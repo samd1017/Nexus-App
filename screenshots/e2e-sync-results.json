@@ -1,0 +1,80 @@
+{
+  "results": [
+    {
+      "name": "switch Welcome",
+      "ok": true,
+      "detail": "Welcome | Welcome to Note App\n\nA personal knowledg"
+    },
+    {
+      "name": "switch Knowledge",
+      "ok": true,
+      "detail": "Knowledge OS | Knowledge OS\n\nThe next decade of persona"
+    },
+    {
+      "name": "switch Design",
+      "ok": true,
+      "detail": "Design Language | Design Language\n\nInspired by high-precis"
+    },
+    {
+      "name": "switch Welcome again",
+      "ok": true,
+      "detail": "Welcome to Note App\n\nA personal knowledg"
+    },
+    {
+      "name": "rapid switches settle",
+      "ok": true,
+      "detail": "Welcome | Welcome to Note App\n\nA persona"
+    },
+    {
+      "name": "2 Visual→Source immediate",
+      "ok": true,
+      "detail": "# Visual Edit\n\nVMARK_1785698321524\n"
+    },
+    {
+      "name": "3 Source→Visual immediate",
+      "ok": true,
+      "detail": "Source Edit\n\nSMARK_1785698322093\n\nWelcome"
+    },
+    {
+      "name": "7 wikilink pills",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "6a dirty visual→other note loads",
+      "ok": true,
+      "detail": "Knowledge OS\n\nThe next decade of personal knowledg"
+    },
+    {
+      "name": "6b dirty visual flushed to store",
+      "ok": true,
+      "detail": "[\"Welcome.md\"]"
+    },
+    {
+      "name": "6c dirty source flushed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "6d switched to Design",
+      "ok": true,
+      "detail": "Design Language"
+    },
+    {
+      "name": "8 graph open note",
+      "ok": true,
+      "detail": "Welcome | # Source Edit\n\nSMARK_1785698322093\n\n[[We"
+    },
+    {
+      "name": "7b wikilink nav",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": []
+}

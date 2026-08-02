@@ -470,7 +470,9 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       setActiveNote: (id) => {
+        // Flush dirty editor into the CURRENT note before changing selection
         flushActiveEditors();
+        if (id === get().activeNoteId) return;
         const note = id ? get().nodes[id] : null;
         set({
           activeNoteId: id,
@@ -568,9 +570,26 @@ export const useVaultStore = create<VaultStore>()(
         if (node.kind === "note" && !name.endsWith(".md")) name += ".md";
         const parent = parentPath(node.path);
         const newPath = parent ? pathJoin(parent, name) : name;
+        if (newPath === node.path && name === node.name) return;
         const oldPath = node.path;
         const nodes = { ...get().nodes };
-        nodes[id] = { ...node, name, path: newPath, mtime: Date.now() };
+        const titleOnly = name.replace(/\.md$/i, "");
+        let content = node.content;
+        if (node.kind === "note" && typeof content === "string") {
+          // Keep first markdown heading aligned with the filename title
+          if (/^#\s+.+$/m.test(content)) {
+            content = content.replace(/^#\s+.+$/m, `# ${titleOnly}`);
+          } else {
+            content = `# ${titleOnly}\n\n` + content.replace(/^\n+/, "");
+          }
+        }
+        nodes[id] = {
+          ...node,
+          name,
+          path: newPath,
+          mtime: Date.now(),
+          ...(node.kind === "note" ? { content } : {}),
+        };
         if (node.kind === "folder") {
           const oldPrefix = node.path + "/";
           for (const n of Object.values(nodes)) {

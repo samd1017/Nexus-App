@@ -1,8 +1,9 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { CreatedWithGrokBanner } from "@/components/created-with-grok-banner";
+import { NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import appCss from "../styles.css?url";
 
-const APP_NAME = "Note App";
+const APP_NAME = NEXUS_NAME;
 const host = import.meta.env.VITE_PUBLIC_HOSTNAME;
 const ogImage = host
   ? `https://og.grok.me/v1/card.png?host=${encodeURIComponent(host)}&title=${encodeURIComponent(APP_NAME)}`
@@ -16,18 +17,25 @@ export const Route = createRootRoute({
       { title: APP_NAME },
       {
         name: "description",
-        content:
-          "Local-first personal knowledge vault — plain Markdown, visual editor, live graph, Hermes-compatible. Zero accounts by default.",
+        content: `${NEXUS_TAGLINE}. Local-first knowledge vault — plain Markdown, visual editor, live graph, Hermes-compatible. Zero accounts by default.`,
       },
+      { name: "theme-color", content: "#050507" },
+      { name: "application-name", content: APP_NAME },
       ...(ogImage
         ? [
             { property: "og:image", content: ogImage },
             { property: "og:image:width", content: "1200" },
             { property: "og:image:height", content: "630" },
+            { property: "og:title", content: APP_NAME },
+            { property: "og:description", content: NEXUS_TAGLINE },
           ]
         : []),
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+      { rel: "apple-touch-icon", href: "/favicon.svg" },
+    ],
   }),
   component: RootDocument,
 });

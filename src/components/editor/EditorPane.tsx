@@ -7,13 +7,14 @@ import {
   PanelRightOpen,
   FilePlus2,
 } from "lucide-react";
-import { useVaultStore, getBreadcrumbs, getNoteDisplayTitle } from "@/lib/vault/store";
+import { useVaultStore, getBreadcrumbs } from "@/lib/vault/store";
 import { VisualEditor } from "./VisualEditor";
 import { SourceEditor } from "./SourceEditor";
 import { formatRelativeTime, cn } from "@/lib/utils";
+import { NoteTitleInput } from "./NoteTitleInput";
+import { NexusMark, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 
 export function EditorPane() {
-  const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const nodes = useVaultStore((s) => s.nodes);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
@@ -21,24 +22,30 @@ export function EditorPane() {
   const mode = useVaultStore((s) => s.mode);
   const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
-  const renameNode = useVaultStore((s) => s.renameNode);
   const createNote = useVaultStore((s) => s.createNote);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const setEditorMode = useVaultStore((s) => s.setEditorMode);
 
-  const note = activeNoteId ? nodes[activeNoteId] : null;
-  const crumbs = useMemo(() => getBreadcrumbs(note ?? null, nodes), [note, nodes]);
+  const note = useVaultStore((s) =>
+    s.activeNoteId ? (s.nodes[s.activeNoteId] ?? null) : null,
+  );
+  const crumbs = useMemo(
+    () => getBreadcrumbs(note ?? null, nodes),
+    [note, nodes],
+  );
 
   if (!note || note.kind !== "note") {
     return (
       <div className="fade-in flex h-full flex-col items-center justify-center px-8 text-center">
         <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] text-[var(--accent)] shadow-[0_0_40px_rgba(0,200,255,0.12)]">
-          <Eye size={28} />
+          <NexusMark size={36} className="text-[var(--text-primary)]" />
         </div>
         <h2 className="text-[22px] font-semibold tracking-tight">Select a note</h2>
         <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-[var(--text-secondary)]">
-          Choose a file from the vault, search with ⌘K, or create a note. Writing surface stays calm —
-          power features live in the edges.
+          Choose a file from the vault, search with ⌘K, or create a note.
+        </p>
+        <p className="mt-2 text-[12px] tracking-wide text-[var(--text-muted)]">
+          {NEXUS_TAGLINE}
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
           <button
@@ -61,8 +68,14 @@ export function EditorPane() {
     );
   }
 
+  const body = note.content ?? "";
+  const editorKey = `${note.id}::${editorMode}`;
+
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]">
+    <div
+      className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
+      data-active-note={note.id}
+    >
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 md:px-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
@@ -79,19 +92,7 @@ export function EditorPane() {
               </span>
             ))}
           </div>
-          <input
-            key={note.id}
-            className="w-full bg-transparent text-[15px] font-semibold tracking-tight text-[var(--text-primary)] outline-none"
-            defaultValue={getNoteDisplayTitle(note)}
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              if (v && v !== getNoteDisplayTitle(note)) renameNode(note.id, v);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            aria-label="Note title"
-          />
+          <NoteTitleInput noteId={note.id} />
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
@@ -137,11 +138,13 @@ export function EditorPane() {
         </div>
       </div>
 
-      {editorMode === "visual" ? (
-        <VisualEditor noteId={note.id} content={note.content ?? ""} />
-      ) : (
-        <SourceEditor noteId={note.id} content={note.content ?? ""} />
-      )}
+      <div key={editorKey} className="flex min-h-0 flex-1 flex-col">
+        {editorMode === "visual" ? (
+          <VisualEditor noteId={note.id} content={body} />
+        ) : (
+          <SourceEditor noteId={note.id} content={body} />
+        )}
+      </div>
     </div>
   );
 }

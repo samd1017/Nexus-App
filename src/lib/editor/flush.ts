@@ -1,6 +1,6 @@
 /**
  * Pending editor flush registry.
- * Visual/Source editors register a sync flush so mode switches never lose content.
+ * Visual/Source register a sync flush so mode/note switches never lose content.
  */
 
 type FlushFn = () => void;
@@ -16,7 +16,7 @@ export function registerSourceFlush(fn: FlushFn | null): void {
   sourceFlush = fn;
 }
 
-/** Flush whichever editor is active — call before mode switches / note changes */
+/** Flush active editors — must run before mode or note switches */
 export function flushActiveEditors(): void {
   try {
     visualFlush?.();

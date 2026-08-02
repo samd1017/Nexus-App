@@ -5,7 +5,6 @@ import {
   Network,
   Radio,
   Sparkles,
-  Zap,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import {
@@ -15,6 +14,11 @@ import {
   providerSyncHint,
   type CloudProvider,
 } from "@/lib/cloud/oauth";
+import {
+  NexusMark,
+  NEXUS_NAME,
+  NEXUS_TAGLINE,
+} from "@/components/brand/NexusLogo";
 
 const PROVIDERS: CloudProvider[] = ["dropbox", "google", "onedrive"];
 
@@ -48,16 +52,21 @@ export function WelcomeScreen() {
       />
 
       <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-6 py-12">
-        <div className="mb-2 flex items-center gap-2 text-[var(--accent)]">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(0,200,255,0.3)] bg-[rgba(0,200,255,0.1)] shadow-[0_0_28px_rgba(0,200,255,0.22)]">
-            <Zap size={18} />
+        <div className="mb-1 flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.28)] bg-[rgba(15,15,18,0.9)] shadow-[0_0_32px_rgba(0,200,255,0.18)]">
+            <NexusMark size={36} className="text-[var(--text-primary)]" />
           </div>
-          <span className="text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--text-secondary)]">
-            Note App
-          </span>
+          <div className="min-w-0">
+            <div className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--text-primary)]">
+              {NEXUS_NAME}
+            </div>
+            <div className="text-[12.5px] font-medium tracking-[0.02em] text-[var(--accent)]">
+              {NEXUS_TAGLINE}
+            </div>
+          </div>
         </div>
 
-        <h1 className="mt-4 max-w-xl text-[clamp(1.85rem,4vw,2.65rem)] font-semibold leading-[1.12] tracking-[-0.03em] text-[var(--text-primary)]">
+        <h1 className="mt-6 max-w-xl text-[clamp(1.85rem,4vw,2.65rem)] font-semibold leading-[1.12] tracking-[-0.03em] text-[var(--text-primary)]">
           A knowledge OS for plain Markdown.
         </h1>
         <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-[var(--text-secondary)]">
@@ -200,6 +209,10 @@ export function WelcomeScreen() {
             </div>
           </div>
         ) : null}
+
+        <p className="mt-10 text-center text-[11.5px] tracking-wide text-[var(--text-muted)]">
+          {NEXUS_NAME} · {NEXUS_TAGLINE}
+        </p>
       </div>
     </div>
   );

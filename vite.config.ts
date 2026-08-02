@@ -6,12 +6,12 @@ import tailwindcss from "@tailwindcss/vite";
 import { nitro } from "nitro/vite";
 
 /**
- * Note App is local-first — no database bootstrap.
+ * Nexus is local-first — no database bootstrap.
  * Template PGLite hook is intentionally gated off so startup never depends on auth/DB.
  */
 function localFirstNoDbPlugin(): Plugin {
   return {
-    name: "noteapp:local-first-no-db",
+    name: "nexus:local-first-no-db",
     apply: "serve",
     async configureServer() {
       /* no-op: zero accounts, zero hosted DB */
@@ -25,7 +25,7 @@ function localFirstNoDbPlugin(): Plugin {
  */
 function authDisabledPlugin(): Plugin {
   return {
-    name: "noteapp:auth-disabled",
+    name: "nexus:auth-disabled",
     apply: "serve",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
@@ -39,7 +39,7 @@ function authDisabledPlugin(): Plugin {
         res.end(
           JSON.stringify({
             error: "auth_disabled",
-            message: "Note App is local-first. No accounts required.",
+            message: "Nexus is local-first. No accounts required.",
           }),
         );
       });

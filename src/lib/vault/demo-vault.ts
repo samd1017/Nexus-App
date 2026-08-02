@@ -50,9 +50,9 @@ export function buildDemoVault(): {
       "Welcome.md",
       "Welcome.md",
       null,
-      `# Welcome to Note App
+      `# Welcome to Nexus
 
-A personal knowledge vault built for **clarity**, **speed**, and **Hermes-compatible** plain Markdown.
+**Notes for Humans and Agents.** A personal knowledge vault built for **clarity**, **speed**, and **Hermes-compatible** plain Markdown.
 
 ## What this is
 

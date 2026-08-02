@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
+import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
@@ -30,168 +31,167 @@ interface Props {
 }
 
 /**
- * Visual editor with purity-preserving autosave + immediate flush on unmount/mode switch.
+ * Visual view of a single note. Parent remounts via key when note/mode changes.
+ * Flush always compares live TipTap DOM → store so Source never sees stale Markdown.
  */
 export function VisualEditor({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastNoteId = useRef(noteId);
   const applying = useRef(false);
-  const baselineMd = useRef(content);
   const userEdited = useRef(false);
-  /** False until the first successful setContent for this editor instance */
-  const hydrated = useRef(false);
+  const baselineMd = useRef(content);
   const noteIdRef = useRef(noteId);
+  const contentRef = useRef(content);
   noteIdRef.current = noteId;
+  contentRef.current = content;
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3, 4] },
-        codeBlock: { HTMLAttributes: { class: "note-code" } },
-      }),
-      Placeholder.configure({
-        placeholder: "Start writing… Use [[wikilinks]] to connect ideas.",
-      }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Image.configure({ inline: false, allowBase64: true }),
-      Link.configure({ openOnClick: false, autolink: true }),
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      Wikilink.configure({
-        onOpen: (target) => {
-          const hit = resolveWikilink(target, useVaultStore.getState().nodes);
-          if (hit) setActiveNote(hit.id);
+  const commit = useCallback(
+    (ed: Editor, opts?: { force?: boolean }) => {
+      if (applying.current) return;
+      const id = noteIdRef.current;
+      let serialized: string;
+      try {
+        serialized = htmlDocToMarkdown(ed.view.dom as HTMLElement);
+      } catch {
+        return;
+      }
+      const prev =
+        useVaultStore.getState().nodes[id]?.content ?? baselineMd.current;
+      // On force flush (mode switch), still skip pure noise — but never skip real edits
+      if (!opts?.force && isOnlySerializationNoise(prev, serialized) && !userEdited.current) {
+        return;
+      }
+      if (isOnlySerializationNoise(prev, serialized)) {
+        userEdited.current = false;
+        return;
+      }
+      const md = preferCleanWrite(prev, serialized);
+      if (md === prev) {
+        userEdited.current = false;
+        return;
+      }
+      baselineMd.current = md;
+      userEdited.current = false;
+      updateNoteContent(id, md);
+    },
+    [updateNoteContent],
+  );
+
+  const editor = useEditor(
+    {
+      immediatelyRender: false,
+      extensions: [
+        StarterKit.configure({
+          heading: { levels: [1, 2, 3, 4] },
+          codeBlock: { HTMLAttributes: { class: "note-code" } },
+        }),
+        Placeholder.configure({
+          placeholder: "Start writing… Use [[wikilinks]] to connect ideas.",
+        }),
+        TaskList,
+        TaskItem.configure({ nested: true }),
+        Image.configure({ inline: false, allowBase64: true }),
+        Link.configure({ openOnClick: false, autolink: true }),
+        Table.configure({ resizable: false }),
+        TableRow,
+        TableHeader,
+        TableCell,
+        Wikilink.configure({
+          onOpen: (target) => {
+            const hit = resolveWikilink(target, useVaultStore.getState().nodes);
+            if (hit) setActiveNote(hit.id);
+          },
+        }),
+      ],
+      content: markdownWithWikilinksToHtml(content || ""),
+      editorProps: {
+        attributes: {
+          class: "note-editor min-h-[50vh] focus:outline-none",
+          "data-note-id": noteId,
         },
-      }),
-    ],
-    content: markdownWithWikilinksToHtml(content || ""),
-    editorProps: {
-      attributes: {
-        class: "note-editor min-h-[50vh] focus:outline-none",
+      },
+      onCreate: ({ editor: ed }) => {
+        applying.current = true;
+        const html = markdownWithWikilinksToHtml(contentRef.current || "");
+        ed.commands.setContent(html, { emitUpdate: false });
+        baselineMd.current = contentRef.current;
+        userEdited.current = false;
+        requestAnimationFrame(() => {
+          ed.view.dom
+            .querySelectorAll("span[data-wikilink]")
+            .forEach((pill) => {
+              const t = pill.getAttribute("data-wikilink") || "";
+              const hit = resolveWikilink(t, useVaultStore.getState().nodes);
+              pill.classList.toggle("is-missing", !hit);
+            });
+          applying.current = false;
+        });
+      },
+      onUpdate: ({ editor: ed }) => {
+        if (applying.current) return;
+        userEdited.current = true;
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => commit(ed), 250);
       },
     },
-    onUpdate: ({ editor: ed }) => {
-      if (applying.current) return;
-      userEdited.current = true;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => {
-        commitFromEditor(ed);
-      }, 400);
-    },
-  });
+    [noteId],
+  );
 
-  function commitFromEditor(ed: NonNullable<typeof editor>) {
-    const id = noteIdRef.current;
-    const root = ed.view.dom as HTMLElement;
-    const serialized = htmlDocToMarkdown(root);
-    const prev =
-      useVaultStore.getState().nodes[id]?.content ?? baselineMd.current;
-    if (isOnlySerializationNoise(prev, serialized)) {
-      userEdited.current = false;
-      return;
-    }
-    const md = preferCleanWrite(prev, serialized);
-    if (md === prev) {
-      userEdited.current = false;
-      return;
-    }
-    baselineMd.current = md;
-    userEdited.current = false;
-    updateNoteContent(id, md);
-  }
-
-  function flushNow() {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-    if (!editor || applying.current) return;
-    if (userEdited.current || editor.isEditable) {
-      try {
-        commitFromEditor(editor);
-      } catch {
-        /* editor may be destroyed */
-      }
-    }
-  }
-
-  useEffect(() => {
-    registerVisualFlush(() => flushNow());
-    return () => {
-      flushNow();
-      registerVisualFlush(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, noteId]);
-
-  // Load content when note changes or external update
+  // External / store content while mounted (e.g. title rename updates H1)
   useEffect(() => {
     if (!editor) return;
-    const switched = lastNoteId.current !== noteId;
+    if (userEdited.current) return;
+    if (isOnlySerializationNoise(baselineMd.current, content)) return;
+    applying.current = true;
+    baselineMd.current = content;
+    contentRef.current = content;
+    editor.commands.setContent(markdownWithWikilinksToHtml(content || ""), {
+      emitUpdate: false,
+    });
+    requestAnimationFrame(() => {
+      applying.current = false;
+    });
+  }, [editor, content]);
 
-    if (switched) {
+  useEffect(() => {
+    if (!editor) return;
+    const flushNow = () => {
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
-      if (userEdited.current && !applying.current) {
-        try {
-          const prevId = lastNoteId.current;
-          const root = editor.view.dom as HTMLElement;
-          const serialized = htmlDocToMarkdown(root);
-          const prev =
-            useVaultStore.getState().nodes[prevId]?.content ??
-            baselineMd.current;
-          if (!isOnlySerializationNoise(prev, serialized)) {
-            const md = preferCleanWrite(prev, serialized);
-            if (md !== prev) updateNoteContent(prevId, md);
-          }
-        } catch {
-          /* ignore */
-        }
+      try {
+        // Always push live DOM → store on mode/note switch
+        commit(editor, { force: true });
+      } catch {
+        /* destroyed */
       }
-      lastNoteId.current = noteId;
-      hydrated.current = false;
-    }
-
-    // Always hydrate once per mount / note; skip noise-only external updates after that
-    if (hydrated.current && !switched) {
-      if (userEdited.current) return;
-      if (isOnlySerializationNoise(baselineMd.current, content)) return;
-    }
-
-    applying.current = true;
-    userEdited.current = false;
-    baselineMd.current = content;
-    const html = markdownWithWikilinksToHtml(content || "");
-    editor.commands.setContent(html, { emitUpdate: false });
-    hydrated.current = true;
-    requestAnimationFrame(() => {
-      const pills = editor.view.dom.querySelectorAll("span[data-wikilink]");
-      pills.forEach((pill) => {
-        const t = pill.getAttribute("data-wikilink") || "";
-        const hit = resolveWikilink(t, useVaultStore.getState().nodes);
-        pill.classList.toggle("is-missing", !hit);
-      });
-      applying.current = false;
-    });
-  }, [editor, noteId, content, updateNoteContent]);
+    };
+    registerVisualFlush(flushNow);
+    return () => {
+      flushNow();
+      registerVisualFlush(null);
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+    };
+  }, [editor, commit]);
 
   if (!editor) {
     return (
-      <div className="flex h-40 items-center justify-center text-[var(--text-muted)]">
+      <div
+        className="flex h-40 items-center justify-center text-[var(--text-muted)]"
+        data-note-id={noteId}
+      >
         <div className="h-5 w-5 animate-pulse rounded-md bg-[rgba(0,200,255,0.2)]" />
       </div>
     );
   }
 
   return (
-    <div className="fade-in flex h-full min-h-0 flex-col">
+    <div className="fade-in flex h-full min-h-0 flex-col" data-note-id={noteId}>
       <EditorToolbar editor={editor} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 md:px-10 md:py-6">
         <div className="mx-auto max-w-[720px]">

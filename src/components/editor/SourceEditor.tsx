@@ -9,67 +9,66 @@ interface Props {
 }
 
 /**
- * Source editor — controlled from store so mode switches never show stale text.
- * Flushes immediately on unmount / mode switch.
+ * Source view of the same note. Always seeds from the latest store content so
+ * Visual → Source never opens on an empty/stale buffer.
  */
 export function SourceEditor({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [value, setValue] = useState(content);
-  const valueRef = useRef(value);
+
+  // Prefer live store value at mount (post-flush), fall back to prop
+  const seed =
+    useVaultStore.getState().nodes[noteId]?.content ?? content ?? "";
+
+  const [value, setValue] = useState(seed);
+  const valueRef = useRef(seed);
   const noteIdRef = useRef(noteId);
   const dirtyRef = useRef(false);
-  valueRef.current = value;
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   noteIdRef.current = noteId;
 
-  // Sync from store when note changes or external update (Hermes)
+  // Keep in sync with store/prop when not mid-edit
   useEffect(() => {
-    if (dirtyRef.current && noteIdRef.current === noteId) {
-      // Local typing in progress — only accept external if content clearly different path
-      // After flush dirty is false, so store content wins
-    }
-    if (!dirtyRef.current) {
-      setValue(content);
-      valueRef.current = content;
-    } else {
-      // If store advanced with our own write, clear dirty
-      if (content === valueRef.current || content === preferCleanWrite(content, valueRef.current)) {
-        // keep
-      }
-      // Accept store if it matches fingerprint of local (already saved)
-      setValue(content);
-      valueRef.current = content;
-      dirtyRef.current = false;
-    }
+    const live =
+      useVaultStore.getState().nodes[noteId]?.content ?? content ?? "";
+    if (dirtyRef.current) return;
+    if (live === valueRef.current) return;
+    setValue(live);
+    valueRef.current = live;
   }, [noteId, content]);
 
-  function flushNow() {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-    const id = noteIdRef.current;
-    const val = valueRef.current;
-    const prev = useVaultStore.getState().nodes[id]?.content ?? "";
-    const next = preferCleanWrite(prev, val);
-    dirtyRef.current = false;
-    if (next !== prev) updateNoteContent(id, next);
-  }
-
   useEffect(() => {
-    registerSourceFlush(() => flushNow());
+    const flushNow = () => {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+      const id = noteIdRef.current;
+      const val = valueRef.current;
+      dirtyRef.current = false;
+      const prev = useVaultStore.getState().nodes[id]?.content ?? "";
+      const next = preferCleanWrite(prev, val);
+      if (next !== prev) updateNoteContent(id, next);
+    };
+
+    registerSourceFlush(flushNow);
     return () => {
       flushNow();
       registerSourceFlush(null);
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noteId]);
+  }, [updateNoteContent, noteId]);
 
   return (
-    <div className="fade-in h-full min-h-0 overflow-y-auto px-6 py-4 md:px-10 md:py-6">
-      <div className="mx-auto max-w-[720px]">
+    <div
+      className="fade-in flex h-full min-h-0 flex-col overflow-hidden px-6 py-4 md:px-10 md:py-6"
+      data-note-id={noteId}
+    >
+      <div className="mx-auto flex min-h-0 w-full max-w-[720px] flex-1 flex-col">
         <textarea
-          className="source-editor"
+          className="source-editor min-h-[50vh] w-full flex-1"
           value={value}
           spellCheck={false}
           onChange={(e) => {
@@ -80,12 +79,11 @@ export function SourceEditor({ noteId, content }: Props) {
             if (timer.current) clearTimeout(timer.current);
             timer.current = setTimeout(() => {
               const id = noteIdRef.current;
-              const prev =
-                useVaultStore.getState().nodes[id]?.content ?? "";
+              const prev = useVaultStore.getState().nodes[id]?.content ?? "";
               const next = preferCleanWrite(prev, val);
               dirtyRef.current = false;
               if (next !== prev) updateNoteContent(id, next);
-            }, 220);
+            }, 200);
           }}
           aria-label="Markdown source"
         />

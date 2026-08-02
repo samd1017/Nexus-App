@@ -16,7 +16,7 @@ export interface CloudSession {
   method: "synced-folder";
 }
 
-const PREF_KEY = "noteapp-cloud-pref-v2";
+const PREF_KEY = "nexus-cloud-pref-v2";
 
 export function providerLabel(p: CloudProvider): string {
   if (p === "dropbox") return "Dropbox";
@@ -35,7 +35,7 @@ export function providerSyncHint(p: CloudProvider): string {
 }
 
 export const CLOUD_SYNC_HINT =
-  "Best path: enable Dropbox / Drive / OneDrive desktop sync, then Open folder as vault. Zero accounts in Note App. Notes stay ordinary Markdown.";
+  "Best path: enable Dropbox / Drive / OneDrive desktop sync, then Open folder as vault. Zero accounts in Nexus. Notes stay ordinary Markdown.";
 
 export function loadCloudSession(): CloudSession | null {
   try {

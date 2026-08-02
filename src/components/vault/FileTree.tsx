@@ -40,11 +40,6 @@ function TreeNode({
   const children = node.kind === "folder" && expanded ? getChildren(node.id) : [];
   const isActive = node.kind === "note" && node.id === activeNoteId;
 
-  const onOpen = () => {
-    if (node.kind === "folder") toggleFolder(node.id);
-    else setActiveNote(node.id);
-  };
-
   const commitRename = () => {
     setRenaming(false);
     if (nameDraft.trim() && nameDraft !== node.name) {
@@ -54,19 +49,38 @@ function TreeNode({
     }
   };
 
+  const openNote = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (node.kind === "folder") {
+      toggleFolder(node.id);
+      return;
+    }
+    // Explicit selection — store flushes previous editor then switches
+    setActiveNote(node.id);
+  };
+
   return (
     <div>
-      <div
-        className={cn("tree-item group relative", isActive && "is-active")}
+      <button
+        type="button"
+        className={cn(
+          "tree-item group relative flex w-full items-center gap-1.5 text-left",
+          isActive && "is-active",
+        )}
         style={{ paddingLeft: 8 + depth * 14 }}
-        onClick={onOpen}
+        onClick={openNote}
         onDoubleClick={(e) => {
+          e.preventDefault();
           e.stopPropagation();
           setRenaming(true);
           setNameDraft(node.kind === "note" ? noteTitle(node) : node.name);
         }}
         role="treeitem"
+        aria-selected={isActive}
         aria-expanded={node.kind === "folder" ? expanded : undefined}
+        data-node-id={node.id}
+        data-node-kind={node.kind}
       >
         {node.kind === "folder" ? (
           <span className="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--text-muted)]">
@@ -83,7 +97,13 @@ function TreeNode({
             <Folder size={15} className="shrink-0 text-[var(--text-muted)]" />
           )
         ) : (
-          <FileText size={15} className="shrink-0 text-[var(--text-muted)]" />
+          <FileText
+            size={15}
+            className={cn(
+              "shrink-0",
+              isActive ? "text-[var(--accent)]" : "text-[var(--text-muted)]",
+            )}
+          />
         )}
 
         {renaming ? (
@@ -108,18 +128,28 @@ function TreeNode({
           </span>
         )}
 
-        <div className="titlebar-no-drag relative ml-auto hidden shrink-0 group-hover:flex">
-          <button
-            type="button"
-            className="icon-btn h-6 w-6"
+        <div
+          className="titlebar-no-drag relative ml-auto hidden shrink-0 group-hover:flex"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span
+            role="button"
+            tabIndex={0}
+            className="icon-btn flex h-6 w-6 items-center justify-center"
             onClick={(e) => {
               e.stopPropagation();
               setMenuOpen((v) => !v);
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setMenuOpen((v) => !v);
+              }
+            }}
             aria-label="Item actions"
           >
             <MoreHorizontal size={14} />
-          </button>
+          </span>
           {menuOpen ? (
             <div
               className="glass-elevated absolute right-0 top-7 z-50 min-w-[150px] rounded-[12px] p-1"
@@ -166,7 +196,7 @@ function TreeNode({
             </div>
           ) : null}
         </div>
-      </div>
+      </button>
 
       {node.kind === "folder" && expanded ? (
         <div role="group">

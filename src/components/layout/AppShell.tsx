@@ -7,6 +7,7 @@ import { EditorPane } from "@/components/editor/EditorPane";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
+import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
 import {
   getFsaRoot,
   setWatcherAck,
@@ -85,8 +86,12 @@ export function AppShell() {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--bg-deepest)]">
         <div className="text-center">
-          <div className="mx-auto mb-4 h-10 w-10 animate-pulse rounded-xl bg-[rgba(0,200,255,0.2)]" />
-          <p className="text-[14px] text-[var(--text-secondary)]">Starting Note App…</p>
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] shadow-[0_0_28px_rgba(0,200,255,0.15)]">
+            <NexusMark size={28} className="text-[var(--text-primary)]" />
+          </div>
+          <p className="text-[14px] text-[var(--text-secondary)]">
+            Starting {NEXUS_NAME}…
+          </p>
         </div>
       </div>
     );

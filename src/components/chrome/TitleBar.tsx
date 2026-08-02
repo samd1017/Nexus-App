@@ -1,7 +1,8 @@
 import { useVaultStore } from "@/lib/vault/store";
 import { formatRelativeTime } from "@/lib/utils";
+import { NexusWordmark } from "@/components/brand/NexusLogo";
 
-/** macOS-style window chrome with traffic lights + vault status */
+/** macOS-style window chrome with traffic lights + Nexus branding */
 export function TitleBar() {
   const vaultName = useVaultStore((s) => s.vaultName);
   const mode = useVaultStore((s) => s.mode);
@@ -18,9 +19,7 @@ export function TitleBar() {
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-semibold tracking-tight text-[var(--text-primary)]">
-            Note App
-          </span>
+          <NexusWordmark size="sm" className="text-[var(--text-primary)]" />
           {vaultName ? (
             <>
               <span className="text-[var(--text-muted)]">·</span>
