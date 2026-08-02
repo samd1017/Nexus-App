@@ -112,6 +112,16 @@ var ChevronRight = createLucideIcon("chevron-right", [["path", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var Cloud = createLucideIcon("cloud", [["path", {
+	d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z",
+	key: "p7xjir"
+}]]);
+/**
+* @license lucide-react v0.510.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var CodeXml = createLucideIcon("code-xml", [
 	["path", {
 		d: "m18 16 4-4-4-4",
@@ -573,6 +583,29 @@ var List = createLucideIcon("list", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var LogOut = createLucideIcon("log-out", [
+	["path", {
+		d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4",
+		key: "1uf3rs"
+	}],
+	["polyline", {
+		points: "16 17 21 12 16 7",
+		key: "1gabdz"
+	}],
+	["line", {
+		x1: "21",
+		x2: "9",
+		y1: "12",
+		y2: "12",
+		key: "1uyos4"
+	}]
+]);
+/**
+* @license lucide-react v0.510.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Maximize2 = createLucideIcon("maximize-2", [
 	["polyline", {
 		points: "15 3 21 3 21 9",
@@ -943,5 +976,15 @@ var TriangleAlert = createLucideIcon("triangle-alert", [
 		key: "p32p05"
 	}]
 ]);
+/**
+* @license lucide-react v0.510.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var Zap = createLucideIcon("zap", [["path", {
+	d: "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",
+	key: "1xq2db"
+}]]);
 //#endregion
-export { FolderOpen as A, Image as C, HardDrive as D, Heading1 as E, CodeXml as F, ChevronRight as I, ChevronDown as L, FilePlus as M, Eye as N, Folder as O, Ellipsis as P, Bold as R, Italic as S, Heading2 as T, List as _, Search as a, ListChecks as b, Plus as c, PanelRightClose as d, PanelLeftClose as f, Maximize2 as g, Minimize2 as h, Sparkles as i, FileText as j, FolderPlus as k, Pencil as l, Minus as m, Trash2 as n, Radio as o, Network as p, Table as r, Quote as s, TriangleAlert as t, PanelRightOpen as u, ListTree as v, Heading3 as w, Link2 as x, ListOrdered as y };
+export { Folder as A, ChevronDown as B, Link2 as C, Heading2 as D, Heading3 as E, Eye as F, Ellipsis as I, CodeXml as L, FolderOpen as M, FileText as N, Heading1 as O, FilePlus as P, Cloud as R, ListChecks as S, Image as T, Bold as V, Maximize2 as _, Sparkles as a, ListTree as b, Quote as c, PanelRightOpen as d, PanelRightClose as f, Minimize2 as g, Minus as h, Table as i, FolderPlus as j, HardDrive as k, Plus as l, Network as m, TriangleAlert as n, Search as o, PanelLeftClose as p, Trash2 as r, Radio as s, Zap as t, Pencil as u, LogOut as v, Italic as w, ListOrdered as x, List as y, ChevronRight as z };

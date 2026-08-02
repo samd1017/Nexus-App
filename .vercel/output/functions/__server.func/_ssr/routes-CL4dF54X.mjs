@@ -1,12 +1,8 @@
 import { r as __toESM } from "../_runtime.mjs";
 import { r as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
-import { A as FolderOpen, C as Image, D as HardDrive, E as Heading1, F as CodeXml, I as ChevronRight, L as ChevronDown, M as FilePlus, N as Eye, O as Folder, P as Ellipsis, R as Bold, S as Italic, T as Heading2, _ as List, a as Search, b as ListChecks, c as Plus, d as PanelRightClose, f as PanelLeftClose, g as Maximize2, h as Minimize2, i as Sparkles, j as FileText, k as FolderPlus, l as Pencil, m as Minus, n as Trash2, o as Radio, p as Network, r as Table, s as Quote, u as PanelRightOpen, v as ListTree, w as Heading3, x as Link2, y as ListOrdered } from "../_libs/lucide-react.mjs";
-import { n as create, t as persist } from "../_libs/zustand.mjs";
-import { t as g } from "../_libs/marked.mjs";
-import { t as TurndownService } from "../_libs/turndown.mjs";
-import { t as clsx } from "../_libs/clsx.mjs";
-import { t as twMerge } from "../_libs/tailwind-merge.mjs";
+import { _ as signaturesChanged, a as formatRelativeTime, c as getFsaRoot, d as preferCleanWrite, f as previewSnippet, g as setWatcherAck, h as scanVault, i as extractOutline, l as getNoteDisplayTitle, m as scanSignatures, n as cn, o as getBreadcrumbs, p as providerLabel, s as getCloudConfig, t as CLOUD_SYNC_HINT, u as noteTitle, v as useVaultStore } from "./store-D0ChvofP.mjs";
+import { A as Folder, B as ChevronDown, C as Link2, D as Heading2, E as Heading3, F as Eye, I as Ellipsis, L as CodeXml, M as FolderOpen, N as FileText, O as Heading1, P as FilePlus, R as Cloud, S as ListChecks, T as Image, V as Bold, _ as Maximize2, a as Sparkles, b as ListTree, c as Quote, d as PanelRightOpen, f as PanelRightClose, g as Minimize2, h as Minus, i as Table, j as FolderPlus, k as HardDrive, l as Plus, m as Network, o as Search, p as PanelLeftClose, r as Trash2, s as Radio, t as Zap, u as Pencil, v as LogOut, w as Italic, x as ListOrdered, y as List, z as ChevronRight } from "../_libs/lucide-react.mjs";
 import { O as mergeAttributes, R as Plugin, a as Mark, i as InputRule, z as PluginKey } from "../_libs/@tiptap/core+[...].mjs";
 import { n as useEditor, t as EditorContent } from "../_libs/fast-equals+tiptap__react.mjs";
 import { n as index_default } from "../_libs/@tiptap/extension-link+[...].mjs";
@@ -22,807 +18,31 @@ import "../_libs/tiptap__extension-table-header.mjs";
 import { t as forceGraph } from "../_libs/force-graph+[...].mjs";
 import { t as _e } from "../_libs/cmdk.mjs";
 import { t as entry_default } from "../_libs/fuse.js.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-DWsDCGCn.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-CL4dF54X.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
-var DEFAULT_SETTINGS = {
-	leftOpen: true,
-	rightOpen: true,
-	leftWidth: 260,
-	rightWidth: 340,
-	editorMode: "visual",
-	graphMode: "panel",
-	lastNotePath: null
-};
-function noteTitle(node) {
-	if (node.kind !== "note") return node.name;
-	return node.name.replace(/\.md$/i, "");
-}
-function pathJoin(...parts) {
-	return parts.filter(Boolean).join("/").replace(/\/+/g, "/").replace(/^\//, "");
-}
-function parentPath(path) {
-	const i = path.lastIndexOf("/");
-	return i <= 0 ? "" : path.slice(0, i);
-}
-function idFor(path) {
-	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
-}
-function folder(path, name, parentId) {
-	return {
-		id: idFor(path || "__root_folder__" + name),
-		path,
-		name,
-		kind: "folder",
-		parentId,
-		mtime: Date.now()
-	};
-}
-function note(path, name, parentId, content) {
-	return {
-		id: idFor(path),
-		path,
-		name,
-		kind: "note",
-		parentId,
-		mtime: Date.now(),
-		content
-	};
-}
-/** Seed knowledge vault — SpaceX-inspired knowledge OS demo content */
-function buildDemoVault() {
-	const nodes = {};
-	const add = (n) => {
-		nodes[n.id] = n;
-		return n;
-	};
-	const projects = add(folder("Projects", "Projects", null));
-	const research = add(folder("Research", "Research", null));
-	const journal = add(folder("Journal", "Journal", null));
-	const systems = add(folder("Systems", "Systems", null));
-	const welcome = add(note("Welcome.md", "Welcome.md", null, `# Welcome to Note App
-
-A personal knowledge vault built for **clarity**, **speed**, and **Hermes-compatible** plain Markdown.
-
-## What this is
-
-- Your vault is a **folder of \`.md\` files** — nothing proprietary
-- The default editor is **visual / WYSIWYG** with clean round-trip Markdown
-- \`[[wikilinks]]\` render as interactive pills and stay standard on disk
-- An interactive **graph** reveals the shape of your thinking
-
-## Quick start
-
-1. Browse the file tree on the left
-2. Open [[Knowledge OS]] or [[Graph Thinking]]
-3. Press **⌘K** to search · **⌘E** for source mode · **⌘\\\\** to toggle sidebars
-4. Explore the graph in the right panel — expand to full canvas
-
-## Hermes-ready
-
-External agents can create, edit, and delete notes in this folder. Changes appear live within ~1–2 seconds.
-
-Try the **Simulate Hermes write** action in the vault menu to watch an external edit land.
-
----
-
-*This is a demo vault. Open any local folder to use your own files.*
-`));
-	add(note(pathJoin("Projects", "Knowledge OS.md"), "Knowledge OS.md", projects.id, `# Knowledge OS
-
-The next decade of personal knowledge software is not another notes app — it is a **knowledge operating system**.
-
-## Principles
-
-1. **Files first** — the vault is the source of truth
-2. **Agent-native** — [[Hermes Compatibility]] means machines write the same files you do
-3. **Spatial memory** — the [[Graph Thinking]] view is first-class, not a gimmick
-4. **Calm writing surface** — complexity lives in progressive disclosure
-
-## Architecture sketch
-
-| Layer | Role |
-| --- | --- |
-| Vault folder | Plain \`.md\` + \`assets/\` |
-| Index cache | Optional \`.noteapp/\` only |
-| Editor | Visual default, source on demand |
-| Graph | Force-directed map of [[wikilinks]] |
-
-## Related
-
-- [[Welcome]]
-- [[Design Language]]
-- [[Linking Strategy]]
-`));
-	add(note(pathJoin("Projects", "Linking Strategy.md"), "Linking Strategy.md", projects.id, `# Linking Strategy
-
-Wikilinks are the connective tissue of the vault.
-
-## Syntax
-
-Use standard double-bracket links:
-
-\`\`\`
-[[Note Name]]
-[[Note Name|display alias]]
-\`\`\`
-
-## Rules of thumb
-
-- Prefer **concept notes** over dumping everything in daily logs
-- Link **forward** when you introduce a new idea
-- Review **backlinks** weekly — they surface unexpected structure
-
-## Map
-
-- [[Knowledge OS]]
-- [[Graph Thinking]]
-- [[Welcome]]
-`));
-	add(note(pathJoin("Research", "Graph Thinking.md"), "Graph Thinking.md", research.id, `# Graph Thinking
-
-Graphs make invisible structure **visible**.
-
-## Why force-directed graphs work
-
-Nodes repel; links attract. Over time, tightly related notes cluster. Orphans float. Hubs dominate.
-
-### Visual language
-
-- **Accent cyan** nodes with soft outer glow
-- **Size by degree** — highly connected notes read as gravity wells
-- **Edges** stay low-opacity so the field stays calm
-
-## Interaction model
-
-- Hover → title + preview
-- Click → open note
-- Drag / zoom / pan for spatial exploration
-- Panel mode for context; fullscreen for deep work
-
-## Seed links
-
-- [[Knowledge OS]]
-- [[Linking Strategy]]
-- [[Design Language]]
-- [[Hermes Compatibility]]
-`));
-	add(note(pathJoin("Research", "Design Language.md"), "Design Language.md", research.id, `# Design Language
-
-Inspired by high-precision engineering interfaces — dark, confident, technically sophisticated.
-
-## Palette
-
-- Deepest background \`#050507\`
-- Surfaces \`#0F0F12\` → \`#1C1C21\`
-- Accent electric cyan \`#00C8FF\`
-- Soft violet secondary \`#7B61FF\`
-
-## Glass
-
-Floating panels use translucent surfaces with \`backdrop-filter: blur(24px)\` and hairline borders.
-
-## Motion
-
-- 220–280ms ease curves
-- Restrained scale on hover (\`1.02\`)
-- Graph physics should feel like soft springs — never chaotic
-
-## Related
-
-- [[Knowledge OS]]
-- [[Welcome]]
-`));
-	add(note(pathJoin("Systems", "Hermes Compatibility.md"), "Hermes Compatibility.md", systems.id, `# Hermes Compatibility
-
-Hermes (and any external process) must be able to treat this vault as ordinary files.
-
-## Contract
-
-- Notes = \`.md\` files
-- Folders = directories
-- Images = relative paths (prefer \`assets/\`)
-- No proprietary metadata inside note bodies
-- App cache only under \`.noteapp/\`
-
-## Live watching
-
-Creates, edits, renames, and deletes from outside the app must appear in the UI within **1–2 seconds**.
-
-## Clean Markdown
-
-When the app writes a note, the result must remain readable by:
-
-- Any text editor
-- \`git diff\`
-- Agents and CLI tools
-
-## Linked ideas
-
-- [[Knowledge OS]]
-- [[Welcome]]
-- [[Graph Thinking]]
-`));
-	add(note(pathJoin("Systems", "Keyboard Map.md"), "Keyboard Map.md", systems.id, `# Keyboard Map
-
-| Shortcut | Action |
-| --- | --- |
-| ⌘K | Command palette / search |
-| ⌘E | Toggle visual / source |
-| ⌘\\\\ | Toggle left sidebar |
-| ⌘⌥\\\\ | Toggle right panel |
-| ⌘G | Toggle full graph |
-| ⌘N | New note |
-| ⌘S | Save (auto-save is on) |
-| ⌘B / ⌘I | Bold / italic in editor |
-
-## Philosophy
-
-Keyboard is the primary interface for power users. Mouse is always available; shortcuts never required for basics.
-`));
-	add(note(pathJoin("Journal", "First Light.md"), "First Light.md", journal.id, `# First Light
-
-Opened the vault for the first time.
-
-The graph already shows structure forming between [[Knowledge OS]], [[Graph Thinking]], and [[Hermes Compatibility]]. That feedback loop — write, link, see — is the product.
-
-## Tasks
-
-- [x] Seed demo notes
-- [x] Wire wikilinks
-- [ ] Capture a real research thread
-- [ ] Attach a diagram to assets/
-
-## Log
-
-Felt immediate. Calm center, powerful edges.
-`));
-	return {
-		nodes,
-		rootIds: [
-			welcome.id,
-			projects.id,
-			research.id,
-			systems.id,
-			journal.id
-		],
-		vaultName: "Demo Vault"
-	};
-}
-var HERMES_SAMPLE_NOTE = {
-	path: pathJoin("Systems", "Hermes Pulse.md"),
-	name: "Hermes Pulse.md",
-	content: `# Hermes Pulse
-
-This note was written by an **external process** (simulated Hermes agent).
-
-Timestamp: \${TS}
-
-## Observation
-
-The filesystem watcher picked this up without manual refresh. The vault remains a plain folder of Markdown.
-
-## Links
-
-- [[Hermes Compatibility]]
-- [[Knowledge OS]]
-- [[Welcome]]
-`
-};
-/**
-* Clean Markdown serialization helpers.
-* On-disk format: CommonMark + GFM + [[wikilinks]] — never proprietary HTML.
-*/
-g.setOptions({
-	gfm: true,
-	breaks: false
-});
-var turndown = new TurndownService({
-	headingStyle: "atx",
-	codeBlockStyle: "fenced",
-	bulletListMarker: "-",
-	emDelimiter: "*",
-	strongDelimiter: "**",
-	hr: "---"
-});
-turndown.addRule("wikilink", {
-	filter: (node) => node.nodeName === "SPAN" && node.getAttribute("data-wikilink") != null,
-	replacement: (_content, node) => {
-		const el = node;
-		const target = el.getAttribute("data-wikilink") || el.textContent || "";
-		const alias = el.getAttribute("data-alias");
-		if (alias && alias !== target) return `[[${target}|${alias}]]`;
-		return `[[${target}]]`;
-	}
-});
-turndown.addRule("taskListItem", {
-	filter: (node) => node.nodeName === "LI" && node.getAttribute("data-type") === "taskItem",
-	replacement: (content, node) => {
-		const checked = node.getAttribute("data-checked") === "true";
-		const body = content.replace(/^\n+/, "").replace(/\n+$/, "\n");
-		return `- [${checked ? "x" : " "}] ${body}`;
-	}
-});
-/** Prefer keeping original markdown if only whitespace/newline noise changed */
-function preferCleanWrite(previous, next) {
-	const norm = (s) => s.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").trimEnd() + "\n";
-	if (norm(previous) === norm(next)) return previous;
-	return norm(next);
-}
-function extractOutline(md) {
-	const lines = md.split("\n");
-	const out = [];
-	let pos = 0;
-	for (const line of lines) {
-		const m = /^(#{1,6})\s+(.+)$/.exec(line);
-		if (m) out.push({
-			level: m[1].length,
-			text: m[2].trim(),
-			pos
-		});
-		pos += line.length + 1;
-	}
-	return out;
-}
-function previewSnippet(md, max = 120) {
-	const plain = md.replace(/^#+\s+/gm, "").replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, "$1").replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[`*_~>#-]/g, "").replace(/\s+/g, " ").trim();
-	if (plain.length <= max) return plain;
-	return plain.slice(0, max - 1) + "…";
-}
-function cn(...inputs) {
-	return twMerge(clsx(inputs));
-}
-function formatRelativeTime(ts) {
-	const diff = Date.now() - ts;
-	const sec = Math.floor(diff / 1e3);
-	if (sec < 5) return "just now";
-	if (sec < 60) return `${sec}s ago`;
-	const min = Math.floor(sec / 60);
-	if (min < 60) return `${min}m ago`;
-	const hr = Math.floor(min / 60);
-	if (hr < 24) return `${hr}h ago`;
-	return `${Math.floor(hr / 24)}d ago`;
-}
-function slugifyTitle(title) {
-	return title.trim().replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").slice(0, 120);
-}
-var STORAGE_KEY = "noteapp-vault-v1";
-var RECENT_KEY = "noteapp-recent-v1";
-function loadRecents() {
-	try {
-		const raw = localStorage.getItem(RECENT_KEY);
-		if (!raw) return [];
-		return JSON.parse(raw);
-	} catch {
-		return [];
-	}
-}
-function saveRecents(list) {
-	try {
-		localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8)));
-	} catch {}
-}
-function makeId(path) {
-	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_") + "_" + Math.random().toString(36).slice(2, 7);
-}
-function stableId(path) {
-	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
-}
-function pushRecent(entry) {
-	const list = loadRecents().filter((r) => r.id !== entry.id);
-	list.unshift(entry);
-	saveRecents(list);
-	return list;
-}
-var useVaultStore = create()(persist((set, get) => ({
-	ready: false,
-	vaultId: null,
-	vaultName: "",
-	vaultPath: "",
-	mode: "demo",
-	nodes: {},
-	rootIds: [],
-	activeNoteId: null,
-	settings: { ...DEFAULT_SETTINGS },
-	expandedFolders: [],
-	lastExternalSync: null,
-	dirtyNoteIds: [],
-	recentVaults: [],
-	commandOpen: false,
-	toast: null,
-	hermesTick: 0,
-	bootstrap: () => {
-		const recents = loadRecents();
-		set({
-			recentVaults: recents,
-			ready: true
-		});
-		if (!get().vaultId) {
-			if (recents[0]?.mode === "demo" || recents.length === 0) get().openDemoVault();
-			else if (recents[0]) get().openDemoVault();
-		}
-	},
-	openDemoVault: () => {
-		const demo = buildDemoVault();
-		const vaultId = "demo-vault";
-		const welcome = Object.values(demo.nodes).find((n) => n.path === "Welcome.md");
-		const expanded = Object.values(demo.nodes).filter((n) => n.kind === "folder").map((n) => n.id);
-		const recents = pushRecent({
-			id: vaultId,
-			name: demo.vaultName,
-			path: "Demo Vault (in-browser)",
-			lastOpened: Date.now(),
-			mode: "demo"
-		});
-		set({
-			vaultId,
-			vaultName: demo.vaultName,
-			vaultPath: "Demo Vault",
-			mode: "demo",
-			nodes: demo.nodes,
-			rootIds: demo.rootIds,
-			activeNoteId: welcome?.id ?? null,
-			expandedFolders: expanded,
-			dirtyNoteIds: [],
-			lastExternalSync: null,
-			recentVaults: recents,
-			settings: {
-				...get().settings,
-				lastNotePath: welcome?.path ?? null
-			}
-		});
-	},
-	openLocalVault: (name, seed) => {
-		const data = seed ?? buildDemoVault();
-		const vaultId = "local-" + slugifyTitle(name).toLowerCase().replace(/\s+/g, "-");
-		const first = Object.values(data.nodes).find((n) => n.kind === "note");
-		const recents = pushRecent({
-			id: vaultId,
-			name,
-			path: name,
-			lastOpened: Date.now(),
-			mode: "local"
-		});
-		set({
-			vaultId,
-			vaultName: name,
-			vaultPath: name,
-			mode: "local",
-			nodes: data.nodes,
-			rootIds: data.rootIds,
-			activeNoteId: first?.id ?? null,
-			expandedFolders: Object.values(data.nodes).filter((n) => n.kind === "folder").map((n) => n.id),
-			dirtyNoteIds: [],
-			recentVaults: recents
-		});
-	},
-	setActiveNote: (id) => {
-		const note = id ? get().nodes[id] : null;
-		set({
-			activeNoteId: id,
-			settings: {
-				...get().settings,
-				lastNotePath: note?.path ?? get().settings.lastNotePath
-			}
-		});
-	},
-	toggleFolder: (id) => {
-		const cur = get().expandedFolders;
-		set({ expandedFolders: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] });
-	},
-	setLeftOpen: (open) => set({ settings: {
-		...get().settings,
-		leftOpen: open
-	} }),
-	setRightOpen: (open) => set({ settings: {
-		...get().settings,
-		rightOpen: open
-	} }),
-	setEditorMode: (mode) => set({ settings: {
-		...get().settings,
-		editorMode: mode
-	} }),
-	setGraphMode: (mode) => set({ settings: {
-		...get().settings,
-		graphMode: mode
-	} }),
-	toggleEditorMode: () => {
-		const cur = get().settings.editorMode;
-		set({ settings: {
-			...get().settings,
-			editorMode: cur === "visual" ? "source" : "visual"
-		} });
-	},
-	toggleLeft: () => set({ settings: {
-		...get().settings,
-		leftOpen: !get().settings.leftOpen
-	} }),
-	toggleRight: () => set({ settings: {
-		...get().settings,
-		rightOpen: !get().settings.rightOpen
-	} }),
-	toggleGraphFullscreen: () => {
-		const cur = get().settings.graphMode;
-		set({ settings: {
-			...get().settings,
-			graphMode: cur === "fullscreen" ? "panel" : "fullscreen",
-			rightOpen: true
-		} });
-	},
-	updateNoteContent: (id, content, opts) => {
-		const node = get().nodes[id];
-		if (!node || node.kind !== "note") return;
-		const prev = node.content ?? "";
-		const next = opts?.external ? content : preferCleanWrite(prev, content);
-		if (prev === next) return;
-		set({
-			nodes: {
-				...get().nodes,
-				[id]: {
-					...node,
-					content: next,
-					mtime: Date.now()
-				}
-			},
-			dirtyNoteIds: opts?.external ? get().dirtyNoteIds.filter((x) => x !== id) : get().dirtyNoteIds.includes(id) ? get().dirtyNoteIds : [...get().dirtyNoteIds, id],
-			lastExternalSync: opts?.external ? Date.now() : get().lastExternalSync
-		});
-	},
-	renameNode: (id, newName) => {
-		const node = get().nodes[id];
-		if (!node) return;
-		let name = newName.trim();
-		if (!name) return;
-		if (node.kind === "note" && !name.endsWith(".md")) name += ".md";
-		const parent = parentPath(node.path);
-		const newPath = parent ? pathJoin(parent, name) : name;
-		const nodes = { ...get().nodes };
-		nodes[id] = {
-			...node,
-			name,
-			path: newPath,
-			mtime: Date.now()
-		};
-		if (node.kind === "folder") {
-			const oldPrefix = node.path + "/";
-			for (const n of Object.values(nodes)) if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
-				...n,
-				path: newPath + n.path.slice(node.path.length),
-				mtime: Date.now()
-			};
-		}
-		set({ nodes });
-	},
-	createNote: (parentId, title = "Untitled") => {
-		const parent = parentId ? get().nodes[parentId] : null;
-		const base = slugifyTitle(title) || "Untitled";
-		let name = base.endsWith(".md") ? base : `${base}.md`;
-		let path = parent ? pathJoin(parent.path, name) : name;
-		let i = 1;
-		const paths = new Set(Object.values(get().nodes).map((n) => n.path));
-		while (paths.has(path)) {
-			name = `${base.replace(/\.md$/i, "")} ${i}.md`;
-			path = parent ? pathJoin(parent.path, name) : name;
-			i++;
-		}
-		const id = makeId(path);
-		const content = `# ${title.replace(/\.md$/i, "")}\n\n`;
-		const node = {
-			id,
-			path,
-			name,
-			kind: "note",
-			parentId,
-			mtime: Date.now(),
-			content
-		};
-		const rootIds = parentId == null ? [...get().rootIds, id] : get().rootIds;
-		const expanded = parentId ? get().expandedFolders.includes(parentId) ? get().expandedFolders : [...get().expandedFolders, parentId] : get().expandedFolders;
-		set({
-			nodes: {
-				...get().nodes,
-				[id]: node
-			},
-			rootIds,
-			activeNoteId: id,
-			expandedFolders: expanded,
-			dirtyNoteIds: [...get().dirtyNoteIds, id]
-		});
-		return id;
-	},
-	createFolder: (parentId, name = "New Folder") => {
-		const parent = parentId ? get().nodes[parentId] : null;
-		let folderName = slugifyTitle(name) || "New Folder";
-		let path = parent ? pathJoin(parent.path, folderName) : folderName;
-		const paths = new Set(Object.values(get().nodes).map((n) => n.path));
-		let i = 1;
-		while (paths.has(path)) {
-			folderName = `${name} ${i}`;
-			path = parent ? pathJoin(parent.path, folderName) : folderName;
-			i++;
-		}
-		const id = stableId(path) + "_" + Math.random().toString(36).slice(2, 6);
-		const node = {
-			id,
-			path,
-			name: folderName,
-			kind: "folder",
-			parentId,
-			mtime: Date.now()
-		};
-		const rootIds = parentId == null ? [...get().rootIds, id] : get().rootIds;
-		set({
-			nodes: {
-				...get().nodes,
-				[id]: node
-			},
-			rootIds,
-			expandedFolders: [...get().expandedFolders, id]
-		});
-		return id;
-	},
-	deleteNode: (id) => {
-		const nodes = { ...get().nodes };
-		if (!nodes[id]) return;
-		const toDelete = /* @__PURE__ */ new Set();
-		const walk = (nid) => {
-			toDelete.add(nid);
-			for (const n of Object.values(nodes)) if (n.parentId === nid) walk(n.id);
-		};
-		walk(id);
-		for (const d of toDelete) delete nodes[d];
-		set({
-			nodes,
-			rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
-			activeNoteId: toDelete.has(get().activeNoteId ?? "") ? null : get().activeNoteId,
-			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x))
-		});
-	},
-	moveNode: (id, newParentId) => {
-		const node = get().nodes[id];
-		if (!node || id === newParentId) return;
-		if (newParentId) {
-			let p = newParentId;
-			while (p) {
-				if (p === id) return;
-				p = get().nodes[p]?.parentId ?? null;
-			}
-		}
-		const parent = newParentId ? get().nodes[newParentId] : null;
-		if (newParentId && parent?.kind !== "folder") return;
-		const newPath = parent ? pathJoin(parent.path, node.name) : node.name;
-		const oldPath = node.path;
-		const nodes = { ...get().nodes };
-		nodes[id] = {
-			...node,
-			parentId: newParentId,
-			path: newPath,
-			mtime: Date.now()
-		};
-		if (node.kind === "folder") {
-			const oldPrefix = oldPath + "/";
-			for (const n of Object.values(nodes)) if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
-				...n,
-				path: newPath + n.path.slice(oldPath.length)
-			};
-		}
-		let rootIds = get().rootIds.filter((r) => r !== id);
-		if (newParentId == null) rootIds = [...rootIds, id];
-		set({
-			nodes,
-			rootIds
-		});
-	},
-	setCommandOpen: (open) => set({ commandOpen: open }),
-	setToast: (msg) => set({ toast: msg }),
-	simulateHermesWrite: () => {
-		const { nodes, rootIds } = get();
-		const systems = Object.values(nodes).find((n) => n.kind === "folder" && n.path === "Systems");
-		const path = HERMES_SAMPLE_NOTE.path;
-		const existing = Object.values(nodes).find((n) => n.path === path);
-		const content = HERMES_SAMPLE_NOTE.content.replace("${TS}", (/* @__PURE__ */ new Date()).toISOString());
-		if (existing) {
-			get().updateNoteContent(existing.id, content, { external: true });
-			set({
-				lastExternalSync: Date.now(),
-				hermesTick: get().hermesTick + 1,
-				toast: "Hermes updated Systems/Hermes Pulse.md",
-				activeNoteId: existing.id
-			});
-			return;
-		}
-		const id = stableId(path);
-		const node = {
-			id,
-			path,
-			name: HERMES_SAMPLE_NOTE.name,
-			kind: "note",
-			parentId: systems?.id ?? null,
-			mtime: Date.now(),
-			content
-		};
-		const nextRoots = systems == null ? [...rootIds, id] : rootIds;
-		const expanded = systems && !get().expandedFolders.includes(systems.id) ? [...get().expandedFolders, systems.id] : get().expandedFolders;
-		set({
-			nodes: {
-				...nodes,
-				[id]: node
-			},
-			rootIds: nextRoots,
-			expandedFolders: expanded,
-			lastExternalSync: Date.now(),
-			hermesTick: get().hermesTick + 1,
-			toast: "Hermes created Systems/Hermes Pulse.md",
-			activeNoteId: id
-		});
-	},
-	applyExternalSnapshot: (nodes, rootIds) => {
-		set({
-			nodes,
-			rootIds,
-			lastExternalSync: Date.now()
-		});
-	},
-	getActiveNote: () => {
-		const id = get().activeNoteId;
-		if (!id) return null;
-		return get().nodes[id] ?? null;
-	},
-	getChildren: (parentId) => {
-		return Object.values(get().nodes).filter((n) => n.parentId === parentId).sort((a, b) => {
-			if (a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
-			return a.name.localeCompare(b.name);
-		});
-	},
-	flushDirty: () => set({ dirtyNoteIds: [] })
-}), {
-	name: STORAGE_KEY,
-	partialize: (s) => ({
-		vaultId: s.vaultId,
-		vaultName: s.vaultName,
-		vaultPath: s.vaultPath,
-		mode: s.mode,
-		nodes: s.nodes,
-		rootIds: s.rootIds,
-		activeNoteId: s.activeNoteId,
-		settings: s.settings,
-		expandedFolders: s.expandedFolders
-	})
-}));
-function getNoteDisplayTitle(node) {
-	if (!node) return "";
-	return noteTitle(node);
-}
-function getBreadcrumbs(node, nodes) {
-	if (!node) return [];
-	const parts = [];
-	let cur = node;
-	while (cur) {
-		parts.unshift(cur.kind === "note" ? noteTitle(cur) : cur.name);
-		cur = cur.parentId ? nodes[cur.parentId] : void 0;
-	}
-	return parts;
-}
-/** macOS-style window chrome (visual) with traffic lights + drag region */
+/** macOS-style window chrome with traffic lights + vault status */
 function TitleBar() {
 	const vaultName = useVaultStore((s) => s.vaultName);
+	const mode = useVaultStore((s) => s.mode);
 	const lastExternalSync = useVaultStore((s) => s.lastExternalSync);
+	const vaultId = useVaultStore((s) => s.vaultId);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
-		className: "titlebar-drag relative z-40 flex h-11 shrink-0 items-center border-b border-[var(--border)] bg-[rgba(10,10,12,0.92)] px-3 backdrop-blur-xl",
+		className: "titlebar-drag relative z-40 flex h-11 shrink-0 items-center border-b border-[var(--border)] bg-[rgba(8,8,10,0.94)] px-3 backdrop-blur-xl",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "titlebar-no-drag flex items-center gap-2 pl-1",
 				children: [
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "traffic-light bg-[#ff5f57]",
+						className: "traffic-light bg-[#ff5f57] shadow-[0_0_0_0.5px_rgba(0,0,0,0.35)]",
 						title: "Close"
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "traffic-light bg-[#febc2e]",
+						className: "traffic-light bg-[#febc2e] shadow-[0_0_0_0.5px_rgba(0,0,0,0.35)]",
 						title: "Minimize"
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "traffic-light bg-[#28c840]",
+						className: "traffic-light bg-[#28c840] shadow-[0_0_0_0.5px_rgba(0,0,0,0.35)]",
 						title: "Zoom"
 					})
 				]
@@ -845,12 +65,19 @@ function TitleBar() {
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 				className: "titlebar-no-drag ml-auto flex items-center gap-2",
-				children: lastExternalSync ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-					className: "rounded-full border border-[rgba(48,209,88,0.3)] bg-[rgba(48,209,88,0.1)] px-2 py-0.5 text-[11px] font-medium text-[var(--success)]",
-					children: "Live sync"
+				children: !vaultId ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					className: "rounded-full border border-[var(--border)] bg-white/[0.03] px-2.5 py-0.5 text-[11px] text-[var(--text-muted)]",
+					children: "No vault"
+				}) : lastExternalSync ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+					className: "rounded-full border border-[rgba(48,209,88,0.3)] bg-[rgba(48,209,88,0.1)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--success)]",
+					title: new Date(lastExternalSync).toLocaleString(),
+					children: ["Live · ", formatRelativeTime(lastExternalSync)]
+				}) : mode === "fsa" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					className: "rounded-full border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent)]",
+					children: "Watching disk"
 				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-					className: "rounded-full border border-[var(--border)] bg-white/[0.03] px-2 py-0.5 text-[11px] text-[var(--text-muted)]",
-					children: "Local vault"
+					className: "rounded-full border border-[var(--border)] bg-white/[0.03] px-2.5 py-0.5 text-[11px] text-[var(--text-muted)]",
+					children: "Local · offline"
 				})
 			})
 		]
@@ -929,29 +156,18 @@ function Toast() {
 }
 function VaultSwitcher() {
 	const vaultName = useVaultStore((s) => s.vaultName);
+	const mode = useVaultStore((s) => s.mode);
 	const recentVaults = useVaultStore((s) => s.recentVaults);
 	const openDemoVault = useVaultStore((s) => s.openDemoVault);
-	const openLocalVault = useVaultStore((s) => s.openLocalVault);
+	const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+	const closeVault = useVaultStore((s) => s.closeVault);
 	const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
+	const connectCloud = useVaultStore((s) => s.connectCloud);
+	const disconnectCloudSession = useVaultStore((s) => s.disconnectCloud);
+	const cloudSession = useVaultStore((s) => s.cloudSession);
+	const lastExternalSync = useVaultStore((s) => s.lastExternalSync);
 	const setToast = useVaultStore((s) => s.setToast);
 	const [open, setOpen] = (0, import_react.useState)(false);
-	const openFolder = async () => {
-		const w = window;
-		if (typeof w.showDirectoryPicker === "function") try {
-			const handle = await w.showDirectoryPicker();
-			openLocalVault(handle.name || "Local Vault");
-			setToast(`Opened vault: ${handle.name}`);
-			setOpen(false);
-			return;
-		} catch {
-			return;
-		}
-		const name = window.prompt("Vault name", "My Vault");
-		if (!name) return;
-		openLocalVault(name);
-		setToast(`Created local vault: ${name}`);
-		setOpen(false);
-	};
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "relative px-3 pt-3",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
@@ -968,9 +184,9 @@ function VaultSwitcher() {
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 						className: "truncate text-[13px] font-semibold tracking-tight",
 						children: vaultName || "Select vault"
-					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						className: "truncate text-[11px] text-[var(--text-muted)]",
-						children: "Plain Markdown folder"
+						children: [mode === "fsa" ? "Local folder · live watch" : mode === "demo" ? "Demo vault · in-browser" : "Plain Markdown folder", lastExternalSync ? " · synced" : ""]
 					})]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronDown, {
@@ -979,12 +195,15 @@ function VaultSwitcher() {
 				})
 			]
 		}), open ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: "glass-elevated absolute left-3 right-3 top-[calc(100%+6px)] z-50 overflow-hidden rounded-[14px] p-1.5",
+			className: "glass-elevated absolute left-3 right-3 top-[calc(100%+6px)] z-50 max-h-[min(70vh,480px)] overflow-y-auto rounded-[14px] p-1.5",
 			children: [
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 					type: "button",
 					className: "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
-					onClick: openFolder,
+					onClick: () => {
+						openFolderAsVault();
+						setOpen(false);
+					},
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FolderOpen, {
 						size: 15,
 						className: "text-[var(--accent)]"
@@ -1014,6 +233,53 @@ function VaultSwitcher() {
 						className: "text-[var(--success)]"
 					}), "Simulate Hermes write"]
 				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mx-2 my-1.5 h-px bg-[var(--border)]" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]",
+					children: "Optional cloud"
+				}),
+				[
+					"dropbox",
+					"google",
+					"onedrive"
+				].map((p) => {
+					const cfg = getCloudConfig(p);
+					return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+						type: "button",
+						className: "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
+						onClick: () => {
+							connectCloud(p);
+							if (!cfg.configured) setOpen(false);
+						},
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cloud, {
+								size: 15,
+								className: "text-[var(--accent-violet)]"
+							}),
+							providerLabel(p),
+							!cfg.configured ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+								className: "ml-auto text-[10px] text-[var(--text-muted)]",
+								children: "setup"
+							}) : null
+						]
+					}, p);
+				}),
+				cloudSession ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+					type: "button",
+					className: "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05]",
+					onClick: () => {
+						disconnectCloudSession();
+						setOpen(false);
+					},
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(LogOut, { size: 15 }),
+						"Disconnect ",
+						providerLabel(cloudSession.provider)
+					]
+				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+					className: "px-2.5 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]",
+					children: CLOUD_SYNC_HINT
+				}),
 				recentVaults.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mx-2 my-1.5 h-px bg-[var(--border)]" }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
@@ -1025,7 +291,10 @@ function VaultSwitcher() {
 						className: "flex w-full flex-col rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]",
 						onClick: () => {
 							if (r.mode === "demo") openDemoVault();
-							else openLocalVault(r.name);
+							else if (r.mode === "fsa") {
+								openFolderAsVault();
+								setToast("Select the folder again to re-grant access");
+							} else openDemoVault();
 							setOpen(false);
 						},
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
@@ -1036,7 +305,17 @@ function VaultSwitcher() {
 							children: r.path
 						})]
 					}, r.id))
-				] }) : null
+				] }) : null,
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mx-2 my-1.5 h-px bg-[var(--border)]" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+					type: "button",
+					className: "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-muted)] hover:bg-white/[0.05] hover:text-[var(--text-secondary)]",
+					onClick: () => {
+						closeVault();
+						setOpen(false);
+					},
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(LogOut, { size: 15 }), "Close vault"]
+				})
 			]
 		}) : null]
 	});
@@ -1208,7 +487,7 @@ function LeftSidebar() {
 	const createNote = useVaultStore((s) => s.createNote);
 	const createFolder = useVaultStore((s) => s.createFolder);
 	if (!leftOpen) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-		className: "flex w-12 shrink-0 flex-col items-center border-r border-[var(--border)] bg-[var(--bg-primary)] py-3",
+		className: "flex w-11 shrink-0 flex-col items-center border-r border-[var(--border)] bg-[var(--bg-primary)] py-3 sm:w-12",
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 			type: "button",
 			className: "icon-btn",
@@ -1220,8 +499,13 @@ function LeftSidebar() {
 			})
 		})
 	});
-	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", {
-		className: "panel-slide glass-panel relative flex h-full shrink-0 flex-col border-r border-[var(--border)] bg-[rgba(15,15,18,0.78)]",
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+		type: "button",
+		className: "fixed inset-0 z-20 bg-black/50 md:hidden",
+		"aria-label": "Close sidebar",
+		onClick: () => setLeftOpen(false)
+	}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", {
+		className: "panel-slide glass-panel absolute inset-y-0 left-0 z-30 flex h-full w-[min(280px,86vw)] shrink-0 flex-col border-r border-[var(--border)] bg-[rgba(15,15,18,0.94)] md:relative md:z-0 md:bg-[rgba(15,15,18,0.78)]",
 		style: { width: leftWidth },
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(VaultSwitcher, {}),
@@ -1231,15 +515,15 @@ function LeftSidebar() {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						type: "button",
 						onClick: () => setCommandOpen(true),
-						className: "flex h-9 flex-1 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-white/[0.03] px-2.5 text-left text-[12.5px] text-[var(--text-muted)] transition-colors hover:border-[rgba(0,200,255,0.25)] hover:text-[var(--text-secondary)]",
+						className: "flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-white/[0.03] px-2.5 text-left text-[12.5px] text-[var(--text-muted)] transition-colors hover:border-[rgba(0,200,255,0.25)] hover:text-[var(--text-secondary)]",
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { size: 14 }),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "flex-1",
+								className: "flex-1 truncate",
 								children: "Search"
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("kbd", {
-								className: "rounded border border-[var(--border)] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]",
+								className: "hidden rounded border border-[var(--border)] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] sm:inline",
 								children: "⌘K"
 							})
 						]
@@ -1278,7 +562,7 @@ function LeftSidebar() {
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileTree, {})
 			})
 		]
-	});
+	})] });
 }
 /**
 * Wikilink mark — renders as pill in visual mode, serializes to [[target]] / [[target|alias]].
@@ -2015,35 +1299,40 @@ function GraphView({ mode, className }) {
 			const n = node;
 			if (n.x == null || n.y == null) return;
 			const label = n.name;
-			const fontSize = Math.max(10 / globalScale, 2.2);
-			const r = Math.sqrt(n.val) * 3.2;
+			const fontSize = Math.max(11 / globalScale, 2.4);
+			const r = 3.6 + Math.sqrt(n.val) * 2.8;
 			const isActive = n.id === activeRef.current;
-			const gradient = ctx.createRadialGradient(n.x, n.y, r * .2, n.x, n.y, r * 2.4);
-			gradient.addColorStop(0, isActive ? "rgba(0,200,255,0.55)" : "rgba(0,200,255,0.28)");
-			gradient.addColorStop(1, "rgba(0,200,255,0)");
-			ctx.fillStyle = gradient;
+			const bloom = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3.2);
+			bloom.addColorStop(0, isActive ? "rgba(0,200,255,0.45)" : "rgba(0,200,255,0.22)");
+			bloom.addColorStop(.45, isActive ? "rgba(0,200,255,0.12)" : "rgba(0,200,255,0.06)");
+			bloom.addColorStop(1, "rgba(0,200,255,0)");
+			ctx.fillStyle = bloom;
 			ctx.beginPath();
-			ctx.arc(n.x, n.y, r * 2.4, 0, 2 * Math.PI);
+			ctx.arc(n.x, n.y, r * 3.2, 0, Math.PI * 2);
 			ctx.fill();
+			const core = ctx.createRadialGradient(n.x - r * .25, n.y - r * .25, 0, n.x, n.y, r);
+			core.addColorStop(0, isActive ? "#9aeeff" : "#5adfff");
+			core.addColorStop(.55, isActive ? "#00c8ff" : "#00b4e6");
+			core.addColorStop(1, isActive ? "#0090c0" : "#007aa3");
 			ctx.beginPath();
-			ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-			ctx.fillStyle = isActive ? "#33d4ff" : "#00c8ff";
-			ctx.shadowColor = "rgba(0,200,255,0.65)";
-			ctx.shadowBlur = isActive ? 18 : 10;
+			ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+			ctx.fillStyle = core;
+			ctx.shadowColor = "rgba(0,200,255,0.75)";
+			ctx.shadowBlur = isActive ? 22 : 12;
 			ctx.fill();
 			ctx.shadowBlur = 0;
-			ctx.strokeStyle = isActive ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.18)";
-			ctx.lineWidth = 1 / globalScale;
+			ctx.strokeStyle = isActive ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.16)";
+			ctx.lineWidth = (isActive ? 1.4 : 1) / globalScale;
 			ctx.stroke();
-			if (globalScale > .55 || isActive) {
+			if (globalScale > .5 || isActive || mode === "fullscreen") {
 				ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
 				ctx.textAlign = "center";
 				ctx.textBaseline = "top";
-				ctx.fillStyle = "rgba(242,242,247,0.88)";
-				ctx.fillText(label, n.x, n.y + r + 2);
+				ctx.fillStyle = isActive ? "rgba(242,242,247,0.98)" : "rgba(242,242,247,0.78)";
+				ctx.fillText(label, n.x, n.y + r + 3);
 			}
 		};
-		const graph = new forceGraph(hostRef.current).backgroundColor("rgba(0,0,0,0)").nodeId("id").nodeLabel(() => "").nodeVal("val").nodeRelSize(5).linkColor(() => "rgba(0, 200, 255, 0.18)").linkWidth(1).linkDirectionalParticles(0).enableNodeDrag(true).cooldownTicks(80).d3AlphaDecay(.03).d3VelocityDecay(.3).nodeCanvasObject(paintNode).onNodeHover((node) => {
+		const graph = new forceGraph(hostRef.current).backgroundColor("rgba(0,0,0,0)").nodeId("id").nodeLabel(() => "").nodeVal("val").nodeRelSize(5).linkColor(() => mode === "fullscreen" ? "rgba(0, 200, 255, 0.22)" : "rgba(0, 200, 255, 0.16)").linkWidth(() => mode === "fullscreen" ? 1.15 : .9).linkDirectionalParticles(mode === "fullscreen" ? 1 : 0).linkDirectionalParticleWidth(1.4).linkDirectionalParticleSpeed(.004).linkDirectionalParticleColor(() => "rgba(0,200,255,0.55)").enableNodeDrag(true).cooldownTicks(100).d3AlphaDecay(.028).d3VelocityDecay(.28).nodeCanvasObject(paintNode).onNodeHover((node) => {
 			if (!hostRef.current) return;
 			if (!node) {
 				setTooltip(null);
@@ -2063,6 +1352,7 @@ function GraphView({ mode, className }) {
 		}).onNodeClick((node) => {
 			if (!node) return;
 			setActiveNote(node.id);
+			if (mode === "fullscreen") {}
 		});
 		graphRef.current = graph;
 		const ro = new ResizeObserver(() => {
@@ -2078,54 +1368,58 @@ function GraphView({ mode, className }) {
 			if (hostRef.current) hostRef.current.innerHTML = "";
 			graphRef.current = null;
 		};
-	}, [setActiveNote]);
+	}, [setActiveNote, mode]);
 	(0, import_react.useEffect)(() => {
 		if (!graphRef.current) return;
 		graphRef.current.graphData(data);
 	}, [data]);
 	(0, import_react.useEffect)(() => {
 		if (!graphRef.current) return;
-		const paint = (node, ctx, globalScale) => {
+		graphRef.current.nodeCanvasObject((node, ctx, globalScale) => {
 			const n = node;
 			if (n.x == null || n.y == null) return;
 			const label = n.name;
-			const fontSize = Math.max(10 / globalScale, 2.2);
-			const r = Math.sqrt(n.val) * 3.2;
+			const fontSize = Math.max(11 / globalScale, 2.4);
+			const r = 3.6 + Math.sqrt(n.val) * 2.8;
 			const isActive = n.id === activeNoteId;
-			const gradient = ctx.createRadialGradient(n.x, n.y, r * .2, n.x, n.y, r * 2.4);
-			gradient.addColorStop(0, isActive ? "rgba(0,200,255,0.55)" : "rgba(0,200,255,0.28)");
-			gradient.addColorStop(1, "rgba(0,200,255,0)");
-			ctx.fillStyle = gradient;
+			const bloom = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3.2);
+			bloom.addColorStop(0, isActive ? "rgba(0,200,255,0.45)" : "rgba(0,200,255,0.22)");
+			bloom.addColorStop(.45, isActive ? "rgba(0,200,255,0.12)" : "rgba(0,200,255,0.06)");
+			bloom.addColorStop(1, "rgba(0,200,255,0)");
+			ctx.fillStyle = bloom;
 			ctx.beginPath();
-			ctx.arc(n.x, n.y, r * 2.4, 0, 2 * Math.PI);
+			ctx.arc(n.x, n.y, r * 3.2, 0, Math.PI * 2);
 			ctx.fill();
+			const core = ctx.createRadialGradient(n.x - r * .25, n.y - r * .25, 0, n.x, n.y, r);
+			core.addColorStop(0, isActive ? "#9aeeff" : "#5adfff");
+			core.addColorStop(.55, isActive ? "#00c8ff" : "#00b4e6");
+			core.addColorStop(1, isActive ? "#0090c0" : "#007aa3");
 			ctx.beginPath();
-			ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-			ctx.fillStyle = isActive ? "#33d4ff" : "#00c8ff";
-			ctx.shadowColor = "rgba(0,200,255,0.65)";
-			ctx.shadowBlur = isActive ? 18 : 10;
+			ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+			ctx.fillStyle = core;
+			ctx.shadowColor = "rgba(0,200,255,0.75)";
+			ctx.shadowBlur = isActive ? 22 : 12;
 			ctx.fill();
 			ctx.shadowBlur = 0;
-			ctx.strokeStyle = isActive ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.18)";
-			ctx.lineWidth = 1 / globalScale;
+			ctx.strokeStyle = isActive ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.16)";
+			ctx.lineWidth = (isActive ? 1.4 : 1) / globalScale;
 			ctx.stroke();
-			if (globalScale > .55 || isActive) {
+			if (globalScale > .5 || isActive) {
 				ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
 				ctx.textAlign = "center";
 				ctx.textBaseline = "top";
-				ctx.fillStyle = "rgba(242,242,247,0.88)";
-				ctx.fillText(label, n.x, n.y + r + 2);
+				ctx.fillStyle = isActive ? "rgba(242,242,247,0.98)" : "rgba(242,242,247,0.78)";
+				ctx.fillText(label, n.x, n.y + r + 3);
 			}
-		};
-		graphRef.current.nodeCanvasObject(paint);
+		});
 	}, [activeNoteId]);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: cn("graph-host relative flex min-h-0 flex-col", className),
+		className: cn("graph-host relative flex min-h-0 flex-col", mode === "fullscreen" && "bg-[radial-gradient(ellipse_at_center,rgba(15,18,24)_0%,#050507_70%)]", className),
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "absolute left-3 right-3 top-3 z-10 flex items-center justify-between",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-center gap-2 rounded-full border border-[var(--border)] bg-[rgba(15,15,18,0.75)] px-3 py-1 backdrop-blur-md",
+					className: "flex items-center gap-2 rounded-full border border-[var(--border)] bg-[rgba(15,15,18,0.8)] px-3 py-1 backdrop-blur-md",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Network, {
 						size: 13,
 						className: "text-[var(--accent)]"
@@ -2168,7 +1462,7 @@ function GraphView({ mode, className }) {
 				className: "pointer-events-none absolute inset-0 flex items-center justify-center",
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 					className: "text-[13px] text-[var(--text-muted)]",
-					children: "No notes in graph yet"
+					children: "Link notes with [[wikilinks]] to grow the graph"
 				})
 			}) : null
 		]
@@ -2200,9 +1494,14 @@ function RightPanel() {
 		})
 	});
 	if (!rightOpen) return null;
-	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", {
-		className: "panel-slide glass-panel flex h-full shrink-0 flex-col border-l border-[var(--border)] bg-[rgba(15,15,18,0.78)]",
-		style: { width: rightWidth },
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+		type: "button",
+		className: "fixed inset-0 z-20 bg-black/50 lg:hidden",
+		"aria-label": "Close panel",
+		onClick: () => setRightOpen(false)
+	}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", {
+		className: "panel-slide glass-panel absolute inset-y-0 right-0 z-30 flex h-full shrink-0 flex-col border-l border-[var(--border)] bg-[rgba(15,15,18,0.94)] lg:relative lg:z-0 lg:bg-[rgba(15,15,18,0.78)]",
+		style: { width: Math.min(rightWidth, 360) },
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "flex items-center gap-1 border-b border-[var(--border)] p-2",
@@ -2227,7 +1526,7 @@ function RightPanel() {
 					className: cn("chip-btn flex-1 justify-center", tab === id && "is-active"),
 					onClick: () => setTab(id),
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "hidden lg:inline",
+						className: "hidden xl:inline",
 						children: label
 					})]
 				}, id)), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
@@ -2296,14 +1595,14 @@ function RightPanel() {
 				]
 			}),
 			tab !== "graph" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "h-[180px] shrink-0 border-t border-[var(--border)]",
+				className: "hidden h-[180px] shrink-0 border-t border-[var(--border)] lg:block",
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GraphView, {
 					mode: "panel",
 					className: "h-full"
 				})
 			}) : null
 		]
-	});
+	})] });
 }
 function Empty({ text }) {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
@@ -2372,19 +1671,20 @@ function CommandPalette() {
 	const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
 	const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
 	const openDemoVault = useVaultStore((s) => s.openDemoVault);
+	const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
 	const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
 	const editorMode = useVaultStore((s) => s.settings.editorMode);
 	const [query, setQuery] = (0, import_react.useState)("");
 	(0, import_react.useEffect)(() => {
 		if (!open) setQuery("");
 	}, [open]);
-	const hits = (0, import_react.useMemo)(() => searchVault(nodes, query, 12), [nodes, query]);
+	const hits = (0, import_react.useMemo)(() => searchVault(nodes, query, 14), [nodes, query]);
 	if (!open) return null;
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-		className: "fixed inset-0 z-[100] flex items-start justify-center bg-black/55 px-4 pt-[12vh] backdrop-blur-sm",
+		className: "fixed inset-0 z-[100] flex items-start justify-center bg-black/60 px-4 pt-[11vh] backdrop-blur-[6px]",
 		onClick: () => setCommandOpen(false),
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e, {
-			className: "glass-elevated w-full max-w-xl overflow-hidden rounded-[16px]",
+			className: "glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_0_0_1px_rgba(0,200,255,0.08)]",
 			onClick: (e) => e.stopPropagation(),
 			label: "Global search",
 			shouldFilter: false,
@@ -2408,7 +1708,7 @@ function CommandPalette() {
 					})
 				]
 			}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.List, {
-				className: "max-h-[min(420px,50vh)] overflow-y-auto p-2",
+				className: "max-h-[min(440px,52vh)] overflow-y-auto p-2",
 				children: [
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(_e.Empty, {
 						className: "px-3 py-8 text-center text-[13px] text-[var(--text-muted)]",
@@ -2424,19 +1724,26 @@ function CommandPalette() {
 								setCommandOpen(false);
 							},
 							className: cn("cmdk-item flex cursor-pointer items-start gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]"),
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileText, {
-								size: 15,
-								className: "mt-0.5 shrink-0 text-[var(--accent)]"
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "min-w-0",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "font-medium text-[var(--text-primary)]",
-									children: h.title
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "truncate text-[11.5px] text-[var(--text-muted)]",
-									children: [h.path, h.snippet ? ` · ${h.snippet}` : ""]
-								})]
-							})]
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileText, {
+									size: 15,
+									className: "mt-0.5 shrink-0 text-[var(--accent)]"
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "min-w-0",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+										className: "font-medium text-[var(--text-primary)]",
+										children: h.title
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "truncate text-[11.5px] text-[var(--text-muted)]",
+										children: [h.path, h.snippet ? ` · ${h.snippet}` : ""]
+									})]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "ml-auto shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-muted)]",
+									children: h.matchType
+								})
+							]
 						}, h.noteId))
 					}) : null,
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.Group, {
@@ -2446,14 +1753,24 @@ function CommandPalette() {
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
 								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FilePlus, { size: 15 }),
 								label: "New note",
+								shortcut: "⌘N",
 								onSelect: () => {
 									createNote(null);
 									setCommandOpen(false);
 								}
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FolderOpen, { size: 15 }),
+								label: "Open folder as vault",
+								onSelect: () => {
+									openFolderAsVault();
+									setCommandOpen(false);
+								}
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
 								icon: editorMode === "visual" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeXml, { size: 15 }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Eye, { size: 15 }),
 								label: editorMode === "visual" ? "Switch to source mode" : "Switch to visual mode",
+								shortcut: "⌘E",
 								onSelect: () => {
 									toggleEditorMode();
 									setCommandOpen(false);
@@ -2462,13 +1779,14 @@ function CommandPalette() {
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
 								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Network, { size: 15 }),
 								label: "Toggle full graph",
+								shortcut: "⌘G",
 								onSelect: () => {
 									toggleGraphFullscreen();
 									setCommandOpen(false);
 								}
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FolderOpen, { size: 15 }),
+								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { size: 15 }),
 								label: "Open demo vault",
 								onSelect: () => {
 									openDemoVault();
@@ -2482,6 +1800,14 @@ function CommandPalette() {
 									simulateHermesWrite();
 									setCommandOpen(false);
 								}
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HardDrive, { size: 15 }),
+								label: "Focus writing surface",
+								onSelect: () => {
+									setCommandOpen(false);
+									document.querySelector(".note-editor, .source-editor")?.focus();
+								}
 							})
 						]
 					})
@@ -2490,23 +1816,247 @@ function CommandPalette() {
 		})
 	});
 }
-function Action({ icon, label, onSelect }) {
+function Action({ icon, label, onSelect, shortcut }) {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.Item, {
 		onSelect,
 		className: "cmdk-item flex cursor-pointer items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]",
-		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-			className: "text-[var(--text-muted)]",
-			children: icon
-		}), label]
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+				className: "text-[var(--text-muted)]",
+				children: icon
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+				className: "flex-1",
+				children: label
+			}),
+			shortcut ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("kbd", {
+				className: "rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]",
+				children: shortcut
+			}) : null
+		]
 	});
 }
+var PROVIDERS = [
+	"dropbox",
+	"google",
+	"onedrive"
+];
+function WelcomeScreen() {
+	const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+	const openDemoVault = useVaultStore((s) => s.openDemoVault);
+	const connectCloud = useVaultStore((s) => s.connectCloud);
+	const fsaSupported = useVaultStore((s) => s.fsaSupported);
+	const connecting = useVaultStore((s) => s.connecting);
+	const recentVaults = useVaultStore((s) => s.recentVaults);
+	const cloudSession = useVaultStore((s) => s.cloudSession);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "pointer-events-none absolute inset-0 opacity-[0.35]",
+				style: { backgroundImage: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.12), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 80%, rgba(123,97,255,0.08), transparent 50%)" }
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "pointer-events-none absolute inset-0 opacity-[0.04]",
+				style: {
+					backgroundImage: "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
+					backgroundSize: "48px 48px"
+				}
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-6 py-12",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "mb-2 flex items-center gap-2 text-[var(--accent)]",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(0,200,255,0.3)] bg-[rgba(0,200,255,0.1)] shadow-[0_0_24px_rgba(0,200,255,0.2)]",
+							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Zap, { size: 18 })
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--text-secondary)]",
+							children: "Note App"
+						})]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", {
+						className: "mt-4 max-w-xl text-[clamp(1.85rem,4vw,2.65rem)] font-semibold leading-[1.12] tracking-[-0.03em] text-[var(--text-primary)]",
+						children: "A knowledge OS for plain Markdown."
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "mt-4 max-w-lg text-[15px] leading-relaxed text-[var(--text-secondary)]",
+						children: [
+							"Local-first vault. Zero accounts by default. Real",
+							" ",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+								className: "text-[var(--text-primary)]",
+								children: ".md"
+							}),
+							" files Hermes can edit. Visual editor, live graph, optional cloud — all optional."
+						]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "mt-8 flex flex-wrap gap-3",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							className: "primary-btn min-h-11",
+							disabled: connecting,
+							onClick: () => void openFolderAsVault(),
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FolderOpen, { size: 16 }), connecting ? "Opening…" : "Open folder as vault"]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							className: "ghost-btn min-h-11",
+							onClick: () => openDemoVault(),
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, {
+								size: 16,
+								className: "text-[var(--accent-violet)]"
+							}), "Explore demo vault"]
+						})]
+					}),
+					!fsaSupported ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "mt-3 text-[12.5px] text-[var(--warning)]",
+						children: "This browser has limited folder access. Use Chrome/Edge for full local vault support, or open the demo vault."
+					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "mt-3 text-[12.5px] text-[var(--text-muted)]",
+						children: "Your vault is a normal folder of notes. No proprietary database."
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mt-10 grid gap-3 sm:grid-cols-3",
+						children: [
+							{
+								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HardDrive, { size: 16 }),
+								title: "Local-first",
+								body: "Pick any folder. Notes stay on disk as clean Markdown."
+							},
+							{
+								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Network, { size: 16 }),
+								title: "Spatial graph",
+								body: "Force-directed map of [[wikilinks]] with glow and physics."
+							},
+							{
+								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Radio, { size: 16 }),
+								title: "Hermes-ready",
+								body: "External writes appear within ~1–2 seconds via live watch."
+							}
+						].map((f) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "glass-panel rounded-[14px] p-4 transition-[transform,border-color] duration-200 hover:scale-[1.015] hover:border-[rgba(0,200,255,0.22)]",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+									className: "mb-2 text-[var(--accent)]",
+									children: f.icon
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+									className: "text-[13.5px] font-semibold tracking-tight",
+									children: f.title
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+									className: "mt-1 text-[12.5px] leading-snug text-[var(--text-muted)]",
+									children: f.body
+								})
+							]
+						}, f.title))
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "glass-panel mt-8 rounded-[16px] p-5",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex items-start gap-3",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[rgba(123,97,255,0.12)] text-[var(--accent-violet)]",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cloud, { size: 16 })
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "min-w-0 flex-1",
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+										className: "text-[14px] font-semibold",
+										children: "Optional cloud"
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+										className: "mt-1 text-[12.5px] leading-relaxed text-[var(--text-muted)]",
+										children: "Connect Dropbox, Google Drive, or OneDrive with pure client-side OAuth (tokens stay in your browser). Prefer zero setup? Point the vault at a synced folder instead."
+									}),
+									cloudSession ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+										className: "mt-2 text-[12px] text-[var(--success)]",
+										children: [
+											"Connected: ",
+											providerLabel(cloudSession.provider),
+											cloudSession.accountLabel ? ` · ${cloudSession.accountLabel}` : ""
+										]
+									}) : null,
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+										className: "mt-3 flex flex-wrap gap-2",
+										children: PROVIDERS.map((p) => {
+											const cfg = getCloudConfig(p);
+											return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+												type: "button",
+												className: cn("chip-btn", !cfg.configured && "opacity-80"),
+												onClick: () => void connectCloud(p),
+												title: cfg.configured ? `Connect ${providerLabel(p)}` : "Client ID not set — shows setup hint",
+												children: providerLabel(p)
+											}, p);
+										})
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+										className: "mt-3 text-[11.5px] text-[var(--text-muted)]",
+										children: CLOUD_SYNC_HINT
+									})
+								]
+							})]
+						})
+					}),
+					recentVaults.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "mt-8",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]",
+							children: "Recent"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "flex flex-col gap-1.5",
+							children: recentVaults.slice(0, 4).map((r) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+								type: "button",
+								className: "flex items-center gap-3 rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5 text-left transition hover:border-[rgba(0,200,255,0.25)] hover:bg-[rgba(0,200,255,0.05)]",
+								onClick: () => {
+									if (r.mode === "demo") openDemoVault();
+									else if (r.mode === "fsa") openFolderAsVault();
+									else openDemoVault();
+								},
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(HardDrive, {
+									size: 14,
+									className: "text-[var(--accent)]"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "min-w-0",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+										className: "truncate text-[13px] font-medium",
+										children: r.name
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "truncate text-[11px] text-[var(--text-muted)]",
+										children: [
+											r.path,
+											" · ",
+											r.mode
+										]
+									})]
+								})]
+							}, r.id))
+						})]
+					}) : null
+				]
+			})
+		]
+	});
+}
+/**
+* Live vault watching — Hermes-ready.
+* Demo/local: hash poll of in-memory nodes.
+* FSA: poll directory signatures every ~1s and rescan on change.
+*/
 var VaultWatcher = class {
 	timer = null;
 	lastHash = "";
+	lastSigs = {};
 	cb = null;
+	dir = null;
+	scanning = false;
+	/** Memory-mode watch (demo / local) */
 	start(getHash, cb, intervalMs = 1e3) {
 		this.stop();
 		this.cb = cb;
+		this.dir = null;
 		this.lastHash = getHash();
 		this.timer = setInterval(() => {
 			const h = getHash();
@@ -2519,9 +2069,54 @@ var VaultWatcher = class {
 			}
 		}, intervalMs);
 	}
+	/** Real filesystem watch via FSA signature polling */
+	async startFsa(dir, cb, intervalMs = 1200) {
+		this.stop();
+		this.cb = cb;
+		this.dir = dir;
+		try {
+			this.lastSigs = await scanSignatures(dir);
+		} catch {
+			this.lastSigs = {};
+		}
+		this.timer = setInterval(() => {
+			this.pollFsa();
+		}, intervalMs);
+	}
+	async pollFsa() {
+		if (!this.dir || this.scanning) return;
+		this.scanning = true;
+		try {
+			const next = await scanSignatures(this.dir);
+			if (signaturesChanged(this.lastSigs, next)) {
+				this.lastSigs = next;
+				const scan = await scanVault(this.dir);
+				this.lastSigs = Object.fromEntries(Object.entries(scan.signatures).map(([p, s]) => {
+					const parts = s.split(":");
+					return [p, `${parts[0]}:${parts[1] ?? "0"}`];
+				}));
+				const rebuilt = {};
+				for (const n of Object.values(scan.nodes)) if (n.kind === "note") rebuilt[n.path] = `${n.mtime}:${(n.content ?? "").length}`;
+				this.lastSigs = await scanSignatures(this.dir);
+				this.cb?.({
+					type: "change",
+					path: "*",
+					scan
+				});
+			}
+		} catch {} finally {
+			this.scanning = false;
+		}
+	}
+	async acknowledgeWrite(dir) {
+		try {
+			this.lastSigs = await scanSignatures(dir);
+		} catch {}
+	}
 	stop() {
 		if (this.timer) clearInterval(this.timer);
 		this.timer = null;
+		this.dir = null;
 	}
 };
 function vaultContentHash(nodes) {
@@ -2531,31 +2126,82 @@ function AppShell() {
 	const bootstrap = useVaultStore((s) => s.bootstrap);
 	const ready = useVaultStore((s) => s.ready);
 	const vaultId = useVaultStore((s) => s.vaultId);
+	const mode = useVaultStore((s) => s.mode);
 	const graphMode = useVaultStore((s) => s.settings.graphMode);
+	const setLeftOpen = useVaultStore((s) => s.setLeftOpen);
+	const setRightOpen = useVaultStore((s) => s.setRightOpen);
+	const applyExternalSnapshot = useVaultStore((s) => s.applyExternalSnapshot);
+	const watcherRef = (0, import_react.useRef)(null);
 	(0, import_react.useEffect)(() => {
 		bootstrap();
 	}, [bootstrap]);
 	(0, import_react.useEffect)(() => {
-		const watcher = new VaultWatcher();
-		watcher.start(() => vaultContentHash(useVaultStore.getState().nodes), () => {}, 1e3);
-		return () => watcher.stop();
+		if (!vaultId) return;
+		const apply = () => {
+			const w = window.innerWidth;
+			if (w < 900) {
+				setLeftOpen(false);
+				setRightOpen(false);
+			} else if (w < 1200) {
+				setRightOpen(false);
+				setLeftOpen(true);
+			} else {
+				setLeftOpen(true);
+				setRightOpen(true);
+			}
+		};
+		apply();
 	}, [vaultId]);
+	(0, import_react.useEffect)(() => {
+		const watcher = new VaultWatcher();
+		watcherRef.current = watcher;
+		if (mode === "fsa" && getFsaRoot()) {
+			const dir = getFsaRoot();
+			setWatcherAck((d) => watcher.acknowledgeWrite(d));
+			watcher.startFsa(dir, (ev) => {
+				if (ev.scan) applyExternalSnapshot(ev.scan.nodes, ev.scan.rootIds);
+			});
+		} else if (vaultId) {
+			setWatcherAck(null);
+			watcher.start(() => vaultContentHash(useVaultStore.getState().nodes), () => {}, 1e3);
+		}
+		return () => {
+			setWatcherAck(null);
+			watcher.stop();
+			watcherRef.current = null;
+		};
+	}, [
+		vaultId,
+		mode,
+		applyExternalSnapshot
+	]);
 	if (!ready) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 		className: "flex h-full items-center justify-center bg-[var(--bg-deepest)]",
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 			className: "text-center",
 			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mx-auto mb-4 h-10 w-10 animate-pulse rounded-xl bg-[rgba(0,200,255,0.2)]" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 				className: "text-[14px] text-[var(--text-secondary)]",
-				children: "Opening vault…"
+				children: "Starting Note App…"
 			})]
 		})
 	});
+	if (!vaultId) return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "flex h-full flex-col overflow-hidden bg-[var(--bg-deepest)]",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(TitleBar, {}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "min-h-0 flex-1",
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WelcomeScreen, {})
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Toast, {})
+		]
+	});
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "flex h-full flex-col bg-[var(--bg-deepest)] text-[var(--text-primary)]",
+		className: "flex h-full flex-col overflow-hidden bg-[var(--bg-deepest)] text-[var(--text-primary)]",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(TitleBar, {}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "relative flex min-h-0 flex-1",
+				className: "relative flex min-h-0 min-w-0 flex-1 overflow-hidden",
 				children: [
 					graphMode !== "fullscreen" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LeftSidebar, {}) : null,
 					graphMode !== "fullscreen" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EditorPane, {}) : null,

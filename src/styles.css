@@ -522,3 +522,34 @@
 .graph-host canvas {
   display: block;
 }
+
+
+/* —— Elevation pass: denser chrome, tighter glass, SpaceX precision —— */
+@layer components {
+  .glass-panel {
+    background: rgba(12, 12, 15, 0.78);
+  }
+  .note-editor {
+    letter-spacing: -0.005em;
+  }
+  .note-editor h1 {
+    background: linear-gradient(180deg, #f8f8fb 0%, #d4d4dc 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .fade-in {
+    animation: noteFadeIn var(--duration-base) var(--motion-ease) both;
+  }
+  @keyframes noteFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+}

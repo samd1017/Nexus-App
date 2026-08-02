@@ -21,7 +21,6 @@ type FGNode = {
 };
 
 type FGLink = { source: string | FGNode; target: string | FGNode };
-
 type GraphApi = InstanceType<typeof ForceGraph>;
 
 export function GraphView({ mode, className }: Props) {
@@ -69,36 +68,43 @@ export function GraphView({ mode, className }: Props) {
       const n = node as FGNode;
       if (n.x == null || n.y == null) return;
       const label = n.name;
-      const fontSize = Math.max(10 / globalScale, 2.2);
-      const r = Math.sqrt(n.val) * 3.2;
+      const fontSize = Math.max(11 / globalScale, 2.4);
+      const r = 3.6 + Math.sqrt(n.val) * 2.8;
       const isActive = n.id === activeRef.current;
 
-      const gradient = ctx.createRadialGradient(n.x, n.y, r * 0.2, n.x, n.y, r * 2.4);
-      gradient.addColorStop(0, isActive ? "rgba(0,200,255,0.55)" : "rgba(0,200,255,0.28)");
-      gradient.addColorStop(1, "rgba(0,200,255,0)");
-      ctx.fillStyle = gradient;
+      // soft outer bloom
+      const bloom = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3.2);
+      bloom.addColorStop(0, isActive ? "rgba(0,200,255,0.45)" : "rgba(0,200,255,0.22)");
+      bloom.addColorStop(0.45, isActive ? "rgba(0,200,255,0.12)" : "rgba(0,200,255,0.06)");
+      bloom.addColorStop(1, "rgba(0,200,255,0)");
+      ctx.fillStyle = bloom;
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r * 2.4, 0, 2 * Math.PI);
+      ctx.arc(n.x, n.y, r * 3.2, 0, Math.PI * 2);
       ctx.fill();
 
+      // core
+      const core = ctx.createRadialGradient(n.x - r * 0.25, n.y - r * 0.25, 0, n.x, n.y, r);
+      core.addColorStop(0, isActive ? "#9aeeff" : "#5adfff");
+      core.addColorStop(0.55, isActive ? "#00c8ff" : "#00b4e6");
+      core.addColorStop(1, isActive ? "#0090c0" : "#007aa3");
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-      ctx.fillStyle = isActive ? "#33d4ff" : "#00c8ff";
-      ctx.shadowColor = "rgba(0,200,255,0.65)";
-      ctx.shadowBlur = isActive ? 18 : 10;
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = core;
+      ctx.shadowColor = "rgba(0,200,255,0.75)";
+      ctx.shadowBlur = isActive ? 22 : 12;
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      ctx.strokeStyle = isActive ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.18)";
-      ctx.lineWidth = 1 / globalScale;
+      ctx.strokeStyle = isActive ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.16)";
+      ctx.lineWidth = (isActive ? 1.4 : 1) / globalScale;
       ctx.stroke();
 
-      if (globalScale > 0.55 || isActive) {
+      if (globalScale > 0.5 || isActive || mode === "fullscreen") {
         ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillStyle = "rgba(242,242,247,0.88)";
-        ctx.fillText(label, n.x, n.y + r + 2);
+        ctx.fillStyle = isActive ? "rgba(242,242,247,0.98)" : "rgba(242,242,247,0.78)";
+        ctx.fillText(label, n.x, n.y + r + 3);
       }
     };
 
@@ -108,13 +114,18 @@ export function GraphView({ mode, className }: Props) {
       .nodeLabel(() => "")
       .nodeVal("val")
       .nodeRelSize(5)
-      .linkColor(() => "rgba(0, 200, 255, 0.18)")
-      .linkWidth(1)
-      .linkDirectionalParticles(0)
+      .linkColor(() =>
+        mode === "fullscreen" ? "rgba(0, 200, 255, 0.22)" : "rgba(0, 200, 255, 0.16)",
+      )
+      .linkWidth(() => (mode === "fullscreen" ? 1.15 : 0.9))
+      .linkDirectionalParticles(mode === "fullscreen" ? 1 : 0)
+      .linkDirectionalParticleWidth(1.4)
+      .linkDirectionalParticleSpeed(0.004)
+      .linkDirectionalParticleColor(() => "rgba(0,200,255,0.55)")
       .enableNodeDrag(true)
-      .cooldownTicks(80)
-      .d3AlphaDecay(0.03)
-      .d3VelocityDecay(0.3)
+      .cooldownTicks(100)
+      .d3AlphaDecay(0.028)
+      .d3VelocityDecay(0.28)
       .nodeCanvasObject(paintNode)
       .onNodeHover((node) => {
         if (!hostRef.current) return;
@@ -137,6 +148,9 @@ export function GraphView({ mode, className }: Props) {
       .onNodeClick((node) => {
         if (!node) return;
         setActiveNote((node as FGNode).id);
+        if (mode === "fullscreen") {
+          // keep immersive; user can exit
+        }
       });
 
     graphRef.current = graph;
@@ -155,7 +169,7 @@ export function GraphView({ mode, className }: Props) {
       if (hostRef.current) hostRef.current.innerHTML = "";
       graphRef.current = null;
     };
-  }, [setActiveNote]);
+  }, [setActiveNote, mode]);
 
   useEffect(() => {
     if (!graphRef.current) return;
@@ -164,49 +178,55 @@ export function GraphView({ mode, className }: Props) {
 
   useEffect(() => {
     if (!graphRef.current) return;
-    const paint = (
-      node: object,
-      ctx: CanvasRenderingContext2D,
-      globalScale: number,
-    ) => {
+    graphRef.current.nodeCanvasObject((node, ctx, globalScale) => {
       const n = node as FGNode;
       if (n.x == null || n.y == null) return;
       const label = n.name;
-      const fontSize = Math.max(10 / globalScale, 2.2);
-      const r = Math.sqrt(n.val) * 3.2;
+      const fontSize = Math.max(11 / globalScale, 2.4);
+      const r = 3.6 + Math.sqrt(n.val) * 2.8;
       const isActive = n.id === activeNoteId;
-      const gradient = ctx.createRadialGradient(n.x, n.y, r * 0.2, n.x, n.y, r * 2.4);
-      gradient.addColorStop(0, isActive ? "rgba(0,200,255,0.55)" : "rgba(0,200,255,0.28)");
-      gradient.addColorStop(1, "rgba(0,200,255,0)");
-      ctx.fillStyle = gradient;
+      const bloom = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3.2);
+      bloom.addColorStop(0, isActive ? "rgba(0,200,255,0.45)" : "rgba(0,200,255,0.22)");
+      bloom.addColorStop(0.45, isActive ? "rgba(0,200,255,0.12)" : "rgba(0,200,255,0.06)");
+      bloom.addColorStop(1, "rgba(0,200,255,0)");
+      ctx.fillStyle = bloom;
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r * 2.4, 0, 2 * Math.PI);
+      ctx.arc(n.x, n.y, r * 3.2, 0, Math.PI * 2);
       ctx.fill();
+      const core = ctx.createRadialGradient(n.x - r * 0.25, n.y - r * 0.25, 0, n.x, n.y, r);
+      core.addColorStop(0, isActive ? "#9aeeff" : "#5adfff");
+      core.addColorStop(0.55, isActive ? "#00c8ff" : "#00b4e6");
+      core.addColorStop(1, isActive ? "#0090c0" : "#007aa3");
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-      ctx.fillStyle = isActive ? "#33d4ff" : "#00c8ff";
-      ctx.shadowColor = "rgba(0,200,255,0.65)";
-      ctx.shadowBlur = isActive ? 18 : 10;
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = core;
+      ctx.shadowColor = "rgba(0,200,255,0.75)";
+      ctx.shadowBlur = isActive ? 22 : 12;
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = isActive ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.18)";
-      ctx.lineWidth = 1 / globalScale;
+      ctx.strokeStyle = isActive ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.16)";
+      ctx.lineWidth = (isActive ? 1.4 : 1) / globalScale;
       ctx.stroke();
-      if (globalScale > 0.55 || isActive) {
+      if (globalScale > 0.5 || isActive) {
         ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillStyle = "rgba(242,242,247,0.88)";
-        ctx.fillText(label, n.x, n.y + r + 2);
+        ctx.fillStyle = isActive ? "rgba(242,242,247,0.98)" : "rgba(242,242,247,0.78)";
+        ctx.fillText(label, n.x, n.y + r + 3);
       }
-    };
-    graphRef.current.nodeCanvasObject(paint);
+    });
   }, [activeNoteId]);
 
   return (
-    <div className={cn("graph-host relative flex min-h-0 flex-col", className)}>
+    <div
+      className={cn(
+        "graph-host relative flex min-h-0 flex-col",
+        mode === "fullscreen" && "bg-[radial-gradient(ellipse_at_center,rgba(15,18,24)_0%,#050507_70%)]",
+        className,
+      )}
+    >
       <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-between">
-        <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[rgba(15,15,18,0.75)] px-3 py-1 backdrop-blur-md">
+        <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[rgba(15,15,18,0.8)] px-3 py-1 backdrop-blur-md">
           <Network size={13} className="text-[var(--accent)]" />
           <span className="text-[11px] font-medium text-[var(--text-secondary)]">
             {data.nodes.length} notes · {data.links.length} links
@@ -228,7 +248,10 @@ export function GraphView({ mode, className }: Props) {
         <div
           className="graph-tooltip"
           style={{
-            left: Math.min(tooltip.x + 14, (hostRef.current?.clientWidth ?? 300) - 200),
+            left: Math.min(
+              tooltip.x + 14,
+              (hostRef.current?.clientWidth ?? 300) - 200,
+            ),
             top: Math.max(8, tooltip.y - 10),
           }}
         >
@@ -243,7 +266,9 @@ export function GraphView({ mode, className }: Props) {
 
       {data.nodes.length === 0 ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <p className="text-[13px] text-[var(--text-muted)]">No notes in graph yet</p>
+          <p className="text-[13px] text-[var(--text-muted)]">
+            Link notes with [[wikilinks]] to grow the graph
+          </p>
         </div>
       ) : null}
     </div>

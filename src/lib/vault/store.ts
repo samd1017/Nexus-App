@@ -8,13 +8,48 @@ import type {
   VaultNode,
   VaultSettings,
 } from "./types";
-import { DEFAULT_SETTINGS, basename, noteTitle, parentPath, pathJoin } from "./types";
+import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
 import { preferCleanWrite } from "@/lib/markdown/serialize";
 import { slugifyTitle } from "@/lib/utils";
+import {
+  clearDirectoryHandle,
+  createFolderOnDisk,
+  deletePathOnDisk,
+  ensurePermission,
+  isFileSystemAccessSupported,
+  loadDirectoryHandle,
+  pickVaultFolder,
+  renamePathOnDisk,
+  saveDirectoryHandle,
+  scanVault,
+  writeNoteFile,
+} from "./fs-adapter";
+import type { CloudProvider, CloudSession } from "@/lib/cloud/oauth";
+import {
+  beginCloudOAuth,
+  disconnectCloud,
+  loadCloudSession,
+  providerLabel,
+} from "@/lib/cloud/oauth";
 
-const STORAGE_KEY = "noteapp-vault-v1";
-const RECENT_KEY = "noteapp-recent-v1";
+const STORAGE_KEY = "noteapp-vault-v2";
+const RECENT_KEY = "noteapp-recent-v2";
+
+let fsaRoot: FileSystemDirectoryHandle | null = null;
+let writeQueue: Promise<void> = Promise.resolve();
+let watcherAck: ((dir: FileSystemDirectoryHandle) => Promise<void>) | null = null;
+let lastExternalToastAt = 0;
+
+export function getFsaRoot(): FileSystemDirectoryHandle | null {
+  return fsaRoot;
+}
+
+export function setWatcherAck(
+  fn: ((dir: FileSystemDirectoryHandle) => Promise<void>) | null,
+) {
+  watcherAck = fn;
+}
 
 function loadRecents(): RecentVault[] {
   try {
@@ -28,18 +63,36 @@ function loadRecents(): RecentVault[] {
 
 function saveRecents(list: RecentVault[]) {
   try {
-    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8)));
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 10)));
   } catch {
     /* ignore */
   }
 }
 
 function makeId(path: string): string {
-  return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_") + "_" + Math.random().toString(36).slice(2, 7);
+  return (
+    "n_" +
+    path.replace(/[^a-zA-Z0-9]+/g, "_") +
+    "_" +
+    Math.random().toString(36).slice(2, 7)
+  );
 }
 
 function stableId(path: string): string {
   return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
+}
+
+function queueDiskWrite(fn: () => Promise<void>) {
+  writeQueue = writeQueue.then(fn).catch((err) => {
+    console.error("[vault] disk write failed", err);
+  });
+  return writeQueue;
+}
+
+async function persistNoteIfFsa(path: string, content: string) {
+  if (!fsaRoot) return;
+  await writeNoteFile(fsaRoot, path, content);
+  if (watcherAck) await watcherAck(fsaRoot);
 }
 
 interface VaultStore {
@@ -58,12 +111,16 @@ interface VaultStore {
   recentVaults: RecentVault[];
   commandOpen: boolean;
   toast: string | null;
-  /** Simulated external write queue for Hermes demo */
   hermesTick: number;
+  cloudSession: CloudSession | null;
+  fsaSupported: boolean;
+  connecting: boolean;
 
-  bootstrap: () => void;
+  bootstrap: () => Promise<void>;
   openDemoVault: () => void;
   openLocalVault: (name: string, seed?: ReturnType<typeof buildDemoVault>) => void;
+  openFolderAsVault: () => Promise<void>;
+  closeVault: () => void;
   setActiveNote: (id: string | null) => void;
   toggleFolder: (id: string) => void;
   setLeftOpen: (open: boolean) => void;
@@ -74,7 +131,11 @@ interface VaultStore {
   toggleLeft: () => void;
   toggleRight: () => void;
   toggleGraphFullscreen: () => void;
-  updateNoteContent: (id: string, content: string, opts?: { external?: boolean }) => void;
+  updateNoteContent: (
+    id: string,
+    content: string,
+    opts?: { external?: boolean },
+  ) => void;
   renameNode: (id: string, newName: string) => void;
   createNote: (parentId: string | null, title?: string) => string;
   createFolder: (parentId: string | null, name?: string) => string;
@@ -83,10 +144,16 @@ interface VaultStore {
   setCommandOpen: (open: boolean) => void;
   setToast: (msg: string | null) => void;
   simulateHermesWrite: () => void;
-  applyExternalSnapshot: (nodes: Record<string, VaultNode>, rootIds: string[]) => void;
+  applyExternalSnapshot: (
+    nodes: Record<string, VaultNode>,
+    rootIds: string[],
+  ) => void;
   getActiveNote: () => VaultNode | null;
   getChildren: (parentId: string | null) => VaultNode[];
   flushDirty: () => void;
+  connectCloud: (provider: CloudProvider) => Promise<void>;
+  disconnectCloud: () => void;
+  refreshCloudSession: () => void;
 }
 
 function pushRecent(entry: RecentVault) {
@@ -115,26 +182,97 @@ export const useVaultStore = create<VaultStore>()(
       commandOpen: false,
       toast: null,
       hermesTick: 0,
+      cloudSession: null,
+      fsaSupported: false,
+      connecting: false,
 
-      bootstrap: () => {
+      bootstrap: async () => {
         const recents = loadRecents();
-        set({ recentVaults: recents, ready: true });
-        const state = get();
-        if (!state.vaultId) {
-          // Auto-open last or demo
-          if (recents[0]?.mode === "demo" || recents.length === 0) {
-            get().openDemoVault();
-          } else if (recents[0]) {
-            // Reopen demo if local not available in browser
-            get().openDemoVault();
+        const fsaSupported = isFileSystemAccessSupported();
+        const cloudSession = loadCloudSession();
+        set({
+          recentVaults: recents,
+          fsaSupported,
+          cloudSession,
+          ready: true,
+        });
+
+        if (fsaSupported) {
+          const saved = await loadDirectoryHandle();
+          if (saved?.handle) {
+            const ok = await ensurePermission(saved.handle, "readwrite");
+            if (ok) {
+              fsaRoot = saved.handle;
+              set({ connecting: true });
+              try {
+                const scan = await scanVault(saved.handle);
+                const lastPath = get().settings.lastNotePath;
+                const active =
+                  (lastPath &&
+                    Object.values(scan.nodes).find((n) => n.path === lastPath)
+                      ?.id) ||
+                  Object.values(scan.nodes).find((n) => n.kind === "note")
+                    ?.id ||
+                  null;
+                const recents2 = pushRecent({
+                  id: saved.meta.id,
+                  name: saved.meta.name,
+                  path: saved.meta.name,
+                  lastOpened: Date.now(),
+                  mode: "fsa",
+                });
+                set({
+                  vaultId: saved.meta.id,
+                  vaultName: saved.meta.name,
+                  vaultPath: saved.meta.name,
+                  mode: "fsa",
+                  nodes: scan.nodes,
+                  rootIds: scan.rootIds,
+                  activeNoteId: active,
+                  expandedFolders: Object.values(scan.nodes)
+                    .filter((n) => n.kind === "folder")
+                    .map((n) => n.id),
+                  recentVaults: recents2,
+                  connecting: false,
+                  dirtyNoteIds: [],
+                });
+                return;
+              } catch {
+                fsaRoot = null;
+                set({ connecting: false });
+              }
+            }
           }
         }
+
+        const state = get();
+        // Valid in-memory demo/local vault from persist
+        if (
+          state.vaultId &&
+          state.mode !== "fsa" &&
+          Object.keys(state.nodes).length > 0
+        ) {
+          return;
+        }
+
+        // Welcome screen
+        set({
+          vaultId: null,
+          vaultName: "",
+          vaultPath: "",
+          nodes: {},
+          rootIds: [],
+          activeNoteId: null,
+        });
       },
 
       openDemoVault: () => {
+        fsaRoot = null;
         const demo = buildDemoVault();
         const vaultId = "demo-vault";
-        const welcome = Object.values(demo.nodes).find((n) => n.path === "Welcome.md");
+        const welcome = Object.values(demo.nodes).find(
+          (n) => n.path === "Welcome.md",
+        );
         const expanded = Object.values(demo.nodes)
           .filter((n) => n.kind === "folder")
           .map((n) => n.id);
@@ -165,8 +303,10 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       openLocalVault: (name, seed) => {
+        fsaRoot = null;
         const data = seed ?? buildDemoVault();
-        const vaultId = "local-" + slugifyTitle(name).toLowerCase().replace(/\s+/g, "-");
+        const vaultId =
+          "local-" + slugifyTitle(name).toLowerCase().replace(/\s+/g, "-");
         const first = Object.values(data.nodes).find((n) => n.kind === "note");
         const recents = pushRecent({
           id: vaultId,
@@ -191,6 +331,78 @@ export const useVaultStore = create<VaultStore>()(
         });
       },
 
+      openFolderAsVault: async () => {
+        set({ connecting: true });
+        try {
+          const handle = await pickVaultFolder();
+          if (!handle) {
+            set({ connecting: false });
+            return;
+          }
+          const ok = await ensurePermission(handle, "readwrite");
+          if (!ok) {
+            set({
+              connecting: false,
+              toast: "Permission denied — cannot read vault folder",
+            });
+            return;
+          }
+          fsaRoot = handle;
+          const vaultId =
+            "fsa-" + handle.name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+          await saveDirectoryHandle(handle, { id: vaultId, name: handle.name });
+          const scan = await scanVault(handle);
+          const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+          const recents = pushRecent({
+            id: vaultId,
+            name: handle.name,
+            path: handle.name,
+            lastOpened: Date.now(),
+            mode: "fsa",
+          });
+          set({
+            vaultId,
+            vaultName: handle.name,
+            vaultPath: handle.name,
+            mode: "fsa",
+            nodes: scan.nodes,
+            rootIds: scan.rootIds,
+            activeNoteId: first?.id ?? null,
+            expandedFolders: Object.values(scan.nodes)
+              .filter((n) => n.kind === "folder")
+              .map((n) => n.id),
+            dirtyNoteIds: [],
+            recentVaults: recents,
+            connecting: false,
+            toast: `Opened vault: ${handle.name}`,
+            settings: {
+              ...get().settings,
+              lastNotePath: first?.path ?? null,
+            },
+          });
+        } catch (e) {
+          set({
+            connecting: false,
+            toast: e instanceof Error ? e.message : "Failed to open folder",
+          });
+        }
+      },
+
+      closeVault: () => {
+        fsaRoot = null;
+        void clearDirectoryHandle();
+        set({
+          vaultId: null,
+          vaultName: "",
+          vaultPath: "",
+          nodes: {},
+          rootIds: [],
+          activeNoteId: null,
+          dirtyNoteIds: [],
+          lastExternalSync: null,
+        });
+      },
+
       setActiveNote: (id) => {
         const note = id ? get().nodes[id] : null;
         set({
@@ -205,14 +417,20 @@ export const useVaultStore = create<VaultStore>()(
       toggleFolder: (id) => {
         const cur = get().expandedFolders;
         set({
-          expandedFolders: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
+          expandedFolders: cur.includes(id)
+            ? cur.filter((x) => x !== id)
+            : [...cur, id],
         });
       },
 
-      setLeftOpen: (open) => set({ settings: { ...get().settings, leftOpen: open } }),
-      setRightOpen: (open) => set({ settings: { ...get().settings, rightOpen: open } }),
-      setEditorMode: (mode) => set({ settings: { ...get().settings, editorMode: mode } }),
-      setGraphMode: (mode) => set({ settings: { ...get().settings, graphMode: mode } }),
+      setLeftOpen: (open) =>
+        set({ settings: { ...get().settings, leftOpen: open } }),
+      setRightOpen: (open) =>
+        set({ settings: { ...get().settings, rightOpen: open } }),
+      setEditorMode: (mode) =>
+        set({ settings: { ...get().settings, editorMode: mode } }),
+      setGraphMode: (mode) =>
+        set({ settings: { ...get().settings, graphMode: mode } }),
 
       toggleEditorMode: () => {
         const cur = get().settings.editorMode;
@@ -225,9 +443,16 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       toggleLeft: () =>
-        set({ settings: { ...get().settings, leftOpen: !get().settings.leftOpen } }),
+        set({
+          settings: { ...get().settings, leftOpen: !get().settings.leftOpen },
+        }),
       toggleRight: () =>
-        set({ settings: { ...get().settings, rightOpen: !get().settings.rightOpen } }),
+        set({
+          settings: {
+            ...get().settings,
+            rightOpen: !get().settings.rightOpen,
+          },
+        }),
 
       toggleGraphFullscreen: () => {
         const cur = get().settings.graphMode;
@@ -256,8 +481,13 @@ export const useVaultStore = create<VaultStore>()(
             : get().dirtyNoteIds.includes(id)
               ? get().dirtyNoteIds
               : [...get().dirtyNoteIds, id],
-          lastExternalSync: opts?.external ? Date.now() : get().lastExternalSync,
+          lastExternalSync: opts?.external
+            ? Date.now()
+            : get().lastExternalSync,
         });
+        if (!opts?.external && get().mode === "fsa") {
+          void queueDiskWrite(() => persistNoteIfFsa(node.path, next));
+        }
       },
 
       renameNode: (id, newName) => {
@@ -268,9 +498,9 @@ export const useVaultStore = create<VaultStore>()(
         if (node.kind === "note" && !name.endsWith(".md")) name += ".md";
         const parent = parentPath(node.path);
         const newPath = parent ? pathJoin(parent, name) : name;
+        const oldPath = node.path;
         const nodes = { ...get().nodes };
         nodes[id] = { ...node, name, path: newPath, mtime: Date.now() };
-        // rewrite child paths if folder
         if (node.kind === "folder") {
           const oldPrefix = node.path + "/";
           for (const n of Object.values(nodes)) {
@@ -284,6 +514,19 @@ export const useVaultStore = create<VaultStore>()(
           }
         }
         set({ nodes });
+        if (get().mode === "fsa" && fsaRoot) {
+          const root = fsaRoot;
+          void queueDiskWrite(async () => {
+            await renamePathOnDisk(
+              root,
+              oldPath,
+              newPath,
+              node.kind,
+              node.kind === "note" ? (nodes[id].content ?? "") : undefined,
+            );
+            if (watcherAck) await watcherAck(root);
+          });
+        }
       },
 
       createNote: (parentId, title = "Untitled") => {
@@ -291,7 +534,6 @@ export const useVaultStore = create<VaultStore>()(
         const base = slugifyTitle(title) || "Untitled";
         let name = base.endsWith(".md") ? base : `${base}.md`;
         let path = parent ? pathJoin(parent.path, name) : name;
-        // unique
         let i = 1;
         const paths = new Set(Object.values(get().nodes).map((n) => n.path));
         while (paths.has(path)) {
@@ -300,7 +542,10 @@ export const useVaultStore = create<VaultStore>()(
           path = parent ? pathJoin(parent.path, name) : name;
           i++;
         }
-        const id = makeId(path);
+        const id =
+          get().mode === "fsa"
+            ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
+            : makeId(path);
         const content = `# ${title.replace(/\.md$/i, "")}\n\n`;
         const node: VaultNode = {
           id,
@@ -325,6 +570,9 @@ export const useVaultStore = create<VaultStore>()(
           expandedFolders: expanded,
           dirtyNoteIds: [...get().dirtyNoteIds, id],
         });
+        if (get().mode === "fsa" && fsaRoot) {
+          void queueDiskWrite(() => persistNoteIfFsa(path, content));
+        }
         return id;
       },
 
@@ -339,7 +587,10 @@ export const useVaultStore = create<VaultStore>()(
           path = parent ? pathJoin(parent.path, folderName) : folderName;
           i++;
         }
-        const id = stableId(path) + "_" + Math.random().toString(36).slice(2, 6);
+        const id =
+          get().mode === "fsa"
+            ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
+            : stableId(path) + "_" + Math.random().toString(36).slice(2, 6);
         const node: VaultNode = {
           id,
           path,
@@ -355,6 +606,13 @@ export const useVaultStore = create<VaultStore>()(
           rootIds,
           expandedFolders: [...get().expandedFolders, id],
         });
+        if (get().mode === "fsa" && fsaRoot) {
+          const root = fsaRoot;
+          void queueDiskWrite(async () => {
+            await createFolderOnDisk(root, path);
+            if (watcherAck) await watcherAck(root);
+          });
+        }
         return id;
       },
 
@@ -379,13 +637,19 @@ export const useVaultStore = create<VaultStore>()(
             : get().activeNoteId,
           expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
         });
+        if (get().mode === "fsa" && fsaRoot) {
+          const root = fsaRoot;
+          void queueDiskWrite(async () => {
+            await deletePathOnDisk(root, target.path, target.kind);
+            if (watcherAck) await watcherAck(root);
+          });
+        }
       },
 
       moveNode: (id, newParentId) => {
         const node = get().nodes[id];
         if (!node || id === newParentId) return;
         if (newParentId) {
-          // prevent moving into descendant
           let p: string | null = newParentId;
           while (p) {
             if (p === id) return;
@@ -397,7 +661,12 @@ export const useVaultStore = create<VaultStore>()(
         const newPath = parent ? pathJoin(parent.path, node.name) : node.name;
         const oldPath = node.path;
         const nodes = { ...get().nodes };
-        nodes[id] = { ...node, parentId: newParentId, path: newPath, mtime: Date.now() };
+        nodes[id] = {
+          ...node,
+          parentId: newParentId,
+          path: newPath,
+          mtime: Date.now(),
+        };
         if (node.kind === "folder") {
           const oldPrefix = oldPath + "/";
           for (const n of Object.values(nodes)) {
@@ -411,15 +680,27 @@ export const useVaultStore = create<VaultStore>()(
         }
         let rootIds = get().rootIds.filter((r) => r !== id);
         if (newParentId == null) rootIds = [...rootIds, id];
-        // remove from old root if needed
         set({ nodes, rootIds });
+        if (get().mode === "fsa" && fsaRoot) {
+          const root = fsaRoot;
+          void queueDiskWrite(async () => {
+            await renamePathOnDisk(
+              root,
+              oldPath,
+              newPath,
+              node.kind,
+              node.kind === "note" ? (nodes[id].content ?? "") : undefined,
+            );
+            if (watcherAck) await watcherAck(root);
+          });
+        }
       },
 
       setCommandOpen: (open) => set({ commandOpen: open }),
       setToast: (msg) => set({ toast: msg }),
 
       simulateHermesWrite: () => {
-        const { nodes, rootIds } = get();
+        const { nodes, rootIds, mode } = get();
         const systems = Object.values(nodes).find(
           (n) => n.kind === "folder" && n.path === "Systems",
         );
@@ -431,6 +712,9 @@ export const useVaultStore = create<VaultStore>()(
         );
         if (existing) {
           get().updateNoteContent(existing.id, content, { external: true });
+          if (mode === "fsa" && fsaRoot) {
+            void queueDiskWrite(() => persistNoteIfFsa(path, content));
+          }
           set({
             lastExternalSync: Date.now(),
             hermesTick: get().hermesTick + 1,
@@ -439,7 +723,10 @@ export const useVaultStore = create<VaultStore>()(
           });
           return;
         }
-        const id = stableId(path);
+        const id =
+          mode === "fsa"
+            ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
+            : stableId(path);
         const node: VaultNode = {
           id,
           path,
@@ -449,8 +736,7 @@ export const useVaultStore = create<VaultStore>()(
           mtime: Date.now(),
           content,
         };
-        const nextRoots =
-          systems == null ? [...rootIds, id] : rootIds;
+        const nextRoots = systems == null ? [...rootIds, id] : rootIds;
         const expanded =
           systems && !get().expandedFolders.includes(systems.id)
             ? [...get().expandedFolders, systems.id]
@@ -464,13 +750,39 @@ export const useVaultStore = create<VaultStore>()(
           toast: "Hermes created Systems/Hermes Pulse.md",
           activeNoteId: id,
         });
+        if (mode === "fsa" && fsaRoot) {
+          void queueDiskWrite(() => persistNoteIfFsa(path, content));
+        }
       },
 
       applyExternalSnapshot: (nodes, rootIds) => {
+        const prev = get().nodes;
+        const active = get().activeNoteId;
+        const activePath = active ? prev[active]?.path : null;
+        // Prefer re-select by path so FSA ids stay stable
+        let nextActive = active && nodes[active] ? active : null;
+        if (!nextActive && activePath) {
+          nextActive =
+            Object.values(nodes).find((n) => n.path === activePath)?.id ?? null;
+        }
+        const now = Date.now();
+        const shouldToast = now - lastExternalToastAt > 2500;
+        if (shouldToast) lastExternalToastAt = now;
         set({
           nodes,
           rootIds,
-          lastExternalSync: Date.now(),
+          lastExternalSync: now,
+          activeNoteId: nextActive,
+          toast: shouldToast ? "Vault updated from disk" : get().toast,
+          expandedFolders: [
+            ...new Set([
+              ...get().expandedFolders.filter((id) => nodes[id]),
+              ...Object.values(nodes)
+                .filter((n) => n.kind === "folder")
+                .map((n) => n.id)
+                .filter((id) => get().expandedFolders.includes(id)),
+            ]),
+          ],
         });
       },
 
@@ -481,27 +793,52 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       getChildren: (parentId) => {
-        const all = Object.values(get().nodes).filter((n) => n.parentId === parentId);
+        const all = Object.values(get().nodes).filter(
+          (n) => n.parentId === parentId,
+        );
         return all.sort((a, b) => {
           if (a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
           return a.name.localeCompare(b.name);
         });
       },
 
-      flushDirty: () => set({ dirtyNoteIds: [] }),
+      flushDirty: () => {
+        set({ dirtyNoteIds: [] });
+        get().setToast("Saved");
+      },
+
+      connectCloud: async (provider) => {
+        const result = await beginCloudOAuth(provider);
+        if (!result.ok) {
+          set({
+            toast:
+              result.reason ||
+              `Connect ${providerLabel(provider)} via synced folder`,
+          });
+        }
+      },
+
+      disconnectCloud: () => {
+        disconnectCloud();
+        set({ cloudSession: null, toast: "Cloud disconnected" });
+      },
+
+      refreshCloudSession: () => {
+        set({ cloudSession: loadCloudSession() });
+      },
     }),
     {
       name: STORAGE_KEY,
       partialize: (s) => ({
-        vaultId: s.vaultId,
-        vaultName: s.vaultName,
-        vaultPath: s.vaultPath,
-        mode: s.mode,
-        nodes: s.nodes,
-        rootIds: s.rootIds,
-        activeNoteId: s.activeNoteId,
+        vaultId: s.mode === "fsa" ? null : s.vaultId,
+        vaultName: s.mode === "fsa" ? "" : s.vaultName,
+        vaultPath: s.mode === "fsa" ? "" : s.vaultPath,
+        mode: s.mode === "fsa" ? "demo" : s.mode,
+        nodes: s.mode === "fsa" ? {} : s.nodes,
+        rootIds: s.mode === "fsa" ? [] : s.rootIds,
+        activeNoteId: s.mode === "fsa" ? null : s.activeNoteId,
         settings: s.settings,
-        expandedFolders: s.expandedFolders,
+        expandedFolders: s.mode === "fsa" ? [] : s.expandedFolders,
       }),
     },
   ),
@@ -512,7 +849,10 @@ export function getNoteDisplayTitle(node: VaultNode | null | undefined): string 
   return noteTitle(node);
 }
 
-export function getBreadcrumbs(node: VaultNode | null, nodes: Record<string, VaultNode>): string[] {
+export function getBreadcrumbs(
+  node: VaultNode | null,
+  nodes: Record<string, VaultNode>,
+): string[] {
   if (!node) return [];
   const parts: string[] = [];
   let cur: VaultNode | undefined = node;
@@ -522,5 +862,3 @@ export function getBreadcrumbs(node: VaultNode | null, nodes: Record<string, Vau
   }
   return parts;
 }
-
-export { basename };

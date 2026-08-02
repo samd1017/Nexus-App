@@ -2,8 +2,9 @@ import { r as __toESM } from "../_runtime.mjs";
 import { r as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].mjs";
 import { c as HeadContent, d as Outlet, f as lazyRouteComponent, m as createRootRoute, p as createFileRoute, s as Scripts, u as createRouter } from "../_libs/@tanstack/react-router+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
-import { t as TriangleAlert } from "../_libs/lucide-react.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/router-kNzOoxtV.js
+import { t as Route } from "./oauth.callback-CJn5BbsV.mjs";
+import { n as TriangleAlert } from "../_libs/lucide-react.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/router-D2Okk6RT.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function AppErrorComponent({ error }) {
@@ -28,19 +29,6 @@ function AppErrorComponent({ error }) {
 			})
 		]
 	});
-}
-/**
-* App-wide client provider mounted once near the root (in `src/routes/__root.tsx`):
-*
-*   <AuthProvider><Outlet /></AuthProvider>
-*
-* Better Auth's React client (`@/lib/auth/client`) needs NO context provider —
-* its `useSession()` works standalone — so this is a passthrough today. It's
-* kept as the single, stable mount point for any future client-side providers
-* (e.g. a toast or theme provider) without churning the root shell.
-*/
-function AuthProvider({ children }) {
-	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_jsx_runtime.Fragment, { children });
 }
 /**
 * Top branding bar for deployed apps. Visibility is deploy-controlled via
@@ -140,7 +128,7 @@ function CreatedWithGrokBanner() {
 		]
 	})] });
 }
-var styles_default = "/assets/styles-DIvmgGQ_.css";
+var styles_default = "/assets/styles-BT7-Rv2d.css";
 var APP_NAME = "Note App";
 var Route$1 = createRootRoute({
 	head: () => ({
@@ -153,7 +141,7 @@ var Route$1 = createRootRoute({
 			{ title: APP_NAME },
 			{
 				name: "description",
-				content: "Mac-first personal knowledge vault — plain Markdown, visual editor, live graph, Hermes-compatible."
+				content: "Local-first personal knowledge vault — plain Markdown, visual editor, live graph, Hermes-compatible. Zero accounts by default."
 			},
 			...[]
 		],
@@ -172,21 +160,28 @@ function RootDocument() {
 			className: "bg-[var(--bg-deepest,#050507)] text-[var(--text-primary,#f2f2f7)]",
 			children: [
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CreatedWithGrokBanner, {}),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(AuthProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Outlet, {}) }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Outlet, {}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Scripts, {})
 			]
 		})]
 	});
 }
-var $$splitComponentImporter = () => import("./routes-DWsDCGCn.mjs");
-var rootRouteChildren = { IndexRoute: createFileRoute("/")({
-	component: lazyRouteComponent($$splitComponentImporter, "component"),
-	ssr: false
-}).update({
-	id: "/",
-	path: "/",
-	getParentRoute: () => Route$1
-}) };
+var $$splitComponentImporter = () => import("./routes-CL4dF54X.mjs");
+var rootRouteChildren = {
+	IndexRoute: createFileRoute("/")({
+		component: lazyRouteComponent($$splitComponentImporter, "component"),
+		ssr: false
+	}).update({
+		id: "/",
+		path: "/",
+		getParentRoute: () => Route$1
+	}),
+	OauthCallbackRoute: Route.update({
+		id: "/oauth/callback",
+		path: "/oauth/callback",
+		getParentRoute: () => Route$1
+	})
+};
 var routeTree = Route$1._addFileChildren(rootRouteChildren)._addFileTypes();
 function getRouter() {
 	return createRouter({

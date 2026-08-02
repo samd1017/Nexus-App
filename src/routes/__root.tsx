@@ -1,5 +1,4 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
-import { AuthProvider } from "@/lib/auth/provider";
 import { CreatedWithGrokBanner } from "@/components/created-with-grok-banner";
 import appCss from "../styles.css?url";
 
@@ -14,13 +13,11 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      {
-        title: APP_NAME,
-      },
+      { title: APP_NAME },
       {
         name: "description",
         content:
-          "Mac-first personal knowledge vault — plain Markdown, visual editor, live graph, Hermes-compatible.",
+          "Local-first personal knowledge vault — plain Markdown, visual editor, live graph, Hermes-compatible. Zero accounts by default.",
       },
       ...(ogImage
         ? [
@@ -43,9 +40,8 @@ function RootDocument() {
       </head>
       <body className="bg-[var(--bg-deepest,#050507)] text-[var(--text-primary,#f2f2f7)]">
         <CreatedWithGrokBanner />
-        <AuthProvider>
-          <Outlet />
-        </AuthProvider>
+        {/* No AuthProvider — core experience is fully offline, zero accounts */}
+        <Outlet />
         <Scripts />
       </body>
     </html>
