@@ -16,6 +16,7 @@ import {
 } from "@/lib/cloud/oauth";
 import {
   NexusMark,
+  NexusWordmark,
   NEXUS_NAME,
   NEXUS_TAGLINE,
 } from "@/components/brand/NexusLogo";
@@ -26,7 +27,6 @@ export function WelcomeScreen() {
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
-  const fsaSupported = useVaultStore((s) => s.fsaSupported);
   const connecting = useVaultStore((s) => s.connecting);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const cloudSession = useVaultStore((s) => s.cloudSession);
@@ -53,21 +53,19 @@ export function WelcomeScreen() {
 
       <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-6 py-12">
         <div className="mb-1 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.28)] bg-[rgba(15,15,18,0.9)] shadow-[0_0_32px_rgba(0,200,255,0.18)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.28)] bg-[linear-gradient(145deg,#1a1e28_0%,#0a0c12_55%,#05070c_100%)] shadow-[0_4px_16px_rgba(0,0,0,0.45),0_0_28px_rgba(0,200,255,0.16)]">
             <NexusMark size={36} className="text-[var(--text-primary)]" />
           </div>
           <div className="min-w-0">
-            <div className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--text-primary)]">
-              {NEXUS_NAME}
-            </div>
-            <div className="text-[12.5px] font-medium tracking-[0.02em] text-[var(--accent)]">
+            <NexusWordmark size="md" showMark={false} />
+            <div className="mt-0.5 text-[12.5px] font-medium tracking-[0.02em] text-[var(--accent)]">
               {NEXUS_TAGLINE}
             </div>
           </div>
         </div>
 
         <h1 className="mt-6 max-w-xl text-[clamp(1.85rem,4vw,2.65rem)] font-semibold leading-[1.12] tracking-[-0.03em] text-[var(--text-primary)]">
-          A knowledge OS for plain Markdown.
+          Your second brain, in plain Markdown.
         </h1>
         <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-[var(--text-secondary)]">
           Local-first. Zero accounts. Real{" "}
@@ -95,15 +93,9 @@ export function WelcomeScreen() {
           </button>
         </div>
 
-        {!fsaSupported ? (
-          <p className="mt-3 text-[12.5px] text-[var(--warning)]">
-            Full local vault access works best in Chrome or Edge. You can still explore the demo.
-          </p>
-        ) : (
-          <p className="mt-3 text-[12.5px] text-[var(--text-muted)]">
-            Your vault is a normal folder. No proprietary database. No sign-in.
-          </p>
-        )}
+        <p className="mt-3 text-[12.5px] text-[var(--text-muted)]">
+          Your vault is a normal folder. No proprietary database. No sign-in.
+        </p>
 
         <div className="mt-10 grid gap-3 sm:grid-cols-3">
           {[

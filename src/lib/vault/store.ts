@@ -28,6 +28,7 @@ import {
   writeNoteFile,
 } from "./fs-adapter";
 import type { CloudProvider, CloudSession } from "@/lib/cloud/oauth";
+import { getPrefs } from "@/lib/prefs/preferences";
 import {
   beginCloudOAuth,
   disconnectCloud,
@@ -200,7 +201,7 @@ export const useVaultStore = create<VaultStore>()(
           ready: true,
         });
 
-        if (fsaSupported) {
+        if (fsaSupported && getPrefs().openLastVault) {
           const saved = await loadDirectoryHandle();
           if (saved?.handle) {
             let ok = await ensurePermission(saved.handle, "readwrite");
@@ -305,6 +306,9 @@ export const useVaultStore = create<VaultStore>()(
           settings: {
             ...get().settings,
             lastNotePath: welcome?.path ?? null,
+            editorMode: getPrefs().defaultEditorMode,
+            graphMode: getPrefs().defaultGraphView,
+            rightOpen: getPrefs().defaultGraphView === "panel",
           },
         });
       },
@@ -322,6 +326,7 @@ export const useVaultStore = create<VaultStore>()(
           lastOpened: Date.now(),
           mode: "local",
         });
+        const prefs = getPrefs();
         set({
           vaultId,
           vaultName: name,
@@ -335,6 +340,13 @@ export const useVaultStore = create<VaultStore>()(
             .map((n) => n.id),
           dirtyNoteIds: [],
           recentVaults: recents,
+          settings: {
+            ...get().settings,
+            editorMode: prefs.defaultEditorMode,
+            graphMode: prefs.defaultGraphView,
+            rightOpen: prefs.defaultGraphView === "panel",
+            lastNotePath: first?.path ?? null,
+          },
         });
       },
 
@@ -385,6 +397,9 @@ export const useVaultStore = create<VaultStore>()(
             settings: {
               ...get().settings,
               lastNotePath: first?.path ?? null,
+              editorMode: getPrefs().defaultEditorMode,
+              graphMode: getPrefs().defaultGraphView,
+              rightOpen: getPrefs().defaultGraphView === "panel",
             },
           });
         } catch (e) {
@@ -709,6 +724,11 @@ export const useVaultStore = create<VaultStore>()(
         const nodes = { ...get().nodes };
         const target = nodes[id];
         if (!target) return;
+        if (getPrefs().confirmDelete) {
+          const label = target.kind === "note" ? noteTitle(target) : target.name;
+          const ok = window.confirm(`Delete "${label}"? This cannot be undone.`);
+          if (!ok) return;
+        }
         const toDelete = new Set<string>();
         const walk = (nid: string) => {
           toDelete.add(nid);

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
 
 /** Global macOS-style keyboard shortcuts */
 export function KeyboardShortcuts() {
@@ -7,6 +8,14 @@ export function KeyboardShortcuts() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       const store = useVaultStore.getState();
+      const prefs = usePrefsStore.getState();
+
+      // ⌘, settings
+      if (mod && (e.key === "," || e.code === "Comma")) {
+        e.preventDefault();
+        prefs.toggleSettings();
+        return;
+      }
 
       // ⌘K search
       if (mod && e.key.toLowerCase() === "k") {
@@ -15,8 +24,12 @@ export function KeyboardShortcuts() {
         return;
       }
 
-      // Escape closes command
+      // Escape closes overlays
       if (e.key === "Escape") {
+        if (prefs.settingsOpen) {
+          prefs.setSettingsOpen(false);
+          return;
+        }
         if (store.commandOpen) {
           store.setCommandOpen(false);
           return;

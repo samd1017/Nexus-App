@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { preferCleanWrite } from "@/lib/markdown/purity";
 import { registerSourceFlush } from "@/lib/editor/flush";
+import { usePrefsStore } from "@/lib/prefs/preferences";
 
 interface Props {
   noteId: string;
@@ -14,6 +15,8 @@ interface Props {
  */
 export function SourceEditor({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
+  const spellCheck = usePrefsStore((s) => s.spellCheck);
+  const editorFontSize = usePrefsStore((s) => s.editorFontSize);
 
   // Prefer live store value at mount (post-flush), fall back to prop
   const seed =
@@ -70,7 +73,8 @@ export function SourceEditor({ noteId, content }: Props) {
         <textarea
           className="source-editor min-h-[50vh] w-full flex-1"
           value={value}
-          spellCheck={false}
+          spellCheck={spellCheck}
+          style={{ fontSize: editorFontSize }}
           onChange={(e) => {
             const val = e.target.value;
             dirtyRef.current = true;

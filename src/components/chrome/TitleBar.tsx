@@ -1,6 +1,8 @@
+import { Settings } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { formatRelativeTime } from "@/lib/utils";
 import { NexusWordmark } from "@/components/brand/NexusLogo";
+import { usePrefsStore } from "@/lib/prefs/preferences";
 
 /** macOS-style window chrome with traffic lights + Nexus branding */
 export function TitleBar() {
@@ -8,6 +10,7 @@ export function TitleBar() {
   const mode = useVaultStore((s) => s.mode);
   const lastExternalSync = useVaultStore((s) => s.lastExternalSync);
   const vaultId = useVaultStore((s) => s.vaultId);
+  const setSettingsOpen = usePrefsStore((s) => s.setSettingsOpen);
 
   return (
     <header className="titlebar-drag relative z-40 flex h-11 shrink-0 items-center border-b border-[var(--border)] bg-[rgba(8,8,10,0.94)] px-3 backdrop-blur-xl">
@@ -50,6 +53,15 @@ export function TitleBar() {
             Local · offline
           </span>
         )}
+        <button
+          type="button"
+          className="icon-btn h-8 w-8"
+          title="Settings (⌘,)"
+          aria-label="Open settings"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <Settings size={15} />
+        </button>
       </div>
     </header>
   );

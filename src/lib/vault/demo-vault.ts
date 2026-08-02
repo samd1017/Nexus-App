@@ -16,7 +16,12 @@ function folder(path: string, name: string, parentId: string | null): VaultNode 
   };
 }
 
-function note(path: string, name: string, parentId: string | null, content: string): VaultNode {
+function note(
+  path: string,
+  name: string,
+  parentId: string | null,
+  content: string,
+): VaultNode {
   return {
     id: idFor(path),
     path,
@@ -28,7 +33,7 @@ function note(path: string, name: string, parentId: string | null, content: stri
   };
 }
 
-/** Seed knowledge vault — SpaceX-inspired knowledge OS demo content */
+/** Demo vault that showcases Nexus features with clean, linked Markdown */
 export function buildDemoVault(): {
   nodes: Record<string, VaultNode>;
   rootIds: string[];
@@ -52,134 +57,146 @@ export function buildDemoVault(): {
       null,
       `# Welcome to Nexus
 
-**Notes for Humans and Agents.** A personal knowledge vault built for **clarity**, **speed**, and **Hermes-compatible** plain Markdown.
+**Notes for Humans and Agents.**
 
-## What this is
+This demo vault is a tour of everything Nexus does — open notes, follow [[wikilinks]], switch Visual ↔ Source, search with **⌘K**, and watch the **graph** light up.
 
-- Your vault is a **folder of \`.md\` files** — nothing proprietary
-- The default editor is **visual / WYSIWYG** with clean round-trip Markdown
-- \`[[wikilinks]]\` render as interactive pills and stay standard on disk
-- An interactive **graph** reveals the shape of your thinking
+## Feature tour
 
-## Quick start
+| Feature | Try it |
+| --- | --- |
+| File tree | Folders on the left — Projects, Research, Systems, Journal |
+| Visual editor | Default calm writing surface with formatting toolbar |
+| Source mode | **⌘E** — same note as clean Markdown |
+| Wikilinks | Click pills like [[Graph View]] or [[Linking Notes]] |
+| Backlinks | Right panel → see what points here |
+| Graph | Right panel → Graph, or **⌘G** for fullscreen |
+| Search | **⌘K** — find any note instantly |
+| Settings | Gear or **⌘,** — accents, density, editor prefs |
+| Hermes | Vault menu → **Simulate Hermes write** |
 
-1. Browse the file tree on the left
-2. Open [[Knowledge OS]] or [[Graph Thinking]]
-3. Press **⌘K** to search · **⌘E** for source mode · **⌘\\\\** to toggle sidebars
-4. Explore the graph in the right panel — expand to full canvas
+## Quick path
 
-## Hermes-ready
+1. Open [[Local-first Vault]] for how storage works  
+2. Open [[Graph View]] and click a node to jump notes  
+3. Edit this page, switch to **Source**, then back — content stays in sync  
+4. Press **⌘K** and type \`hermes\`
 
-External agents can create, edit, and delete notes in this folder. Changes appear live within ~1–2 seconds.
+## What stays true
 
-Try the **Simulate Hermes write** action in the vault menu to watch an external edit land.
+- Vault = ordinary **folder of \`.md\` files**
+- No accounts required
+- Agents can edit the same files you do
 
 ---
 
-*This is a demo vault. Open any local folder to use your own files.*
+*Demo data only. Open your own folder anytime.*
 `,
     ),
   );
 
   add(
     note(
-      pathJoin("Projects", "Knowledge OS.md"),
-      "Knowledge OS.md",
+      pathJoin("Projects", "Local-first Vault.md"),
+      "Local-first Vault.md",
       projects.id,
-      `# Knowledge OS
+      `# Local-first Vault
 
-The next decade of personal knowledge software is not another notes app — it is a **knowledge operating system**.
+Nexus treats a **folder** as the product. No proprietary database for your notes.
 
-## Principles
+## How it works
 
-1. **Files first** — the vault is the source of truth
-2. **Agent-native** — [[Hermes Compatibility]] means machines write the same files you do
-3. **Spatial memory** — the [[Graph Thinking]] view is first-class, not a gimmick
-4. **Calm writing surface** — complexity lives in progressive disclosure
+1. **Open folder as vault** — grant access to a real directory  
+2. Notes are \`.md\` files; folders are directories  
+3. Changes save to disk (or stay in-browser for this demo)  
+4. External tools and agents write the **same files**
 
-## Architecture sketch
+## Why this matters
 
-| Layer | Role |
+| You get | Agents get |
 | --- | --- |
-| Vault folder | Plain \`.md\` + \`assets/\` |
-| Index cache | Optional \`.noteapp/\` only |
-| Editor | Visual default, source on demand |
-| Graph | Force-directed map of [[wikilinks]] |
+| Readable Markdown | Same readable Markdown |
+| \`git diff\` that makes sense | CLI and Hermes-friendly paths |
+| Portability forever | No lock-in API |
 
 ## Related
 
 - [[Welcome]]
-- [[Design Language]]
-- [[Linking Strategy]]
+- [[Hermes Compatibility]]
+- [[Linking Notes]]
+- [[Settings & Shortcuts]]
 `,
     ),
   );
 
   add(
     note(
-      pathJoin("Projects", "Linking Strategy.md"),
-      "Linking Strategy.md",
+      pathJoin("Projects", "Linking Notes.md"),
+      "Linking Notes.md",
       projects.id,
-      `# Linking Strategy
+      `# Linking Notes
 
 Wikilinks are the connective tissue of the vault.
 
 ## Syntax
-
-Use standard double-bracket links:
 
 \`\`\`
 [[Note Name]]
 [[Note Name|display alias]]
 \`\`\`
 
-## Rules of thumb
+On disk they stay plain text. In **Visual** mode they render as interactive pills.
 
-- Prefer **concept notes** over dumping everything in daily logs
-- Link **forward** when you introduce a new idea
-- Review **backlinks** weekly — they surface unexpected structure
+## Habits that scale
+
+- Prefer **one idea per note**
+- Link when you introduce a concept
+- Use the **backlinks** panel to find unexpected structure
+- Watch the [[Graph View]] cluster related work
 
 ## Map
 
-- [[Knowledge OS]]
-- [[Graph Thinking]]
 - [[Welcome]]
+- [[Graph View]]
+- [[Visual & Source]]
+- [[First Light]]
 `,
     ),
   );
 
   add(
     note(
-      pathJoin("Research", "Graph Thinking.md"),
-      "Graph Thinking.md",
+      pathJoin("Research", "Graph View.md"),
+      "Graph View.md",
       research.id,
-      `# Graph Thinking
+      `# Graph View
 
-Graphs make invisible structure **visible**.
+The graph turns [[wikilinks]] into a living map of your thinking.
 
-## Why force-directed graphs work
+## What you’ll see
 
-Nodes repel; links attract. Over time, tightly related notes cluster. Orphans float. Hubs dominate.
+- **Nodes** sized by how connected they are  
+- **Soft glow** on the active note  
+- **Particles** along links (toggle in Settings)  
+- **Physics** — Calm / Standard / Energetic  
 
-### Visual language
+## Controls
 
-- **Accent cyan** nodes with soft outer glow
-- **Size by degree** — highly connected notes read as gravity wells
-- **Edges** stay low-opacity so the field stays calm
+| Action | Result |
+| --- | --- |
+| Hover | Title + preview |
+| Click | Open the note (exits fullscreen) |
+| Drag | Reposition nodes |
+| Scroll | Zoom |
+| **⌘G** | Fullscreen graph |
 
-## Interaction model
+## Seed network
 
-- Hover → title + preview
-- Click → open note
-- Drag / zoom / pan for spatial exploration
-- Panel mode for context; fullscreen for deep work
-
-## Seed links
-
-- [[Knowledge OS]]
-- [[Linking Strategy]]
+- [[Welcome]]
+- [[Linking Notes]]
 - [[Design Language]]
 - [[Hermes Compatibility]]
+- [[Local-first Vault]]
 `,
     ),
   );
@@ -191,29 +208,70 @@ Nodes repel; links attract. Over time, tightly related notes cluster. Orphans fl
       research.id,
       `# Design Language
 
-Inspired by high-precision engineering interfaces — dark, confident, technically sophisticated.
+Dark, precise, high-signal — built to feel like an instrument, not a template.
 
 ## Palette
 
-- Deepest background \`#050507\`
-- Surfaces \`#0F0F12\` → \`#1C1C21\`
-- Accent electric cyan \`#00C8FF\`
-- Soft violet secondary \`#7B61FF\`
+- Deepest \`#050507\`
+- Surfaces \`#0F0F12\` → \`#16161A\`
+- Accent cyan \`#00C8FF\` (changeable in Settings)
+- Violet \`#7B61FF\`
 
-## Glass
+## UI principles
 
-Floating panels use translucent surfaces with \`backdrop-filter: blur(24px)\` and hairline borders.
+- **Calm center** — the writing surface stays quiet  
+- **Power on the edges** — tree, graph, search, settings  
+- **Glass panels** with hairline borders  
+- Motion ~220–280ms, never flashy  
 
-## Motion
+## Try the accents
 
-- 220–280ms ease curves
-- Restrained scale on hover (\`1.02\`)
-- Graph physics should feel like soft springs — never chaotic
+Open **Settings (⌘,)** and switch Cyan → Violet → Emerald. The whole UI updates live.
 
 ## Related
 
-- [[Knowledge OS]]
 - [[Welcome]]
+- [[Settings & Shortcuts]]
+- [[Graph View]]
+`,
+    ),
+  );
+
+  add(
+    note(
+      pathJoin("Research", "Visual & Source.md"),
+      "Visual & Source.md",
+      research.id,
+      `# Visual & Source
+
+Two views. **One note.** Same Markdown on disk.
+
+## Visual
+
+- Default writing mode  
+- Headings, lists, tasks, code, tables  
+- Wikilink pills you can click  
+
+## Source
+
+- Press **⌘E** or the Source chip  
+- Edit raw Markdown  
+- Switch back — rich view matches  
+
+## Round-trip rules
+
+Nexus keeps files clean so [[Hermes Compatibility]] and \`git diff\` stay honest. Prefer standard Markdown; avoid proprietary blobs.
+
+## Practice
+
+1. Type a sentence here in Visual  
+2. Switch to Source — confirm it appears  
+3. Edit the Markdown, return to Visual  
+
+## Links
+
+- [[Welcome]]
+- [[Linking Notes]]
 `,
     ),
   );
@@ -225,58 +283,73 @@ Floating panels use translucent surfaces with \`backdrop-filter: blur(24px)\` an
       systems.id,
       `# Hermes Compatibility
 
-Hermes (and any external process) must be able to treat this vault as ordinary files.
+Hermes (and any agent or script) should treat this vault as ordinary files.
 
 ## Contract
 
-- Notes = \`.md\` files
-- Folders = directories
-- Images = relative paths (prefer \`assets/\`)
-- No proprietary metadata inside note bodies
-- App cache only under \`.noteapp/\`
+- Notes = \`.md\` files  
+- Folders = directories  
+- No proprietary metadata inside note bodies  
+- App preferences stay in the browser, not in your Markdown  
 
 ## Live watching
 
-Creates, edits, renames, and deletes from outside the app must appear in the UI within **1–2 seconds**.
+Creates, edits, renames, and deletes from outside the app appear in the UI within about **1–2 seconds** when a real folder is open.
 
-## Clean Markdown
+## Demo it now
 
-When the app writes a note, the result must remain readable by:
+In the vault switcher menu, choose **Simulate Hermes write**. A new note lands under Systems without you typing it.
 
-- Any text editor
-- \`git diff\`
-- Agents and CLI tools
+## Linked
 
-## Linked ideas
-
-- [[Knowledge OS]]
+- [[Local-first Vault]]
 - [[Welcome]]
-- [[Graph Thinking]]
+- [[Graph View]]
 `,
     ),
   );
 
   add(
     note(
-      pathJoin("Systems", "Keyboard Map.md"),
-      "Keyboard Map.md",
+      pathJoin("Systems", "Settings & Shortcuts.md"),
+      "Settings & Shortcuts.md",
       systems.id,
-      `# Keyboard Map
+      `# Settings & Shortcuts
+
+## Settings (⌘,)
+
+| Section | What you can change |
+| --- | --- |
+| Appearance | Accent color, density, graph particles |
+| Editor | Default Visual/Source, font size, spellcheck |
+| Graph | Default panel/hidden, physics intensity |
+| Vault | Confirm delete, open last vault on launch |
+| Keyboard | Full shortcut list |
+| About | Nexus version + vault info |
+
+## Keyboard map
 
 | Shortcut | Action |
 | --- | --- |
-| ⌘K | Command palette / search |
-| ⌘E | Toggle visual / source |
+| ⌘K | Search / command palette |
+| ⌘, | Settings |
+| ⌘E | Toggle Visual / Source |
+| ⌘G | Graph fullscreen |
+| ⌘N | New note |
+| ⌘S | Save (auto-save is already on) |
 | ⌘\\\\ | Toggle left sidebar |
 | ⌘⌥\\\\ | Toggle right panel |
-| ⌘G | Toggle full graph |
-| ⌘N | New note |
-| ⌘S | Save (auto-save is on) |
-| ⌘B / ⌘I | Bold / italic in editor |
+| Esc | Close overlay / exit graph |
 
 ## Philosophy
 
-Keyboard is the primary interface for power users. Mouse is always available; shortcuts never required for basics.
+Basics never require shortcuts. Power users never leave the keyboard.
+
+## Related
+
+- [[Welcome]]
+- [[Design Language]]
+- [[Visual & Source]]
 `,
     ),
   );
@@ -290,23 +363,36 @@ Keyboard is the primary interface for power users. Mouse is always available; sh
 
 Opened the vault for the first time.
 
-The graph already shows structure forming between [[Knowledge OS]], [[Graph Thinking]], and [[Hermes Compatibility]]. That feedback loop — write, link, see — is the product.
+The graph already ties together [[Local-first Vault]], [[Graph View]], and [[Hermes Compatibility]]. That loop — **write, link, see** — is the product.
 
 ## Tasks
 
 - [x] Seed demo notes
 - [x] Wire wikilinks
+- [x] Try Visual ↔ Source
 - [ ] Capture a real research thread
-- [ ] Attach a diagram to assets/
+- [ ] Open my own folder as a vault
 
 ## Log
 
-Felt immediate. Calm center, powerful edges.
+Felt immediate. Calm center, powerful edges. Settings accents made it mine in one click.
+
+## Next
+
+- [[Welcome]]
+- [[Linking Notes]]
+- [[Settings & Shortcuts]]
 `,
     ),
   );
 
-  const rootIds = [welcome.id, projects.id, research.id, systems.id, journal.id];
+  const rootIds = [
+    welcome.id,
+    projects.id,
+    research.id,
+    systems.id,
+    journal.id,
+  ];
 
   return {
     nodes,
@@ -320,18 +406,18 @@ export const HERMES_SAMPLE_NOTE = {
   name: "Hermes Pulse.md",
   content: `# Hermes Pulse
 
-This note was written by an **external process** (simulated Hermes agent).
+This note was written by an **external process** (simulated agent).
 
 Timestamp: ${"${TS}"}
 
 ## Observation
 
-The filesystem watcher picked this up without manual refresh. The vault remains a plain folder of Markdown.
+The filesystem watcher picked this up without a manual refresh. The vault remains a plain folder of Markdown.
 
 ## Links
 
 - [[Hermes Compatibility]]
-- [[Knowledge OS]]
+- [[Local-first Vault]]
 - [[Welcome]]
 `,
 };

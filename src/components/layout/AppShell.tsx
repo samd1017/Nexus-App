@@ -7,6 +7,7 @@ import { EditorPane } from "@/components/editor/EditorPane";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
+import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
 import {
   getFsaRoot,
@@ -14,6 +15,7 @@ import {
   useVaultStore,
 } from "@/lib/vault/store";
 import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
+import { applyPrefsToDom, getPrefs } from "@/lib/prefs/preferences";
 
 export function AppShell() {
   const bootstrap = useVaultStore((s) => s.bootstrap);
@@ -27,6 +29,7 @@ export function AppShell() {
   const watcherRef = useRef<VaultWatcher | null>(null);
 
   useEffect(() => {
+    applyPrefsToDom(getPrefs());
     void bootstrap();
   }, [bootstrap]);
 
@@ -105,6 +108,8 @@ export function AppShell() {
           <WelcomeScreen />
         </div>
         <Toast />
+        <SettingsPanel />
+        <KeyboardShortcuts />
       </div>
     );
   }
@@ -119,6 +124,7 @@ export function AppShell() {
       </div>
       <CommandPalette />
       <KeyboardShortcuts />
+      <SettingsPanel />
       <Toast />
     </div>
   );
