@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 8080",
     "build": "vite build",
-    "db:migrate": "node -e \"console.log('[migrate] skipped \u2014 Note App is local-first')\"",
+    "db:migrate": "node -e \"console.log('[migrate] skipped \u2014 local-first Note App')\"",
     "build:dev": "vite build --mode development",
     "preview": "vite preview --host 0.0.0.0 --port 8080",
     "typecheck": "tsc --noEmit",
@@ -17,7 +17,6 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.3",
     "@hookform/resolvers": "^5.0.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -61,18 +60,15 @@
     "@tiptap/react": "^3.0.0",
     "@tiptap/starter-kit": "^3.0.0",
     "@types/turndown": "^5.0.6",
-    "better-auth": "^1.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.0.0",
     "force-graph": "^1.51.0",
     "fuse.js": "^7.0.0",
-    "kysely": "^0.28.5",
     "lowlight": "^3.0.0",
     "lucide-react": "^0.510.0",
     "marked": "^15.0.0",
-    "pg": "^8.16.3",
     "react": "^19.1.0",
     "react-day-picker": "^9.14.0",
     "react-dom": "^19.1.0",
@@ -91,7 +87,6 @@
   "devDependencies": {
     "@eslint/js": "^9.20.0",
     "@types/node": "^22.16.5",
-    "@types/pg": "^8.11.10",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",

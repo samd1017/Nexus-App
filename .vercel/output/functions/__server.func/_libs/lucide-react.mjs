@@ -464,6 +464,54 @@ var Italic = createLucideIcon("italic", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var Keyboard = createLucideIcon("keyboard", [
+	["path", {
+		d: "M10 8h.01",
+		key: "1r9ogq"
+	}],
+	["path", {
+		d: "M12 12h.01",
+		key: "1mp3jc"
+	}],
+	["path", {
+		d: "M14 8h.01",
+		key: "1primd"
+	}],
+	["path", {
+		d: "M16 12h.01",
+		key: "1l6xoz"
+	}],
+	["path", {
+		d: "M18 8h.01",
+		key: "emo2bl"
+	}],
+	["path", {
+		d: "M6 8h.01",
+		key: "x9i8wu"
+	}],
+	["path", {
+		d: "M7 16h10",
+		key: "wp8him"
+	}],
+	["path", {
+		d: "M8 12h.01",
+		key: "czm47f"
+	}],
+	["rect", {
+		width: "20",
+		height: "16",
+		x: "2",
+		y: "4",
+		rx: "2",
+		key: "18n3k1"
+	}]
+]);
+/**
+* @license lucide-react v0.510.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Link2 = createLucideIcon("link-2", [
 	["path", {
 		d: "M9 17H7A5 5 0 0 1 7 7h2",
@@ -1011,4 +1059,4 @@ var Zap = createLucideIcon("zap", [["path", {
 	key: "1xq2db"
 }]]);
 //#endregion
-export { Folder as A, ChevronRight as B, Link2 as C, Heading2 as D, Heading3 as E, FilePlus2 as F, Bold as H, Eye as I, Ellipsis as L, FolderOpen as M, FileText as N, Heading1 as O, FilePlus as P, CodeXml as R, ListChecks as S, Image as T, ChevronDown as V, Maximize2 as _, Sparkles as a, ListTree as b, Quote as c, PanelRightOpen as d, PanelRightClose as f, Minimize2 as g, Minus as h, Table as i, FolderPlus as j, HardDrive as k, Plus as l, Network as m, TriangleAlert as n, Search as o, PanelLeftClose as p, Trash2 as r, Radio as s, Zap as t, Pencil as u, LogOut as v, Italic as w, ListOrdered as x, List as y, Cloud as z };
+export { HardDrive as A, Cloud as B, Link2 as C, Heading3 as D, Image as E, FilePlus as F, ChevronDown as H, FilePlus2 as I, Eye as L, FolderPlus as M, FolderOpen as N, Heading2 as O, FileText as P, Ellipsis as R, ListChecks as S, Italic as T, Bold as U, ChevronRight as V, Maximize2 as _, Sparkles as a, ListTree as b, Quote as c, PanelRightOpen as d, PanelRightClose as f, Minimize2 as g, Minus as h, Table as i, Folder as j, Heading1 as k, Plus as l, Network as m, TriangleAlert as n, Search as o, PanelLeftClose as p, Trash2 as r, Radio as s, Zap as t, Pencil as u, LogOut as v, Keyboard as w, ListOrdered as x, List as y, CodeXml as z };

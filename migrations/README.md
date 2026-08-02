@@ -1,0 +1,1 @@
+-- Note App is local-first. No database migrations.

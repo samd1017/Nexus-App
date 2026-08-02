@@ -84,26 +84,29 @@ export function RightPanel() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           {tab === "backlinks" ? (
             <div className="p-3">
-              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Linked mentions
-              </h3>
-              {!note ? (
-                <Empty text="Open a note to see backlinks." />
-              ) : backlinks.length === 0 ? (
-                <Empty text="No backlinks yet. Link other notes with [[wikilinks]]." />
+              </div>
+              {backlinks.length === 0 ? (
+                <div className="rounded-[12px] border border-dashed border-[var(--border)] px-3 py-6 text-center">
+                  <p className="text-[13px] text-[var(--text-secondary)]">No backlinks yet</p>
+                  <p className="mt-1 text-[11.5px] leading-snug text-[var(--text-muted)]">
+                    Other notes that [[mention this]] will appear here.
+                  </p>
+                </div>
               ) : (
-                <ul className="space-y-1.5">
+                <ul className="flex flex-col gap-1">
                   {backlinks.map((b) => (
                     <li key={b.fromId}>
                       <button
                         type="button"
+                        className="tree-row w-full rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]"
                         onClick={() => setActiveNote(b.fromId)}
-                        className="w-full rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5 text-left transition-[border-color,background,transform] duration-200 hover:scale-[1.01] hover:border-[rgba(0,200,255,0.28)] hover:bg-[rgba(0,200,255,0.06)]"
                       >
                         <div className="text-[13px] font-medium text-[var(--text-primary)]">
-                          {b.fromTitle}
+                          {b.fromTitle || noteTitle({ name: b.fromPath, kind: "note" } as never)}
                         </div>
-                        <div className="mt-1 line-clamp-2 text-[11.5px] leading-snug text-[var(--text-muted)]">
+                        <div className="mt-0.5 line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
                           {b.context}
                         </div>
                       </button>
@@ -116,57 +119,39 @@ export function RightPanel() {
 
           {tab === "outline" ? (
             <div className="p-3">
-              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Outline
-              </h3>
-              {!note ? (
-                <Empty text="Open a note to see its outline." />
-              ) : outline.length === 0 ? (
-                <Empty text="No headings in this note." />
+              </div>
+              {outline.length === 0 ? (
+                <div className="rounded-[12px] border border-dashed border-[var(--border)] px-3 py-6 text-center">
+                  <p className="text-[13px] text-[var(--text-secondary)]">No headings</p>
+                  <p className="mt-1 text-[11.5px] text-[var(--text-muted)]">
+                    Use # headings to structure the note.
+                  </p>
+                </div>
               ) : (
-                <ul className="space-y-0.5">
+                <ul className="flex flex-col gap-0.5">
                   {outline.map((h, i) => (
-                    <li key={i}>
-                      <div
-                        className="rounded-lg px-2 py-1.5 text-[13px] text-[var(--text-secondary)]"
-                        style={{ paddingLeft: 8 + (h.level - 1) * 12 }}
-                      >
-                        <span className="mr-2 text-[10px] text-[var(--text-muted)]">H{h.level}</span>
-                        {h.text}
-                      </div>
+                    <li
+                      key={i}
+                      className="truncate rounded-md px-2 py-1.5 text-[12.5px] text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+                      style={{ paddingLeft: 8 + (h.level - 1) * 12 }}
+                    >
+                      {h.text}
                     </li>
                   ))}
                 </ul>
               )}
-              {note ? (
-                <p className="mt-4 px-2 text-[11px] text-[var(--text-muted)]">
-                  Viewing {noteTitle(note)}
-                </p>
-              ) : null}
             </div>
           ) : null}
 
           {tab === "graph" ? (
-            <div className="flex h-full min-h-[280px] flex-col">
-              <GraphView mode="panel" className="min-h-[320px] flex-1" />
+            <div className="flex h-[min(420px,50vh)] min-h-[280px] flex-col">
+              <GraphView mode="panel" className="h-full min-h-[280px]" />
             </div>
           ) : null}
         </div>
-
-        {tab !== "graph" ? (
-          <div className="hidden h-[180px] shrink-0 border-t border-[var(--border)] lg:block">
-            <GraphView mode="panel" className="h-full" />
-          </div>
-        ) : null}
       </aside>
     </>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return (
-    <p className="rounded-[12px] border border-dashed border-[var(--border)] px-3 py-6 text-center text-[12.5px] leading-relaxed text-[var(--text-muted)]">
-      {text}
-    </p>
   );
 }

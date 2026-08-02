@@ -1,7 +1,7 @@
 import { r as __toESM } from "../_runtime.mjs";
 import { r as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
-import { A as Folder, B as ChevronRight, C as Link2, D as Heading2, E as Heading3, F as FilePlus2, H as Bold, I as Eye, L as Ellipsis, M as FolderOpen, N as FileText, O as Heading1, P as FilePlus, R as CodeXml, S as ListChecks, T as Image, V as ChevronDown, _ as Maximize2, a as Sparkles, b as ListTree, c as Quote, d as PanelRightOpen, f as PanelRightClose, g as Minimize2, h as Minus, i as Table, j as FolderPlus, k as HardDrive, l as Plus, m as Network, o as Search, p as PanelLeftClose, r as Trash2, s as Radio, t as Zap, u as Pencil, v as LogOut, w as Italic, x as ListOrdered, y as List, z as Cloud } from "../_libs/lucide-react.mjs";
+import { A as HardDrive, B as Cloud, C as Link2, D as Heading3, E as Image, F as FilePlus, H as ChevronDown, I as FilePlus2, L as Eye, M as FolderPlus, N as FolderOpen, O as Heading2, P as FileText, R as Ellipsis, S as ListChecks, T as Italic, U as Bold, V as ChevronRight, _ as Maximize2, a as Sparkles, b as ListTree, c as Quote, d as PanelRightOpen, f as PanelRightClose, g as Minimize2, h as Minus, i as Table, j as Folder, k as Heading1, l as Plus, m as Network, o as Search, p as PanelLeftClose, r as Trash2, s as Radio, t as Zap, u as Pencil, v as LogOut, w as Keyboard, x as ListOrdered, y as List, z as CodeXml } from "../_libs/lucide-react.mjs";
 import { n as create, t as persist } from "../_libs/zustand.mjs";
 import { t as g } from "../_libs/marked.mjs";
 import { t as TurndownService } from "../_libs/turndown.mjs";
@@ -22,7 +22,7 @@ import "../_libs/tiptap__extension-table-header.mjs";
 import { t as forceGraph } from "../_libs/force-graph+[...].mjs";
 import { t as _e } from "../_libs/cmdk.mjs";
 import { t as entry_default } from "../_libs/fuse.js.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-Nwym3A3c.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-BPoqy4AV.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var DEFAULT_SETTINGS = {
@@ -2729,6 +2729,76 @@ function getBacklinks(targetNote, nodes) {
 	}
 	return out.sort((a, b) => a.fromTitle.localeCompare(b.fromTitle));
 }
+function paintPremiumNode(node, ctx, globalScale, activeId, mode) {
+	if (node.x == null || node.y == null) return;
+	const isActive = node.id === activeId;
+	const isHub = node.degree >= 3;
+	const r = 3.2 + Math.sqrt(node.val) * (mode === "fullscreen" ? 3.4 : 2.6);
+	const fontSize = Math.max((mode === "fullscreen" ? 12 : 10.5) / globalScale, 2.2);
+	const outerR = r * (isActive ? 4.2 : isHub ? 3.4 : 2.8);
+	const bloom = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, outerR);
+	if (isActive) {
+		bloom.addColorStop(0, "rgba(0,200,255,0.55)");
+		bloom.addColorStop(.35, "rgba(0,200,255,0.18)");
+		bloom.addColorStop(.7, "rgba(123,97,255,0.08)");
+		bloom.addColorStop(1, "rgba(0,200,255,0)");
+	} else if (isHub) {
+		bloom.addColorStop(0, "rgba(123,97,255,0.28)");
+		bloom.addColorStop(.5, "rgba(0,200,255,0.1)");
+		bloom.addColorStop(1, "rgba(0,0,0,0)");
+	} else {
+		bloom.addColorStop(0, "rgba(0,200,255,0.22)");
+		bloom.addColorStop(.55, "rgba(0,200,255,0.06)");
+		bloom.addColorStop(1, "rgba(0,0,0,0)");
+	}
+	ctx.fillStyle = bloom;
+	ctx.beginPath();
+	ctx.arc(node.x, node.y, outerR, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.beginPath();
+	ctx.arc(node.x, node.y, r + 1.6 / globalScale, 0, Math.PI * 2);
+	ctx.strokeStyle = isActive ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.08)";
+	ctx.lineWidth = 1 / globalScale;
+	ctx.stroke();
+	const core = ctx.createRadialGradient(node.x - r * .3, node.y - r * .35, 0, node.x, node.y, r);
+	if (isActive) {
+		core.addColorStop(0, "#c8f7ff");
+		core.addColorStop(.4, "#00d4ff");
+		core.addColorStop(1, "#0088b8");
+	} else if (isHub) {
+		core.addColorStop(0, "#b8a8ff");
+		core.addColorStop(.45, "#7b61ff");
+		core.addColorStop(1, "#4a38b0");
+	} else {
+		core.addColorStop(0, "#7ae8ff");
+		core.addColorStop(.5, "#00b4e6");
+		core.addColorStop(1, "#007a9e");
+	}
+	ctx.beginPath();
+	ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+	ctx.fillStyle = core;
+	ctx.shadowColor = isActive ? "rgba(0,200,255,0.9)" : isHub ? "rgba(123,97,255,0.55)" : "rgba(0,200,255,0.45)";
+	ctx.shadowBlur = isActive ? 26 : isHub ? 16 : 10;
+	ctx.fill();
+	ctx.shadowBlur = 0;
+	ctx.beginPath();
+	ctx.arc(node.x - r * .28, node.y - r * .3, r * .28, 0, Math.PI * 2);
+	ctx.fillStyle = "rgba(255,255,255,0.35)";
+	ctx.fill();
+	if (globalScale > .45 || isActive || mode === "fullscreen") {
+		ctx.font = `${isActive ? 600 : 500} ${fontSize}px Inter, system-ui, sans-serif`;
+		ctx.textAlign = "center";
+		ctx.textBaseline = "top";
+		ctx.fillStyle = isActive ? "rgba(248,248,252,0.98)" : "rgba(230,230,238,0.82)";
+		ctx.shadowColor = "rgba(0,0,0,0.65)";
+		ctx.shadowBlur = 4;
+		ctx.fillText(node.name, node.x, node.y + r + 3.5);
+		ctx.shadowBlur = 0;
+	}
+}
+function linkIds(link) {
+	return [typeof link.source === "object" ? link.source.id : String(link.source), typeof link.target === "object" ? link.target.id : String(link.target)];
+}
 function GraphView({ mode, className }) {
 	const hostRef = (0, import_react.useRef)(null);
 	const graphRef = (0, import_react.useRef)(null);
@@ -2747,7 +2817,8 @@ function GraphView({ mode, className }) {
 				name: n.title,
 				val: Math.max(1, n.degree + 1),
 				preview: n.preview,
-				path: n.path
+				path: n.path,
+				degree: n.degree
 			})),
 			links: g.edges.map((e) => ({
 				source: e.source,
@@ -2757,44 +2828,27 @@ function GraphView({ mode, className }) {
 	}, [nodes]);
 	(0, import_react.useEffect)(() => {
 		if (!hostRef.current) return;
-		const paintNode = (node, ctx, globalScale) => {
+		const graph = new forceGraph(hostRef.current).backgroundColor("rgba(0,0,0,0)").nodeId("id").nodeLabel(() => "").nodeVal("val").nodeRelSize(5).linkColor((link) => {
+			const [s, t] = linkIds(link);
+			const active = activeRef.current;
+			if (active && (s === active || t === active)) return "rgba(0, 200, 255, 0.5)";
+			return mode === "fullscreen" ? "rgba(0, 200, 255, 0.18)" : "rgba(0, 200, 255, 0.12)";
+		}).linkWidth((link) => {
+			const [s, t] = linkIds(link);
+			const active = activeRef.current;
+			if (active && (s === active || t === active)) return mode === "fullscreen" ? 1.8 : 1.4;
+			return mode === "fullscreen" ? 1.05 : .85;
+		}).linkDirectionalParticles(mode === "fullscreen" ? 2 : 1).linkDirectionalParticleWidth(1.6).linkDirectionalParticleSpeed(.0055).linkDirectionalParticleColor(() => "rgba(0,220,255,0.7)").enableNodeDrag(true).cooldownTicks(140).d3AlphaDecay(.022).d3VelocityDecay(.32).nodeCanvasObject((node, ctx, globalScale) => {
+			paintPremiumNode(node, ctx, globalScale, activeRef.current, mode);
+		}).nodePointerAreaPaint((node, color, ctx) => {
 			const n = node;
 			if (n.x == null || n.y == null) return;
-			const label = n.name;
-			const fontSize = Math.max(11 / globalScale, 2.4);
-			const r = 3.6 + Math.sqrt(n.val) * 2.8;
-			const isActive = n.id === activeRef.current;
-			const bloom = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3.2);
-			bloom.addColorStop(0, isActive ? "rgba(0,200,255,0.45)" : "rgba(0,200,255,0.22)");
-			bloom.addColorStop(.45, isActive ? "rgba(0,200,255,0.12)" : "rgba(0,200,255,0.06)");
-			bloom.addColorStop(1, "rgba(0,200,255,0)");
-			ctx.fillStyle = bloom;
-			ctx.beginPath();
-			ctx.arc(n.x, n.y, r * 3.2, 0, Math.PI * 2);
-			ctx.fill();
-			const core = ctx.createRadialGradient(n.x - r * .25, n.y - r * .25, 0, n.x, n.y, r);
-			core.addColorStop(0, isActive ? "#9aeeff" : "#5adfff");
-			core.addColorStop(.55, isActive ? "#00c8ff" : "#00b4e6");
-			core.addColorStop(1, isActive ? "#0090c0" : "#007aa3");
+			const r = 6 + Math.sqrt(n.val) * 3;
+			ctx.fillStyle = color;
 			ctx.beginPath();
 			ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-			ctx.fillStyle = core;
-			ctx.shadowColor = "rgba(0,200,255,0.75)";
-			ctx.shadowBlur = isActive ? 22 : 12;
 			ctx.fill();
-			ctx.shadowBlur = 0;
-			ctx.strokeStyle = isActive ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.16)";
-			ctx.lineWidth = (isActive ? 1.4 : 1) / globalScale;
-			ctx.stroke();
-			if (globalScale > .5 || isActive || mode === "fullscreen") {
-				ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
-				ctx.textAlign = "center";
-				ctx.textBaseline = "top";
-				ctx.fillStyle = isActive ? "rgba(242,242,247,0.98)" : "rgba(242,242,247,0.78)";
-				ctx.fillText(label, n.x, n.y + r + 3);
-			}
-		};
-		const graph = new forceGraph(hostRef.current).backgroundColor("rgba(0,0,0,0)").nodeId("id").nodeLabel(() => "").nodeVal("val").nodeRelSize(5).linkColor(() => mode === "fullscreen" ? "rgba(0, 200, 255, 0.22)" : "rgba(0, 200, 255, 0.16)").linkWidth(() => mode === "fullscreen" ? 1.15 : .9).linkDirectionalParticles(mode === "fullscreen" ? 1 : 0).linkDirectionalParticleWidth(1.4).linkDirectionalParticleSpeed(.004).linkDirectionalParticleColor(() => "rgba(0,200,255,0.55)").enableNodeDrag(true).cooldownTicks(100).d3AlphaDecay(.028).d3VelocityDecay(.28).nodeCanvasObject(paintNode).onNodeHover((node) => {
+		}).onNodeHover((node) => {
 			if (!hostRef.current) return;
 			if (!node) {
 				setTooltip(null);
@@ -2809,13 +2863,18 @@ function GraphView({ mode, className }) {
 				x: coords.x,
 				y: coords.y,
 				title: n.name,
-				preview: n.preview
+				path: n.path,
+				preview: n.preview,
+				degree: n.degree
 			});
 		}).onNodeClick((node) => {
 			if (!node) return;
 			setActiveNote(node.id);
-			if (mode === "fullscreen") {}
-		});
+		}).onBackgroundClick(() => setTooltip(null));
+		try {
+			graph.d3Force("charge")?.strength?.(mode === "fullscreen" ? -180 : -120);
+			graph.d3Force("link")?.distance?.(mode === "fullscreen" ? 72 : 48);
+		} catch {}
 		graphRef.current = graph;
 		const ro = new ResizeObserver(() => {
 			if (!hostRef.current || !graphRef.current) return;
@@ -2838,65 +2897,46 @@ function GraphView({ mode, className }) {
 	(0, import_react.useEffect)(() => {
 		if (!graphRef.current) return;
 		graphRef.current.nodeCanvasObject((node, ctx, globalScale) => {
-			const n = node;
-			if (n.x == null || n.y == null) return;
-			const label = n.name;
-			const fontSize = Math.max(11 / globalScale, 2.4);
-			const r = 3.6 + Math.sqrt(n.val) * 2.8;
-			const isActive = n.id === activeNoteId;
-			const bloom = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3.2);
-			bloom.addColorStop(0, isActive ? "rgba(0,200,255,0.45)" : "rgba(0,200,255,0.22)");
-			bloom.addColorStop(.45, isActive ? "rgba(0,200,255,0.12)" : "rgba(0,200,255,0.06)");
-			bloom.addColorStop(1, "rgba(0,200,255,0)");
-			ctx.fillStyle = bloom;
-			ctx.beginPath();
-			ctx.arc(n.x, n.y, r * 3.2, 0, Math.PI * 2);
-			ctx.fill();
-			const core = ctx.createRadialGradient(n.x - r * .25, n.y - r * .25, 0, n.x, n.y, r);
-			core.addColorStop(0, isActive ? "#9aeeff" : "#5adfff");
-			core.addColorStop(.55, isActive ? "#00c8ff" : "#00b4e6");
-			core.addColorStop(1, isActive ? "#0090c0" : "#007aa3");
-			ctx.beginPath();
-			ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-			ctx.fillStyle = core;
-			ctx.shadowColor = "rgba(0,200,255,0.75)";
-			ctx.shadowBlur = isActive ? 22 : 12;
-			ctx.fill();
-			ctx.shadowBlur = 0;
-			ctx.strokeStyle = isActive ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.16)";
-			ctx.lineWidth = (isActive ? 1.4 : 1) / globalScale;
-			ctx.stroke();
-			if (globalScale > .5 || isActive) {
-				ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
-				ctx.textAlign = "center";
-				ctx.textBaseline = "top";
-				ctx.fillStyle = isActive ? "rgba(242,242,247,0.98)" : "rgba(242,242,247,0.78)";
-				ctx.fillText(label, n.x, n.y + r + 3);
-			}
+			paintPremiumNode(node, ctx, globalScale, activeNoteId, mode);
+		}).linkColor((link) => {
+			const [s, t] = linkIds(link);
+			if (activeNoteId && (s === activeNoteId || t === activeNoteId)) return "rgba(0, 200, 255, 0.5)";
+			return mode === "fullscreen" ? "rgba(0, 200, 255, 0.18)" : "rgba(0, 200, 255, 0.12)";
 		});
-	}, [activeNoteId]);
+	}, [activeNoteId, mode]);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: cn("graph-host relative flex min-h-0 flex-col", mode === "fullscreen" && "bg-[radial-gradient(ellipse_at_center,rgba(15,18,24)_0%,#050507_70%)]", className),
+		className: cn("graph-host relative flex min-h-0 flex-col", mode === "fullscreen" && "bg-[radial-gradient(ellipse_at_center,rgba(12,16,22)_0%,#050507_68%)]", className),
 		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "pointer-events-none absolute inset-0 opacity-[0.04]",
+				style: {
+					backgroundImage: "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.5) 1px, transparent 0)",
+					backgroundSize: "28px 28px"
+				}
+			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "absolute left-3 right-3 top-3 z-10 flex items-center justify-between",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-center gap-2 rounded-full border border-[var(--border)] bg-[rgba(15,15,18,0.8)] px-3 py-1 backdrop-blur-md",
+					className: "flex items-center gap-2 rounded-full border border-[var(--border)] bg-[rgba(10,10,12,0.82)] px-3 py-1.5 shadow-[0_4px_24px_rgba(0,0,0,0.35)] backdrop-blur-md",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Network, {
 						size: 13,
 						className: "text-[var(--accent)]"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-						className: "text-[11px] font-medium text-[var(--text-secondary)]",
+						className: "text-[11px] font-medium tracking-wide text-[var(--text-secondary)]",
 						children: [
 							data.nodes.length,
-							" notes · ",
+							" notes",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+								className: "mx-1.5 text-[var(--text-muted)]",
+								children: "·"
+							}),
 							data.links.length,
 							" links"
 						]
 					})]
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 					type: "button",
-					className: "icon-btn glass-panel h-8 w-8",
+					className: "icon-btn glass-panel pointer-events-auto h-8 w-8",
 					title: mode === "fullscreen" ? "Exit fullscreen graph" : "Expand graph",
 					onClick: () => setGraphMode(mode === "fullscreen" ? "panel" : "fullscreen"),
 					children: mode === "fullscreen" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Minimize2, { size: 14 }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Maximize2, { size: 14 })
@@ -2909,23 +2949,57 @@ function GraphView({ mode, className }) {
 			tooltip ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "graph-tooltip",
 				style: {
-					left: Math.min(tooltip.x + 14, (hostRef.current?.clientWidth ?? 300) - 200),
-					top: Math.max(8, tooltip.y - 10)
+					left: Math.min(tooltip.x + 16, (hostRef.current?.clientWidth ?? 320) - 220),
+					top: Math.max(12, tooltip.y - 12)
 				},
-				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-					className: "text-[12.5px] font-semibold text-[var(--text-primary)]",
-					children: tooltip.title
-				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-					className: "mt-1 text-[11.5px] leading-snug text-[var(--text-secondary)]",
-					children: tooltip.preview || "No preview"
-				})]
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "flex items-start justify-between gap-2",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "text-[13px] font-semibold tracking-tight text-[var(--text-primary)]",
+							children: tooltip.title
+						}), tooltip.degree > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+							className: "shrink-0 rounded-full bg-[rgba(0,200,255,0.12)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]",
+							children: [tooltip.degree, "×"]
+						}) : null]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mt-0.5 truncate font-mono text-[10px] text-[var(--text-muted)]",
+						children: tooltip.path
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mt-2 text-[12px] leading-snug text-[var(--text-secondary)]",
+						children: tooltip.preview || "Empty note"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mt-2 text-[10px] text-[var(--text-muted)]",
+						children: "Click to open"
+					})
+				]
 			}) : null,
-			data.nodes.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "pointer-events-none absolute inset-0 flex items-center justify-center",
-				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-					className: "text-[13px] text-[var(--text-muted)]",
-					children: "Link notes with [[wikilinks]] to grow the graph"
-				})
+			data.nodes.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.2)] bg-[rgba(0,200,255,0.08)] text-[var(--accent)]",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { size: 20 })
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "text-[14px] font-medium text-[var(--text-primary)]",
+						children: "Graph is waiting for links"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "mt-1 max-w-[240px] text-[12.5px] leading-snug text-[var(--text-muted)]",
+						children: [
+							"Connect notes with ",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+								className: "text-[var(--accent)]",
+								children: "[[wikilinks]]"
+							}),
+							" to grow the map."
+						]
+					})
+				]
 			}) : null
 		]
 	});
@@ -2964,113 +3038,108 @@ function RightPanel() {
 	}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", {
 		className: "panel-slide glass-panel absolute inset-y-0 right-0 z-30 flex h-full shrink-0 flex-col border-l border-[var(--border)] bg-[rgba(15,15,18,0.94)] lg:relative lg:z-0 lg:bg-[rgba(15,15,18,0.78)]",
 		style: { width: Math.min(rightWidth, 360) },
-		children: [
-			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "flex items-center gap-1 border-b border-[var(--border)] p-2",
-				children: [[
-					[
-						"backlinks",
-						Link2,
-						"Backlinks"
-					],
-					[
-						"outline",
-						ListTree,
-						"Outline"
-					],
-					[
-						"graph",
-						Network,
-						"Graph"
-					]
-				].map(([id, Icon, label]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-					type: "button",
-					className: cn("chip-btn flex-1 justify-center", tab === id && "is-active"),
-					onClick: () => setTab(id),
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-						className: "hidden xl:inline",
-						children: label
-					})]
-				}, id)), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-					type: "button",
-					className: "icon-btn ml-1 h-7 w-7",
-					onClick: () => setRightOpen(false),
-					title: "Collapse panel",
-					children: "×"
-				})]
-			}),
-			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "min-h-0 flex-1 overflow-y-auto",
-				children: [
-					tab === "backlinks" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "p-3",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
-							className: "mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]",
-							children: "Linked mentions"
-						}), !note ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "Open a note to see backlinks." }) : backlinks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "No backlinks yet. Link other notes with [[wikilinks]]." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
-							className: "space-y-1.5",
-							children: backlinks.map((b) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-								type: "button",
-								onClick: () => setActiveNote(b.fromId),
-								className: "w-full rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5 text-left transition-[border-color,background,transform] duration-200 hover:scale-[1.01] hover:border-[rgba(0,200,255,0.28)] hover:bg-[rgba(0,200,255,0.06)]",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "text-[13px] font-medium text-[var(--text-primary)]",
-									children: b.fromTitle
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-									className: "mt-1 line-clamp-2 text-[11.5px] leading-snug text-[var(--text-muted)]",
-									children: b.context
-								})]
-							}) }, b.fromId))
-						})]
-					}) : null,
-					tab === "outline" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-						className: "p-3",
-						children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
-								className: "mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]",
-								children: "Outline"
-							}),
-							!note ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "Open a note to see its outline." }) : outline.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Empty, { text: "No headings in this note." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
-								className: "space-y-0.5",
-								children: outline.map((h, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "rounded-lg px-2 py-1.5 text-[13px] text-[var(--text-secondary)]",
-									style: { paddingLeft: 8 + (h.level - 1) * 12 },
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "mr-2 text-[10px] text-[var(--text-muted)]",
-										children: ["H", h.level]
-									}), h.text]
-								}) }, i))
-							}),
-							note ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-								className: "mt-4 px-2 text-[11px] text-[var(--text-muted)]",
-								children: ["Viewing ", noteTitle(note)]
-							}) : null
-						]
-					}) : null,
-					tab === "graph" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "flex h-full min-h-[280px] flex-col",
-						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GraphView, {
-							mode: "panel",
-							className: "min-h-[320px] flex-1"
-						})
-					}) : null
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+			className: "flex items-center gap-1 border-b border-[var(--border)] p-2",
+			children: [[
+				[
+					"backlinks",
+					Link2,
+					"Backlinks"
+				],
+				[
+					"outline",
+					ListTree,
+					"Outline"
+				],
+				[
+					"graph",
+					Network,
+					"Graph"
 				]
-			}),
-			tab !== "graph" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "hidden h-[180px] shrink-0 border-t border-[var(--border)] lg:block",
-				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GraphView, {
-					mode: "panel",
-					className: "h-full"
-				})
-			}) : null
-		]
+			].map(([id, Icon, label]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+				type: "button",
+				className: cn("chip-btn flex-1 justify-center", tab === id && "is-active"),
+				onClick: () => setTab(id),
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					className: "hidden xl:inline",
+					children: label
+				})]
+			}, id)), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+				type: "button",
+				className: "icon-btn ml-1 h-7 w-7",
+				onClick: () => setRightOpen(false),
+				title: "Collapse panel",
+				children: "×"
+			})]
+		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+			className: "min-h-0 flex-1 overflow-y-auto",
+			children: [
+				tab === "backlinks" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "p-3",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]",
+						children: "Linked mentions"
+					}), backlinks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "rounded-[12px] border border-dashed border-[var(--border)] px-3 py-6 text-center",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-[13px] text-[var(--text-secondary)]",
+							children: "No backlinks yet"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "mt-1 text-[11.5px] leading-snug text-[var(--text-muted)]",
+							children: "Other notes that [[mention this]] will appear here."
+						})]
+					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
+						className: "flex flex-col gap-1",
+						children: backlinks.map((b) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							className: "tree-row w-full rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]",
+							onClick: () => setActiveNote(b.fromId),
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "text-[13px] font-medium text-[var(--text-primary)]",
+								children: b.fromTitle || noteTitle({
+									name: b.fromPath,
+									kind: "note"
+								})
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "mt-0.5 line-clamp-2 text-[11.5px] text-[var(--text-muted)]",
+								children: b.context
+							})]
+						}) }, b.fromId))
+					})]
+				}) : null,
+				tab === "outline" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "p-3",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]",
+						children: "Outline"
+					}), outline.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "rounded-[12px] border border-dashed border-[var(--border)] px-3 py-6 text-center",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-[13px] text-[var(--text-secondary)]",
+							children: "No headings"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "mt-1 text-[11.5px] text-[var(--text-muted)]",
+							children: "Use # headings to structure the note."
+						})]
+					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
+						className: "flex flex-col gap-0.5",
+						children: outline.map((h, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", {
+							className: "truncate rounded-md px-2 py-1.5 text-[12.5px] text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)]",
+							style: { paddingLeft: 8 + (h.level - 1) * 12 },
+							children: h.text
+						}, i))
+					})]
+				}) : null,
+				tab === "graph" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "flex h-[min(420px,50vh)] min-h-[280px] flex-col",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GraphView, {
+						mode: "panel",
+						className: "h-full min-h-[280px]"
+					})
+				}) : null
+			]
+		})]
 	})] });
-}
-function Empty({ text }) {
-	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-		className: "rounded-[12px] border border-dashed border-[var(--border)] px-3 py-6 text-center text-[12.5px] leading-relaxed text-[var(--text-muted)]",
-		children: text
-	});
 }
 /** Cached Fuse index — rebuilt only when vault note set changes */
 var cachedKey = "";
@@ -3161,141 +3230,166 @@ function CommandPalette() {
 	(0, import_react.useEffect)(() => {
 		if (!open) setQuery("");
 	}, [open]);
-	const hits = (0, import_react.useMemo)(() => searchVault(nodes, query, 14), [nodes, query]);
+	const hits = (0, import_react.useMemo)(() => searchVault(nodes, query, 16), [nodes, query]);
 	if (!open) return null;
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-		className: "fixed inset-0 z-[100] flex items-start justify-center bg-black/60 px-4 pt-[11vh] backdrop-blur-[6px]",
+		className: "fixed inset-0 z-[100] flex items-start justify-center bg-black/65 px-4 pt-[10vh] backdrop-blur-[8px]",
 		onClick: () => setCommandOpen(false),
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e, {
-			className: "glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_0_0_1px_rgba(0,200,255,0.08)]",
+			className: "glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.1)]",
 			onClick: (e) => e.stopPropagation(),
-			label: "Global search",
+			label: "Command palette",
 			shouldFilter: false,
-			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-				className: "flex items-center gap-2 border-b border-[var(--border)] px-4",
-				children: [
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, {
-						size: 16,
-						className: "text-[var(--accent)]"
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(_e.Input, {
-						value: query,
-						onValueChange: setQuery,
-						placeholder: "Search notes, paths, content…",
-						className: "h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]",
-						autoFocus: true
-					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("kbd", {
-						className: "rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]",
-						children: "ESC"
-					})
-				]
-			}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.List, {
-				className: "max-h-[min(440px,52vh)] overflow-y-auto p-2",
-				children: [
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(_e.Empty, {
-						className: "px-3 py-8 text-center text-[13px] text-[var(--text-muted)]",
-						children: "No matching notes."
-					}),
-					hits.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(_e.Group, {
-						heading: "Notes",
-						className: "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.1em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]",
-						children: hits.map((h) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.Item, {
-							value: h.noteId + h.title,
-							onSelect: () => {
-								setActiveNote(h.noteId);
-								setCommandOpen(false);
-							},
-							className: cn("cmdk-item flex cursor-pointer items-start gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]"),
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-center gap-2.5 border-b border-[var(--border)] px-4",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, {
+							size: 16,
+							className: "text-[var(--accent)]"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(_e.Input, {
+							value: query,
+							onValueChange: setQuery,
+							placeholder: "Search notes or run a command…",
+							className: "h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]",
+							autoFocus: true
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("kbd", {
+							className: "rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]",
+							children: "ESC"
+						})
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.List, {
+					className: "max-h-[min(460px,54vh)] overflow-y-auto p-2",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.Empty, {
+							className: "px-3 py-10 text-center",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "text-[13px] text-[var(--text-muted)]",
+								children: "No matching notes"
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+								type: "button",
+								className: "mt-3 text-[12.5px] text-[var(--accent)] hover:underline",
+								onClick: () => {
+									createNote(null, query || "Untitled");
+									setCommandOpen(false);
+								},
+								children: [
+									"Create “",
+									query || "Untitled",
+									"”"
+								]
+							})]
+						}),
+						hits.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(_e.Group, {
+							heading: query ? "Notes" : "Recent",
+							className: "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.1em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]",
+							children: hits.map((h) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.Item, {
+								value: h.noteId + h.title,
+								onSelect: () => {
+									setActiveNote(h.noteId);
+									setCommandOpen(false);
+								},
+								className: cn("cmdk-item flex cursor-pointer items-start gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]"),
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileText, {
+										size: 15,
+										className: "mt-0.5 shrink-0 text-[var(--accent)]"
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "min-w-0 flex-1",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+											className: "font-medium text-[var(--text-primary)]",
+											children: h.title
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "truncate text-[11.5px] text-[var(--text-muted)]",
+											children: [h.path, h.snippet ? ` · ${h.snippet}` : ""]
+										})]
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "ml-auto shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-muted)]",
+										children: h.matchType
+									})
+								]
+							}, h.noteId))
+						}) : null,
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.Group, {
+							heading: "Actions",
+							className: "mt-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.1em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]",
 							children: [
-								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FileText, {
-									size: 15,
-									className: "mt-0.5 shrink-0 text-[var(--accent)]"
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+									icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FilePlus, { size: 15 }),
+									label: "New note",
+									shortcut: "⌘N",
+									onSelect: () => {
+										createNote(null);
+										setCommandOpen(false);
+									}
 								}),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-									className: "min-w-0",
-									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-										className: "font-medium text-[var(--text-primary)]",
-										children: h.title
-									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "truncate text-[11.5px] text-[var(--text-muted)]",
-										children: [h.path, h.snippet ? ` · ${h.snippet}` : ""]
-									})]
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+									icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FolderOpen, { size: 15 }),
+									label: "Open folder as vault",
+									onSelect: () => {
+										openFolderAsVault();
+										setCommandOpen(false);
+									}
 								}),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-									className: "ml-auto shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-muted)]",
-									children: h.matchType
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+									icon: editorMode === "visual" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeXml, { size: 15 }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Eye, { size: 15 }),
+									label: editorMode === "visual" ? "Switch to source mode" : "Switch to visual mode",
+									shortcut: "⌘E",
+									onSelect: () => {
+										toggleEditorMode();
+										setCommandOpen(false);
+									}
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+									icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Network, { size: 15 }),
+									label: "Toggle full graph",
+									shortcut: "⌘G",
+									onSelect: () => {
+										toggleGraphFullscreen();
+										setCommandOpen(false);
+									}
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+									icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { size: 15 }),
+									label: "Open demo vault",
+									onSelect: () => {
+										openDemoVault();
+										setCommandOpen(false);
+									}
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
+									icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Radio, { size: 15 }),
+									label: "Simulate Hermes write",
+									onSelect: () => {
+										simulateHermesWrite();
+										setCommandOpen(false);
+									}
 								})
 							]
-						}, h.noteId))
-					}) : null,
-					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(_e.Group, {
-						heading: "Actions",
-						className: "mt-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.1em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]",
-						children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FilePlus, { size: 15 }),
-								label: "New note",
-								shortcut: "⌘N",
-								onSelect: () => {
-									createNote(null);
-									setCommandOpen(false);
-								}
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(FolderOpen, { size: 15 }),
-								label: "Open folder as vault",
-								onSelect: () => {
-									openFolderAsVault();
-									setCommandOpen(false);
-								}
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: editorMode === "visual" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeXml, { size: 15 }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Eye, { size: 15 }),
-								label: editorMode === "visual" ? "Switch to source mode" : "Switch to visual mode",
-								shortcut: "⌘E",
-								onSelect: () => {
-									toggleEditorMode();
-									setCommandOpen(false);
-								}
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Network, { size: 15 }),
-								label: "Toggle full graph",
-								shortcut: "⌘G",
-								onSelect: () => {
-									toggleGraphFullscreen();
-									setCommandOpen(false);
-								}
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { size: 15 }),
-								label: "Open demo vault",
-								onSelect: () => {
-									openDemoVault();
-									setCommandOpen(false);
-								}
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Radio, { size: 15 }),
-								label: "Simulate Hermes write",
-								onSelect: () => {
-									simulateHermesWrite();
-									setCommandOpen(false);
-								}
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Action, {
-								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HardDrive, { size: 15 }),
-								label: "Focus writing surface",
-								onSelect: () => {
-									setCommandOpen(false);
-									document.querySelector(".note-editor, .source-editor")?.focus();
-								}
-							})
-						]
-					})
-				]
-			})]
+						})
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-center gap-3 border-t border-[var(--border)] px-3 py-2 text-[10.5px] text-[var(--text-muted)]",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Keyboard, {
+							size: 12,
+							className: "text-[var(--text-muted)]"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "↑↓ navigate" }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "↵ open" }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "ml-auto",
+							children: "⌘K anytime"
+						})
+					]
+				})
+			]
 		})
 	});
 }
@@ -3313,7 +3407,7 @@ function Action({ icon, label, onSelect, shortcut }) {
 				children: label
 			}),
 			shortcut ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("kbd", {
-				className: "rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]",
+				className: "rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]",
 				children: shortcut
 			}) : null
 		]

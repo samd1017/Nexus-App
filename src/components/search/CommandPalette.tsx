@@ -10,7 +10,7 @@ import {
   Radio,
   Search,
   Sparkles,
-  HardDrive,
+  Keyboard,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { searchVault } from "@/lib/search/fuse-search";
@@ -34,43 +34,53 @@ export function CommandPalette() {
     if (!open) setQuery("");
   }, [open]);
 
-  const hits = useMemo(() => searchVault(nodes, query, 14), [nodes, query]);
+  const hits = useMemo(() => searchVault(nodes, query, 16), [nodes, query]);
 
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/60 px-4 pt-[11vh] backdrop-blur-[6px]"
+      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/65 px-4 pt-[10vh] backdrop-blur-[8px]"
       onClick={() => setCommandOpen(false)}
     >
       <Command
-        className="glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_0_0_1px_rgba(0,200,255,0.08)]"
+        className="glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.1)]"
         onClick={(e) => e.stopPropagation()}
-        label="Global search"
+        label="Command palette"
         shouldFilter={false}
       >
-        <div className="flex items-center gap-2 border-b border-[var(--border)] px-4">
+        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4">
           <Search size={16} className="text-[var(--accent)]" />
           <Command.Input
             value={query}
             onValueChange={setQuery}
-            placeholder="Search notes, paths, content…"
+            placeholder="Search notes or run a command…"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
           />
-          <kbd className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+          <kbd className="rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
             ESC
           </kbd>
         </div>
 
-        <Command.List className="max-h-[min(440px,52vh)] overflow-y-auto p-2">
-          <Command.Empty className="px-3 py-8 text-center text-[13px] text-[var(--text-muted)]">
-            No matching notes.
+        <Command.List className="max-h-[min(460px,54vh)] overflow-y-auto p-2">
+          <Command.Empty className="px-3 py-10 text-center">
+            <div className="text-[13px] text-[var(--text-muted)]">No matching notes</div>
+            <button
+              type="button"
+              className="mt-3 text-[12.5px] text-[var(--accent)] hover:underline"
+              onClick={() => {
+                createNote(null, query || "Untitled");
+                setCommandOpen(false);
+              }}
+            >
+              Create “{query || "Untitled"}”
+            </button>
           </Command.Empty>
 
           {hits.length > 0 ? (
             <Command.Group
-              heading="Notes"
+              heading={query ? "Notes" : "Recent"}
               className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.1em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]"
             >
               {hits.map((h) => (
@@ -86,7 +96,7 @@ export function CommandPalette() {
                   )}
                 >
                   <FileText size={15} className="mt-0.5 shrink-0 text-[var(--accent)]" />
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-medium text-[var(--text-primary)]">{h.title}</div>
                     <div className="truncate text-[11.5px] text-[var(--text-muted)]">
                       {h.path}
@@ -158,16 +168,15 @@ export function CommandPalette() {
                 setCommandOpen(false);
               }}
             />
-            <Action
-              icon={<HardDrive size={15} />}
-              label="Focus writing surface"
-              onSelect={() => {
-                setCommandOpen(false);
-                document.querySelector<HTMLElement>(".note-editor, .source-editor")?.focus();
-              }}
-            />
           </Command.Group>
         </Command.List>
+
+        <div className="flex items-center gap-3 border-t border-[var(--border)] px-3 py-2 text-[10.5px] text-[var(--text-muted)]">
+          <Keyboard size={12} className="text-[var(--text-muted)]" />
+          <span>↑↓ navigate</span>
+          <span>↵ open</span>
+          <span className="ml-auto">⌘K anytime</span>
+        </div>
       </Command>
     </div>
   );
@@ -192,7 +201,7 @@ function Action({
       <span className="text-[var(--text-muted)]">{icon}</span>
       <span className="flex-1">{label}</span>
       {shortcut ? (
-        <kbd className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+        <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
           {shortcut}
         </kbd>
       ) : null}

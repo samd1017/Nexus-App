@@ -3,7 +3,7 @@ import { r as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].
 import { O as redirect, c as HeadContent, d as Outlet, f as lazyRouteComponent, m as createRootRoute, p as createFileRoute, s as Scripts, u as createRouter } from "../_libs/@tanstack/react-router+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
 import { n as TriangleAlert } from "../_libs/lucide-react.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/router-BmlwWSFO.js
+//#region node_modules/.nitro/vite/services/ssr/assets/router-Bhyr-EaX.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function AppErrorComponent({ error }) {
@@ -127,7 +127,7 @@ function CreatedWithGrokBanner() {
 		]
 	})] });
 }
-var styles_default = "/assets/styles-Bmr4xsVH.css";
+var styles_default = "/assets/styles-BqjDUlWw.css";
 var APP_NAME = "Note App";
 var Route$2 = createRootRoute({
 	head: () => ({
@@ -165,7 +165,7 @@ function RootDocument() {
 		})]
 	});
 }
-var $$splitComponentImporter$1 = () => import("./routes-Nwym3A3c.mjs");
+var $$splitComponentImporter$1 = () => import("./routes-BPoqy4AV.mjs");
 var Route$1 = createFileRoute("/")({
 	component: lazyRouteComponent($$splitComponentImporter$1, "component"),
 	ssr: false
