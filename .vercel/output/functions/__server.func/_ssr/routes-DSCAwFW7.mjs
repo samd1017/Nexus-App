@@ -3,7 +3,7 @@ import { r as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
 import { A as HardDrive, B as Cloud, C as Link2, D as Heading3, E as Image, F as FilePlus, H as ChevronDown, I as FilePlus2, L as Eye, M as FolderPlus, N as FolderOpen, O as Heading2, P as FileText, R as Ellipsis, S as ListChecks, T as Italic, U as Bold, V as ChevronRight, _ as Maximize2, a as Sparkles, b as ListTree, c as Quote, d as PanelRightOpen, f as PanelRightClose, g as Minimize2, h as Minus, i as Table, j as Folder, k as Heading1, l as Plus, m as Network, o as Search, p as PanelLeftClose, r as Trash2, s as Radio, t as Zap, u as Pencil, v as LogOut, w as Keyboard, x as ListOrdered, y as List, z as CodeXml } from "../_libs/lucide-react.mjs";
 import { n as create, t as persist } from "../_libs/zustand.mjs";
-import { t as g } from "../_libs/marked.mjs";
+import { t as marked } from "../_libs/marked.mjs";
 import { t as TurndownService } from "../_libs/turndown.mjs";
 import { t as clsx } from "../_libs/clsx.mjs";
 import { t as twMerge } from "../_libs/tailwind-merge.mjs";
@@ -22,7 +22,7 @@ import "../_libs/tiptap__extension-table-header.mjs";
 import { t as forceGraph } from "../_libs/force-graph+[...].mjs";
 import { t as _e } from "../_libs/cmdk.mjs";
 import { t as entry_default } from "../_libs/fuse.js.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-BPoqy4AV.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-DSCAwFW7.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var DEFAULT_SETTINGS = {
@@ -342,7 +342,7 @@ function isOnlySerializationNoise(previous, next) {
 * Clean Markdown serialization helpers.
 * On-disk format: CommonMark + GFM + [[wikilinks]] — never proprietary HTML.
 */
-g.setOptions({
+marked.setOptions({
 	gfm: true,
 	breaks: false
 });
@@ -861,7 +861,9 @@ var useVaultStore = create()(persist((set, get) => ({
 		if (fsaSupported) {
 			const saved = await loadDirectoryHandle();
 			if (saved?.handle) {
-				if (await ensurePermission(saved.handle, "readwrite")) {
+				let ok = await ensurePermission(saved.handle, "readwrite");
+				if (!ok) ok = await ensurePermission(saved.handle, "readwrite");
+				if (ok) {
 					fsaRoot = saved.handle;
 					set({ connecting: true });
 					try {
@@ -1381,10 +1383,23 @@ var useVaultStore = create()(persist((set, get) => ({
 	},
 	applyExternalSnapshot: (nodes, rootIds) => {
 		const prev = get().nodes;
+		if (Object.values(prev).filter((n) => n.kind === "note").map((n) => `${n.path}:${n.mtime}:${(n.content ?? "").length}`).sort().join("|") === Object.values(nodes).filter((n) => n.kind === "note").map((n) => `${n.path}:${n.mtime}:${(n.content ?? "").length}`).sort().join("|") && get().rootIds.join() === rootIds.join()) return;
 		const active = get().activeNoteId;
 		const activePath = active ? prev[active]?.path : null;
 		let nextActive = active && nodes[active] ? active : null;
 		if (!nextActive && activePath) nextActive = Object.values(nodes).find((n) => n.path === activePath)?.id ?? null;
+		if (nextActive && prev[nextActive]?.content != null && nodes[nextActive] && get().dirtyNoteIds.includes(nextActive)) {
+			const disk = nodes[nextActive];
+			const local = prev[nextActive];
+			nodes = {
+				...nodes,
+				[nextActive]: {
+					...disk,
+					content: local.content,
+					mtime: local.mtime
+				}
+			};
+		}
 		const now = Date.now();
 		const shouldToast = now - lastExternalToastAt > 2500;
 		if (shouldToast) lastExternalToastAt = now;

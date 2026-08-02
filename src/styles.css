@@ -623,3 +623,22 @@
     box-shadow: 0 0 12px rgba(0, 200, 255, 0.15);
   }
 }
+
+
+/* Final ship density */
+@layer components {
+  .tree-row {
+    min-height: 28px;
+    border-radius: 8px;
+  }
+  .chip-btn {
+    min-height: 28px;
+    font-size: 12px;
+  }
+  .primary-btn {
+    box-shadow: 0 0 0 1px rgba(0, 200, 255, 0.2), 0 8px 28px rgba(0, 200, 255, 0.12);
+  }
+  .primary-btn:hover:not(:disabled) {
+    box-shadow: 0 0 0 1px rgba(0, 200, 255, 0.35), 0 10px 32px rgba(0, 200, 255, 0.18);
+  }
+}

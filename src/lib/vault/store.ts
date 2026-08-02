@@ -202,7 +202,11 @@ export const useVaultStore = create<VaultStore>()(
         if (fsaSupported) {
           const saved = await loadDirectoryHandle();
           if (saved?.handle) {
-            const ok = await ensurePermission(saved.handle, "readwrite");
+            let ok = await ensurePermission(saved.handle, "readwrite");
+            if (!ok) {
+              // One more attempt after query — some browsers need gesture; keep welcome ready
+              ok = await ensurePermission(saved.handle, "readwrite");
+            }
             if (ok) {
               fsaRoot = saved.handle;
               set({ connecting: true });
@@ -810,6 +814,20 @@ export const useVaultStore = create<VaultStore>()(
 
       applyExternalSnapshot: (nodes, rootIds) => {
         const prev = get().nodes;
+        // Skip no-op snapshots (performance on large vaults)
+        const prevSig = Object.values(prev)
+          .filter((n) => n.kind === "note")
+          .map((n) => `${n.path}:${n.mtime}:${(n.content ?? "").length}`)
+          .sort()
+          .join("|");
+        const nextSig = Object.values(nodes)
+          .filter((n) => n.kind === "note")
+          .map((n) => `${n.path}:${n.mtime}:${(n.content ?? "").length}`)
+          .sort()
+          .join("|");
+        if (prevSig === nextSig && get().rootIds.join() === rootIds.join()) {
+          return;
+        }
         const active = get().activeNoteId;
         const activePath = active ? prev[active]?.path : null;
         // Prefer re-select by path so FSA ids stay stable
@@ -817,6 +835,21 @@ export const useVaultStore = create<VaultStore>()(
         if (!nextActive && activePath) {
           nextActive =
             Object.values(nodes).find((n) => n.path === activePath)?.id ?? null;
+        }
+        // Preserve in-progress local edits on the active note when disk content is identical semantically
+        if (
+          nextActive &&
+          prev[nextActive]?.content != null &&
+          nodes[nextActive] &&
+          get().dirtyNoteIds.includes(nextActive)
+        ) {
+          const disk = nodes[nextActive];
+          const local = prev[nextActive];
+          // If user has dirty local edits, keep local content until save lands
+          nodes = {
+            ...nodes,
+            [nextActive]: { ...disk, content: local.content, mtime: local.mtime },
+          };
         }
         const now = Date.now();
         const shouldToast = now - lastExternalToastAt > 2500;

@@ -9,7 +9,6 @@
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 8080",
     "build": "vite build",
-    "db:migrate": "node -e \"console.log('[migrate] skipped \u2014 local-first Note App')\"",
     "build:dev": "vite build --mode development",
     "preview": "vite preview --host 0.0.0.0 --port 8080",
     "typecheck": "tsc --noEmit",
