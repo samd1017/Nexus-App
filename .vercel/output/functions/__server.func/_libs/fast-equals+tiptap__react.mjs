@@ -1,12 +1,12 @@
 import { r as __toESM } from "../_runtime.mjs";
+import { n as require_jsx_runtime } from "./radix-ui__react-context+react.mjs";
 import { r as require_react } from "./@radix-ui/react-compose-refs+[...].mjs";
 import { g as require_shim, h as require_with_selector } from "./@tanstack/react-router+[...].mjs";
-import { n as require_jsx_runtime } from "./radix-ui__react-context+react.mjs";
 import { s as require_react_dom } from "./@radix-ui/react-dialog+[...].mjs";
 import { n as Editor } from "./@tiptap/core+[...].mjs";
 //#region node_modules/fast-equals/dist/es/index.mjs
-var import_react = /* @__PURE__ */ __toESM(require_react(), 1);
 var import_jsx_runtime = require_jsx_runtime();
+var import_react = /* @__PURE__ */ __toESM(require_react(), 1);
 var import_shim = require_shim();
 var import_react_dom = /* @__PURE__ */ __toESM(require_react_dom(), 1);
 var { getOwnPropertyNames, getOwnPropertySymbols } = Object;

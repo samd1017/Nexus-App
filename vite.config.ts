@@ -50,10 +50,13 @@ function authDisabledPlugin(): Plugin {
 // `0.0.0.0:8080` is the live-preview contract — don't change host/port.
 // Keep `nitro` gated to `build` (the Vercel deploy target).
 export default defineConfig(({ command }) => ({
+  clearScreen: false,
+  envPrefix: ["VITE_", "TAURI_"],
   server: {
     host: "0.0.0.0",
     port: 8080,
     strictPort: true,
+    watch: { ignored: ["**/src-tauri/**"] },
   },
   resolve: { tsconfigPaths: true },
   plugins: [

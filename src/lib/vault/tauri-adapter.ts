@@ -1,0 +1,344 @@
+/**
+ * Native desktop vault via Tauri 2 plugins (fs + dialog).
+ * Path-based, Hermes-compatible plain Markdown on disk.
+ * Only used when running inside the Tauri shell.
+ */
+
+import type { VaultNode } from "./types";
+import { pathJoin } from "./types";
+import type { VaultScan } from "./fs-adapter";
+
+const ROOT_KEY = "nexus-desktop-vault-root";
+const RECENTS_KEY = "nexus-desktop-vault-recents";
+
+const SKIP_DIRS = new Set([
+  ".git",
+  ".noteapp",
+  "node_modules",
+  ".trash",
+  ".obsidian",
+  ".vscode",
+  ".idea",
+  "src-tauri",
+  "dist",
+  "dist-desktop",
+]);
+
+function nodeId(path: string): string {
+  return "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_");
+}
+
+export function getDesktopVaultRoot(): string | null {
+  try {
+    return localStorage.getItem(ROOT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setDesktopVaultRoot(root: string | null): void {
+  try {
+    if (root) localStorage.setItem(ROOT_KEY, root);
+    else localStorage.removeItem(ROOT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadDesktopRecents(): Array<{
+  id: string;
+  name: string;
+  path: string;
+}> {
+  try {
+    const raw = localStorage.getItem(RECENTS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as Array<{ id: string; name: string; path: string }>;
+  } catch {
+    return [];
+  }
+}
+
+export function pushDesktopRecent(entry: {
+  id: string;
+  name: string;
+  path: string;
+}): void {
+  const list = loadDesktopRecents().filter((r) => r.id !== entry.id);
+  list.unshift(entry);
+  try {
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, 10)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function basename(p: string): string {
+  const parts = p.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts[parts.length - 1] || p;
+}
+
+function joinRoot(root: string, rel: string): string {
+  if (!rel) return root;
+  const sep = root.includes("\\") && !root.includes("/") ? "\\" : "/";
+  return `${root.replace(/[/\\]+$/, "")}${sep}${rel.replace(/^[/\\]+/, "").replace(/\//g, sep)}`;
+}
+
+function toPosixRel(root: string, abs: string): string {
+  const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  const a = abs.replace(/\\/g, "/");
+  if (a.startsWith(r + "/")) return a.slice(r.length + 1);
+  if (a === r) return "";
+  return a;
+}
+
+export async function pickDesktopVaultFolder(): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    recursive: true,
+    title: "Open Nexus Vault",
+  });
+  if (selected == null) return null;
+  const root = Array.isArray(selected) ? selected[0] : selected;
+  if (!root || typeof root !== "string") return null;
+  setDesktopVaultRoot(root);
+  pushDesktopRecent({
+    id: "desk-" + basename(root).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase(),
+    name: basename(root),
+    path: root,
+  });
+  return root;
+}
+
+async function walkNotes(
+  root: string,
+  relDir: string,
+  onFile: (relPath: string, name: string, parentRel: string, abs: string, mtime: number, size: number) => Promise<void>,
+  onDir: (relPath: string, name: string, parentRel: string) => void,
+): Promise<void> {
+  const { readDir, stat } = await import("@tauri-apps/plugin-fs");
+  const absDir = joinRoot(root, relDir);
+  let entries;
+  try {
+    entries = await readDir(absDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const name = entry.name;
+    if (!name || name === ".DS_Store" || name === "Thumbs.db") continue;
+    if (entry.isDirectory) {
+      if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
+      const rel = relDir ? pathJoin(relDir, name) : name;
+      onDir(rel, name, relDir);
+      await walkNotes(root, rel, onFile, onDir);
+    } else if (entry.isFile && name.toLowerCase().endsWith(".md")) {
+      const rel = relDir ? pathJoin(relDir, name) : name;
+      const abs = joinRoot(root, rel);
+      try {
+        const meta = await stat(abs);
+        await onFile(
+          rel,
+          name,
+          relDir,
+          abs,
+          meta.mtime ? new Date(meta.mtime).getTime() : Date.now(),
+          Number(meta.size ?? 0),
+        );
+      } catch {
+        /* skip unreadable */
+      }
+    }
+  }
+}
+
+export async function scanDesktopVault(root: string): Promise<VaultScan> {
+  const { readTextFile } = await import("@tauri-apps/plugin-fs");
+  const nodes: Record<string, VaultNode> = {};
+  const rootIds: string[] = [];
+  const signatures: Record<string, string> = {};
+  const folderIds = new Map<string, string>();
+
+  await walkNotes(
+    root,
+    "",
+    async (path, name, parentPath, abs, mtime, size) => {
+      const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+      const id = nodeId(path);
+      let content = "";
+      try {
+        content = await readTextFile(abs);
+      } catch {
+        content = "";
+      }
+      nodes[id] = {
+        id,
+        path,
+        name,
+        kind: "note",
+        parentId,
+        mtime,
+        content,
+      };
+      signatures[path] = `${mtime}:${size}`;
+      if (!parentPath) rootIds.push(id);
+    },
+    (path, name, parentPath) => {
+      const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+      const id = nodeId(path);
+      folderIds.set(path, id);
+      nodes[id] = {
+        id,
+        path,
+        name,
+        kind: "folder",
+        parentId,
+        mtime: Date.now(),
+      };
+      if (!parentPath) rootIds.push(id);
+    },
+  );
+
+  rootIds.sort((a, b) => {
+    const na = nodes[a];
+    const nb = nodes[b];
+    if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
+    return na.name.localeCompare(nb.name);
+  });
+
+  return { nodes, rootIds, signatures };
+}
+
+export async function scanDesktopSignatures(
+  root: string,
+): Promise<Record<string, string>> {
+  const signatures: Record<string, string> = {};
+  await walkNotes(
+    root,
+    "",
+    async (path, _n, _p, _a, mtime, size) => {
+      signatures[path] = `${mtime}:${size}`;
+    },
+    () => {},
+  );
+  return signatures;
+}
+
+export async function writeDesktopNote(
+  root: string,
+  relPath: string,
+  content: string,
+): Promise<void> {
+  const { writeTextFile, mkdir } = await import("@tauri-apps/plugin-fs");
+  const parts = relPath.replace(/\\/g, "/").split("/").filter(Boolean);
+  parts.pop();
+  if (parts.length) {
+    const dir = joinRoot(root, parts.join("/"));
+    await mkdir(dir, { recursive: true });
+  }
+  await writeTextFile(joinRoot(root, relPath), content);
+}
+
+export async function createDesktopFolder(
+  root: string,
+  relPath: string,
+): Promise<void> {
+  const { mkdir } = await import("@tauri-apps/plugin-fs");
+  await mkdir(joinRoot(root, relPath), { recursive: true });
+}
+
+export async function deleteDesktopPath(
+  root: string,
+  relPath: string,
+  kind: "folder" | "note",
+): Promise<void> {
+  const { remove } = await import("@tauri-apps/plugin-fs");
+  await remove(joinRoot(root, relPath), { recursive: kind === "folder" });
+}
+
+export async function renameDesktopPath(
+  root: string,
+  oldRel: string,
+  newRel: string,
+  kind: "folder" | "note",
+  content?: string,
+): Promise<void> {
+  const { rename, readTextFile } = await import("@tauri-apps/plugin-fs");
+  if (kind === "note") {
+    let text = content;
+    if (text == null) {
+      text = await readTextFile(joinRoot(root, oldRel));
+    }
+    await writeDesktopNote(root, newRel, text);
+    await deleteDesktopPath(root, oldRel, "note");
+    return;
+  }
+  // folder rename
+  const parentParts = newRel.replace(/\\/g, "/").split("/").filter(Boolean);
+  parentParts.pop();
+  if (parentParts.length) {
+    await createDesktopFolder(root, parentParts.join("/"));
+  }
+  await rename(joinRoot(root, oldRel), joinRoot(root, newRel));
+}
+
+export async function openDesktopVaultAt(
+  root: string,
+): Promise<VaultScan> {
+  setDesktopVaultRoot(root);
+  return scanDesktopVault(root);
+}
+
+/** Poll-based watcher for desktop (no FileSystemObserver in webview) */
+export function startDesktopWatch(
+  root: string,
+  onChange: (scan: VaultScan) => void,
+  intervalMs = 900,
+): { stop: () => void; acknowledge: () => void } {
+  let lastSig = "";
+  let suppressUntil = 0;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let busy = false;
+
+  const tick = async () => {
+    if (busy || Date.now() < suppressUntil) return;
+    busy = true;
+    try {
+      const sigs = await scanDesktopSignatures(root);
+      const hash = JSON.stringify(sigs);
+      if (hash !== lastSig) {
+        lastSig = hash;
+        const scan = await scanDesktopVault(root);
+        onChange(scan);
+      }
+    } catch {
+      /* ignore transient */
+    } finally {
+      busy = false;
+    }
+  };
+
+  void (async () => {
+    try {
+      const sigs = await scanDesktopSignatures(root);
+      lastSig = JSON.stringify(sigs);
+    } catch {
+      lastSig = "";
+    }
+    timer = setInterval(() => void tick(), intervalMs);
+  })();
+
+  return {
+    stop: () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+    acknowledge: () => {
+      suppressUntil = Date.now() + 1200;
+    },
+  };
+}
+
+export { joinRoot, basename as desktopBasename, toPosixRel };

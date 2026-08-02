@@ -21,11 +21,11 @@ export interface RecentVault {
   /** Display path / label */
   path: string;
   lastOpened: number;
-  /** "demo" | "local" | "fsa" */
+  /** "demo" | "local" | "fsa" | "desktop" */
   mode: VaultMode;
 }
 
-export type VaultMode = "demo" | "local" | "fsa";
+export type VaultMode = "demo" | "local" | "fsa" | "desktop";
 
 export type EditorMode = "visual" | "source";
 

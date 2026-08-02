@@ -10,12 +10,16 @@ import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
 import {
+  getDesktopRoot,
   getFsaRoot,
+  setDesktopWatchAck,
   setWatcherAck,
   useVaultStore,
 } from "@/lib/vault/store";
 import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
-import { applyPrefsToDom, getPrefs } from "@/lib/prefs/preferences";
+import { startDesktopWatch } from "@/lib/vault/tauri-adapter";
+import { applyPrefsToDom, getPrefs, usePrefsStore } from "@/lib/prefs/preferences";
+import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
 
 export function AppShell() {
   const bootstrap = useVaultStore((s) => s.bootstrap);
@@ -32,6 +36,25 @@ export function AppShell() {
     applyPrefsToDom(getPrefs());
     void bootstrap();
   }, [bootstrap]);
+
+  // Native Tauri menu → store actions
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void bindDesktopMenu({
+      openVault: () => void useVaultStore.getState().openFolderAsVault(),
+      closeVault: () => useVaultStore.getState().closeVault(),
+      settings: () => usePrefsStore.getState().setSettingsOpen(true),
+      search: () => useVaultStore.getState().setCommandOpen(true),
+      newNote: () => {
+        useVaultStore.getState().createNote(null, "Untitled");
+      },
+      toggleGraph: () => useVaultStore.getState().toggleGraphFullscreen(),
+      toggleSource: () => useVaultStore.getState().toggleEditorMode(),
+    }).then((fn) => {
+      un = fn;
+    });
+    return () => un?.();
+  }, []);
 
   // Responsive side panels — only set defaults when vault opens / width crosses bands
   useEffect(() => {
@@ -59,16 +82,28 @@ export function AppShell() {
     const watcher = new VaultWatcher();
     watcherRef.current = watcher;
 
+    let desktopStop: (() => void) | null = null;
+
     if (mode === "fsa" && getFsaRoot()) {
       const dir = getFsaRoot()!;
       setWatcherAck((d) => watcher.acknowledgeWrite(d));
+      setDesktopWatchAck(null);
       void watcher.startFsa(dir, (ev) => {
         if (ev.scan) {
           applyExternalSnapshot(ev.scan.nodes, ev.scan.rootIds);
         }
       });
+    } else if (mode === "desktop" && getDesktopRoot()) {
+      const root = getDesktopRoot()!;
+      setWatcherAck(null);
+      const handle = startDesktopWatch(root, (scan) => {
+        applyExternalSnapshot(scan.nodes, scan.rootIds);
+      });
+      setDesktopWatchAck(() => handle.acknowledge());
+      desktopStop = handle.stop;
     } else if (vaultId) {
       setWatcherAck(null);
+      setDesktopWatchAck(null);
       watcher.start(
         () => vaultContentHash(useVaultStore.getState().nodes),
         () => {
@@ -80,6 +115,8 @@ export function AppShell() {
 
     return () => {
       setWatcherAck(null);
+      setDesktopWatchAck(null);
+      desktopStop?.();
       watcher.stop();
       watcherRef.current = null;
     };

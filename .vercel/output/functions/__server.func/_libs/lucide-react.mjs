@@ -944,6 +944,21 @@ var Search = createLucideIcon("search", [["path", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var Settings = createLucideIcon("settings", [["path", {
+	d: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z",
+	key: "1qme2f"
+}], ["circle", {
+	cx: "12",
+	cy: "12",
+	r: "3",
+	key: "1v7zrd"
+}]]);
+/**
+* @license lucide-react v0.510.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Sparkles = createLucideIcon("sparkles", [
 	["path", {
 		d: "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z",
@@ -1054,9 +1069,12 @@ var TriangleAlert = createLucideIcon("triangle-alert", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
-var Zap = createLucideIcon("zap", [["path", {
-	d: "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",
-	key: "1xq2db"
+var X = createLucideIcon("x", [["path", {
+	d: "M18 6 6 18",
+	key: "1bl5f8"
+}], ["path", {
+	d: "m6 6 12 12",
+	key: "d8bk6v"
 }]]);
 //#endregion
-export { HardDrive as A, Cloud as B, Link2 as C, Heading3 as D, Image as E, FilePlus as F, ChevronDown as H, FilePlus2 as I, Eye as L, FolderPlus as M, FolderOpen as N, Heading2 as O, FileText as P, Ellipsis as R, ListChecks as S, Italic as T, Bold as U, ChevronRight as V, Maximize2 as _, Sparkles as a, ListTree as b, Quote as c, PanelRightOpen as d, PanelRightClose as f, Minimize2 as g, Minus as h, Table as i, Folder as j, Heading1 as k, Plus as l, Network as m, TriangleAlert as n, Search as o, PanelLeftClose as p, Trash2 as r, Radio as s, Zap as t, Pencil as u, LogOut as v, Keyboard as w, ListOrdered as x, List as y, CodeXml as z };
+export { Heading1 as A, CodeXml as B, ListChecks as C, Image as D, Italic as E, FileText as F, ChevronRight as H, FilePlus as I, FilePlus2 as L, Folder as M, FolderPlus as N, Heading3 as O, FolderOpen as P, Eye as R, ListOrdered as S, Keyboard as T, ChevronDown as U, Cloud as V, Bold as W, Minimize2 as _, Sparkles as a, List as b, Radio as c, Pencil as d, PanelRightOpen as f, Minus as g, Network as h, Table as i, HardDrive as j, Heading2 as k, Quote as l, PanelLeftClose as m, TriangleAlert as n, Settings as o, PanelRightClose as p, Trash2 as r, Search as s, X as t, Plus as u, Maximize2 as v, Link2 as w, ListTree as x, LogOut as y, Ellipsis as z };

@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Desktop SPA + app sources for class detection */
+@source "./**/*.{ts,tsx}";
+@source "../desktop/**/*.{ts,tsx}";
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
 @theme {

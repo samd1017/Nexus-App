@@ -27,6 +27,17 @@ import {
   scanVault,
   writeNoteFile,
 } from "./fs-adapter";
+import {
+  createDesktopFolder,
+  deleteDesktopPath,
+  getDesktopVaultRoot,
+  openDesktopVaultAt,
+  pickDesktopVaultFolder,
+  renameDesktopPath,
+  setDesktopVaultRoot,
+  writeDesktopNote,
+} from "./tauri-adapter";
+import { isDesktopShell, canOpenLocalVaultFolder } from "@/lib/platform";
 import type { CloudProvider, CloudSession } from "@/lib/cloud/oauth";
 import { getPrefs } from "@/lib/prefs/preferences";
 import {
@@ -40,6 +51,8 @@ const STORAGE_KEY = "noteapp-vault-v2";
 const RECENT_KEY = "noteapp-recent-v2";
 
 let fsaRoot: FileSystemDirectoryHandle | null = null;
+let desktopRoot: string | null = null;
+let desktopWatchAck: (() => void) | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
 let watcherAck: ((dir: FileSystemDirectoryHandle) => Promise<void>) | null = null;
 let lastExternalToastAt = 0;
@@ -48,10 +61,22 @@ export function getFsaRoot(): FileSystemDirectoryHandle | null {
   return fsaRoot;
 }
 
+export function getDesktopRoot(): string | null {
+  return desktopRoot;
+}
+
 export function setWatcherAck(
   fn: ((dir: FileSystemDirectoryHandle) => Promise<void>) | null,
 ) {
   watcherAck = fn;
+}
+
+export function setDesktopWatchAck(fn: (() => void) | null) {
+  desktopWatchAck = fn;
+}
+
+function isDiskVault(mode: VaultMode): boolean {
+  return mode === "fsa" || mode === "desktop";
 }
 
 function loadRecents(): RecentVault[] {
@@ -93,6 +118,11 @@ function queueDiskWrite(fn: () => Promise<void>) {
 }
 
 async function persistNoteIfFsa(path: string, content: string) {
+  if (desktopRoot) {
+    await writeDesktopNote(desktopRoot, path, content);
+    desktopWatchAck?.();
+    return;
+  }
   if (!fsaRoot) return;
   await writeNoteFile(fsaRoot, path, content);
   if (watcherAck) await watcherAck(fsaRoot);
@@ -192,7 +222,7 @@ export const useVaultStore = create<VaultStore>()(
 
       bootstrap: async () => {
         const recents = loadRecents();
-        const fsaSupported = isFileSystemAccessSupported();
+        const fsaSupported = canOpenLocalVaultFolder();
         const cloudSession = loadCloudSession();
         set({
           recentVaults: recents,
@@ -201,7 +231,56 @@ export const useVaultStore = create<VaultStore>()(
           ready: true,
         });
 
-        if (fsaSupported && getPrefs().openLastVault) {
+        // Desktop: reopen last Tauri vault path
+        if (isDesktopShell() && getPrefs().openLastVault) {
+          const root = getDesktopVaultRoot();
+          if (root) {
+            set({ connecting: true });
+            try {
+              desktopRoot = root;
+              fsaRoot = null;
+              const scan = await openDesktopVaultAt(root);
+              const lastPath = get().settings.lastNotePath;
+              const active =
+                (lastPath &&
+                  Object.values(scan.nodes).find((n) => n.path === lastPath)
+                    ?.id) ||
+                Object.values(scan.nodes).find((n) => n.kind === "note")?.id ||
+                null;
+              const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
+              const vaultId =
+                "desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+              const recents2 = pushRecent({
+                id: vaultId,
+                name,
+                path: root,
+                lastOpened: Date.now(),
+                mode: "desktop",
+              });
+              set({
+                vaultId,
+                vaultName: name,
+                vaultPath: root,
+                mode: "desktop",
+                nodes: scan.nodes,
+                rootIds: scan.rootIds,
+                activeNoteId: active,
+                expandedFolders: Object.values(scan.nodes)
+                  .filter((n) => n.kind === "folder")
+                  .map((n) => n.id),
+                recentVaults: recents2,
+                connecting: false,
+                dirtyNoteIds: [],
+              });
+              return;
+            } catch {
+              desktopRoot = null;
+              set({ connecting: false });
+            }
+          }
+        }
+
+        if (!isDesktopShell() && isFileSystemAccessSupported() && getPrefs().openLastVault) {
           const saved = await loadDirectoryHandle();
           if (saved?.handle) {
             let ok = await ensurePermission(saved.handle, "readwrite");
@@ -258,6 +337,7 @@ export const useVaultStore = create<VaultStore>()(
         if (
           state.vaultId &&
           state.mode !== "fsa" &&
+          state.mode !== "desktop" &&
           Object.keys(state.nodes).length > 0
         ) {
           return;
@@ -276,6 +356,8 @@ export const useVaultStore = create<VaultStore>()(
 
       openDemoVault: () => {
         fsaRoot = null;
+        desktopRoot = null;
+        setDesktopVaultRoot(null);
         const demo = buildDemoVault();
         const vaultId = "demo-vault";
         const welcome = Object.values(demo.nodes).find(
@@ -315,6 +397,8 @@ export const useVaultStore = create<VaultStore>()(
 
       openLocalVault: (name, seed) => {
         fsaRoot = null;
+        desktopRoot = null;
+        setDesktopVaultRoot(null);
         const data = seed ?? buildDemoVault();
         const vaultId =
           "local-" + slugifyTitle(name).toLowerCase().replace(/\s+/g, "-");
@@ -353,6 +437,51 @@ export const useVaultStore = create<VaultStore>()(
       openFolderAsVault: async () => {
         set({ connecting: true });
         try {
+          if (isDesktopShell()) {
+            const root = await pickDesktopVaultFolder();
+            if (!root) {
+              set({ connecting: false });
+              return;
+            }
+            desktopRoot = root;
+            fsaRoot = null;
+            const scan = await openDesktopVaultAt(root);
+            const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
+            const vaultId =
+              "desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+            const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+            const recents = pushRecent({
+              id: vaultId,
+              name,
+              path: root,
+              lastOpened: Date.now(),
+              mode: "desktop",
+            });
+            set({
+              vaultId,
+              vaultName: name,
+              vaultPath: root,
+              mode: "desktop",
+              nodes: scan.nodes,
+              rootIds: scan.rootIds,
+              activeNoteId: first?.id ?? null,
+              expandedFolders: Object.values(scan.nodes)
+                .filter((n) => n.kind === "folder")
+                .map((n) => n.id),
+              dirtyNoteIds: [],
+              recentVaults: recents,
+              connecting: false,
+              toast: `Opened vault: ${name}`,
+              settings: {
+                ...get().settings,
+                lastNotePath: first?.path ?? null,
+                editorMode: getPrefs().defaultEditorMode,
+                graphMode: getPrefs().defaultGraphView,
+                rightOpen: getPrefs().defaultGraphView === "panel",
+              },
+            });
+            return;
+          }
           const handle = await pickVaultFolder();
           if (!handle) {
             set({ connecting: false });
@@ -411,6 +540,56 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       reopenRecentVault: async (id: string) => {
+        if (isDesktopShell()) {
+          const recent = get().recentVaults.find((r) => r.id === id);
+          const root = recent?.path || getDesktopVaultRoot();
+          if (!root || recent?.mode === "demo") {
+            if (id === "demo-vault" || recent?.mode === "demo") {
+              get().openDemoVault();
+              return;
+            }
+            set({ toast: "Pick the vault folder again" });
+            await get().openFolderAsVault();
+            return;
+          }
+          set({ connecting: true });
+          try {
+            desktopRoot = root;
+            fsaRoot = null;
+            const scan = await openDesktopVaultAt(root);
+            const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
+            const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+            const recents = pushRecent({
+              id,
+              name,
+              path: root,
+              lastOpened: Date.now(),
+              mode: "desktop",
+            });
+            set({
+              vaultId: id,
+              vaultName: name,
+              vaultPath: root,
+              mode: "desktop",
+              nodes: scan.nodes,
+              rootIds: scan.rootIds,
+              activeNoteId: first?.id ?? null,
+              expandedFolders: Object.values(scan.nodes)
+                .filter((n) => n.kind === "folder")
+                .map((n) => n.id),
+              dirtyNoteIds: [],
+              recentVaults: recents,
+              connecting: false,
+              toast: `Reopened vault: ${name}`,
+            });
+          } catch (e) {
+            set({
+              connecting: false,
+              toast: e instanceof Error ? e.message : "Failed to reopen vault",
+            });
+          }
+          return;
+        }
         const handle = await loadRecentHandle(id);
         if (!handle) {
           set({ toast: "Re-select the folder to restore access" });
@@ -464,6 +643,8 @@ export const useVaultStore = create<VaultStore>()(
       closeVault: () => {
         flushActiveEditors();
         fsaRoot = null;
+        desktopRoot = null;
+        setDesktopVaultRoot(null);
         void clearDirectoryHandle();
         set({
           vaultId: null,
@@ -572,7 +753,7 @@ export const useVaultStore = create<VaultStore>()(
             ? Date.now()
             : get().lastExternalSync,
         });
-        if (!opts?.external && get().mode === "fsa") {
+        if (!opts?.external && isDiskVault(get().mode)) {
           void queueDiskWrite(() => persistNoteIfFsa(node.path, next));
         }
       },
@@ -618,7 +799,19 @@ export const useVaultStore = create<VaultStore>()(
           }
         }
         set({ nodes });
-        if (get().mode === "fsa" && fsaRoot) {
+        if (get().mode === "desktop" && desktopRoot) {
+          const root = desktopRoot;
+          void queueDiskWrite(async () => {
+            await renameDesktopPath(
+              root,
+              oldPath,
+              newPath,
+              node.kind,
+              node.kind === "note" ? (nodes[id].content ?? "") : undefined,
+            );
+            desktopWatchAck?.();
+          });
+        } else if (get().mode === "fsa" && fsaRoot) {
           const root = fsaRoot;
           void queueDiskWrite(async () => {
             await renamePathOnDisk(
@@ -649,7 +842,9 @@ export const useVaultStore = create<VaultStore>()(
         const id =
           get().mode === "fsa"
             ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
-            : makeId(path);
+            : get().mode === "desktop"
+              ? "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
+              : makeId(path);
         const content = `# ${title.replace(/\.md$/i, "")}\n\n`;
         const node: VaultNode = {
           id,
@@ -674,7 +869,7 @@ export const useVaultStore = create<VaultStore>()(
           expandedFolders: expanded,
           dirtyNoteIds: [...get().dirtyNoteIds, id],
         });
-        if (get().mode === "fsa" && fsaRoot) {
+        if (isDiskVault(get().mode)) {
           void queueDiskWrite(() => persistNoteIfFsa(path, content));
         }
         return id;
@@ -694,7 +889,9 @@ export const useVaultStore = create<VaultStore>()(
         const id =
           get().mode === "fsa"
             ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
-            : stableId(path) + "_" + Math.random().toString(36).slice(2, 6);
+            : get().mode === "desktop"
+              ? "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
+              : stableId(path) + "_" + Math.random().toString(36).slice(2, 6);
         const node: VaultNode = {
           id,
           path,
@@ -710,7 +907,13 @@ export const useVaultStore = create<VaultStore>()(
           rootIds,
           expandedFolders: [...get().expandedFolders, id],
         });
-        if (get().mode === "fsa" && fsaRoot) {
+        if (get().mode === "desktop" && desktopRoot) {
+          const root = desktopRoot;
+          void queueDiskWrite(async () => {
+            await createDesktopFolder(root, path);
+            desktopWatchAck?.();
+          });
+        } else if (get().mode === "fsa" && fsaRoot) {
           const root = fsaRoot;
           void queueDiskWrite(async () => {
             await createFolderOnDisk(root, path);
@@ -746,7 +949,13 @@ export const useVaultStore = create<VaultStore>()(
             : get().activeNoteId,
           expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
         });
-        if (get().mode === "fsa" && fsaRoot) {
+        if (get().mode === "desktop" && desktopRoot) {
+          const root = desktopRoot;
+          void queueDiskWrite(async () => {
+            await deleteDesktopPath(root, target.path, target.kind);
+            desktopWatchAck?.();
+          });
+        } else if (get().mode === "fsa" && fsaRoot) {
           const root = fsaRoot;
           void queueDiskWrite(async () => {
             await deletePathOnDisk(root, target.path, target.kind);
@@ -790,7 +999,19 @@ export const useVaultStore = create<VaultStore>()(
         let rootIds = get().rootIds.filter((r) => r !== id);
         if (newParentId == null) rootIds = [...rootIds, id];
         set({ nodes, rootIds });
-        if (get().mode === "fsa" && fsaRoot) {
+        if (get().mode === "desktop" && desktopRoot) {
+          const root = desktopRoot;
+          void queueDiskWrite(async () => {
+            await renameDesktopPath(
+              root,
+              oldPath,
+              newPath,
+              node.kind,
+              node.kind === "note" ? (nodes[id].content ?? "") : undefined,
+            );
+            desktopWatchAck?.();
+          });
+        } else if (get().mode === "fsa" && fsaRoot) {
           const root = fsaRoot;
           void queueDiskWrite(async () => {
             await renamePathOnDisk(
@@ -821,7 +1042,7 @@ export const useVaultStore = create<VaultStore>()(
         );
         if (existing) {
           get().updateNoteContent(existing.id, content, { external: true });
-          if (mode === "fsa" && fsaRoot) {
+          if (isDiskVault(mode)) {
             void queueDiskWrite(() => persistNoteIfFsa(path, content));
           }
           set({
@@ -835,7 +1056,9 @@ export const useVaultStore = create<VaultStore>()(
         const id =
           mode === "fsa"
             ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
-            : stableId(path);
+            : mode === "desktop"
+              ? "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
+              : stableId(path);
         const node: VaultNode = {
           id,
           path,
@@ -859,7 +1082,7 @@ export const useVaultStore = create<VaultStore>()(
           toast: "Hermes created Systems/Hermes Pulse.md",
           activeNoteId: id,
         });
-        if (mode === "fsa" && fsaRoot) {
+        if (isDiskVault(mode)) {
           void queueDiskWrite(() => persistNoteIfFsa(path, content));
         }
       },
@@ -966,17 +1189,20 @@ export const useVaultStore = create<VaultStore>()(
     }),
     {
       name: STORAGE_KEY,
-      partialize: (s) => ({
-        vaultId: s.mode === "fsa" ? null : s.vaultId,
-        vaultName: s.mode === "fsa" ? "" : s.vaultName,
-        vaultPath: s.mode === "fsa" ? "" : s.vaultPath,
-        mode: s.mode === "fsa" ? "demo" : s.mode,
-        nodes: s.mode === "fsa" ? {} : s.nodes,
-        rootIds: s.mode === "fsa" ? [] : s.rootIds,
-        activeNoteId: s.mode === "fsa" ? null : s.activeNoteId,
-        settings: s.settings,
-        expandedFolders: s.mode === "fsa" ? [] : s.expandedFolders,
-      }),
+      partialize: (s) => {
+        const disk = s.mode === "fsa" || s.mode === "desktop";
+        return {
+          vaultId: disk ? null : s.vaultId,
+          vaultName: disk ? "" : s.vaultName,
+          vaultPath: disk ? "" : s.vaultPath,
+          mode: disk ? "demo" : s.mode,
+          nodes: disk ? {} : s.nodes,
+          rootIds: disk ? [] : s.rootIds,
+          activeNoteId: disk ? null : s.activeNoteId,
+          settings: s.settings,
+          expandedFolders: disk ? [] : s.expandedFolders,
+        };
+      },
     },
   ),
 );
