@@ -21,6 +21,7 @@ import {
   isOnlySerializationNoise,
   preferCleanWrite,
 } from "@/lib/markdown/purity";
+import { registerVisualFlush } from "@/lib/editor/flush";
 import { EditorToolbar } from "./EditorToolbar";
 
 interface Props {
@@ -29,10 +30,7 @@ interface Props {
 }
 
 /**
- * Visual editor with purity-preserving autosave:
- * - Hermes/external content is loaded as-is
- * - Disk writes only when user edits change semantic content
- * - Serialization noise never rewrites on-disk Markdown
+ * Visual editor with purity-preserving autosave + immediate flush on unmount/mode switch.
  */
 export function VisualEditor({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
@@ -40,9 +38,12 @@ export function VisualEditor({ noteId, content }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNoteId = useRef(noteId);
   const applying = useRef(false);
-  /** Baseline markdown last loaded from store/disk (Hermes-safe) */
   const baselineMd = useRef(content);
   const userEdited = useRef(false);
+  /** False until the first successful setContent for this editor instance */
+  const hydrated = useRef(false);
+  const noteIdRef = useRef(noteId);
+  noteIdRef.current = noteId;
 
   const editor = useEditor({
     extensions: [
@@ -68,6 +69,7 @@ export function VisualEditor({ noteId, content }: Props) {
         },
       }),
     ],
+    content: markdownWithWikilinksToHtml(content || ""),
     editorProps: {
       attributes: {
         class: "note-editor min-h-[50vh] focus:outline-none",
@@ -78,38 +80,88 @@ export function VisualEditor({ noteId, content }: Props) {
       userEdited.current = true;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        const root = ed.view.dom as HTMLElement;
-        const serialized = htmlDocToMarkdown(root);
-        const prev =
-          useVaultStore.getState().nodes[noteId]?.content ?? baselineMd.current;
-        // Never rewrite Hermes notes for serialization noise alone
-        if (isOnlySerializationNoise(prev, serialized)) return;
-        const md = preferCleanWrite(prev, serialized);
-        if (md === prev) return;
-        baselineMd.current = md;
-        updateNoteContent(noteId, md);
+        commitFromEditor(ed);
       }, 400);
     },
   });
+
+  function commitFromEditor(ed: NonNullable<typeof editor>) {
+    const id = noteIdRef.current;
+    const root = ed.view.dom as HTMLElement;
+    const serialized = htmlDocToMarkdown(root);
+    const prev =
+      useVaultStore.getState().nodes[id]?.content ?? baselineMd.current;
+    if (isOnlySerializationNoise(prev, serialized)) {
+      userEdited.current = false;
+      return;
+    }
+    const md = preferCleanWrite(prev, serialized);
+    if (md === prev) {
+      userEdited.current = false;
+      return;
+    }
+    baselineMd.current = md;
+    userEdited.current = false;
+    updateNoteContent(id, md);
+  }
+
+  function flushNow() {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (!editor || applying.current) return;
+    if (userEdited.current || editor.isEditable) {
+      try {
+        commitFromEditor(editor);
+      } catch {
+        /* editor may be destroyed */
+      }
+    }
+  }
+
+  useEffect(() => {
+    registerVisualFlush(() => flushNow());
+    return () => {
+      flushNow();
+      registerVisualFlush(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, noteId]);
 
   // Load content when note changes or external update
   useEffect(() => {
     if (!editor) return;
     const switched = lastNoteId.current !== noteId;
-    lastNoteId.current = noteId;
 
-    if (!switched) {
-      // External update while same note open — only if user isn't dirty-editing
-      if (userEdited.current) {
-        const root = editor.view.dom as HTMLElement;
-        const current = htmlDocToMarkdown(root);
-        if (!isOnlySerializationNoise(current, content) && current !== content) {
-          // Conflict: prefer disk (Hermes) when external and user idle > soft merge
-          // If fingerprints differ, take external (Hermes wins for external mtime path)
-        }
-        // If content matches baseline fingerprint, ignore
-        if (isOnlySerializationNoise(baselineMd.current, content)) return;
+    if (switched) {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
       }
+      if (userEdited.current && !applying.current) {
+        try {
+          const prevId = lastNoteId.current;
+          const root = editor.view.dom as HTMLElement;
+          const serialized = htmlDocToMarkdown(root);
+          const prev =
+            useVaultStore.getState().nodes[prevId]?.content ??
+            baselineMd.current;
+          if (!isOnlySerializationNoise(prev, serialized)) {
+            const md = preferCleanWrite(prev, serialized);
+            if (md !== prev) updateNoteContent(prevId, md);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      lastNoteId.current = noteId;
+      hydrated.current = false;
+    }
+
+    // Always hydrate once per mount / note; skip noise-only external updates after that
+    if (hydrated.current && !switched) {
+      if (userEdited.current) return;
       if (isOnlySerializationNoise(baselineMd.current, content)) return;
     }
 
@@ -118,6 +170,7 @@ export function VisualEditor({ noteId, content }: Props) {
     baselineMd.current = content;
     const html = markdownWithWikilinksToHtml(content || "");
     editor.commands.setContent(html, { emitUpdate: false });
+    hydrated.current = true;
     requestAnimationFrame(() => {
       const pills = editor.view.dom.querySelectorAll("span[data-wikilink]");
       pills.forEach((pill) => {
@@ -127,13 +180,7 @@ export function VisualEditor({ noteId, content }: Props) {
       });
       applying.current = false;
     });
-  }, [editor, noteId, content]);
-
-  useEffect(() => {
-    return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-    };
-  }, []);
+  }, [editor, noteId, content, updateNoteContent]);
 
   if (!editor) {
     return (

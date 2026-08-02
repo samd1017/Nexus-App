@@ -11,6 +11,7 @@ import type {
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
 import { preferCleanWrite } from "@/lib/markdown/serialize";
+import { flushActiveEditors } from "@/lib/editor/flush";
 import { slugifyTitle } from "@/lib/utils";
 import {
   clearDirectoryHandle,
@@ -446,21 +447,30 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       closeVault: () => {
+        flushActiveEditors();
         fsaRoot = null;
         void clearDirectoryHandle();
         set({
           vaultId: null,
           vaultName: "",
           vaultPath: "",
+          mode: "demo",
           nodes: {},
           rootIds: [],
           activeNoteId: null,
           dirtyNoteIds: [],
           lastExternalSync: null,
+          expandedFolders: [],
+          settings: {
+            ...get().settings,
+            graphMode: "panel",
+            editorMode: "visual",
+          },
         });
       },
 
       setActiveNote: (id) => {
+        flushActiveEditors();
         const note = id ? get().nodes[id] : null;
         set({
           activeNoteId: id,
@@ -484,12 +494,15 @@ export const useVaultStore = create<VaultStore>()(
         set({ settings: { ...get().settings, leftOpen: open } }),
       setRightOpen: (open) =>
         set({ settings: { ...get().settings, rightOpen: open } }),
-      setEditorMode: (mode) =>
-        set({ settings: { ...get().settings, editorMode: mode } }),
+      setEditorMode: (mode) => {
+        flushActiveEditors();
+        set({ settings: { ...get().settings, editorMode: mode } });
+      },
       setGraphMode: (mode) =>
         set({ settings: { ...get().settings, graphMode: mode } }),
 
       toggleEditorMode: () => {
+        flushActiveEditors();
         const cur = get().settings.editorMode;
         set({
           settings: {
@@ -928,6 +941,13 @@ export const useVaultStore = create<VaultStore>()(
     },
   ),
 );
+
+// Dev/QA hook — single store instance used by the UI
+if (typeof window !== "undefined") {
+  (window as unknown as { __NOTEAPP__?: { store: typeof useVaultStore } }).__NOTEAPP__ = {
+    store: useVaultStore,
+  };
+}
 
 export function getNoteDisplayTitle(node: VaultNode | null | undefined): string {
   if (!node) return "";

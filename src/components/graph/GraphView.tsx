@@ -133,6 +133,8 @@ export function GraphView({ mode, className }: Props) {
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const setGraphMode = useVaultStore((s) => s.setGraphMode);
+  const setLeftOpen = useVaultStore((s) => s.setLeftOpen);
+  const setRightOpen = useVaultStore((s) => s.setRightOpen);
   const [tooltip, setTooltip] = useState<{
     x: number;
     y: number;
@@ -164,6 +166,16 @@ export function GraphView({ mode, className }: Props) {
 
   useEffect(() => {
     if (!hostRef.current) return;
+
+    const openNoteFromGraph = (id: string) => {
+      // Exit fullscreen so the editor shell is visible again
+      setGraphMode("panel");
+      setLeftOpen(true);
+      if (typeof window !== "undefined" && window.innerWidth >= 1200) {
+        setRightOpen(true);
+      }
+      setActiveNote(id);
+    };
 
     const graph = new ForceGraph(hostRef.current)
       .backgroundColor("rgba(0,0,0,0)")
@@ -231,7 +243,7 @@ export function GraphView({ mode, className }: Props) {
       })
       .onNodeClick((node) => {
         if (!node) return;
-        setActiveNote((node as FGNode).id);
+        openNoteFromGraph((node as FGNode).id);
       })
       .onBackgroundClick(() => setTooltip(null));
 
@@ -264,7 +276,7 @@ export function GraphView({ mode, className }: Props) {
       if (hostRef.current) hostRef.current.innerHTML = "";
       graphRef.current = null;
     };
-  }, [setActiveNote, mode]);
+  }, [setActiveNote, setGraphMode, setLeftOpen, setRightOpen, mode]);
 
   useEffect(() => {
     if (!graphRef.current) return;
@@ -293,7 +305,7 @@ export function GraphView({ mode, className }: Props) {
       className={cn(
         "graph-host relative flex min-h-0 flex-col",
         mode === "fullscreen" &&
-          "bg-[radial-gradient(ellipse_at_center,rgba(12,16,22)_0%,#050507_68%)]",
+          "bg-[radial-gradient(ellipse_at_center,rgb(12,16,22)_0%,#050507_68%)]",
         className,
       )}
     >

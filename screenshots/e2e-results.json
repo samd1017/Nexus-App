@@ -1,0 +1,80 @@
+{
+  "results": [
+    {
+      "name": "1+3 Visual→Source rapid",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 Source→Visual",
+      "ok": true,
+      "detail": "From Source\n\nSOURCE_MARK_1785697134927\n\nWelcome"
+    },
+    {
+      "name": "7 pills",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "7 nav",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "4 tree",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "6 fullscreen",
+      "ok": true,
+      "detail": "fullscreen"
+    },
+    {
+      "name": "5-6 graph open",
+      "ok": true,
+      "detail": "Welcome panel"
+    },
+    {
+      "name": "5 panel select",
+      "ok": true,
+      "detail": "Knowledge OS.md"
+    },
+    {
+      "name": "8 crud",
+      "ok": true,
+      "detail": "{\"name\":\"E2E Renamed.md\",\"gone\":true}"
+    },
+    {
+      "name": "9 hermes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 palette",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "12 bulk",
+      "ok": true,
+      "detail": "n=34"
+    },
+    {
+      "name": "11 close welcome",
+      "ok": true,
+      "detail": "vid=null"
+    },
+    {
+      "name": "final flush",
+      "ok": true,
+      "detail": "ny local folder to use your own files.*\n"
+    },
+    {
+      "name": "errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": []
+}
