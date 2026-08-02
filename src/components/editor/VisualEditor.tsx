@@ -17,7 +17,10 @@ import {
 } from "@/lib/markdown/wikilink-extension";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveWikilink } from "@/lib/graph/build-graph";
-import { preferCleanWrite } from "@/lib/markdown/serialize";
+import {
+  isOnlySerializationNoise,
+  preferCleanWrite,
+} from "@/lib/markdown/purity";
 import { EditorToolbar } from "./EditorToolbar";
 
 interface Props {
@@ -25,13 +28,21 @@ interface Props {
   content: string;
 }
 
+/**
+ * Visual editor with purity-preserving autosave:
+ * - Hermes/external content is loaded as-is
+ * - Disk writes only when user edits change semantic content
+ * - Serialization noise never rewrites on-disk Markdown
+ */
 export function VisualEditor({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
-  const nodes = useVaultStore((s) => s.nodes);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNoteId = useRef(noteId);
   const applying = useRef(false);
+  /** Baseline markdown last loaded from store/disk (Hermes-safe) */
+  const baselineMd = useRef(content);
+  const userEdited = useRef(false);
 
   const editor = useEditor({
     extensions: [
@@ -64,15 +75,20 @@ export function VisualEditor({ noteId, content }: Props) {
     },
     onUpdate: ({ editor: ed }) => {
       if (applying.current) return;
+      userEdited.current = true;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
         const root = ed.view.dom as HTMLElement;
-        const md = preferCleanWrite(
-          useVaultStore.getState().nodes[noteId]?.content ?? "",
-          htmlDocToMarkdown(root),
-        );
+        const serialized = htmlDocToMarkdown(root);
+        const prev =
+          useVaultStore.getState().nodes[noteId]?.content ?? baselineMd.current;
+        // Never rewrite Hermes notes for serialization noise alone
+        if (isOnlySerializationNoise(prev, serialized)) return;
+        const md = preferCleanWrite(prev, serialized);
+        if (md === prev) return;
+        baselineMd.current = md;
         updateNoteContent(noteId, md);
-      }, 350);
+      }, 400);
     },
   });
 
@@ -82,17 +98,26 @@ export function VisualEditor({ noteId, content }: Props) {
     const switched = lastNoteId.current !== noteId;
     lastNoteId.current = noteId;
 
-    // Skip if local edit produced same content
     if (!switched) {
-      const root = editor.view.dom as HTMLElement;
-      const current = htmlDocToMarkdown(root);
-      if (preferCleanWrite(current, content) === current) return;
+      // External update while same note open — only if user isn't dirty-editing
+      if (userEdited.current) {
+        const root = editor.view.dom as HTMLElement;
+        const current = htmlDocToMarkdown(root);
+        if (!isOnlySerializationNoise(current, content) && current !== content) {
+          // Conflict: prefer disk (Hermes) when external and user idle > soft merge
+          // If fingerprints differ, take external (Hermes wins for external mtime path)
+        }
+        // If content matches baseline fingerprint, ignore
+        if (isOnlySerializationNoise(baselineMd.current, content)) return;
+      }
+      if (isOnlySerializationNoise(baselineMd.current, content)) return;
     }
 
     applying.current = true;
+    userEdited.current = false;
+    baselineMd.current = content;
     const html = markdownWithWikilinksToHtml(content || "");
     editor.commands.setContent(html, { emitUpdate: false });
-    // mark missing wikilinks
     requestAnimationFrame(() => {
       const pills = editor.view.dom.querySelectorAll("span[data-wikilink]");
       pills.forEach((pill) => {
@@ -102,7 +127,7 @@ export function VisualEditor({ noteId, content }: Props) {
       });
       applying.current = false;
     });
-  }, [editor, noteId, content, nodes]);
+  }, [editor, noteId, content]);
 
   useEffect(() => {
     return () => {
@@ -113,13 +138,13 @@ export function VisualEditor({ noteId, content }: Props) {
   if (!editor) {
     return (
       <div className="flex h-40 items-center justify-center text-[var(--text-muted)]">
-        Loading editor…
+        <div className="h-5 w-5 animate-pulse rounded-md bg-[rgba(0,200,255,0.2)]" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="fade-in flex h-full min-h-0 flex-col">
       <EditorToolbar editor={editor} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 md:px-10 md:py-6">
         <div className="mx-auto max-w-[720px]">

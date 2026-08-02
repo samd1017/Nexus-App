@@ -1,10 +1,11 @@
 /**
  * Live vault watching — Hermes-ready.
- * Demo/local: hash poll of in-memory nodes.
- * FSA: poll directory signatures every ~1s and rescan on change.
+ * Prefers FileSystemObserver when available; falls back to ~800ms signature poll.
+ * Uses incremental rescans to avoid full vault re-reads.
  */
 
 import {
+  incrementalRescan,
   scanSignatures,
   scanVault,
   signaturesChanged,
@@ -15,18 +16,22 @@ type WatchCallback = (event: {
   type: "change" | "create" | "delete";
   path: string;
   scan?: VaultScan;
+  changedPaths?: string[];
 }) => void;
 
 export class VaultWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastHash = "";
+  private lastScan: VaultScan | null = null;
   private lastSigs: Record<string, string> = {};
   private cb: WatchCallback | null = null;
   private dir: FileSystemDirectoryHandle | null = null;
   private scanning = false;
+  private observer: { disconnect: () => void } | null = null;
+  private suppressUntil = 0;
 
   /** Memory-mode watch (demo / local) */
-  start(getHash: () => string, cb: WatchCallback, intervalMs = 1000) {
+  start(getHash: () => string, cb: WatchCallback, intervalMs = 900) {
     this.stop();
     this.cb = cb;
     this.dir = null;
@@ -40,49 +45,79 @@ export class VaultWatcher {
     }, intervalMs);
   }
 
-  /** Real filesystem watch via FSA signature polling */
+  /** Real filesystem watch via FSA */
   async startFsa(
     dir: FileSystemDirectoryHandle,
     cb: WatchCallback,
-    intervalMs = 1200,
+    intervalMs = 900,
   ) {
     this.stop();
     this.cb = cb;
     this.dir = dir;
     try {
-      this.lastSigs = await scanSignatures(dir);
+      const full = await scanVault(dir);
+      this.lastScan = full;
+      this.lastSigs = full.signatures;
     } catch {
       this.lastSigs = {};
+      this.lastScan = null;
     }
+
+    // FileSystemObserver (Chromium) when present
+    const Obs = (
+      window as unknown as {
+        FileSystemObserver?: new (
+          cb: (records: unknown[]) => void,
+        ) => {
+          observe: (h: FileSystemHandle) => Promise<void>;
+          disconnect: () => void;
+        };
+      }
+    ).FileSystemObserver;
+
+    if (typeof Obs === "function") {
+      try {
+        const observer = new Obs(() => {
+          void this.pollFsa(true);
+        });
+        await observer.observe(dir);
+        this.observer = observer;
+      } catch {
+        this.observer = null;
+      }
+    }
+
+    // Always keep a light poll as safety net (Hermes reliability)
     this.timer = setInterval(() => {
-      void this.pollFsa();
+      void this.pollFsa(false);
     }, intervalMs);
   }
 
-  private async pollFsa() {
+  private async pollFsa(force: boolean) {
     if (!this.dir || this.scanning) return;
+    if (Date.now() < this.suppressUntil) return;
     this.scanning = true;
     try {
       const next = await scanSignatures(this.dir);
-      if (signaturesChanged(this.lastSigs, next)) {
-        this.lastSigs = next;
-        const scan = await scanVault(this.dir);
-        this.lastSigs = Object.fromEntries(
-          Object.entries(scan.signatures).map(([p, s]) => {
-            // prefer size-based for next polls
-            const parts = s.split(":");
-            return [p, `${parts[0]}:${parts[1] ?? "0"}`];
-          }),
+      if (!force && !signaturesChanged(this.lastSigs, next)) return;
+
+      if (this.lastScan) {
+        const { scan, changedPaths } = await incrementalRescan(
+          this.dir,
+          this.lastScan,
         );
-        // Actually scanSignatures format is mtime:size — rebuild from nodes
-        const rebuilt: Record<string, string> = {};
-        for (const n of Object.values(scan.nodes)) {
-          if (n.kind === "note") {
-            rebuilt[n.path] = `${n.mtime}:${(n.content ?? "").length}`;
-          }
-        }
-        // Use scanSignatures again for consistency
-        this.lastSigs = await scanSignatures(this.dir);
+        this.lastScan = scan;
+        this.lastSigs = scan.signatures;
+        this.cb?.({
+          type: "change",
+          path: "*",
+          scan,
+          changedPaths,
+        });
+      } else {
+        const scan = await scanVault(this.dir);
+        this.lastScan = scan;
+        this.lastSigs = scan.signatures;
         this.cb?.({ type: "change", path: "*", scan });
       }
     } catch {
@@ -92,9 +127,12 @@ export class VaultWatcher {
     }
   }
 
+  /** After app writes, suppress echo + refresh baseline */
   async acknowledgeWrite(dir: FileSystemDirectoryHandle) {
+    this.suppressUntil = Date.now() + 600;
     try {
       this.lastSigs = await scanSignatures(dir);
+      // keep lastScan nodes in sync lazily on next poll
     } catch {
       /* ignore */
     }
@@ -104,6 +142,12 @@ export class VaultWatcher {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.dir = null;
+    try {
+      this.observer?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    this.observer = null;
   }
 }
 

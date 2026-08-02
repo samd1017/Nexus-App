@@ -1,8 +1,12 @@
 import { r as __toESM } from "../_runtime.mjs";
 import { r as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
-import { _ as signaturesChanged, a as formatRelativeTime, c as getFsaRoot, d as preferCleanWrite, f as previewSnippet, g as setWatcherAck, h as scanVault, i as extractOutline, l as getNoteDisplayTitle, m as scanSignatures, n as cn, o as getBreadcrumbs, p as providerLabel, s as getCloudConfig, t as CLOUD_SYNC_HINT, u as noteTitle, v as useVaultStore } from "./store-D0ChvofP.mjs";
-import { A as Folder, B as ChevronDown, C as Link2, D as Heading2, E as Heading3, F as Eye, I as Ellipsis, L as CodeXml, M as FolderOpen, N as FileText, O as Heading1, P as FilePlus, R as Cloud, S as ListChecks, T as Image, V as Bold, _ as Maximize2, a as Sparkles, b as ListTree, c as Quote, d as PanelRightOpen, f as PanelRightClose, g as Minimize2, h as Minus, i as Table, j as FolderPlus, k as HardDrive, l as Plus, m as Network, o as Search, p as PanelLeftClose, r as Trash2, s as Radio, t as Zap, u as Pencil, v as LogOut, w as Italic, x as ListOrdered, y as List, z as ChevronRight } from "../_libs/lucide-react.mjs";
+import { A as Folder, B as ChevronRight, C as Link2, D as Heading2, E as Heading3, F as FilePlus2, H as Bold, I as Eye, L as Ellipsis, M as FolderOpen, N as FileText, O as Heading1, P as FilePlus, R as CodeXml, S as ListChecks, T as Image, V as ChevronDown, _ as Maximize2, a as Sparkles, b as ListTree, c as Quote, d as PanelRightOpen, f as PanelRightClose, g as Minimize2, h as Minus, i as Table, j as FolderPlus, k as HardDrive, l as Plus, m as Network, o as Search, p as PanelLeftClose, r as Trash2, s as Radio, t as Zap, u as Pencil, v as LogOut, w as Italic, x as ListOrdered, y as List, z as Cloud } from "../_libs/lucide-react.mjs";
+import { n as create, t as persist } from "../_libs/zustand.mjs";
+import { t as g } from "../_libs/marked.mjs";
+import { t as TurndownService } from "../_libs/turndown.mjs";
+import { t as clsx } from "../_libs/clsx.mjs";
+import { t as twMerge } from "../_libs/tailwind-merge.mjs";
 import { O as mergeAttributes, R as Plugin, a as Mark, i as InputRule, z as PluginKey } from "../_libs/@tiptap/core+[...].mjs";
 import { n as useEditor, t as EditorContent } from "../_libs/fast-equals+tiptap__react.mjs";
 import { n as index_default } from "../_libs/@tiptap/extension-link+[...].mjs";
@@ -18,9 +22,1441 @@ import "../_libs/tiptap__extension-table-header.mjs";
 import { t as forceGraph } from "../_libs/force-graph+[...].mjs";
 import { t as _e } from "../_libs/cmdk.mjs";
 import { t as entry_default } from "../_libs/fuse.js.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-CL4dF54X.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-Nwym3A3c.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
+var DEFAULT_SETTINGS = {
+	leftOpen: true,
+	rightOpen: true,
+	leftWidth: 260,
+	rightWidth: 340,
+	editorMode: "visual",
+	graphMode: "panel",
+	lastNotePath: null
+};
+function noteTitle(node) {
+	if (node.kind !== "note") return node.name;
+	return node.name.replace(/\.md$/i, "");
+}
+function pathJoin(...parts) {
+	return parts.filter(Boolean).join("/").replace(/\/+/g, "/").replace(/^\//, "");
+}
+function parentPath(path) {
+	const i = path.lastIndexOf("/");
+	return i <= 0 ? "" : path.slice(0, i);
+}
+function idFor(path) {
+	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
+}
+function folder(path, name, parentId) {
+	return {
+		id: idFor(path || "__root_folder__" + name),
+		path,
+		name,
+		kind: "folder",
+		parentId,
+		mtime: Date.now()
+	};
+}
+function note(path, name, parentId, content) {
+	return {
+		id: idFor(path),
+		path,
+		name,
+		kind: "note",
+		parentId,
+		mtime: Date.now(),
+		content
+	};
+}
+/** Seed knowledge vault — SpaceX-inspired knowledge OS demo content */
+function buildDemoVault() {
+	const nodes = {};
+	const add = (n) => {
+		nodes[n.id] = n;
+		return n;
+	};
+	const projects = add(folder("Projects", "Projects", null));
+	const research = add(folder("Research", "Research", null));
+	const journal = add(folder("Journal", "Journal", null));
+	const systems = add(folder("Systems", "Systems", null));
+	const welcome = add(note("Welcome.md", "Welcome.md", null, `# Welcome to Note App
+
+A personal knowledge vault built for **clarity**, **speed**, and **Hermes-compatible** plain Markdown.
+
+## What this is
+
+- Your vault is a **folder of \`.md\` files** — nothing proprietary
+- The default editor is **visual / WYSIWYG** with clean round-trip Markdown
+- \`[[wikilinks]]\` render as interactive pills and stay standard on disk
+- An interactive **graph** reveals the shape of your thinking
+
+## Quick start
+
+1. Browse the file tree on the left
+2. Open [[Knowledge OS]] or [[Graph Thinking]]
+3. Press **⌘K** to search · **⌘E** for source mode · **⌘\\\\** to toggle sidebars
+4. Explore the graph in the right panel — expand to full canvas
+
+## Hermes-ready
+
+External agents can create, edit, and delete notes in this folder. Changes appear live within ~1–2 seconds.
+
+Try the **Simulate Hermes write** action in the vault menu to watch an external edit land.
+
+---
+
+*This is a demo vault. Open any local folder to use your own files.*
+`));
+	add(note(pathJoin("Projects", "Knowledge OS.md"), "Knowledge OS.md", projects.id, `# Knowledge OS
+
+The next decade of personal knowledge software is not another notes app — it is a **knowledge operating system**.
+
+## Principles
+
+1. **Files first** — the vault is the source of truth
+2. **Agent-native** — [[Hermes Compatibility]] means machines write the same files you do
+3. **Spatial memory** — the [[Graph Thinking]] view is first-class, not a gimmick
+4. **Calm writing surface** — complexity lives in progressive disclosure
+
+## Architecture sketch
+
+| Layer | Role |
+| --- | --- |
+| Vault folder | Plain \`.md\` + \`assets/\` |
+| Index cache | Optional \`.noteapp/\` only |
+| Editor | Visual default, source on demand |
+| Graph | Force-directed map of [[wikilinks]] |
+
+## Related
+
+- [[Welcome]]
+- [[Design Language]]
+- [[Linking Strategy]]
+`));
+	add(note(pathJoin("Projects", "Linking Strategy.md"), "Linking Strategy.md", projects.id, `# Linking Strategy
+
+Wikilinks are the connective tissue of the vault.
+
+## Syntax
+
+Use standard double-bracket links:
+
+\`\`\`
+[[Note Name]]
+[[Note Name|display alias]]
+\`\`\`
+
+## Rules of thumb
+
+- Prefer **concept notes** over dumping everything in daily logs
+- Link **forward** when you introduce a new idea
+- Review **backlinks** weekly — they surface unexpected structure
+
+## Map
+
+- [[Knowledge OS]]
+- [[Graph Thinking]]
+- [[Welcome]]
+`));
+	add(note(pathJoin("Research", "Graph Thinking.md"), "Graph Thinking.md", research.id, `# Graph Thinking
+
+Graphs make invisible structure **visible**.
+
+## Why force-directed graphs work
+
+Nodes repel; links attract. Over time, tightly related notes cluster. Orphans float. Hubs dominate.
+
+### Visual language
+
+- **Accent cyan** nodes with soft outer glow
+- **Size by degree** — highly connected notes read as gravity wells
+- **Edges** stay low-opacity so the field stays calm
+
+## Interaction model
+
+- Hover → title + preview
+- Click → open note
+- Drag / zoom / pan for spatial exploration
+- Panel mode for context; fullscreen for deep work
+
+## Seed links
+
+- [[Knowledge OS]]
+- [[Linking Strategy]]
+- [[Design Language]]
+- [[Hermes Compatibility]]
+`));
+	add(note(pathJoin("Research", "Design Language.md"), "Design Language.md", research.id, `# Design Language
+
+Inspired by high-precision engineering interfaces — dark, confident, technically sophisticated.
+
+## Palette
+
+- Deepest background \`#050507\`
+- Surfaces \`#0F0F12\` → \`#1C1C21\`
+- Accent electric cyan \`#00C8FF\`
+- Soft violet secondary \`#7B61FF\`
+
+## Glass
+
+Floating panels use translucent surfaces with \`backdrop-filter: blur(24px)\` and hairline borders.
+
+## Motion
+
+- 220–280ms ease curves
+- Restrained scale on hover (\`1.02\`)
+- Graph physics should feel like soft springs — never chaotic
+
+## Related
+
+- [[Knowledge OS]]
+- [[Welcome]]
+`));
+	add(note(pathJoin("Systems", "Hermes Compatibility.md"), "Hermes Compatibility.md", systems.id, `# Hermes Compatibility
+
+Hermes (and any external process) must be able to treat this vault as ordinary files.
+
+## Contract
+
+- Notes = \`.md\` files
+- Folders = directories
+- Images = relative paths (prefer \`assets/\`)
+- No proprietary metadata inside note bodies
+- App cache only under \`.noteapp/\`
+
+## Live watching
+
+Creates, edits, renames, and deletes from outside the app must appear in the UI within **1–2 seconds**.
+
+## Clean Markdown
+
+When the app writes a note, the result must remain readable by:
+
+- Any text editor
+- \`git diff\`
+- Agents and CLI tools
+
+## Linked ideas
+
+- [[Knowledge OS]]
+- [[Welcome]]
+- [[Graph Thinking]]
+`));
+	add(note(pathJoin("Systems", "Keyboard Map.md"), "Keyboard Map.md", systems.id, `# Keyboard Map
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘K | Command palette / search |
+| ⌘E | Toggle visual / source |
+| ⌘\\\\ | Toggle left sidebar |
+| ⌘⌥\\\\ | Toggle right panel |
+| ⌘G | Toggle full graph |
+| ⌘N | New note |
+| ⌘S | Save (auto-save is on) |
+| ⌘B / ⌘I | Bold / italic in editor |
+
+## Philosophy
+
+Keyboard is the primary interface for power users. Mouse is always available; shortcuts never required for basics.
+`));
+	add(note(pathJoin("Journal", "First Light.md"), "First Light.md", journal.id, `# First Light
+
+Opened the vault for the first time.
+
+The graph already shows structure forming between [[Knowledge OS]], [[Graph Thinking]], and [[Hermes Compatibility]]. That feedback loop — write, link, see — is the product.
+
+## Tasks
+
+- [x] Seed demo notes
+- [x] Wire wikilinks
+- [ ] Capture a real research thread
+- [ ] Attach a diagram to assets/
+
+## Log
+
+Felt immediate. Calm center, powerful edges.
+`));
+	return {
+		nodes,
+		rootIds: [
+			welcome.id,
+			projects.id,
+			research.id,
+			systems.id,
+			journal.id
+		],
+		vaultName: "Demo Vault"
+	};
+}
+var HERMES_SAMPLE_NOTE = {
+	path: pathJoin("Systems", "Hermes Pulse.md"),
+	name: "Hermes Pulse.md",
+	content: `# Hermes Pulse
+
+This note was written by an **external process** (simulated Hermes agent).
+
+Timestamp: \${TS}
+
+## Observation
+
+The filesystem watcher picked this up without manual refresh. The vault remains a plain folder of Markdown.
+
+## Links
+
+- [[Hermes Compatibility]]
+- [[Knowledge OS]]
+- [[Welcome]]
+`
+};
+/**
+* Markdown purity — never rewrite Hermes/external notes without real user edits.
+*/
+/** Canonical normalize for equality (line endings + trailing space) */
+function normalizeMarkdown(s) {
+	return s.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n+$/g, "") + "\n";
+}
+/**
+* Semantic fingerprint: collapses whitespace noise so round-trip
+* serialization noise doesn't force disk writes.
+*/
+function markdownFingerprint(s) {
+	return normalizeMarkdown(s).replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().toLowerCase();
+}
+/**
+* Prefer previous on-disk markdown when next is only a formatter rewrite.
+* Returns previous if fingerprints match; otherwise normalized next.
+*/
+function preferCleanWrite(previous, next) {
+	if (!previous && !next) return "\n";
+	if (!previous) return normalizeMarkdown(next);
+	if (normalizeMarkdown(previous) === normalizeMarkdown(next)) return previous;
+	if (markdownFingerprint(previous) === markdownFingerprint(next)) return previous;
+	return normalizeMarkdown(next);
+}
+/** True when visual serialization would rewrite file without user intent */
+function isOnlySerializationNoise(previous, next) {
+	return markdownFingerprint(previous) === markdownFingerprint(next);
+}
+/**
+* Clean Markdown serialization helpers.
+* On-disk format: CommonMark + GFM + [[wikilinks]] — never proprietary HTML.
+*/
+g.setOptions({
+	gfm: true,
+	breaks: false
+});
+var turndown = new TurndownService({
+	headingStyle: "atx",
+	codeBlockStyle: "fenced",
+	bulletListMarker: "-",
+	emDelimiter: "*",
+	strongDelimiter: "**",
+	hr: "---"
+});
+turndown.addRule("wikilink", {
+	filter: (node) => node.nodeName === "SPAN" && node.getAttribute("data-wikilink") != null,
+	replacement: (_content, node) => {
+		const el = node;
+		const target = el.getAttribute("data-wikilink") || el.textContent || "";
+		const alias = el.getAttribute("data-alias");
+		if (alias && alias !== target) return `[[${target}|${alias}]]`;
+		return `[[${target}]]`;
+	}
+});
+turndown.addRule("taskListItem", {
+	filter: (node) => node.nodeName === "LI" && node.getAttribute("data-type") === "taskItem",
+	replacement: (content, node) => {
+		const checked = node.getAttribute("data-checked") === "true";
+		const body = content.replace(/^\n+/, "").replace(/\n+$/, "\n").trim();
+		return `- [${checked ? "x" : " "}] ${body}\n`;
+	}
+});
+function extractOutline(md) {
+	const lines = md.split("\n");
+	const out = [];
+	let pos = 0;
+	for (const line of lines) {
+		const m = /^(#{1,6})\s+(.+)$/.exec(line);
+		if (m) out.push({
+			level: m[1].length,
+			text: m[2].trim(),
+			pos
+		});
+		pos += line.length + 1;
+	}
+	return out;
+}
+function previewSnippet(md, max = 120) {
+	const plain = md.replace(/^#+\s+/gm, "").replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, "$1").replace(/!\[[^\]]*\]\([^)]+\)/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[`*_~>#-]/g, "").replace(/\s+/g, " ").trim();
+	if (plain.length <= max) return plain;
+	return plain.slice(0, max - 1) + "…";
+}
+function cn(...inputs) {
+	return twMerge(clsx(inputs));
+}
+function formatRelativeTime(ts) {
+	const diff = Date.now() - ts;
+	const sec = Math.floor(diff / 1e3);
+	if (sec < 5) return "just now";
+	if (sec < 60) return `${sec}s ago`;
+	const min = Math.floor(sec / 60);
+	if (min < 60) return `${min}m ago`;
+	const hr = Math.floor(min / 60);
+	if (hr < 24) return `${hr}h ago`;
+	return `${Math.floor(hr / 24)}d ago`;
+}
+function slugifyTitle(title) {
+	return title.trim().replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").slice(0, 120);
+}
+var IDB_NAME = "noteapp-vault-handles-v2";
+var IDB_STORE = "handles";
+var HANDLE_KEY = "current";
+var RECENTS_KEY = "recents";
+function isFileSystemAccessSupported() {
+	return typeof window !== "undefined" && "showDirectoryPicker" in window;
+}
+function openIdb() {
+	return new Promise((resolve, reject) => {
+		const req = indexedDB.open(IDB_NAME, 2);
+		req.onupgradeneeded = () => {
+			const db = req.result;
+			if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+		};
+		req.onsuccess = () => resolve(req.result);
+		req.onerror = () => reject(req.error);
+	});
+}
+async function saveDirectoryHandle(handle, meta) {
+	const db = await openIdb();
+	await new Promise((resolve, reject) => {
+		const tx = db.transaction(IDB_STORE, "readwrite");
+		tx.objectStore(IDB_STORE).put({
+			handle,
+			meta,
+			savedAt: Date.now()
+		}, HANDLE_KEY);
+		const getReq = tx.objectStore(IDB_STORE).get(RECENTS_KEY);
+		getReq.onsuccess = () => {
+			const map = getReq.result || {};
+			map[meta.id] = {
+				handle,
+				meta
+			};
+			tx.objectStore(IDB_STORE).put(map, RECENTS_KEY);
+		};
+		tx.oncomplete = () => resolve();
+		tx.onerror = () => reject(tx.error);
+	});
+	db.close();
+}
+async function loadDirectoryHandle() {
+	try {
+		const db = await openIdb();
+		const row = await new Promise((resolve, reject) => {
+			const req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(HANDLE_KEY);
+			req.onsuccess = () => resolve(req.result);
+			req.onerror = () => reject(req.error);
+		});
+		db.close();
+		if (!row?.handle) return null;
+		return row;
+	} catch {
+		return null;
+	}
+}
+async function loadRecentHandle(id) {
+	try {
+		const db = await openIdb();
+		const map = await new Promise((resolve, reject) => {
+			const req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(RECENTS_KEY);
+			req.onsuccess = () => resolve(req.result || {});
+			req.onerror = () => reject(req.error);
+		});
+		db.close();
+		return map[id]?.handle ?? null;
+	} catch {
+		return null;
+	}
+}
+async function clearDirectoryHandle() {
+	try {
+		const db = await openIdb();
+		await new Promise((resolve, reject) => {
+			const tx = db.transaction(IDB_STORE, "readwrite");
+			tx.objectStore(IDB_STORE).delete(HANDLE_KEY);
+			tx.oncomplete = () => resolve();
+			tx.onerror = () => reject(tx.error);
+		});
+		db.close();
+	} catch {}
+}
+async function ensurePermission(handle, mode = "readwrite") {
+	try {
+		const opts = { mode };
+		if (await handle.queryPermission?.(opts) === "granted") return true;
+		return await handle.requestPermission?.(opts) === "granted";
+	} catch {
+		return false;
+	}
+}
+function nodeId(path) {
+	return "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_");
+}
+var SKIP_DIRS = /* @__PURE__ */ new Set([
+	".git",
+	".noteapp",
+	"node_modules",
+	".trash",
+	".obsidian",
+	".vscode",
+	".idea"
+]);
+async function walkCollect(root, onFile, onDir) {
+	async function walk(dir, relPath) {
+		for await (const [name, handle] of dir.entries()) {
+			if (name === ".DS_Store" || name === "Thumbs.db") continue;
+			if (handle.kind === "directory") {
+				if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
+				const path = relPath ? pathJoin(relPath, name) : name;
+				onDir(path, name, relPath);
+				await walk(handle, path);
+			} else if (handle.kind === "file" && name.toLowerCase().endsWith(".md")) {
+				const path = relPath ? pathJoin(relPath, name) : name;
+				const fh = handle;
+				await onFile(path, name, relPath, await fh.getFile(), fh);
+			}
+		}
+	}
+	await walk(root, "");
+}
+async function scanVault(root) {
+	const nodes = {};
+	const rootIds = [];
+	const signatures = {};
+	const folderIds = /* @__PURE__ */ new Map();
+	await walkCollect(root, async (path, name, parentPath, file) => {
+		const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+		const id = nodeId(path);
+		const content = await file.text();
+		nodes[id] = {
+			id,
+			path,
+			name,
+			kind: "note",
+			parentId,
+			mtime: file.lastModified,
+			content
+		};
+		signatures[path] = `${file.lastModified}:${file.size}`;
+		if (!parentPath) rootIds.push(id);
+	}, (path, name, parentPath) => {
+		const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+		const id = nodeId(path);
+		folderIds.set(path, id);
+		nodes[id] = {
+			id,
+			path,
+			name,
+			kind: "folder",
+			parentId,
+			mtime: Date.now()
+		};
+		if (!parentPath) rootIds.push(id);
+	});
+	rootIds.sort((a, b) => {
+		const na = nodes[a];
+		const nb = nodes[b];
+		if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
+		return na.name.localeCompare(nb.name);
+	});
+	return {
+		nodes,
+		rootIds,
+		signatures
+	};
+}
+async function incrementalRescan(root, prev) {
+	const nextSigs = await scanSignatures(root);
+	const changedPaths = [];
+	const prevByPath = new Map(Object.values(prev.nodes).filter((n) => n.kind === "note").map((n) => [n.path, n]));
+	const allPaths = /* @__PURE__ */ new Set([...Object.keys(prev.signatures), ...Object.keys(nextSigs)]);
+	for (const p of allPaths) if (prev.signatures[p] !== nextSigs[p]) changedPaths.push(p);
+	if (Object.keys(nextSigs).length === 0 || changedPaths.length > 40 || Math.abs(Object.keys(nextSigs).length - Object.keys(prev.signatures).length) > 15) {
+		const scan = await scanVault(root);
+		return {
+			scan,
+			changedPaths: Object.keys(scan.signatures)
+		};
+	}
+	const notePaths = Object.keys(nextSigs);
+	const folderPaths = /* @__PURE__ */ new Set();
+	for (const p of notePaths) {
+		const parts = p.split("/");
+		for (let i = 1; i < parts.length; i++) folderPaths.add(parts.slice(0, i).join("/"));
+	}
+	const nodes = {};
+	const rootIds = [];
+	const folderIds = /* @__PURE__ */ new Map();
+	const sortedFolders = [...folderPaths].sort((a, b) => a.split("/").length - b.split("/").length);
+	for (const path of sortedFolders) {
+		const name = path.split("/").pop();
+		const parentPath = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+		const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+		const id = nodeId(path);
+		folderIds.set(path, id);
+		nodes[id] = {
+			id,
+			path,
+			name,
+			kind: "folder",
+			parentId,
+			mtime: Date.now()
+		};
+		if (!parentPath) rootIds.push(id);
+	}
+	for (const path of notePaths) {
+		const name = path.split("/").pop();
+		const parentPath = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+		const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+		const id = nodeId(path);
+		let content;
+		let mtime;
+		if (prev.signatures[path] === nextSigs[path] && prevByPath.has(path)) {
+			const old = prevByPath.get(path);
+			content = old.content ?? "";
+			mtime = old.mtime;
+		} else {
+			const file = await readFileAtPath(root, path);
+			content = await file.text();
+			mtime = file.lastModified;
+		}
+		nodes[id] = {
+			id,
+			path,
+			name,
+			kind: "note",
+			parentId,
+			mtime,
+			content
+		};
+		if (!parentPath) rootIds.push(id);
+	}
+	rootIds.sort((a, b) => {
+		const na = nodes[a];
+		const nb = nodes[b];
+		if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
+		return na.name.localeCompare(nb.name);
+	});
+	return {
+		scan: {
+			nodes,
+			rootIds,
+			signatures: nextSigs
+		},
+		changedPaths
+	};
+}
+async function readFileAtPath(root, path) {
+	const parts = path.split("/").filter(Boolean);
+	const fileName = parts.pop();
+	let dir = root;
+	for (const part of parts) dir = await dir.getDirectoryHandle(part);
+	return (await dir.getFileHandle(fileName)).getFile();
+}
+async function getDirAtPath(root, dirPath, create = false) {
+	if (!dirPath) return root;
+	const parts = dirPath.split("/").filter(Boolean);
+	let cur = root;
+	for (const part of parts) cur = await cur.getDirectoryHandle(part, { create });
+	return cur;
+}
+async function writeNoteFile(root, path, content) {
+	const parts = path.split("/").filter(Boolean);
+	const fileName = parts.pop();
+	const writable = await (await (await getDirAtPath(root, parts.join("/"), true)).getFileHandle(fileName, { create: true })).createWritable();
+	await writable.write(content);
+	await writable.close();
+}
+async function createFolderOnDisk(root, path) {
+	await getDirAtPath(root, path, true);
+}
+async function deletePathOnDisk(root, path, kind) {
+	const parts = path.split("/").filter(Boolean);
+	const name = parts.pop();
+	await (await getDirAtPath(root, parts.join("/"), false)).removeEntry(name, { recursive: kind === "folder" });
+}
+async function renamePathOnDisk(root, oldPath, newPath, kind, content) {
+	if (kind === "note") {
+		let text = content;
+		if (text == null) text = await (await readFileAtPath(root, oldPath)).text();
+		await writeNoteFile(root, newPath, text);
+		await deletePathOnDisk(root, oldPath, "note");
+		return;
+	}
+	const oldParts = oldPath.split("/").filter(Boolean);
+	const oldName = oldParts.pop();
+	const parent = await getDirAtPath(root, oldParts.join("/"), false);
+	const oldDir = await parent.getDirectoryHandle(oldName);
+	await getDirAtPath(root, newPath, true);
+	for await (const [name, handle] of oldDir.entries()) {
+		const from = pathJoin(oldPath, name);
+		const to = pathJoin(newPath, name);
+		if (handle.kind === "file") await writeNoteFile(root, to, await (await handle.getFile()).text());
+		else await renamePathOnDisk(root, from, to, "folder");
+	}
+	await parent.removeEntry(oldName, { recursive: true });
+}
+async function pickVaultFolder() {
+	if (!isFileSystemAccessSupported()) return null;
+	try {
+		return await window.showDirectoryPicker({
+			id: "noteapp-vault",
+			mode: "readwrite",
+			startIn: "documents"
+		});
+	} catch {
+		return null;
+	}
+}
+async function scanSignatures(root) {
+	const signatures = {};
+	await walkCollect(root, async (path, _name, _pp, file) => {
+		signatures[path] = `${file.lastModified}:${file.size}`;
+	}, () => {});
+	return signatures;
+}
+function signaturesChanged(a, b) {
+	const keysA = Object.keys(a);
+	const keysB = Object.keys(b);
+	if (keysA.length !== keysB.length) return true;
+	for (const k of keysA) if (a[k] !== b[k]) return true;
+	return false;
+}
+var PREF_KEY = "noteapp-cloud-pref-v2";
+function providerLabel(p) {
+	if (p === "dropbox") return "Dropbox";
+	if (p === "google") return "Google Drive";
+	return "OneDrive";
+}
+function providerSyncHint(p) {
+	if (p === "dropbox") return "Open your Dropbox folder (or a subfolder) as the vault after desktop sync is on.";
+	if (p === "google") return "Open the Google Drive for desktop stream/mirror folder as the vault.";
+	return "Open your OneDrive folder as the vault after Files On-Demand sync.";
+}
+var CLOUD_SYNC_HINT = "Best path: enable Dropbox / Drive / OneDrive desktop sync, then Open folder as vault. Zero accounts in Note App. Notes stay ordinary Markdown.";
+function loadCloudSession() {
+	try {
+		const raw = localStorage.getItem(PREF_KEY);
+		if (!raw) return null;
+		return JSON.parse(raw);
+	} catch {
+		return null;
+	}
+}
+function saveCloudSession(session) {
+	if (!session) localStorage.removeItem(PREF_KEY);
+	else localStorage.setItem(PREF_KEY, JSON.stringify(session));
+}
+/** Mark that the user prefers a given provider's synced folder (no OAuth). */
+function preferSyncedProvider(provider) {
+	const session = {
+		provider,
+		label: providerLabel(provider) + " (synced folder)",
+		connectedAt: Date.now(),
+		method: "synced-folder"
+	};
+	saveCloudSession(session);
+	return session;
+}
+function disconnectCloud() {
+	saveCloudSession(null);
+}
+/** @deprecated OAuth intentionally not used — use preferSyncedProvider */
+async function beginCloudOAuth(provider) {
+	return {
+		ok: true,
+		session: preferSyncedProvider(provider),
+		reason: providerSyncHint(provider)
+	};
+}
+var STORAGE_KEY = "noteapp-vault-v2";
+var RECENT_KEY = "noteapp-recent-v2";
+var fsaRoot = null;
+var writeQueue = Promise.resolve();
+var watcherAck = null;
+var lastExternalToastAt = 0;
+function getFsaRoot() {
+	return fsaRoot;
+}
+function setWatcherAck(fn) {
+	watcherAck = fn;
+}
+function loadRecents() {
+	try {
+		const raw = localStorage.getItem(RECENT_KEY);
+		if (!raw) return [];
+		return JSON.parse(raw);
+	} catch {
+		return [];
+	}
+}
+function saveRecents(list) {
+	try {
+		localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 10)));
+	} catch {}
+}
+function makeId(path) {
+	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_") + "_" + Math.random().toString(36).slice(2, 7);
+}
+function stableId(path) {
+	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
+}
+function queueDiskWrite(fn) {
+	writeQueue = writeQueue.then(fn).catch((err) => {
+		console.error("[vault] disk write failed", err);
+	});
+	return writeQueue;
+}
+async function persistNoteIfFsa(path, content) {
+	if (!fsaRoot) return;
+	await writeNoteFile(fsaRoot, path, content);
+	if (watcherAck) await watcherAck(fsaRoot);
+}
+function pushRecent(entry) {
+	const list = loadRecents().filter((r) => r.id !== entry.id);
+	list.unshift(entry);
+	saveRecents(list);
+	return list;
+}
+var useVaultStore = create()(persist((set, get) => ({
+	ready: false,
+	vaultId: null,
+	vaultName: "",
+	vaultPath: "",
+	mode: "demo",
+	nodes: {},
+	rootIds: [],
+	activeNoteId: null,
+	settings: { ...DEFAULT_SETTINGS },
+	expandedFolders: [],
+	lastExternalSync: null,
+	dirtyNoteIds: [],
+	recentVaults: [],
+	commandOpen: false,
+	toast: null,
+	hermesTick: 0,
+	cloudSession: null,
+	fsaSupported: false,
+	connecting: false,
+	bootstrap: async () => {
+		const recents = loadRecents();
+		const fsaSupported = isFileSystemAccessSupported();
+		set({
+			recentVaults: recents,
+			fsaSupported,
+			cloudSession: loadCloudSession(),
+			ready: true
+		});
+		if (fsaSupported) {
+			const saved = await loadDirectoryHandle();
+			if (saved?.handle) {
+				if (await ensurePermission(saved.handle, "readwrite")) {
+					fsaRoot = saved.handle;
+					set({ connecting: true });
+					try {
+						const scan = await scanVault(saved.handle);
+						const lastPath = get().settings.lastNotePath;
+						const active = lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id || Object.values(scan.nodes).find((n) => n.kind === "note")?.id || null;
+						const recents2 = pushRecent({
+							id: saved.meta.id,
+							name: saved.meta.name,
+							path: saved.meta.name,
+							lastOpened: Date.now(),
+							mode: "fsa"
+						});
+						set({
+							vaultId: saved.meta.id,
+							vaultName: saved.meta.name,
+							vaultPath: saved.meta.name,
+							mode: "fsa",
+							nodes: scan.nodes,
+							rootIds: scan.rootIds,
+							activeNoteId: active,
+							expandedFolders: Object.values(scan.nodes).filter((n) => n.kind === "folder").map((n) => n.id),
+							recentVaults: recents2,
+							connecting: false,
+							dirtyNoteIds: []
+						});
+						return;
+					} catch {
+						fsaRoot = null;
+						set({ connecting: false });
+					}
+				}
+			}
+		}
+		const state = get();
+		if (state.vaultId && state.mode !== "fsa" && Object.keys(state.nodes).length > 0) return;
+		set({
+			vaultId: null,
+			vaultName: "",
+			vaultPath: "",
+			nodes: {},
+			rootIds: [],
+			activeNoteId: null
+		});
+	},
+	openDemoVault: () => {
+		fsaRoot = null;
+		const demo = buildDemoVault();
+		const vaultId = "demo-vault";
+		const welcome = Object.values(demo.nodes).find((n) => n.path === "Welcome.md");
+		const expanded = Object.values(demo.nodes).filter((n) => n.kind === "folder").map((n) => n.id);
+		const recents = pushRecent({
+			id: vaultId,
+			name: demo.vaultName,
+			path: "Demo Vault (in-browser)",
+			lastOpened: Date.now(),
+			mode: "demo"
+		});
+		set({
+			vaultId,
+			vaultName: demo.vaultName,
+			vaultPath: "Demo Vault",
+			mode: "demo",
+			nodes: demo.nodes,
+			rootIds: demo.rootIds,
+			activeNoteId: welcome?.id ?? null,
+			expandedFolders: expanded,
+			dirtyNoteIds: [],
+			lastExternalSync: null,
+			recentVaults: recents,
+			settings: {
+				...get().settings,
+				lastNotePath: welcome?.path ?? null
+			}
+		});
+	},
+	openLocalVault: (name, seed) => {
+		fsaRoot = null;
+		const data = seed ?? buildDemoVault();
+		const vaultId = "local-" + slugifyTitle(name).toLowerCase().replace(/\s+/g, "-");
+		const first = Object.values(data.nodes).find((n) => n.kind === "note");
+		const recents = pushRecent({
+			id: vaultId,
+			name,
+			path: name,
+			lastOpened: Date.now(),
+			mode: "local"
+		});
+		set({
+			vaultId,
+			vaultName: name,
+			vaultPath: name,
+			mode: "local",
+			nodes: data.nodes,
+			rootIds: data.rootIds,
+			activeNoteId: first?.id ?? null,
+			expandedFolders: Object.values(data.nodes).filter((n) => n.kind === "folder").map((n) => n.id),
+			dirtyNoteIds: [],
+			recentVaults: recents
+		});
+	},
+	openFolderAsVault: async () => {
+		set({ connecting: true });
+		try {
+			const handle = await pickVaultFolder();
+			if (!handle) {
+				set({ connecting: false });
+				return;
+			}
+			if (!await ensurePermission(handle, "readwrite")) {
+				set({
+					connecting: false,
+					toast: "Permission denied — cannot read vault folder"
+				});
+				return;
+			}
+			fsaRoot = handle;
+			const vaultId = "fsa-" + handle.name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+			await saveDirectoryHandle(handle, {
+				id: vaultId,
+				name: handle.name
+			});
+			const scan = await scanVault(handle);
+			const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+			const recents = pushRecent({
+				id: vaultId,
+				name: handle.name,
+				path: handle.name,
+				lastOpened: Date.now(),
+				mode: "fsa"
+			});
+			set({
+				vaultId,
+				vaultName: handle.name,
+				vaultPath: handle.name,
+				mode: "fsa",
+				nodes: scan.nodes,
+				rootIds: scan.rootIds,
+				activeNoteId: first?.id ?? null,
+				expandedFolders: Object.values(scan.nodes).filter((n) => n.kind === "folder").map((n) => n.id),
+				dirtyNoteIds: [],
+				recentVaults: recents,
+				connecting: false,
+				toast: `Opened vault: ${handle.name}`,
+				settings: {
+					...get().settings,
+					lastNotePath: first?.path ?? null
+				}
+			});
+		} catch (e) {
+			set({
+				connecting: false,
+				toast: e instanceof Error ? e.message : "Failed to open folder"
+			});
+		}
+	},
+	reopenRecentVault: async (id) => {
+		const handle = await loadRecentHandle(id);
+		if (!handle) {
+			set({ toast: "Re-select the folder to restore access" });
+			await get().openFolderAsVault();
+			return;
+		}
+		set({ connecting: true });
+		try {
+			if (!await ensurePermission(handle, "readwrite")) {
+				set({
+					connecting: false,
+					toast: "Permission needed — pick the folder again"
+				});
+				await get().openFolderAsVault();
+				return;
+			}
+			fsaRoot = handle;
+			const vaultId = id;
+			await saveDirectoryHandle(handle, {
+				id: vaultId,
+				name: handle.name
+			});
+			const scan = await scanVault(handle);
+			const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+			const recents = pushRecent({
+				id: vaultId,
+				name: handle.name,
+				path: handle.name,
+				lastOpened: Date.now(),
+				mode: "fsa"
+			});
+			set({
+				vaultId,
+				vaultName: handle.name,
+				vaultPath: handle.name,
+				mode: "fsa",
+				nodes: scan.nodes,
+				rootIds: scan.rootIds,
+				activeNoteId: first?.id ?? null,
+				expandedFolders: Object.values(scan.nodes).filter((n) => n.kind === "folder").map((n) => n.id),
+				dirtyNoteIds: [],
+				recentVaults: recents,
+				connecting: false,
+				toast: `Reopened vault: ${handle.name}`
+			});
+		} catch (e) {
+			set({
+				connecting: false,
+				toast: e instanceof Error ? e.message : "Failed to reopen vault"
+			});
+		}
+	},
+	closeVault: () => {
+		fsaRoot = null;
+		clearDirectoryHandle();
+		set({
+			vaultId: null,
+			vaultName: "",
+			vaultPath: "",
+			nodes: {},
+			rootIds: [],
+			activeNoteId: null,
+			dirtyNoteIds: [],
+			lastExternalSync: null
+		});
+	},
+	setActiveNote: (id) => {
+		const note = id ? get().nodes[id] : null;
+		set({
+			activeNoteId: id,
+			settings: {
+				...get().settings,
+				lastNotePath: note?.path ?? get().settings.lastNotePath
+			}
+		});
+	},
+	toggleFolder: (id) => {
+		const cur = get().expandedFolders;
+		set({ expandedFolders: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] });
+	},
+	setLeftOpen: (open) => set({ settings: {
+		...get().settings,
+		leftOpen: open
+	} }),
+	setRightOpen: (open) => set({ settings: {
+		...get().settings,
+		rightOpen: open
+	} }),
+	setEditorMode: (mode) => set({ settings: {
+		...get().settings,
+		editorMode: mode
+	} }),
+	setGraphMode: (mode) => set({ settings: {
+		...get().settings,
+		graphMode: mode
+	} }),
+	toggleEditorMode: () => {
+		const cur = get().settings.editorMode;
+		set({ settings: {
+			...get().settings,
+			editorMode: cur === "visual" ? "source" : "visual"
+		} });
+	},
+	toggleLeft: () => set({ settings: {
+		...get().settings,
+		leftOpen: !get().settings.leftOpen
+	} }),
+	toggleRight: () => set({ settings: {
+		...get().settings,
+		rightOpen: !get().settings.rightOpen
+	} }),
+	toggleGraphFullscreen: () => {
+		const cur = get().settings.graphMode;
+		set({ settings: {
+			...get().settings,
+			graphMode: cur === "fullscreen" ? "panel" : "fullscreen",
+			rightOpen: true
+		} });
+	},
+	updateNoteContent: (id, content, opts) => {
+		const node = get().nodes[id];
+		if (!node || node.kind !== "note") return;
+		const prev = node.content ?? "";
+		const next = opts?.external ? content : preferCleanWrite(prev, content);
+		if (prev === next) return;
+		set({
+			nodes: {
+				...get().nodes,
+				[id]: {
+					...node,
+					content: next,
+					mtime: Date.now()
+				}
+			},
+			dirtyNoteIds: opts?.external ? get().dirtyNoteIds.filter((x) => x !== id) : get().dirtyNoteIds.includes(id) ? get().dirtyNoteIds : [...get().dirtyNoteIds, id],
+			lastExternalSync: opts?.external ? Date.now() : get().lastExternalSync
+		});
+		if (!opts?.external && get().mode === "fsa") queueDiskWrite(() => persistNoteIfFsa(node.path, next));
+	},
+	renameNode: (id, newName) => {
+		const node = get().nodes[id];
+		if (!node) return;
+		let name = newName.trim();
+		if (!name) return;
+		if (node.kind === "note" && !name.endsWith(".md")) name += ".md";
+		const parent = parentPath(node.path);
+		const newPath = parent ? pathJoin(parent, name) : name;
+		const oldPath = node.path;
+		const nodes = { ...get().nodes };
+		nodes[id] = {
+			...node,
+			name,
+			path: newPath,
+			mtime: Date.now()
+		};
+		if (node.kind === "folder") {
+			const oldPrefix = node.path + "/";
+			for (const n of Object.values(nodes)) if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
+				...n,
+				path: newPath + n.path.slice(node.path.length),
+				mtime: Date.now()
+			};
+		}
+		set({ nodes });
+		if (get().mode === "fsa" && fsaRoot) {
+			const root = fsaRoot;
+			queueDiskWrite(async () => {
+				await renamePathOnDisk(root, oldPath, newPath, node.kind, node.kind === "note" ? nodes[id].content ?? "" : void 0);
+				if (watcherAck) await watcherAck(root);
+			});
+		}
+	},
+	createNote: (parentId, title = "Untitled") => {
+		const parent = parentId ? get().nodes[parentId] : null;
+		const base = slugifyTitle(title) || "Untitled";
+		let name = base.endsWith(".md") ? base : `${base}.md`;
+		let path = parent ? pathJoin(parent.path, name) : name;
+		let i = 1;
+		const paths = new Set(Object.values(get().nodes).map((n) => n.path));
+		while (paths.has(path)) {
+			name = `${base.replace(/\.md$/i, "")} ${i}.md`;
+			path = parent ? pathJoin(parent.path, name) : name;
+			i++;
+		}
+		const id = get().mode === "fsa" ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_") : makeId(path);
+		const content = `# ${title.replace(/\.md$/i, "")}\n\n`;
+		const node = {
+			id,
+			path,
+			name,
+			kind: "note",
+			parentId,
+			mtime: Date.now(),
+			content
+		};
+		const rootIds = parentId == null ? [...get().rootIds, id] : get().rootIds;
+		const expanded = parentId ? get().expandedFolders.includes(parentId) ? get().expandedFolders : [...get().expandedFolders, parentId] : get().expandedFolders;
+		set({
+			nodes: {
+				...get().nodes,
+				[id]: node
+			},
+			rootIds,
+			activeNoteId: id,
+			expandedFolders: expanded,
+			dirtyNoteIds: [...get().dirtyNoteIds, id]
+		});
+		if (get().mode === "fsa" && fsaRoot) queueDiskWrite(() => persistNoteIfFsa(path, content));
+		return id;
+	},
+	createFolder: (parentId, name = "New Folder") => {
+		const parent = parentId ? get().nodes[parentId] : null;
+		let folderName = slugifyTitle(name) || "New Folder";
+		let path = parent ? pathJoin(parent.path, folderName) : folderName;
+		const paths = new Set(Object.values(get().nodes).map((n) => n.path));
+		let i = 1;
+		while (paths.has(path)) {
+			folderName = `${name} ${i}`;
+			path = parent ? pathJoin(parent.path, folderName) : folderName;
+			i++;
+		}
+		const id = get().mode === "fsa" ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_") : stableId(path) + "_" + Math.random().toString(36).slice(2, 6);
+		const node = {
+			id,
+			path,
+			name: folderName,
+			kind: "folder",
+			parentId,
+			mtime: Date.now()
+		};
+		const rootIds = parentId == null ? [...get().rootIds, id] : get().rootIds;
+		set({
+			nodes: {
+				...get().nodes,
+				[id]: node
+			},
+			rootIds,
+			expandedFolders: [...get().expandedFolders, id]
+		});
+		if (get().mode === "fsa" && fsaRoot) {
+			const root = fsaRoot;
+			queueDiskWrite(async () => {
+				await createFolderOnDisk(root, path);
+				if (watcherAck) await watcherAck(root);
+			});
+		}
+		return id;
+	},
+	deleteNode: (id) => {
+		const nodes = { ...get().nodes };
+		const target = nodes[id];
+		if (!target) return;
+		const toDelete = /* @__PURE__ */ new Set();
+		const walk = (nid) => {
+			toDelete.add(nid);
+			for (const n of Object.values(nodes)) if (n.parentId === nid) walk(n.id);
+		};
+		walk(id);
+		for (const d of toDelete) delete nodes[d];
+		set({
+			nodes,
+			rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
+			activeNoteId: toDelete.has(get().activeNoteId ?? "") ? null : get().activeNoteId,
+			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x))
+		});
+		if (get().mode === "fsa" && fsaRoot) {
+			const root = fsaRoot;
+			queueDiskWrite(async () => {
+				await deletePathOnDisk(root, target.path, target.kind);
+				if (watcherAck) await watcherAck(root);
+			});
+		}
+	},
+	moveNode: (id, newParentId) => {
+		const node = get().nodes[id];
+		if (!node || id === newParentId) return;
+		if (newParentId) {
+			let p = newParentId;
+			while (p) {
+				if (p === id) return;
+				p = get().nodes[p]?.parentId ?? null;
+			}
+		}
+		const parent = newParentId ? get().nodes[newParentId] : null;
+		if (newParentId && parent?.kind !== "folder") return;
+		const newPath = parent ? pathJoin(parent.path, node.name) : node.name;
+		const oldPath = node.path;
+		const nodes = { ...get().nodes };
+		nodes[id] = {
+			...node,
+			parentId: newParentId,
+			path: newPath,
+			mtime: Date.now()
+		};
+		if (node.kind === "folder") {
+			const oldPrefix = oldPath + "/";
+			for (const n of Object.values(nodes)) if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
+				...n,
+				path: newPath + n.path.slice(oldPath.length)
+			};
+		}
+		let rootIds = get().rootIds.filter((r) => r !== id);
+		if (newParentId == null) rootIds = [...rootIds, id];
+		set({
+			nodes,
+			rootIds
+		});
+		if (get().mode === "fsa" && fsaRoot) {
+			const root = fsaRoot;
+			queueDiskWrite(async () => {
+				await renamePathOnDisk(root, oldPath, newPath, node.kind, node.kind === "note" ? nodes[id].content ?? "" : void 0);
+				if (watcherAck) await watcherAck(root);
+			});
+		}
+	},
+	setCommandOpen: (open) => set({ commandOpen: open }),
+	setToast: (msg) => set({ toast: msg }),
+	simulateHermesWrite: () => {
+		const { nodes, rootIds, mode } = get();
+		const systems = Object.values(nodes).find((n) => n.kind === "folder" && n.path === "Systems");
+		const path = HERMES_SAMPLE_NOTE.path;
+		const existing = Object.values(nodes).find((n) => n.path === path);
+		const content = HERMES_SAMPLE_NOTE.content.replace("${TS}", (/* @__PURE__ */ new Date()).toISOString());
+		if (existing) {
+			get().updateNoteContent(existing.id, content, { external: true });
+			if (mode === "fsa" && fsaRoot) queueDiskWrite(() => persistNoteIfFsa(path, content));
+			set({
+				lastExternalSync: Date.now(),
+				hermesTick: get().hermesTick + 1,
+				toast: "Hermes updated Systems/Hermes Pulse.md",
+				activeNoteId: existing.id
+			});
+			return;
+		}
+		const id = mode === "fsa" ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_") : stableId(path);
+		const node = {
+			id,
+			path,
+			name: HERMES_SAMPLE_NOTE.name,
+			kind: "note",
+			parentId: systems?.id ?? null,
+			mtime: Date.now(),
+			content
+		};
+		const nextRoots = systems == null ? [...rootIds, id] : rootIds;
+		const expanded = systems && !get().expandedFolders.includes(systems.id) ? [...get().expandedFolders, systems.id] : get().expandedFolders;
+		set({
+			nodes: {
+				...nodes,
+				[id]: node
+			},
+			rootIds: nextRoots,
+			expandedFolders: expanded,
+			lastExternalSync: Date.now(),
+			hermesTick: get().hermesTick + 1,
+			toast: "Hermes created Systems/Hermes Pulse.md",
+			activeNoteId: id
+		});
+		if (mode === "fsa" && fsaRoot) queueDiskWrite(() => persistNoteIfFsa(path, content));
+	},
+	applyExternalSnapshot: (nodes, rootIds) => {
+		const prev = get().nodes;
+		const active = get().activeNoteId;
+		const activePath = active ? prev[active]?.path : null;
+		let nextActive = active && nodes[active] ? active : null;
+		if (!nextActive && activePath) nextActive = Object.values(nodes).find((n) => n.path === activePath)?.id ?? null;
+		const now = Date.now();
+		const shouldToast = now - lastExternalToastAt > 2500;
+		if (shouldToast) lastExternalToastAt = now;
+		set({
+			nodes,
+			rootIds,
+			lastExternalSync: now,
+			activeNoteId: nextActive,
+			toast: shouldToast ? "Vault updated from disk" : get().toast,
+			expandedFolders: [.../* @__PURE__ */ new Set([...get().expandedFolders.filter((id) => nodes[id]), ...Object.values(nodes).filter((n) => n.kind === "folder").map((n) => n.id).filter((id) => get().expandedFolders.includes(id))])]
+		});
+	},
+	getActiveNote: () => {
+		const id = get().activeNoteId;
+		if (!id) return null;
+		return get().nodes[id] ?? null;
+	},
+	getChildren: (parentId) => {
+		return Object.values(get().nodes).filter((n) => n.parentId === parentId).sort((a, b) => {
+			if (a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
+	},
+	flushDirty: () => {
+		set({ dirtyNoteIds: [] });
+		get().setToast("Saved");
+	},
+	connectCloud: async (provider) => {
+		const result = await beginCloudOAuth(provider);
+		set({
+			cloudSession: result.session ?? loadCloudSession(),
+			toast: result.reason || `Use Open folder on your ${providerLabel(provider)} sync directory`
+		});
+	},
+	disconnectCloud: () => {
+		disconnectCloud();
+		set({
+			cloudSession: null,
+			toast: "Cloud preference cleared"
+		});
+	},
+	refreshCloudSession: () => {
+		set({ cloudSession: loadCloudSession() });
+	}
+}), {
+	name: STORAGE_KEY,
+	partialize: (s) => ({
+		vaultId: s.mode === "fsa" ? null : s.vaultId,
+		vaultName: s.mode === "fsa" ? "" : s.vaultName,
+		vaultPath: s.mode === "fsa" ? "" : s.vaultPath,
+		mode: s.mode === "fsa" ? "demo" : s.mode,
+		nodes: s.mode === "fsa" ? {} : s.nodes,
+		rootIds: s.mode === "fsa" ? [] : s.rootIds,
+		activeNoteId: s.mode === "fsa" ? null : s.activeNoteId,
+		settings: s.settings,
+		expandedFolders: s.mode === "fsa" ? [] : s.expandedFolders
+	})
+}));
+function getNoteDisplayTitle(node) {
+	if (!node) return "";
+	return noteTitle(node);
+}
+function getBreadcrumbs(node, nodes) {
+	if (!node) return [];
+	const parts = [];
+	let cur = node;
+	while (cur) {
+		parts.unshift(cur.kind === "note" ? noteTitle(cur) : cur.name);
+		cur = cur.parentId ? nodes[cur.parentId] : void 0;
+	}
+	return parts;
+}
 /** macOS-style window chrome with traffic lights + vault status */
 function TitleBar() {
 	const vaultName = useVaultStore((s) => s.vaultName);
@@ -160,13 +1596,14 @@ function VaultSwitcher() {
 	const recentVaults = useVaultStore((s) => s.recentVaults);
 	const openDemoVault = useVaultStore((s) => s.openDemoVault);
 	const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+	const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
 	const closeVault = useVaultStore((s) => s.closeVault);
 	const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
-	const connectCloud = useVaultStore((s) => s.connectCloud);
-	const disconnectCloudSession = useVaultStore((s) => s.disconnectCloud);
 	const cloudSession = useVaultStore((s) => s.cloudSession);
 	const lastExternalSync = useVaultStore((s) => s.lastExternalSync);
 	const setToast = useVaultStore((s) => s.setToast);
+	const refreshCloudSession = useVaultStore((s) => s.refreshCloudSession);
+	const disconnectCloudSession = useVaultStore((s) => s.disconnectCloud);
 	const [open, setOpen] = (0, import_react.useState)(false);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "relative px-3 pt-3",
@@ -236,34 +1673,30 @@ function VaultSwitcher() {
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mx-2 my-1.5 h-px bg-[var(--border)]" }),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 					className: "px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]",
-					children: "Optional cloud"
+					children: "Cloud (synced folders)"
 				}),
 				[
 					"dropbox",
 					"google",
 					"onedrive"
-				].map((p) => {
-					const cfg = getCloudConfig(p);
-					return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-						type: "button",
-						className: "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
-						onClick: () => {
-							connectCloud(p);
-							if (!cfg.configured) setOpen(false);
-						},
-						children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cloud, {
-								size: 15,
-								className: "text-[var(--accent-violet)]"
-							}),
-							providerLabel(p),
-							!cfg.configured ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "ml-auto text-[10px] text-[var(--text-muted)]",
-								children: "setup"
-							}) : null
-						]
-					}, p);
-				}),
+				].map((p) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+					type: "button",
+					className: "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
+					onClick: () => {
+						preferSyncedProvider(p);
+						refreshCloudSession();
+						setToast(providerSyncHint(p));
+						setOpen(false);
+					},
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cloud, {
+							size: 15,
+							className: "text-[var(--accent-violet)]"
+						}),
+						providerLabel(p),
+						" folder…"
+					]
+				}, p)),
 				cloudSession ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 					type: "button",
 					className: "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05]",
@@ -273,8 +1706,9 @@ function VaultSwitcher() {
 					},
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(LogOut, { size: 15 }),
-						"Disconnect ",
-						providerLabel(cloudSession.provider)
+						"Clear ",
+						providerLabel(cloudSession.provider),
+						" preference"
 					]
 				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 					className: "px-2.5 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]",
@@ -291,10 +1725,8 @@ function VaultSwitcher() {
 						className: "flex w-full flex-col rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]",
 						onClick: () => {
 							if (r.mode === "demo") openDemoVault();
-							else if (r.mode === "fsa") {
-								openFolderAsVault();
-								setToast("Select the folder again to re-grant access");
-							} else openDemoVault();
+							else if (r.mode === "fsa") reopenRecentVault(r.id);
+							else openDemoVault();
 							setOpen(false);
 						},
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
@@ -993,13 +2425,21 @@ function EditorToolbar({ editor }) {
 function Sep() {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mx-1 h-4 w-px bg-[var(--border)]" });
 }
+/**
+* Visual editor with purity-preserving autosave:
+* - Hermes/external content is loaded as-is
+* - Disk writes only when user edits change semantic content
+* - Serialization noise never rewrites on-disk Markdown
+*/
 function VisualEditor({ noteId, content }) {
 	const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
 	const setActiveNote = useVaultStore((s) => s.setActiveNote);
-	const nodes = useVaultStore((s) => s.nodes);
 	const saveTimer = (0, import_react.useRef)(null);
 	const lastNoteId = (0, import_react.useRef)(noteId);
 	const applying = (0, import_react.useRef)(false);
+	/** Baseline markdown last loaded from store/disk (Hermes-safe) */
+	const baselineMd = (0, import_react.useRef)(content);
+	const userEdited = (0, import_react.useRef)(false);
 	const editor = useEditor({
 		extensions: [
 			index_default$2.configure({
@@ -1034,12 +2474,18 @@ function VisualEditor({ noteId, content }) {
 		editorProps: { attributes: { class: "note-editor min-h-[50vh] focus:outline-none" } },
 		onUpdate: ({ editor: ed }) => {
 			if (applying.current) return;
+			userEdited.current = true;
 			if (saveTimer.current) clearTimeout(saveTimer.current);
 			saveTimer.current = setTimeout(() => {
 				const root = ed.view.dom;
-				const md = preferCleanWrite(useVaultStore.getState().nodes[noteId]?.content ?? "", htmlDocToMarkdown(root));
+				const serialized = htmlDocToMarkdown(root);
+				const prev = useVaultStore.getState().nodes[noteId]?.content ?? baselineMd.current;
+				if (isOnlySerializationNoise(prev, serialized)) return;
+				const md = preferCleanWrite(prev, serialized);
+				if (md === prev) return;
+				baselineMd.current = md;
 				updateNoteContent(noteId, md);
-			}, 350);
+			}, 400);
 		}
 	});
 	(0, import_react.useEffect)(() => {
@@ -1047,11 +2493,17 @@ function VisualEditor({ noteId, content }) {
 		const switched = lastNoteId.current !== noteId;
 		lastNoteId.current = noteId;
 		if (!switched) {
-			const root = editor.view.dom;
-			const current = htmlDocToMarkdown(root);
-			if (preferCleanWrite(current, content) === current) return;
+			if (userEdited.current) {
+				const root = editor.view.dom;
+				const current = htmlDocToMarkdown(root);
+				if (!isOnlySerializationNoise(current, content) && current !== content) {}
+				if (isOnlySerializationNoise(baselineMd.current, content)) return;
+			}
+			if (isOnlySerializationNoise(baselineMd.current, content)) return;
 		}
 		applying.current = true;
+		userEdited.current = false;
+		baselineMd.current = content;
 		const html = markdownWithWikilinksToHtml(content || "");
 		editor.commands.setContent(html, { emitUpdate: false });
 		requestAnimationFrame(() => {
@@ -1064,8 +2516,7 @@ function VisualEditor({ noteId, content }) {
 	}, [
 		editor,
 		noteId,
-		content,
-		nodes
+		content
 	]);
 	(0, import_react.useEffect)(() => {
 		return () => {
@@ -1074,10 +2525,10 @@ function VisualEditor({ noteId, content }) {
 	}, []);
 	if (!editor) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 		className: "flex h-40 items-center justify-center text-[var(--text-muted)]",
-		children: "Loading editor…"
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "h-5 w-5 animate-pulse rounded-md bg-[rgba(0,200,255,0.2)]" })
 	});
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "flex h-full min-h-0 flex-col",
+		className: "fade-in flex h-full min-h-0 flex-col",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(EditorToolbar, { editor }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 			className: "min-h-0 flex-1 overflow-y-auto px-6 py-4 md:px-10 md:py-6",
 			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
@@ -1087,6 +2538,7 @@ function VisualEditor({ noteId, content }) {
 		})]
 	});
 }
+/** Raw Markdown source — writes only when text actually changes */
 function SourceEditor({ noteId, content }) {
 	const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
 	const timer = (0, import_react.useRef)(null);
@@ -1094,13 +2546,12 @@ function SourceEditor({ noteId, content }) {
 	const lastId = (0, import_react.useRef)(noteId);
 	(0, import_react.useEffect)(() => {
 		if (!ref.current) return;
-		if (lastId.current !== noteId || ref.current.value !== content) {
-			if (lastId.current !== noteId || document.activeElement !== ref.current) ref.current.value = content;
-		}
+		const switched = lastId.current !== noteId;
 		lastId.current = noteId;
+		if (switched || document.activeElement !== ref.current) ref.current.value = content;
 	}, [noteId, content]);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-		className: "h-full min-h-0 overflow-y-auto px-6 py-4 md:px-10 md:py-6",
+		className: "fade-in h-full min-h-0 overflow-y-auto px-6 py-4 md:px-10 md:py-6",
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 			className: "mx-auto max-w-[720px]",
 			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", {
@@ -1113,8 +2564,9 @@ function SourceEditor({ noteId, content }) {
 					if (timer.current) clearTimeout(timer.current);
 					timer.current = setTimeout(() => {
 						const prev = useVaultStore.getState().nodes[noteId]?.content ?? "";
-						updateNoteContent(noteId, preferCleanWrite(prev, val));
-					}, 250);
+						const next = preferCleanWrite(prev, val);
+						if (next !== prev) updateNoteContent(noteId, next);
+					}, 220);
 				},
 				"aria-label": "Markdown source"
 			})
@@ -1127,18 +2579,20 @@ function EditorPane() {
 	const editorMode = useVaultStore((s) => s.settings.editorMode);
 	const graphMode = useVaultStore((s) => s.settings.graphMode);
 	const rightOpen = useVaultStore((s) => s.settings.rightOpen);
-	const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
+	const mode = useVaultStore((s) => s.mode);
 	const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
 	const setRightOpen = useVaultStore((s) => s.setRightOpen);
 	const renameNode = useVaultStore((s) => s.renameNode);
 	const createNote = useVaultStore((s) => s.createNote);
+	const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
+	const setEditorMode = useVaultStore((s) => s.setEditorMode);
 	const note = activeNoteId ? nodes[activeNoteId] : null;
 	const crumbs = (0, import_react.useMemo)(() => getBreadcrumbs(note ?? null, nodes), [note, nodes]);
 	if (!note || note.kind !== "note") return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-		className: "flex h-full flex-col items-center justify-center px-8 text-center",
+		className: "fade-in flex h-full flex-col items-center justify-center px-8 text-center",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border)] bg-[rgba(0,200,255,0.08)] text-[var(--accent)]",
+				className: "mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] text-[var(--accent)] shadow-[0_0_40px_rgba(0,200,255,0.12)]",
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Eye, { size: 28 })
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
@@ -1146,14 +2600,22 @@ function EditorPane() {
 				children: "Select a note"
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-				className: "mt-2 max-w-sm text-[14px] text-[var(--text-secondary)]",
-				children: "Choose a file from the vault tree, search with ⌘K, or create a new note to start writing."
+				className: "mt-2 max-w-sm text-[14px] leading-relaxed text-[var(--text-secondary)]",
+				children: "Choose a file from the vault, search with ⌘K, or create a note. Writing surface stays calm — power features live in the edges."
 			}),
-			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-				type: "button",
-				className: "primary-btn mt-6",
-				onClick: () => createNote(null, "Untitled"),
-				children: "New note"
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mt-6 flex flex-wrap items-center justify-center gap-2",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+					type: "button",
+					className: "primary-btn",
+					onClick: () => createNote(null, "Untitled"),
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FilePlus2, { size: 16 }), "New note"]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+					type: "button",
+					className: "ghost-btn",
+					onClick: () => setCommandOpen(true),
+					children: "Search ⌘K"
+				})]
 			})
 		]
 	});
@@ -1190,14 +2652,14 @@ function EditorPane() {
 			}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "flex shrink-0 items-center gap-1",
 				children: [
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
 						className: "mr-2 hidden text-[11px] text-[var(--text-muted)] sm:inline",
-						children: formatRelativeTime(note.mtime)
+						children: [mode === "fsa" ? "on disk · " : "", formatRelativeTime(note.mtime)]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						type: "button",
 						className: cn("chip-btn", editorMode === "visual" && "is-active"),
-						onClick: () => editorMode !== "visual" && toggleEditorMode(),
+						onClick: () => setEditorMode("visual"),
 						title: "Visual mode",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Eye, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 							className: "hidden sm:inline",
@@ -1207,7 +2669,7 @@ function EditorPane() {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						type: "button",
 						className: cn("chip-btn", editorMode === "source" && "is-active"),
-						onClick: () => editorMode !== "source" && toggleEditorMode(),
+						onClick: () => setEditorMode("source"),
 						title: "Source mode (⌘E)",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeXml, { size: 13 }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 							className: "hidden sm:inline",
@@ -1610,16 +3072,23 @@ function Empty({ text }) {
 		children: text
 	});
 }
-function searchVault(nodes, query, limit = 20) {
-	const q = query.trim();
-	if (!q) return [];
-	const docs = Object.values(nodes).filter((n) => n.kind === "note").map((n) => ({
+/** Cached Fuse index — rebuilt only when vault note set changes */
+var cachedKey = "";
+var cachedFuse = null;
+var cachedDocs = [];
+function vaultKey(nodes) {
+	return Object.values(nodes).filter((n) => n.kind === "note").map((n) => `${n.id}:${n.mtime}:${(n.content ?? "").length}`).sort().join("|");
+}
+function getFuse(nodes) {
+	const key = vaultKey(nodes);
+	if (cachedFuse && cachedKey === key) return cachedFuse;
+	cachedDocs = Object.values(nodes).filter((n) => n.kind === "note").map((n) => ({
 		id: n.id,
 		path: n.path,
 		title: noteTitle(n),
 		content: n.content ?? ""
 	}));
-	return new entry_default(docs, {
+	cachedFuse = new entry_default(cachedDocs, {
 		keys: [
 			{
 				name: "title",
@@ -1634,11 +3103,25 @@ function searchVault(nodes, query, limit = 20) {
 				weight: .25
 			}
 		],
-		threshold: .42,
+		threshold: .38,
 		includeScore: true,
 		ignoreLocation: true,
 		minMatchCharLength: 1
-	}).search(q, { limit }).map((r) => {
+	});
+	cachedKey = key;
+	return cachedFuse;
+}
+function searchVault(nodes, query, limit = 20) {
+	const q = query.trim();
+	if (!q) return Object.values(nodes).filter((n) => n.kind === "note").sort((a, b) => b.mtime - a.mtime).slice(0, limit).map((n) => ({
+		noteId: n.id,
+		path: n.path,
+		title: noteTitle(n),
+		snippet: previewSnippet(n.content ?? "", 90),
+		score: 1,
+		matchType: "title"
+	}));
+	return getFuse(nodes).search(q, { limit }).map((r) => {
 		const score = 1 - (r.score ?? 0);
 		const titleHit = r.item.title.toLowerCase().includes(q.toLowerCase());
 		const snippet = titleHit ? previewSnippet(r.item.content, 100) : extractSnippet(r.item.content, q);
@@ -1844,22 +3327,24 @@ var PROVIDERS = [
 function WelcomeScreen() {
 	const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
 	const openDemoVault = useVaultStore((s) => s.openDemoVault);
-	const connectCloud = useVaultStore((s) => s.connectCloud);
+	const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
 	const fsaSupported = useVaultStore((s) => s.fsaSupported);
 	const connecting = useVaultStore((s) => s.connecting);
 	const recentVaults = useVaultStore((s) => s.recentVaults);
 	const cloudSession = useVaultStore((s) => s.cloudSession);
+	const setToast = useVaultStore((s) => s.setToast);
+	const refreshCloudSession = useVaultStore((s) => s.refreshCloudSession);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "pointer-events-none absolute inset-0 opacity-[0.35]",
-				style: { backgroundImage: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.12), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 80%, rgba(123,97,255,0.08), transparent 50%)" }
+				className: "pointer-events-none absolute inset-0 opacity-[0.4]",
+				style: { backgroundImage: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.14), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 80%, rgba(123,97,255,0.09), transparent 50%)" }
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: "pointer-events-none absolute inset-0 opacity-[0.04]",
+				className: "pointer-events-none absolute inset-0 opacity-[0.035]",
 				style: {
-					backgroundImage: "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
+					backgroundImage: "linear-gradient(rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.07) 1px, transparent 1px)",
 					backgroundSize: "48px 48px"
 				}
 			}),
@@ -1869,7 +3354,7 @@ function WelcomeScreen() {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 						className: "mb-2 flex items-center gap-2 text-[var(--accent)]",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-							className: "flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(0,200,255,0.3)] bg-[rgba(0,200,255,0.1)] shadow-[0_0_24px_rgba(0,200,255,0.2)]",
+							className: "flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(0,200,255,0.3)] bg-[rgba(0,200,255,0.1)] shadow-[0_0_28px_rgba(0,200,255,0.22)]",
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Zap, { size: 18 })
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 							className: "text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--text-secondary)]",
@@ -1883,13 +3368,13 @@ function WelcomeScreen() {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 						className: "mt-4 max-w-lg text-[15px] leading-relaxed text-[var(--text-secondary)]",
 						children: [
-							"Local-first vault. Zero accounts by default. Real",
+							"Local-first. Zero accounts. Real",
 							" ",
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 								className: "text-[var(--text-primary)]",
 								children: ".md"
 							}),
-							" files Hermes can edit. Visual editor, live graph, optional cloud — all optional."
+							" files Hermes can edit. Visual editor, live graph, progressive power."
 						]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -1912,10 +3397,10 @@ function WelcomeScreen() {
 					}),
 					!fsaSupported ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 						className: "mt-3 text-[12.5px] text-[var(--warning)]",
-						children: "This browser has limited folder access. Use Chrome/Edge for full local vault support, or open the demo vault."
+						children: "Full local vault access works best in Chrome or Edge. You can still explore the demo."
 					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 						className: "mt-3 text-[12.5px] text-[var(--text-muted)]",
-						children: "Your vault is a normal folder of notes. No proprietary database."
+						children: "Your vault is a normal folder. No proprietary database. No sign-in."
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 						className: "mt-10 grid gap-3 sm:grid-cols-3",
@@ -1933,7 +3418,7 @@ function WelcomeScreen() {
 							{
 								icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Radio, { size: 16 }),
 								title: "Hermes-ready",
-								body: "External writes appear within ~1–2 seconds via live watch."
+								body: "External writes appear within ~1 second via live watch."
 							}
 						].map((f) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "glass-panel rounded-[14px] p-4 transition-[transform,border-color] duration-200 hover:scale-[1.015] hover:border-[rgba(0,200,255,0.22)]",
@@ -1965,36 +3450,34 @@ function WelcomeScreen() {
 								children: [
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 										className: "text-[14px] font-semibold",
-										children: "Optional cloud"
+										children: "Cloud via synced folders"
 									}),
 									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 										className: "mt-1 text-[12.5px] leading-relaxed text-[var(--text-muted)]",
-										children: "Connect Dropbox, Google Drive, or OneDrive with pure client-side OAuth (tokens stay in your browser). Prefer zero setup? Point the vault at a synced folder instead."
+										children: CLOUD_SYNC_HINT
 									}),
 									cloudSession ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 										className: "mt-2 text-[12px] text-[var(--success)]",
-										children: [
-											"Connected: ",
-											providerLabel(cloudSession.provider),
-											cloudSession.accountLabel ? ` · ${cloudSession.accountLabel}` : ""
-										]
+										children: ["Preference: ", cloudSession.label]
 									}) : null,
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 										className: "mt-3 flex flex-wrap gap-2",
-										children: PROVIDERS.map((p) => {
-											const cfg = getCloudConfig(p);
-											return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-												type: "button",
-												className: cn("chip-btn", !cfg.configured && "opacity-80"),
-												onClick: () => void connectCloud(p),
-												title: cfg.configured ? `Connect ${providerLabel(p)}` : "Client ID not set — shows setup hint",
-												children: providerLabel(p)
-											}, p);
-										})
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-										className: "mt-3 text-[11.5px] text-[var(--text-muted)]",
-										children: CLOUD_SYNC_HINT
+										children: [PROVIDERS.map((p) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+											type: "button",
+											className: "chip-btn",
+											onClick: () => {
+												preferSyncedProvider(p);
+												refreshCloudSession();
+												setToast(providerSyncHint(p));
+											},
+											title: providerSyncHint(p),
+											children: providerLabel(p)
+										}, p)), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+											type: "button",
+											className: "chip-btn is-active",
+											onClick: () => void openFolderAsVault(),
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(FolderOpen, { size: 13 }), "Open synced folder"]
+										})]
 									})
 								]
 							})]
@@ -2007,12 +3490,12 @@ function WelcomeScreen() {
 							children: "Recent"
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 							className: "flex flex-col gap-1.5",
-							children: recentVaults.slice(0, 4).map((r) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							children: recentVaults.slice(0, 5).map((r) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
 								className: "flex items-center gap-3 rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5 text-left transition hover:border-[rgba(0,200,255,0.25)] hover:bg-[rgba(0,200,255,0.05)]",
 								onClick: () => {
 									if (r.mode === "demo") openDemoVault();
-									else if (r.mode === "fsa") openFolderAsVault();
+									else if (r.mode === "fsa") reopenRecentVault(r.id);
 									else openDemoVault();
 								},
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(HardDrive, {
@@ -2028,7 +3511,7 @@ function WelcomeScreen() {
 										children: [
 											r.path,
 											" · ",
-											r.mode
+											r.mode === "fsa" ? "local folder" : r.mode
 										]
 									})]
 								})]
@@ -2042,18 +3525,21 @@ function WelcomeScreen() {
 }
 /**
 * Live vault watching — Hermes-ready.
-* Demo/local: hash poll of in-memory nodes.
-* FSA: poll directory signatures every ~1s and rescan on change.
+* Prefers FileSystemObserver when available; falls back to ~800ms signature poll.
+* Uses incremental rescans to avoid full vault re-reads.
 */
 var VaultWatcher = class {
 	timer = null;
 	lastHash = "";
+	lastScan = null;
 	lastSigs = {};
 	cb = null;
 	dir = null;
 	scanning = false;
+	observer = null;
+	suppressUntil = 0;
 	/** Memory-mode watch (demo / local) */
-	start(getHash, cb, intervalMs = 1e3) {
+	start(getHash, cb, intervalMs = 900) {
 		this.stop();
 		this.cb = cb;
 		this.dir = null;
@@ -2069,35 +3555,54 @@ var VaultWatcher = class {
 			}
 		}, intervalMs);
 	}
-	/** Real filesystem watch via FSA signature polling */
-	async startFsa(dir, cb, intervalMs = 1200) {
+	/** Real filesystem watch via FSA */
+	async startFsa(dir, cb, intervalMs = 900) {
 		this.stop();
 		this.cb = cb;
 		this.dir = dir;
 		try {
-			this.lastSigs = await scanSignatures(dir);
+			const full = await scanVault(dir);
+			this.lastScan = full;
+			this.lastSigs = full.signatures;
 		} catch {
 			this.lastSigs = {};
+			this.lastScan = null;
+		}
+		const Obs = window.FileSystemObserver;
+		if (typeof Obs === "function") try {
+			const observer = new Obs(() => {
+				this.pollFsa(true);
+			});
+			await observer.observe(dir);
+			this.observer = observer;
+		} catch {
+			this.observer = null;
 		}
 		this.timer = setInterval(() => {
-			this.pollFsa();
+			this.pollFsa(false);
 		}, intervalMs);
 	}
-	async pollFsa() {
+	async pollFsa(force) {
 		if (!this.dir || this.scanning) return;
+		if (Date.now() < this.suppressUntil) return;
 		this.scanning = true;
 		try {
 			const next = await scanSignatures(this.dir);
-			if (signaturesChanged(this.lastSigs, next)) {
-				this.lastSigs = next;
+			if (!force && !signaturesChanged(this.lastSigs, next)) return;
+			if (this.lastScan) {
+				const { scan, changedPaths } = await incrementalRescan(this.dir, this.lastScan);
+				this.lastScan = scan;
+				this.lastSigs = scan.signatures;
+				this.cb?.({
+					type: "change",
+					path: "*",
+					scan,
+					changedPaths
+				});
+			} else {
 				const scan = await scanVault(this.dir);
-				this.lastSigs = Object.fromEntries(Object.entries(scan.signatures).map(([p, s]) => {
-					const parts = s.split(":");
-					return [p, `${parts[0]}:${parts[1] ?? "0"}`];
-				}));
-				const rebuilt = {};
-				for (const n of Object.values(scan.nodes)) if (n.kind === "note") rebuilt[n.path] = `${n.mtime}:${(n.content ?? "").length}`;
-				this.lastSigs = await scanSignatures(this.dir);
+				this.lastScan = scan;
+				this.lastSigs = scan.signatures;
 				this.cb?.({
 					type: "change",
 					path: "*",
@@ -2108,7 +3613,9 @@ var VaultWatcher = class {
 			this.scanning = false;
 		}
 	}
+	/** After app writes, suppress echo + refresh baseline */
 	async acknowledgeWrite(dir) {
+		this.suppressUntil = Date.now() + 600;
 		try {
 			this.lastSigs = await scanSignatures(dir);
 		} catch {}
@@ -2117,6 +3624,10 @@ var VaultWatcher = class {
 		if (this.timer) clearInterval(this.timer);
 		this.timer = null;
 		this.dir = null;
+		try {
+			this.observer?.disconnect();
+		} catch {}
+		this.observer = null;
 	}
 };
 function vaultContentHash(nodes) {

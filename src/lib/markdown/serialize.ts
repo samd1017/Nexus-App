@@ -5,6 +5,7 @@
 
 import { marked } from "marked";
 import TurndownService from "turndown";
+export { preferCleanWrite, normalizeMarkdown, markdownFingerprint } from "./purity";
 
 marked.setOptions({
   gfm: true,
@@ -20,7 +21,6 @@ const turndown = new TurndownService({
   hr: "---",
 });
 
-// Preserve [[wikilinks]] that may appear as special spans
 turndown.addRule("wikilink", {
   filter: (node) =>
     node.nodeName === "SPAN" &&
@@ -34,20 +34,36 @@ turndown.addRule("wikilink", {
   },
 });
 
-// Task lists
 turndown.addRule("taskListItem", {
   filter: (node) =>
     node.nodeName === "LI" &&
     (node as HTMLElement).getAttribute("data-type") === "taskItem",
   replacement: (content, node) => {
-    const checked = (node as HTMLElement).getAttribute("data-checked") === "true";
-    const body = content.replace(/^\n+/, "").replace(/\n+$/, "\n");
-    return `- [${checked ? "x" : " "}] ${body}`;
+    const checked =
+      (node as HTMLElement).getAttribute("data-checked") === "true";
+    const body = content.replace(/^\n+/, "").replace(/\n+$/, "\n").trim();
+    return `- [${checked ? "x" : " "}] ${body}\n`;
   },
 });
 
+const AMP = "&" + "amp;";
+const LT = "&" + "lt;";
+const GT = "&" + "gt;";
+const QUOT = "&" + "quot;";
+
+function escapeHtml(s: string): string {
+  return s.split("&").join(AMP).split("<").join(LT).split(">").join(GT).split('"').join(QUOT);
+}
+
+function escapeAttr(s: string): string {
+  return s.split("&").join(AMP).split('"').join(QUOT).split("<").join(LT);
+}
+
+function unescapeAttr(s: string): string {
+  return s.split(QUOT).join('"').split(LT).join("<").split(AMP).join("&");
+}
+
 export function markdownToHtml(md: string): string {
-  // Protect wikilinks from marked mangling
   const placeholders: string[] = [];
   const protectedMd = md.replace(/\[\[([^\]]+)\]\]/g, (full) => {
     const i = placeholders.length;
@@ -79,51 +95,21 @@ export function htmlToMarkdown(html: string): string {
   return turndown.turndown(withMarkers).trim() + "\n";
 }
 
-/** Prefer keeping original markdown if only whitespace/newline noise changed */
-export function preferCleanWrite(previous: string, next: string): string {
-  const norm = (s: string) =>
-    s.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").trimEnd() + "\n";
-  if (norm(previous) === norm(next)) return previous;
-  return norm(next);
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "\u0026amp;")
-    .replace(/</g, "\u0026lt;")
-    .replace(/>/g, "\u0026gt;")
-    .replace(/"/g, "\u0026quot;");
-}
-
-function escapeAttr(s: string): string {
-  return s
-    .replace(/&/g, "\u0026amp;")
-    .replace(/"/g, "\u0026quot;")
-    .replace(/</g, "\u0026lt;");
-}
-
-function unescapeAttr(s: string): string {
-  return s
-    .replace(/\u0026quot;/g, '"')
-    .replace(/\u0026lt;/g, "<")
-    .replace(/\u0026amp;/g, "&");
-}
-
 export function extractTitleFromMarkdown(md: string, fallback: string): string {
   const m = md.match(/^#\s+(.+)$/m);
   if (m?.[1]) return m[1].trim();
   return fallback;
 }
 
-export function extractOutline(md: string): { level: number; text: string; pos: number }[] {
+export function extractOutline(
+  md: string,
+): { level: number; text: string; pos: number }[] {
   const lines = md.split("\n");
   const out: { level: number; text: string; pos: number }[] = [];
   let pos = 0;
   for (const line of lines) {
     const m = /^(#{1,6})\s+(.+)$/.exec(line);
-    if (m) {
-      out.push({ level: m[1].length, text: m[2].trim(), pos });
-    }
+    if (m) out.push({ level: m[1].length, text: m[2].trim(), pos });
     pos += line.length + 1;
   }
   return out;

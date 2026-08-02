@@ -19,6 +19,7 @@ import {
   ensurePermission,
   isFileSystemAccessSupported,
   loadDirectoryHandle,
+  loadRecentHandle,
   pickVaultFolder,
   renamePathOnDisk,
   saveDirectoryHandle,
@@ -120,6 +121,7 @@ interface VaultStore {
   openDemoVault: () => void;
   openLocalVault: (name: string, seed?: ReturnType<typeof buildDemoVault>) => void;
   openFolderAsVault: () => Promise<void>;
+  reopenRecentVault: (id: string) => Promise<void>;
   closeVault: () => void;
   setActiveNote: (id: string | null) => void;
   toggleFolder: (id: string) => void;
@@ -384,6 +386,57 @@ export const useVaultStore = create<VaultStore>()(
           set({
             connecting: false,
             toast: e instanceof Error ? e.message : "Failed to open folder",
+          });
+        }
+      },
+
+      reopenRecentVault: async (id: string) => {
+        const handle = await loadRecentHandle(id);
+        if (!handle) {
+          set({ toast: "Re-select the folder to restore access" });
+          await get().openFolderAsVault();
+          return;
+        }
+        set({ connecting: true });
+        try {
+          const ok = await ensurePermission(handle, "readwrite");
+          if (!ok) {
+            set({ connecting: false, toast: "Permission needed — pick the folder again" });
+            await get().openFolderAsVault();
+            return;
+          }
+          fsaRoot = handle;
+          const vaultId = id;
+          await saveDirectoryHandle(handle, { id: vaultId, name: handle.name });
+          const scan = await scanVault(handle);
+          const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+          const recents = pushRecent({
+            id: vaultId,
+            name: handle.name,
+            path: handle.name,
+            lastOpened: Date.now(),
+            mode: "fsa",
+          });
+          set({
+            vaultId,
+            vaultName: handle.name,
+            vaultPath: handle.name,
+            mode: "fsa",
+            nodes: scan.nodes,
+            rootIds: scan.rootIds,
+            activeNoteId: first?.id ?? null,
+            expandedFolders: Object.values(scan.nodes)
+              .filter((n) => n.kind === "folder")
+              .map((n) => n.id),
+            dirtyNoteIds: [],
+            recentVaults: recents,
+            connecting: false,
+            toast: `Reopened vault: ${handle.name}`,
+          });
+        } catch (e) {
+          set({
+            connecting: false,
+            toast: e instanceof Error ? e.message : "Failed to reopen vault",
           });
         }
       },
@@ -809,18 +862,17 @@ export const useVaultStore = create<VaultStore>()(
 
       connectCloud: async (provider) => {
         const result = await beginCloudOAuth(provider);
-        if (!result.ok) {
-          set({
-            toast:
-              result.reason ||
-              `Connect ${providerLabel(provider)} via synced folder`,
-          });
-        }
+        set({
+          cloudSession: result.session ?? loadCloudSession(),
+          toast:
+            result.reason ||
+            `Use Open folder on your ${providerLabel(provider)} sync directory`,
+        });
       },
 
       disconnectCloud: () => {
         disconnectCloud();
-        set({ cloudSession: null, toast: "Cloud disconnected" });
+        set({ cloudSession: null, toast: "Cloud preference cleared" });
       },
 
       refreshCloudSession: () => {

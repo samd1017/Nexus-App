@@ -11,8 +11,9 @@ import {
 import { useVaultStore } from "@/lib/vault/store";
 import {
   CLOUD_SYNC_HINT,
-  getCloudConfig,
+  preferSyncedProvider,
   providerLabel,
+  providerSyncHint,
   type CloudProvider,
 } from "@/lib/cloud/oauth";
 import { cn } from "@/lib/utils";
@@ -23,13 +24,14 @@ export function VaultSwitcher() {
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+  const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const closeVault = useVaultStore((s) => s.closeVault);
   const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
-  const connectCloud = useVaultStore((s) => s.connectCloud);
-  const disconnectCloudSession = useVaultStore((s) => s.disconnectCloud);
   const cloudSession = useVaultStore((s) => s.cloudSession);
   const lastExternalSync = useVaultStore((s) => s.lastExternalSync);
   const setToast = useVaultStore((s) => s.setToast);
+  const refreshCloudSession = useVaultStore((s) => s.refreshCloudSession);
+  const disconnectCloudSession = useVaultStore((s) => s.disconnectCloud);
   const [open, setOpen] = useState(false);
 
   return (
@@ -105,28 +107,24 @@ export function VaultSwitcher() {
 
           <div className="mx-2 my-1.5 h-px bg-[var(--border)]" />
           <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-            Optional cloud
+            Cloud (synced folders)
           </div>
-          {(["dropbox", "google", "onedrive"] as CloudProvider[]).map((p) => {
-            const cfg = getCloudConfig(p);
-            return (
-              <button
-                key={p}
-                type="button"
-                className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]"
-                onClick={() => {
-                  void connectCloud(p);
-                  if (!cfg.configured) setOpen(false);
-                }}
-              >
-                <Cloud size={15} className="text-[var(--accent-violet)]" />
-                {providerLabel(p)}
-                {!cfg.configured ? (
-                  <span className="ml-auto text-[10px] text-[var(--text-muted)]">setup</span>
-                ) : null}
-              </button>
-            );
-          })}
+          {(["dropbox", "google", "onedrive"] as CloudProvider[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]"
+              onClick={() => {
+                preferSyncedProvider(p);
+                refreshCloudSession();
+                setToast(providerSyncHint(p));
+                setOpen(false);
+              }}
+            >
+              <Cloud size={15} className="text-[var(--accent-violet)]" />
+              {providerLabel(p)} folder…
+            </button>
+          ))}
           {cloudSession ? (
             <button
               type="button"
@@ -137,7 +135,7 @@ export function VaultSwitcher() {
               }}
             >
               <LogOut size={15} />
-              Disconnect {providerLabel(cloudSession.provider)}
+              Clear {providerLabel(cloudSession.provider)} preference
             </button>
           ) : (
             <p className="px-2.5 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
@@ -158,10 +156,8 @@ export function VaultSwitcher() {
                   className="flex w-full flex-col rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]"
                   onClick={() => {
                     if (r.mode === "demo") openDemoVault();
-                    else if (r.mode === "fsa") {
-                      void openFolderAsVault();
-                      setToast("Select the folder again to re-grant access");
-                    } else openDemoVault();
+                    else if (r.mode === "fsa") void reopenRecentVault(r.id);
+                    else openDemoVault();
                     setOpen(false);
                   }}
                 >

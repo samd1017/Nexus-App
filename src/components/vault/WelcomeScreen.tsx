@@ -10,45 +10,46 @@ import {
 import { useVaultStore } from "@/lib/vault/store";
 import {
   CLOUD_SYNC_HINT,
-  getCloudConfig,
+  preferSyncedProvider,
   providerLabel,
+  providerSyncHint,
   type CloudProvider,
 } from "@/lib/cloud/oauth";
-import { cn } from "@/lib/utils";
 
 const PROVIDERS: CloudProvider[] = ["dropbox", "google", "onedrive"];
 
 export function WelcomeScreen() {
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
-  const connectCloud = useVaultStore((s) => s.connectCloud);
+  const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const fsaSupported = useVaultStore((s) => s.fsaSupported);
   const connecting = useVaultStore((s) => s.connecting);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const cloudSession = useVaultStore((s) => s.cloudSession);
+  const setToast = useVaultStore((s) => s.setToast);
+  const refreshCloudSession = useVaultStore((s) => s.refreshCloudSession);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]">
-      {/* ambient grid */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.35]"
+        className="pointer-events-none absolute inset-0 opacity-[0.4]"
         style={{
           backgroundImage:
-            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.12), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 80%, rgba(123,97,255,0.08), transparent 50%)",
+            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.14), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 80%, rgba(123,97,255,0.09), transparent 50%)",
         }}
       />
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.04]"
+        className="pointer-events-none absolute inset-0 opacity-[0.035]"
         style={{
           backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
+            "linear-gradient(rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.07) 1px, transparent 1px)",
           backgroundSize: "48px 48px",
         }}
       />
 
       <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-6 py-12">
         <div className="mb-2 flex items-center gap-2 text-[var(--accent)]">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(0,200,255,0.3)] bg-[rgba(0,200,255,0.1)] shadow-[0_0_24px_rgba(0,200,255,0.2)]">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(0,200,255,0.3)] bg-[rgba(0,200,255,0.1)] shadow-[0_0_28px_rgba(0,200,255,0.22)]">
             <Zap size={18} />
           </div>
           <span className="text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--text-secondary)]">
@@ -60,9 +61,9 @@ export function WelcomeScreen() {
           A knowledge OS for plain Markdown.
         </h1>
         <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-[var(--text-secondary)]">
-          Local-first vault. Zero accounts by default. Real{" "}
+          Local-first. Zero accounts. Real{" "}
           <span className="text-[var(--text-primary)]">.md</span> files Hermes can edit.
-          Visual editor, live graph, optional cloud — all optional.
+          Visual editor, live graph, progressive power.
         </p>
 
         <div className="mt-8 flex flex-wrap gap-3">
@@ -87,16 +88,14 @@ export function WelcomeScreen() {
 
         {!fsaSupported ? (
           <p className="mt-3 text-[12.5px] text-[var(--warning)]">
-            This browser has limited folder access. Use Chrome/Edge for full local vault
-            support, or open the demo vault.
+            Full local vault access works best in Chrome or Edge. You can still explore the demo.
           </p>
         ) : (
           <p className="mt-3 text-[12.5px] text-[var(--text-muted)]">
-            Your vault is a normal folder of notes. No proprietary database.
+            Your vault is a normal folder. No proprietary database. No sign-in.
           </p>
         )}
 
-        {/* Features */}
         <div className="mt-10 grid gap-3 sm:grid-cols-3">
           {[
             {
@@ -112,7 +111,7 @@ export function WelcomeScreen() {
             {
               icon: <Radio size={16} />,
               title: "Hermes-ready",
-              body: "External writes appear within ~1–2 seconds via live watch.",
+              body: "External writes appear within ~1 second via live watch.",
             },
           ].map((f) => (
             <div
@@ -128,49 +127,46 @@ export function WelcomeScreen() {
           ))}
         </div>
 
-        {/* Optional cloud */}
         <div className="glass-panel mt-8 rounded-[16px] p-5">
           <div className="flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[rgba(123,97,255,0.12)] text-[var(--accent-violet)]">
               <Cloud size={16} />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[14px] font-semibold">Optional cloud</div>
+              <div className="text-[14px] font-semibold">Cloud via synced folders</div>
               <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--text-muted)]">
-                Connect Dropbox, Google Drive, or OneDrive with pure client-side OAuth
-                (tokens stay in your browser). Prefer zero setup? Point the vault at a
-                synced folder instead.
+                {CLOUD_SYNC_HINT}
               </p>
               {cloudSession ? (
                 <p className="mt-2 text-[12px] text-[var(--success)]">
-                  Connected: {providerLabel(cloudSession.provider)}
-                  {cloudSession.accountLabel ? ` · ${cloudSession.accountLabel}` : ""}
+                  Preference: {cloudSession.label}
                 </p>
               ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
-                {PROVIDERS.map((p) => {
-                  const cfg = getCloudConfig(p);
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      className={cn(
-                        "chip-btn",
-                        !cfg.configured && "opacity-80",
-                      )}
-                      onClick={() => void connectCloud(p)}
-                      title={
-                        cfg.configured
-                          ? `Connect ${providerLabel(p)}`
-                          : "Client ID not set — shows setup hint"
-                      }
-                    >
-                      {providerLabel(p)}
-                    </button>
-                  );
-                })}
+                {PROVIDERS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="chip-btn"
+                    onClick={() => {
+                      preferSyncedProvider(p);
+                      refreshCloudSession();
+                      setToast(providerSyncHint(p));
+                    }}
+                    title={providerSyncHint(p)}
+                  >
+                    {providerLabel(p)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="chip-btn is-active"
+                  onClick={() => void openFolderAsVault()}
+                >
+                  <FolderOpen size={13} />
+                  Open synced folder
+                </button>
               </div>
-              <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">{CLOUD_SYNC_HINT}</p>
             </div>
           </div>
         </div>
@@ -181,14 +177,14 @@ export function WelcomeScreen() {
               Recent
             </div>
             <div className="flex flex-col gap-1.5">
-              {recentVaults.slice(0, 4).map((r) => (
+              {recentVaults.slice(0, 5).map((r) => (
                 <button
                   key={r.id}
                   type="button"
                   className="flex items-center gap-3 rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5 text-left transition hover:border-[rgba(0,200,255,0.25)] hover:bg-[rgba(0,200,255,0.05)]"
                   onClick={() => {
                     if (r.mode === "demo") openDemoVault();
-                    else if (r.mode === "fsa") void openFolderAsVault();
+                    else if (r.mode === "fsa") void reopenRecentVault(r.id);
                     else openDemoVault();
                   }}
                 >
@@ -196,7 +192,7 @@ export function WelcomeScreen() {
                   <div className="min-w-0">
                     <div className="truncate text-[13px] font-medium">{r.name}</div>
                     <div className="truncate text-[11px] text-[var(--text-muted)]">
-                      {r.path} · {r.mode}
+                      {r.path} · {r.mode === "fsa" ? "local folder" : r.mode}
                     </div>
                   </div>
                 </button>

@@ -1,6 +1,6 @@
 import { r as __toESM } from "../_runtime.mjs";
 import { r as require_react } from "./@radix-ui/react-compose-refs+[...].mjs";
-import { _ as require_shim, g as require_with_selector } from "./@tanstack/react-router+[...].mjs";
+import { g as require_shim, h as require_with_selector } from "./@tanstack/react-router+[...].mjs";
 import { n as require_jsx_runtime } from "./radix-ui__react-context+react.mjs";
 import { s as require_react_dom } from "./@radix-ui/react-dialog+[...].mjs";
 import { n as Editor } from "./@tiptap/core+[...].mjs";

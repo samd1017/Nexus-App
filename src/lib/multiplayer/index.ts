@@ -1,9 +1,10 @@
-export { P2PRoom, defaultIceServers } from "./p2p";
-export type {
-  PeerInfo,
-  P2PRoomOptions,
-  SignalKind,
-  PeerRow,
-  SignalRow,
-  RtcPollResponse,
-} from "./p2p";
+/**
+ * Multiplayer intentionally disabled for Note App MVP.
+ * Knowledge vaults are single-user, local-first.
+ */
+
+export const multiplayerEnabled = false;
+
+export function createMultiplayerSession(): never {
+  throw new Error("Multiplayer is out of scope for Note App.");
+}

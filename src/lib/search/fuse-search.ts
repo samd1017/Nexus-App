@@ -10,15 +10,25 @@ interface SearchDoc {
   content: string;
 }
 
-export function searchVault(
-  nodes: Record<string, VaultNode>,
-  query: string,
-  limit = 20,
-): SearchHit[] {
-  const q = query.trim();
-  if (!q) return [];
+/** Cached Fuse index — rebuilt only when vault note set changes */
+let cachedKey = "";
+let cachedFuse: Fuse<SearchDoc> | null = null;
+let cachedDocs: SearchDoc[] = [];
 
-  const docs: SearchDoc[] = Object.values(nodes)
+function vaultKey(nodes: Record<string, VaultNode>): string {
+  // path + mtime + length — cheap, stable for incremental Hermes updates
+  return Object.values(nodes)
+    .filter((n) => n.kind === "note")
+    .map((n) => `${n.id}:${n.mtime}:${(n.content ?? "").length}`)
+    .sort()
+    .join("|");
+}
+
+function getFuse(nodes: Record<string, VaultNode>): Fuse<SearchDoc> {
+  const key = vaultKey(nodes);
+  if (cachedFuse && cachedKey === key) return cachedFuse;
+
+  cachedDocs = Object.values(nodes)
     .filter((n) => n.kind === "note")
     .map((n) => ({
       id: n.id,
@@ -27,18 +37,44 @@ export function searchVault(
       content: n.content ?? "",
     }));
 
-  const fuse = new Fuse(docs, {
+  cachedFuse = new Fuse(cachedDocs, {
     keys: [
       { name: "title", weight: 0.55 },
       { name: "path", weight: 0.2 },
       { name: "content", weight: 0.25 },
     ],
-    threshold: 0.42,
+    threshold: 0.38,
     includeScore: true,
     ignoreLocation: true,
     minMatchCharLength: 1,
   });
+  cachedKey = key;
+  return cachedFuse;
+}
 
+export function searchVault(
+  nodes: Record<string, VaultNode>,
+  query: string,
+  limit = 20,
+): SearchHit[] {
+  const q = query.trim();
+  if (!q) {
+    // Empty query: recent notes by mtime
+    return Object.values(nodes)
+      .filter((n) => n.kind === "note")
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit)
+      .map((n) => ({
+        noteId: n.id,
+        path: n.path,
+        title: noteTitle(n),
+        snippet: previewSnippet(n.content ?? "", 90),
+        score: 1,
+        matchType: "title" as const,
+      }));
+  }
+
+  const fuse = getFuse(nodes);
   return fuse.search(q, { limit }).map((r) => {
     const score = 1 - (r.score ?? 0);
     const titleHit = r.item.title.toLowerCase().includes(q.toLowerCase());
@@ -66,4 +102,10 @@ function extractSnippet(content: string, query: string, radius = 50): string {
   if (from > 0) s = "…" + s;
   if (to < content.length) s = s + "…";
   return s;
+}
+
+export function invalidateSearchCache(): void {
+  cachedKey = "";
+  cachedFuse = null;
+  cachedDocs = [];
 }

@@ -1,10 +1,9 @@
 import { r as __toESM } from "../_runtime.mjs";
 import { r as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].mjs";
-import { c as HeadContent, d as Outlet, f as lazyRouteComponent, m as createRootRoute, p as createFileRoute, s as Scripts, u as createRouter } from "../_libs/@tanstack/react-router+[...].mjs";
+import { O as redirect, c as HeadContent, d as Outlet, f as lazyRouteComponent, m as createRootRoute, p as createFileRoute, s as Scripts, u as createRouter } from "../_libs/@tanstack/react-router+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
-import { t as Route } from "./oauth.callback-CJn5BbsV.mjs";
 import { n as TriangleAlert } from "../_libs/lucide-react.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/router-D2Okk6RT.js
+//#region node_modules/.nitro/vite/services/ssr/assets/router-BmlwWSFO.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function AppErrorComponent({ error }) {
@@ -128,9 +127,9 @@ function CreatedWithGrokBanner() {
 		]
 	})] });
 }
-var styles_default = "/assets/styles-BT7-Rv2d.css";
+var styles_default = "/assets/styles-Bmr4xsVH.css";
 var APP_NAME = "Note App";
-var Route$1 = createRootRoute({
+var Route$2 = createRootRoute({
 	head: () => ({
 		meta: [
 			{ charSet: "utf-8" },
@@ -166,23 +165,36 @@ function RootDocument() {
 		})]
 	});
 }
-var $$splitComponentImporter = () => import("./routes-CL4dF54X.mjs");
+var $$splitComponentImporter$1 = () => import("./routes-Nwym3A3c.mjs");
+var Route$1 = createFileRoute("/")({
+	component: lazyRouteComponent($$splitComponentImporter$1, "component"),
+	ssr: false
+});
+var $$splitComponentImporter = () => import("./oauth.callback-CJRHEZmK.mjs");
+/**
+* Legacy OAuth callback — cloud uses synced folders only.
+* Redirect home so old bookmarks never blank-screen.
+*/
+var Route = createFileRoute("/oauth/callback")({
+	ssr: false,
+	beforeLoad: () => {
+		throw redirect({ to: "/" });
+	},
+	component: lazyRouteComponent($$splitComponentImporter, "component")
+});
 var rootRouteChildren = {
-	IndexRoute: createFileRoute("/")({
-		component: lazyRouteComponent($$splitComponentImporter, "component"),
-		ssr: false
-	}).update({
+	IndexRoute: Route$1.update({
 		id: "/",
 		path: "/",
-		getParentRoute: () => Route$1
+		getParentRoute: () => Route$2
 	}),
 	OauthCallbackRoute: Route.update({
 		id: "/oauth/callback",
 		path: "/oauth/callback",
-		getParentRoute: () => Route$1
+		getParentRoute: () => Route$2
 	})
 };
-var routeTree = Route$1._addFileChildren(rootRouteChildren)._addFileTypes();
+var routeTree = Route$2._addFileChildren(rootRouteChildren)._addFileTypes();
 function getRouter() {
 	return createRouter({
 		routeTree,

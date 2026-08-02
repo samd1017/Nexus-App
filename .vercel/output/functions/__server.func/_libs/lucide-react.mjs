@@ -183,6 +183,30 @@ var Eye = createLucideIcon("eye", [["path", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var FilePlus2 = createLucideIcon("file-plus-2", [
+	["path", {
+		d: "M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4",
+		key: "1pf5j1"
+	}],
+	["path", {
+		d: "M14 2v4a2 2 0 0 0 2 2h4",
+		key: "tnqrlb"
+	}],
+	["path", {
+		d: "M3 15h6",
+		key: "4e2qda"
+	}],
+	["path", {
+		d: "M6 12v6",
+		key: "1u72j0"
+	}]
+]);
+/**
+* @license lucide-react v0.510.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var FilePlus = createLucideIcon("file-plus", [
 	["path", {
 		d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z",
@@ -987,4 +1011,4 @@ var Zap = createLucideIcon("zap", [["path", {
 	key: "1xq2db"
 }]]);
 //#endregion
-export { Folder as A, ChevronDown as B, Link2 as C, Heading2 as D, Heading3 as E, Eye as F, Ellipsis as I, CodeXml as L, FolderOpen as M, FileText as N, Heading1 as O, FilePlus as P, Cloud as R, ListChecks as S, Image as T, Bold as V, Maximize2 as _, Sparkles as a, ListTree as b, Quote as c, PanelRightOpen as d, PanelRightClose as f, Minimize2 as g, Minus as h, Table as i, FolderPlus as j, HardDrive as k, Plus as l, Network as m, TriangleAlert as n, Search as o, PanelLeftClose as p, Trash2 as r, Radio as s, Zap as t, Pencil as u, LogOut as v, Italic as w, ListOrdered as x, List as y, ChevronRight as z };
+export { Folder as A, ChevronRight as B, Link2 as C, Heading2 as D, Heading3 as E, FilePlus2 as F, Bold as H, Eye as I, Ellipsis as L, FolderOpen as M, FileText as N, Heading1 as O, FilePlus as P, CodeXml as R, ListChecks as S, Image as T, ChevronDown as V, Maximize2 as _, Sparkles as a, ListTree as b, Quote as c, PanelRightOpen as d, PanelRightClose as f, Minimize2 as g, Minus as h, Table as i, FolderPlus as j, HardDrive as k, Plus as l, Network as m, TriangleAlert as n, Search as o, PanelLeftClose as p, Trash2 as r, Radio as s, Zap as t, Pencil as u, LogOut as v, Italic as w, ListOrdered as x, List as y, Cloud as z };
