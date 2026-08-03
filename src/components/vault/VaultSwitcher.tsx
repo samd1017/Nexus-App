@@ -1,41 +1,94 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  Check,
   ChevronDown,
-  Cloud,
   FolderOpen,
+  FolderPlus,
   HardDrive,
-  LogOut,
-  Radio,
+  MoreHorizontal,
   Sparkles,
+  X,
+  ExternalLink,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
-import {
-  CLOUD_SYNC_HINT,
-  preferSyncedProvider,
-  providerLabel,
-  providerSyncHint,
-  type CloudProvider,
-} from "@/lib/cloud/oauth";
+import { isDesktopShell } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
+/**
+ * Finder-style vault menu:
+ * Recents → Open → Create → Reveal → Close
+ * Cloud / demo / Hermes are not primary destinations.
+ */
 export function VaultSwitcher() {
+  const vaultId = useVaultStore((s) => s.vaultId);
   const vaultName = useVaultStore((s) => s.vaultName);
+  const vaultPath = useVaultStore((s) => s.vaultPath);
   const mode = useVaultStore((s) => s.mode);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+  const createNewVault = useVaultStore((s) => s.createNewVault);
+  const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const closeVault = useVaultStore((s) => s.closeVault);
-  const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
-  const cloudSession = useVaultStore((s) => s.cloudSession);
-  const lastExternalSync = useVaultStore((s) => s.lastExternalSync);
-  const setToast = useVaultStore((s) => s.setToast);
-  const refreshCloudSession = useVaultStore((s) => s.refreshCloudSession);
-  const disconnectCloudSession = useVaultStore((s) => s.disconnectCloud);
+  const connecting = useVaultStore((s) => s.connecting);
+
   const [open, setOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("Nexus Vault");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const desktop = isDesktopShell();
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+        setMoreOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        setMoreOpen(false);
+        setCreateOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const subtitle =
+    mode === "desktop"
+      ? vaultPath || "Local folder"
+      : mode === "fsa"
+        ? "Local folder · live watch"
+        : mode === "demo" && vaultId
+          ? "Demo vault"
+          : "Plain Markdown folder";
+
+  const canReveal = Boolean(vaultId && mode === "desktop" && vaultPath);
+
+  const openRecent = (id: string, rMode: string) => {
+    if (rMode === "demo") openDemoVault();
+    else void reopenRecentVault(id);
+    setOpen(false);
+  };
+
+  const submitCreate = () => {
+    const name = createName.trim() || "Nexus Vault";
+    setCreateOpen(false);
+    setOpen(false);
+    void createNewVault(name);
+  };
 
   return (
-    <div className="relative px-3 pt-3">
+    <div className="relative px-3 pt-3" ref={rootRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -52,12 +105,7 @@ export function VaultSwitcher() {
             {vaultName || "Select vault"}
           </div>
           <div className="truncate text-[11px] text-[var(--text-muted)]">
-            {mode === "fsa"
-              ? "Local folder · live watch"
-              : mode === "demo"
-                ? "Demo vault · in-browser"
-                : "Plain Markdown folder"}
-            {lastExternalSync ? " · synced" : ""}
+            {connecting ? "Working…" : subtitle}
           </div>
         </div>
         <ChevronDown
@@ -70,120 +118,234 @@ export function VaultSwitcher() {
       </button>
 
       {open ? (
-        <div className="glass-elevated absolute left-3 right-3 top-[calc(100%+6px)] z-50 max-h-[min(70vh,480px)] overflow-y-auto rounded-[14px] p-1.5">
-          <button
-            type="button"
-            className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]"
+        <div className="glass-elevated absolute left-3 right-3 top-[calc(100%+6px)] z-50 max-h-[min(70vh,520px)] overflow-y-auto rounded-[14px] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.5)]">
+          {/* Open Recent */}
+          {recentVaults.length > 0 ? (
+            <>
+              <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                Open Recent
+              </div>
+              {recentVaults.slice(0, 8).map((r) => {
+                const active = r.id === vaultId;
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className={cn(
+                      "flex w-full items-start gap-2 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]",
+                      active && "bg-[rgba(0,200,255,0.08)]",
+                    )}
+                    onClick={() => openRecent(r.id, r.mode)}
+                  >
+                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center text-[var(--accent)]">
+                      {active ? <Check size={14} /> : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12.5px] text-[var(--text-primary)]">
+                        {r.name}
+                      </span>
+                      <span className="block truncate text-[11px] text-[var(--text-muted)]">
+                        {r.path}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+              <div className="mx-2 my-1.5 h-px bg-[var(--border)]" />
+            </>
+          ) : null}
+
+          <MenuRow
+            icon={<FolderOpen size={15} className="text-[var(--accent)]" />}
+            label="Open…"
+            hint={desktop ? "⌘O" : undefined}
             onClick={() => {
               void openFolderAsVault();
               setOpen(false);
             }}
-          >
-            <FolderOpen size={15} className="text-[var(--accent)]" />
-            Open folder as vault…
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]"
+          />
+          <MenuRow
+            icon={<FolderPlus size={15} className="text-[var(--accent)]" />}
+            label="New Vault…"
             onClick={() => {
-              openDemoVault();
-              setOpen(false);
+              setCreateName("Nexus Vault");
+              setCreateOpen(true);
             }}
-          >
-            <Sparkles size={15} className="text-[var(--accent-violet)]" />
-            Open demo vault
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]"
-            onClick={() => {
-              simulateHermesWrite();
-              setOpen(false);
-            }}
-          >
-            <Radio size={15} className="text-[var(--success)]" />
-            Simulate Hermes write
-          </button>
+          />
 
-          <div className="mx-2 my-1.5 h-px bg-[var(--border)]" />
-          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-            Cloud (synced folders)
-          </div>
-          {(["dropbox", "google", "onedrive"] as CloudProvider[]).map((p) => (
-            <button
-              key={p}
-              type="button"
-              className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]"
-              onClick={() => {
-                preferSyncedProvider(p);
-                refreshCloudSession();
-                setToast(providerSyncHint(p));
-                setOpen(false);
-              }}
-            >
-              <Cloud size={15} className="text-[var(--accent-violet)]" />
-              {providerLabel(p)} folder…
-            </button>
-          ))}
-          {cloudSession ? (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.05]"
-              onClick={() => {
-                disconnectCloudSession();
-                setOpen(false);
-              }}
-            >
-              <LogOut size={15} />
-              Clear {providerLabel(cloudSession.provider)} preference
-            </button>
-          ) : (
-            <p className="px-2.5 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
-              {CLOUD_SYNC_HINT}
-            </p>
-          )}
-
-          {recentVaults.length > 0 ? (
+          {vaultId && mode !== "demo" ? (
             <>
               <div className="mx-2 my-1.5 h-px bg-[var(--border)]" />
-              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                Recent
-              </div>
-              {recentVaults.slice(0, 5).map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  className="flex w-full flex-col rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]"
-                  onClick={() => {
-                    if (r.mode === "demo") openDemoVault();
-                    else if (r.mode === "fsa") void reopenRecentVault(r.id);
-                    else openDemoVault();
-                    setOpen(false);
-                  }}
-                >
-                  <span className="text-[12.5px] text-[var(--text-primary)]">{r.name}</span>
-                  <span className="truncate text-[11px] text-[var(--text-muted)]">
-                    {r.path}
-                  </span>
-                </button>
-              ))}
+              <MenuRow
+                icon={
+                  <ExternalLink
+                    size={15}
+                    className={
+                      canReveal
+                        ? "text-[var(--text-secondary)]"
+                        : "text-[var(--text-muted)]"
+                    }
+                  />
+                }
+                label={desktop ? "Show in Finder" : "Show vault location"}
+                disabled={!canReveal && desktop}
+                onClick={() => {
+                  void revealVaultInFinder();
+                  setOpen(false);
+                }}
+              />
+              {!desktop && mode === "fsa" ? (
+                <p className="px-2.5 pb-1.5 text-[10.5px] leading-snug text-[var(--text-muted)]">
+                  Browser vaults stay in the folder you granted access to.
+                </p>
+              ) : null}
             </>
           ) : null}
+
+          <div className="mx-2 my-1.5 h-px bg-[var(--border)]" />
+          <MenuRow
+            icon={<X size={15} />}
+            label="Close"
+            muted
+            disabled={!vaultId}
+            onClick={() => {
+              closeVault();
+              setOpen(false);
+            }}
+          />
 
           <div className="mx-2 my-1.5 h-px bg-[var(--border)]" />
           <button
             type="button"
             className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-[var(--text-muted)] hover:bg-white/[0.05] hover:text-[var(--text-secondary)]"
-            onClick={() => {
-              closeVault();
-              setOpen(false);
-            }}
+            onClick={() => setMoreOpen((v) => !v)}
           >
-            <LogOut size={15} />
-            Close vault
+            <MoreHorizontal size={15} />
+            More
+            <ChevronDown
+              size={13}
+              className={cn(
+                "ml-auto transition-transform",
+                moreOpen && "rotate-180",
+              )}
+            />
           </button>
+          {moreOpen ? (
+            <div className="mb-0.5 ml-2 border-l border-[var(--border)] pl-1">
+              <MenuRow
+                icon={
+                  <Sparkles
+                    size={15}
+                    className="text-[var(--accent-violet)]"
+                  />
+                }
+                label="Open demo vault"
+                onClick={() => {
+                  openDemoVault();
+                  setOpen(false);
+                  setMoreOpen(false);
+                }}
+              />
+              <p className="px-2.5 py-1.5 text-[10.5px] leading-snug text-[var(--text-muted)]">
+                Cloud sync: turn on Dropbox, Drive, or OneDrive desktop sync,
+                then use Open… on that folder. Nexus never stores accounts.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {createOpen ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/55"
+            aria-label="Cancel"
+            onClick={() => setCreateOpen(false)}
+          />
+          <div className="glass-elevated relative z-10 w-full max-w-[360px] rounded-[16px] border border-[var(--border)] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+            <h3 className="text-[15px] font-semibold tracking-tight">
+              New Vault
+            </h3>
+            <p className="mt-1 text-[12.5px] text-[var(--text-muted)]">
+              Creates a folder of plain Markdown files
+              {desktop ? ", then opens it" : " inside a parent folder you pick"}
+              .
+            </p>
+            <label className="mt-4 block text-[12px] font-medium text-[var(--text-secondary)]">
+              Name
+              <input
+                autoFocus
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submitCreate();
+                  }
+                  if (e.key === "Escape") setCreateOpen(false);
+                }}
+                className="mt-1.5 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none ring-[var(--accent)] focus:ring-1"
+                placeholder="Nexus Vault"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setCreateOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={submitCreate}
+              >
+                Create…
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
+  );
+}
+
+function MenuRow({
+  icon,
+  label,
+  onClick,
+  hint,
+  muted,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  hint?: string;
+  muted?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        muted
+          ? "text-[var(--text-muted)] hover:bg-white/[0.05] hover:text-[var(--text-secondary)]"
+          : "text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
+      )}
+    >
+      {icon}
+      <span className="flex-1">{label}</span>
+      {hint ? (
+        <span className="font-mono text-[10px] text-[var(--text-muted)]">
+          {hint}
+        </span>
+      ) : null}
+    </button>
   );
 }

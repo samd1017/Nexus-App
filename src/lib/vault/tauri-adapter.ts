@@ -89,24 +89,75 @@ function joinRoot(root: string, rel: string): string {
   return `${cleanRoot}${sep}${cleanRel}`;
 }
 
-export async function pickDesktopVaultFolder(): Promise<string | null> {
+export async function pickDesktopVaultFolder(
+  title = "Open Nexus Vault",
+  opts?: { remember?: boolean },
+): Promise<string | null> {
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
     directory: true,
     multiple: false,
     recursive: true,
-    title: "Open Nexus Vault",
+    title,
   });
   if (selected == null) return null;
   const root = Array.isArray(selected) ? selected[0] : selected;
   if (!root || typeof root !== "string") return null;
-  setDesktopVaultRoot(root);
-  pushDesktopRecent({
-    id: "desk-" + basename(root).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase(),
-    name: basename(root),
-    path: root,
-  });
+  if (opts?.remember !== false) {
+    setDesktopVaultRoot(root);
+    pushDesktopRecent({
+      id: "desk-" + basename(root).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase(),
+      name: basename(root),
+      path: root,
+    });
+  }
   return root;
+}
+
+/** Create a new empty vault directory with a Welcome note. Returns absolute path. */
+export async function createNewDesktopVault(
+  parentDir: string,
+  vaultName: string,
+  welcomeMarkdown: string,
+): Promise<string> {
+  const { mkdir, writeTextFile, exists } = await import("@tauri-apps/plugin-fs");
+  const isWin =
+    /^[A-Za-z]:[\\/]/.test(parentDir) || parentDir.startsWith("\\\\");
+  const sep = isWin ? "\\" : "/";
+  const cleanParent = parentDir.replace(/[/\\]+$/, "");
+  const safe =
+    vaultName
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+      .replace(/\s+/g, " ")
+      .slice(0, 80)
+      .trim() || "Nexus Vault";
+
+  let vaultPath = `${cleanParent}${sep}${safe}`;
+  let n = 2;
+  while (await exists(vaultPath)) {
+    vaultPath = `${cleanParent}${sep}${safe} ${n}`;
+    n += 1;
+    if (n > 50) throw new Error("Could not find a free vault folder name");
+  }
+
+  await mkdir(vaultPath, { recursive: true });
+  await writeTextFile(`${vaultPath}${sep}Welcome.md`, welcomeMarkdown);
+  setDesktopVaultRoot(vaultPath);
+  pushDesktopRecent({
+    id:
+      "desk-" +
+      basename(vaultPath).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase(),
+    name: basename(vaultPath),
+    path: vaultPath,
+  });
+  return vaultPath;
+}
+
+/** Reveal a path in Finder (macOS) / Explorer (Windows). */
+export async function revealDesktopPath(path: string): Promise<void> {
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
 }
 
 async function walkNotes(

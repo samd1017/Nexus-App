@@ -29,11 +29,13 @@ import {
 } from "./fs-adapter";
 import {
   createDesktopFolder,
+  createNewDesktopVault,
   deleteDesktopPath,
   getDesktopVaultRoot,
   openDesktopVaultAt,
   pickDesktopVaultFolder,
   renameDesktopPath,
+  revealDesktopPath,
   setDesktopVaultRoot,
   writeDesktopNote,
 } from "./tauri-adapter";
@@ -273,6 +275,8 @@ interface VaultStore {
   openDemoVault: () => void;
   openLocalVault: (name: string, seed?: ReturnType<typeof buildDemoVault>) => void;
   openFolderAsVault: () => Promise<void>;
+  createNewVault: (name?: string) => Promise<void>;
+  revealVaultInFinder: () => Promise<void>;
   reopenRecentVault: (id: string) => Promise<void>;
   closeVault: () => void;
   setActiveNote: (id: string | null) => void;
@@ -671,6 +675,181 @@ export const useVaultStore = create<VaultStore>()(
             toast: e instanceof Error ? e.message : "Failed to open folder",
           });
         }
+      },
+
+
+      createNewVault: async (name) => {
+        const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
+        const welcome = [
+          "# Welcome",
+          "",
+          "This is your new **Nexus** vault.",
+          "",
+          "Notes are plain Markdown files in this folder. Type `[[` to link notes, switch Visual and Source, and open the graph to see connections.",
+          "",
+          "— Nexus · Notes for Humans and Agents",
+          "",
+        ].join("\n");
+        set({ connecting: true });
+        try {
+          const desktop = (await confirmDesktopShell()) || isDesktopShell();
+          if (desktop) {
+            const parent = await pickDesktopVaultFolder(
+              "Choose where to create the vault",
+              { remember: false },
+            );
+            if (!parent) {
+              set({ connecting: false });
+              return;
+            }
+            const vaultPath = await createNewDesktopVault(
+              parent,
+              vaultName,
+              welcome,
+            );
+            desktopRoot = vaultPath;
+            fsaRoot = null;
+            const scan = await openDesktopVaultAt(vaultPath);
+            const nameOut =
+              vaultPath.split(/[/\\]/).filter(Boolean).pop() || vaultName;
+            const vaultId =
+              "desk-" + nameOut.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+            const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+            const recents = pushRecent({
+              id: vaultId,
+              name: nameOut,
+              path: vaultPath,
+              lastOpened: Date.now(),
+              mode: "desktop",
+            });
+            set({
+              vaultId,
+              vaultName: nameOut,
+              vaultPath,
+              mode: "desktop",
+              nodes: scan.nodes,
+              rootIds: scan.rootIds,
+              activeNoteId: first?.id ?? null,
+              expandedFolders: Object.values(scan.nodes)
+                .filter((n) => n.kind === "folder")
+                .map((n) => n.id),
+              dirtyNoteIds: [],
+              recentVaults: recents,
+              connecting: false,
+              toast: `Created vault: ${nameOut}`,
+              settings: {
+                ...get().settings,
+                lastNotePath: first?.path ?? null,
+                editorMode: getPrefs().defaultEditorMode,
+                graphMode: getPrefs().defaultGraphView,
+                rightOpen: getPrefs().defaultGraphView === "panel",
+              },
+            });
+            return;
+          }
+
+          const parent = await pickVaultFolder();
+          if (!parent) {
+            set({ connecting: false });
+            return;
+          }
+          const ok = await ensurePermission(parent, "readwrite");
+          if (!ok) {
+            set({
+              connecting: false,
+              toast: "Permission denied — cannot create vault",
+            });
+            return;
+          }
+          let childName = vaultName.replace(/[\\/]+/g, "-").slice(0, 80);
+          let handle: FileSystemDirectoryHandle | null = null;
+          for (let i = 0; i < 40; i++) {
+            const tryName = i === 0 ? childName : `${childName} ${i + 1}`;
+            try {
+              handle = await parent.getDirectoryHandle(tryName, { create: true });
+              childName = tryName;
+              break;
+            } catch {
+              /* try next */
+            }
+          }
+          if (!handle) {
+            set({ connecting: false, toast: "Could not create vault folder" });
+            return;
+          }
+          fsaRoot = handle;
+          desktopRoot = null;
+          await writeNoteFile(handle, "Welcome.md", welcome);
+          const vaultId =
+            "fsa-" + childName.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+          await saveDirectoryHandle(handle, { id: vaultId, name: childName });
+          const scan = await scanVault(handle);
+          const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+          const recents = pushRecent({
+            id: vaultId,
+            name: childName,
+            path: childName,
+            lastOpened: Date.now(),
+            mode: "fsa",
+          });
+          set({
+            vaultId,
+            vaultName: childName,
+            vaultPath: childName,
+            mode: "fsa",
+            nodes: scan.nodes,
+            rootIds: scan.rootIds,
+            activeNoteId: first?.id ?? null,
+            expandedFolders: Object.values(scan.nodes)
+              .filter((n) => n.kind === "folder")
+              .map((n) => n.id),
+            dirtyNoteIds: [],
+            recentVaults: recents,
+            connecting: false,
+            toast: `Created vault: ${childName}`,
+            settings: {
+              ...get().settings,
+              lastNotePath: first?.path ?? null,
+              editorMode: getPrefs().defaultEditorMode,
+              graphMode: getPrefs().defaultGraphView,
+              rightOpen: getPrefs().defaultGraphView === "panel",
+            },
+          });
+        } catch (e) {
+          set({
+            connecting: false,
+            toast: e instanceof Error ? e.message : "Failed to create vault",
+          });
+        }
+      },
+
+      revealVaultInFinder: async () => {
+        const { mode, vaultPath, vaultId } = get();
+        if (!vaultId) {
+          set({ toast: "No vault open" });
+          return;
+        }
+        if (mode === "desktop" && vaultPath) {
+          try {
+            await revealDesktopPath(vaultPath);
+          } catch (e) {
+            set({
+              toast:
+                e instanceof Error
+                  ? e.message
+                  : "Could not reveal vault in Finder",
+            });
+          }
+          return;
+        }
+        if (mode === "fsa") {
+          set({
+            toast:
+              "In the browser, the vault is the folder you granted access to.",
+          });
+          return;
+        }
+        set({ toast: "Reveal is available for local folders on desktop" });
       },
 
       reopenRecentVault: async (id: string) => {

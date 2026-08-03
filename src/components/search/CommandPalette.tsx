@@ -26,6 +26,8 @@ export function CommandPalette() {
   const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+  const createNewVault = useVaultStore((s) => s.createNewVault);
+  const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
   const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const [query, setQuery] = useState("");
@@ -126,9 +128,25 @@ export function CommandPalette() {
             />
             <Action
               icon={<FolderOpen size={15} />}
-              label="Open folder as vault"
+              label="Open folder…"
               onSelect={() => {
                 void openFolderAsVault();
+                setCommandOpen(false);
+              }}
+            />
+            <Action
+              icon={<FolderOpen size={15} />}
+              label="New vault…"
+              onSelect={() => {
+                void createNewVault("Nexus Vault");
+                setCommandOpen(false);
+              }}
+            />
+            <Action
+              icon={<FolderOpen size={15} />}
+              label="Show vault in Finder"
+              onSelect={() => {
+                void revealVaultInFinder();
                 setCommandOpen(false);
               }}
             />

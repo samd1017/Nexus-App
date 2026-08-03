@@ -301,6 +301,39 @@ export function SettingsPanel() {
             </ul>
           </Section>
 
+          {/* Help */}
+          <Section title="Help">
+            <div className="space-y-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+              <HelpItem
+                title="Vaults"
+                body="A vault is a normal folder of Markdown files. Open… picks an existing folder. New Vault… creates one with a Welcome note."
+              />
+              <HelpItem
+                title="Editing"
+                body="Visual is the rich editor. Source shows clean Markdown. They stay in sync. Type [[ to link notes or folders."
+              />
+              <HelpItem
+                title="Graph"
+                body="The graph maps [[wikilinks]] and gently clusters notes that share a folder. Click a node to open it."
+              />
+              <HelpItem
+                title="Cloud"
+                body="Nexus does not host accounts. Use Dropbox / Drive / OneDrive desktop sync, then Open… that local folder."
+              />
+              <HelpItem
+                title="Hermes & agents"
+                body="External apps can edit .md files on disk. Changes appear live. Keep Markdown clean — no proprietary formats."
+              />
+              <HelpItem
+                title="Desktop"
+                body="On Mac, Show in Finder reveals the vault folder. Open Settings anytime with ⌘,."
+              />
+            </div>
+            <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">
+              Everyday reference — deeper guides can grow as the product matures.
+            </p>
+          </Section>
+
           {/* About */}
           <Section title="About">
             <div className="flex items-start gap-3 rounded-[14px] border border-[var(--border)] bg-white/[0.02] p-3.5">
@@ -357,6 +390,25 @@ const DEFAULT_CUSTOM = "#00C8FF";
 function normalize(hex: string): string {
   const h = hex.trim();
   return h.startsWith("#") ? h.toUpperCase() : `#${h.toUpperCase()}`;
+}
+
+function HelpItem({
+  title,
+  body,
+}: {
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5">
+      <div className="text-[12.5px] font-semibold text-[var(--text-primary)]">
+        {title}
+      </div>
+      <p className="mt-1 text-[12px] leading-snug text-[var(--text-muted)]">
+        {body}
+      </p>
+    </div>
+  );
 }
 
 function Section({
