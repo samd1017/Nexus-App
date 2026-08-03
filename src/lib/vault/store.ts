@@ -870,6 +870,8 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       updateNoteContent: (id, content, opts) => {
+        flushStageNow(set as (p: Record<string, unknown>) => void);
+
         const node = get().nodes[id];
         if (!node || node.kind !== "note") return;
         const prev = node.content ?? "";

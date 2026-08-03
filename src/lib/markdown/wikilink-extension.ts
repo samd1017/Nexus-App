@@ -15,7 +15,8 @@ declare module "@tiptap/core" {
 }
 
 /**
- * Wikilink mark — renders as pill in visual mode, serializes to [[target]] / [[target|alias]].
+ * Wikilink mark — pill in visual mode, serializes to [[target]] / [[target|alias]].
+ * Click handling uses DOM events (WKWebView / Mac app friendly).
  */
 export const Wikilink = Mark.create<WikilinkOptions>({
   name: "wikilink",
@@ -91,22 +92,42 @@ export const Wikilink = Mark.create<WikilinkOptions>({
 
   addProseMirrorPlugins() {
     const onOpen = this.options.onOpen;
+    const openFromEvent = (event: Event): boolean => {
+      if (!onOpen) return false;
+      const t = event.target as HTMLElement | null;
+      const el = t?.closest?.("span[data-wikilink], .wikilink-pill") as
+        | HTMLElement
+        | null;
+      if (!el) return false;
+      const target =
+        el.getAttribute("data-wikilink") ||
+        el.getAttribute("data-alias") ||
+        el.textContent?.trim();
+      if (!target) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      onOpen(target);
+      return true;
+    };
+
     return [
       new Plugin({
         key: new PluginKey("wikilink-click"),
         props: {
-          handleClick: (_view, _pos, event) => {
-            const el = (event.target as HTMLElement)?.closest?.(
-              "span[data-wikilink]",
-            ) as HTMLElement | null;
-            if (!el) return false;
-            const target = el.getAttribute("data-wikilink");
-            if (target && onOpen) {
-              event.preventDefault();
-              onOpen(target);
-              return true;
-            }
-            return false;
+          // Primary path — ProseMirror click
+          handleClick: (_view, _pos, event) => openFromEvent(event),
+          // WKWebView / Tauri often misses handleClick — use DOM events
+          handleDOMEvents: {
+            click: (_view, event) => openFromEvent(event),
+            // Mac / WKWebView: mousedown + click both; preventDefault on mousedown keeps focus behavior sane
+            mousedown: (_view, event) => {
+              const t = event.target as HTMLElement | null;
+              if (t?.closest?.("span[data-wikilink], .wikilink-pill")) {
+                // Don't steal focus unnecessarily; navigation on click
+                return false;
+              }
+              return false;
+            },
           },
         },
       }),
@@ -114,7 +135,6 @@ export const Wikilink = Mark.create<WikilinkOptions>({
   },
 });
 
-// Round-trip converters live in serialize.ts (GFM tables + tasks)
 export {
   markdownToHtml as markdownWithWikilinksToHtml,
   htmlDocToMarkdown,

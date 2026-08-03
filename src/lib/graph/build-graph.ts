@@ -9,13 +9,6 @@ export function buildGraph(nodes: Record<string, VaultNode>): {
   edges: GraphEdge[];
 } {
   const notes = Object.values(nodes).filter((n) => n.kind === "note");
-  const byNorm = new Map<string, VaultNode>();
-  for (const n of notes) {
-    byNorm.set(normalizeLinkTarget(noteTitle(n)), n);
-    byNorm.set(normalizeLinkTarget(n.path.replace(/\.md$/i, "")), n);
-    byNorm.set(normalizeLinkTarget(n.path), n);
-  }
-
   const degree = new Map<string, number>();
   const edgeSet = new Set<string>();
   const edges: GraphEdge[] = [];
@@ -25,8 +18,8 @@ export function buildGraph(nodes: Record<string, VaultNode>): {
   for (const n of notes) {
     const targets = extractWikilinkTargets(n.content ?? "");
     for (const t of targets) {
-      const dest = byNorm.get(normalizeLinkTarget(t));
-      if (!dest || dest.id === n.id) continue;
+      const dest = resolveWikilink(t, nodes);
+      if (!dest || dest.kind !== "note" || dest.id === n.id) continue;
       const key = [n.id, dest.id].sort().join("→");
       if (edgeSet.has(key)) continue;
       edgeSet.add(key);
@@ -47,22 +40,53 @@ export function buildGraph(nodes: Record<string, VaultNode>): {
   return { nodes: gNodes, edges };
 }
 
+/**
+ * Resolve a wikilink target to a note or folder.
+ * Matches title, filename, full path, and partial path suffixes.
+ */
 export function resolveWikilink(
   target: string,
   nodes: Record<string, VaultNode>,
 ): VaultNode | null {
-  const notes = Object.values(nodes).filter((n) => n.kind === "note");
+  const all = Object.values(nodes);
+  const notes = all.filter((n) => n.kind === "note");
+  const folders = all.filter((n) => n.kind === "folder");
   const norm = normalizeLinkTarget(target);
+  if (!norm) return null;
+
+  const scoreNote = (n: VaultNode): number => {
+    const title = normalizeLinkTarget(noteTitle(n));
+    const path = normalizeLinkTarget(n.path);
+    const pathNo = normalizeLinkTarget(n.path.replace(/\.md$/i, ""));
+    const name = normalizeLinkTarget(n.name);
+    if (title === norm) return 100;
+    if (name === norm || name === `${norm}.md`) return 95;
+    if (pathNo === norm || path === norm) return 90;
+    if (pathNo.endsWith("/" + norm)) return 80;
+    if (path.endsWith(norm + ".md")) return 75;
+    if (title.includes(norm) && norm.length >= 3) return 40;
+    return 0;
+  };
+
+  let best: VaultNode | null = null;
+  let bestScore = 0;
   for (const n of notes) {
-    if (normalizeLinkTarget(noteTitle(n)) === norm) return n;
-    if (normalizeLinkTarget(n.path.replace(/\.md$/i, "")) === norm) return n;
-    if (normalizeLinkTarget(n.path) === norm) return n;
-    if (normalizeLinkTarget(n.name) === norm) return n;
+    const s = scoreNote(n);
+    if (s > bestScore) {
+      bestScore = s;
+      best = n;
+    }
   }
-  // partial path match
-  for (const n of notes) {
-    if (normalizeLinkTarget(n.path).endsWith("/" + norm)) return n;
-    if (normalizeLinkTarget(n.path).endsWith(norm + ".md")) return n;
+  if (best && bestScore >= 75) return best;
+
+  for (const f of folders) {
+    const name = normalizeLinkTarget(f.name);
+    const path = normalizeLinkTarget(f.path);
+    if (name === norm || path === norm || path.endsWith("/" + norm)) {
+      return f;
+    }
   }
+
+  if (best && bestScore >= 40) return best;
   return null;
 }
