@@ -9,13 +9,34 @@ export function detectPlatform(): PlatformKind {
   const w = window as unknown as {
     __TAURI__?: unknown;
     __TAURI_INTERNALS__?: unknown;
+    isTauri?: boolean;
   };
-  if (w.__TAURI__ || w.__TAURI_INTERNALS__) return "tauri";
+  // withGlobalTauri + Tauri 2 internals
+  if (w.__TAURI_INTERNALS__ || w.__TAURI__ || w.isTauri === true) return "tauri";
+  // Some builds expose only a protocol handler
+  try {
+    if (typeof (window as unknown as { __TAURI_OS_PLUGIN_INTERNALS__?: unknown }).__TAURI_OS_PLUGIN_INTERNALS__ !== "undefined") {
+      return "tauri";
+    }
+  } catch {
+    /* ignore */
+  }
   return "web";
 }
 
 export function isDesktopShell(): boolean {
   return detectPlatform() === "tauri";
+}
+
+/** Async confirm (preferred when opening vaults / menus) */
+export async function confirmDesktopShell(): Promise<boolean> {
+  if (isDesktopShell()) return true;
+  try {
+    const { isTauri } = await import("@tauri-apps/api/core");
+    return isTauri();
+  } catch {
+    return false;
+  }
 }
 
 /** Local filesystem folder open available on this runtime */

@@ -22,6 +22,7 @@ const SKIP_DIRS = new Set([
   "src-tauri",
   "dist",
   "dist-desktop",
+  "target",
 ]);
 
 function nodeId(path: string): string {
@@ -78,18 +79,14 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
+/** Join vault root + relative POSIX path (macOS / Linux; Windows uses \\ roots). */
 function joinRoot(root: string, rel: string): string {
   if (!rel) return root;
-  const sep = root.includes("\\") && !root.includes("/") ? "\\" : "/";
-  return `${root.replace(/[/\\]+$/, "")}${sep}${rel.replace(/^[/\\]+/, "").replace(/\//g, sep)}`;
-}
-
-function toPosixRel(root: string, abs: string): string {
-  const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
-  const a = abs.replace(/\\/g, "/");
-  if (a.startsWith(r + "/")) return a.slice(r.length + 1);
-  if (a === r) return "";
-  return a;
+  const isWin = /^[A-Za-z]:[\\/]/.test(root) || root.startsWith("\\\\");
+  const sep = isWin ? "\\" : "/";
+  const cleanRoot = root.replace(/[/\\]+$/, "");
+  const cleanRel = rel.replace(/^[/\\]+/, "").replace(/[/\\]+/g, sep);
+  return `${cleanRoot}${sep}${cleanRel}`;
 }
 
 export async function pickDesktopVaultFolder(): Promise<string | null> {
@@ -115,7 +112,14 @@ export async function pickDesktopVaultFolder(): Promise<string | null> {
 async function walkNotes(
   root: string,
   relDir: string,
-  onFile: (relPath: string, name: string, parentRel: string, abs: string, mtime: number, size: number) => Promise<void>,
+  onFile: (
+    relPath: string,
+    name: string,
+    parentRel: string,
+    abs: string,
+    mtime: number,
+    size: number,
+  ) => Promise<void>,
   onDir: (relPath: string, name: string, parentRel: string) => void,
 ): Promise<void> {
   const { readDir, stat } = await import("@tauri-apps/plugin-fs");
@@ -123,7 +127,8 @@ async function walkNotes(
   let entries;
   try {
     entries = await readDir(absDir);
-  } catch {
+  } catch (err) {
+    console.warn("[nexus] readDir failed", absDir, err);
     return;
   }
   for (const entry of entries) {
@@ -139,16 +144,14 @@ async function walkNotes(
       const abs = joinRoot(root, rel);
       try {
         const meta = await stat(abs);
-        await onFile(
-          rel,
-          name,
-          relDir,
-          abs,
-          meta.mtime ? new Date(meta.mtime).getTime() : Date.now(),
-          Number(meta.size ?? 0),
-        );
-      } catch {
-        /* skip unreadable */
+        const mtime = meta.mtime
+          ? typeof meta.mtime === "number"
+            ? meta.mtime
+            : new Date(meta.mtime).getTime()
+          : Date.now();
+        await onFile(rel, name, relDir, abs, mtime, Number(meta.size ?? 0));
+      } catch (err) {
+        console.warn("[nexus] stat/read skip", abs, err);
       }
     }
   }
@@ -170,7 +173,8 @@ export async function scanDesktopVault(root: string): Promise<VaultScan> {
       let content = "";
       try {
         content = await readTextFile(abs);
-      } catch {
+      } catch (err) {
+        console.warn("[nexus] readTextFile failed", abs, err);
         content = "";
       }
       nodes[id] = {
@@ -275,7 +279,6 @@ export async function renameDesktopPath(
     await deleteDesktopPath(root, oldRel, "note");
     return;
   }
-  // folder rename
   const parentParts = newRel.replace(/\\/g, "/").split("/").filter(Boolean);
   parentParts.pop();
   if (parentParts.length) {
@@ -284,14 +287,12 @@ export async function renameDesktopPath(
   await rename(joinRoot(root, oldRel), joinRoot(root, newRel));
 }
 
-export async function openDesktopVaultAt(
-  root: string,
-): Promise<VaultScan> {
+export async function openDesktopVaultAt(root: string): Promise<VaultScan> {
   setDesktopVaultRoot(root);
   return scanDesktopVault(root);
 }
 
-/** Poll-based watcher for desktop (no FileSystemObserver in webview) */
+/** Poll-based watcher for desktop (no FileSystemObserver in WKWebView) */
 export function startDesktopWatch(
   root: string,
   onChange: (scan: VaultScan) => void,
@@ -313,8 +314,8 @@ export function startDesktopWatch(
         const scan = await scanDesktopVault(root);
         onChange(scan);
       }
-    } catch {
-      /* ignore transient */
+    } catch (err) {
+      console.warn("[nexus] desktop watch tick failed", err);
     } finally {
       busy = false;
     }
@@ -337,8 +338,14 @@ export function startDesktopWatch(
     },
     acknowledge: () => {
       suppressUntil = Date.now() + 1200;
+      // refresh signature after own write so we don't thrash
+      void scanDesktopSignatures(root)
+        .then((s) => {
+          lastSig = JSON.stringify(s);
+        })
+        .catch(() => {});
     },
   };
 }
 
-export { joinRoot, basename as desktopBasename, toPosixRel };
+export { joinRoot, basename as desktopBasename };

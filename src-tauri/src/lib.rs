@@ -1,6 +1,6 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    Emitter, Manager,
+    Emitter,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -11,16 +11,34 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // Native macOS-style menus (also fine on Linux/Windows)
             let handle = app.handle();
-            let open_vault = MenuItem::with_id(handle, "open_vault", "Open Vault…", true, Some("CmdOrCtrl+O"))?;
-            let close_vault = MenuItem::with_id(handle, "close_vault", "Close Vault", true, None::<&str>)?;
-            let settings = MenuItem::with_id(handle, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
-            let search = MenuItem::with_id(handle, "search", "Search…", true, Some("CmdOrCtrl+K"))?;
-            let new_note = MenuItem::with_id(handle, "new_note", "New Note", true, Some("CmdOrCtrl+N"))?;
-            let toggle_graph = MenuItem::with_id(handle, "toggle_graph", "Toggle Graph", true, Some("CmdOrCtrl+G"))?;
-            let toggle_source = MenuItem::with_id(handle, "toggle_source", "Toggle Visual / Source", true, Some("CmdOrCtrl+\\"))?;
 
+            let open_vault =
+                MenuItem::with_id(handle, "open_vault", "Open Vault…", true, Some("CmdOrCtrl+O"))?;
+            let close_vault =
+                MenuItem::with_id(handle, "close_vault", "Close Vault", true, None::<&str>)?;
+            let settings =
+                MenuItem::with_id(handle, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+            let search =
+                MenuItem::with_id(handle, "search", "Search…", true, Some("CmdOrCtrl+K"))?;
+            let new_note =
+                MenuItem::with_id(handle, "new_note", "New Note", true, Some("CmdOrCtrl+N"))?;
+            let toggle_graph = MenuItem::with_id(
+                handle,
+                "toggle_graph",
+                "Toggle Graph Fullscreen",
+                true,
+                Some("CmdOrCtrl+G"),
+            )?;
+            let toggle_source = MenuItem::with_id(
+                handle,
+                "toggle_source",
+                "Toggle Visual / Source",
+                true,
+                Some("CmdOrCtrl+\\"),
+            )?;
+
+            // macOS app menu
             let app_submenu = Submenu::with_items(
                 handle,
                 "Nexus",
@@ -76,7 +94,6 @@ pub fn run() {
                 true,
                 &[
                     &PredefinedMenuItem::minimize(handle, None)?,
-                    &PredefinedMenuItem::maximize(handle, None)?,
                     &PredefinedMenuItem::separator(handle)?,
                     &PredefinedMenuItem::close_window(handle, None)?,
                 ],
@@ -84,12 +101,18 @@ pub fn run() {
 
             let menu = Menu::with_items(
                 handle,
-                &[&app_submenu, &file_submenu, &edit_submenu, &view_submenu, &window_submenu],
+                &[
+                    &app_submenu,
+                    &file_submenu,
+                    &edit_submenu,
+                    &view_submenu,
+                    &window_submenu,
+                ],
             )?;
             app.set_menu(menu)?;
 
             app.on_menu_event(move |app, event| {
-                let id = event.id().as_ref();
+                let id = event.id().as_ref().to_string();
                 let _ = app.emit("nexus-menu", id);
             });
 

@@ -20,6 +20,7 @@ import {
   NEXUS_NAME,
   NEXUS_TAGLINE,
 } from "@/components/brand/NexusLogo";
+import { isDesktopShell } from "@/lib/platform";
 
 const PROVIDERS: CloudProvider[] = ["dropbox", "google", "onedrive"];
 
@@ -94,7 +95,9 @@ export function WelcomeScreen() {
         </div>
 
         <p className="mt-3 text-[12.5px] text-[var(--text-muted)]">
-          Your vault is a normal folder. No proprietary database. No sign-in.
+          {isDesktopShell()
+            ? "Desktop mode: native folder picker · real .md files on disk · zero accounts."
+            : "Your vault is a normal folder. No proprietary database. No sign-in."}
         </p>
 
         <div className="mt-10 grid gap-3 sm:grid-cols-3">

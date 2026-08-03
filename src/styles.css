@@ -234,14 +234,77 @@
     margin: 0.65rem 0;
   }
 
-  .note-editor ul,
+  /* Tailwind preflight zeros list markers — restore for prose lists */
+  .note-editor ul:not([data-type="taskList"]),
   .note-editor ol {
-    padding-left: 1.4rem;
+    padding-left: 1.55rem;
     margin: 0.65rem 0;
+    list-style-position: outside;
+  }
+
+  .note-editor ul:not([data-type="taskList"]) {
+    list-style-type: disc;
+  }
+
+  .note-editor ul:not([data-type="taskList"])[data-bullet="disc"] {
+    list-style-type: disc;
+  }
+
+  .note-editor ul:not([data-type="taskList"])[data-bullet="circle"] {
+    list-style-type: circle;
+  }
+
+  .note-editor ul:not([data-type="taskList"])[data-bullet="square"] {
+    list-style-type: square;
+  }
+
+  .note-editor ul:not([data-type="taskList"])[data-bullet="dash"] {
+    list-style-type: none;
+  }
+
+  .note-editor ul:not([data-type="taskList"])[data-bullet="dash"] > li {
+    position: relative;
+    padding-left: 0.15rem;
+  }
+
+  .note-editor ul:not([data-type="taskList"])[data-bullet="dash"] > li::marker {
+    content: "";
+  }
+
+  .note-editor ul:not([data-type="taskList"])[data-bullet="dash"] > li::before {
+    content: "–";
+    position: absolute;
+    left: -1.05rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  .note-editor ol {
+    list-style-type: decimal;
+  }
+
+  .note-editor ul:not([data-type="taskList"]):not([data-bullet]) ul {
+    list-style-type: circle;
+  }
+
+  .note-editor ul:not([data-type="taskList"]):not([data-bullet]) ul ul {
+    list-style-type: square;
   }
 
   .note-editor li {
     margin: 0.25rem 0;
+    display: list-item;
+    list-style: inherit;
+  }
+
+  .note-editor ul:not([data-type="taskList"]) > li,
+  .note-editor ol > li {
+    padding-left: 0.15rem;
+  }
+
+  .note-editor ul:not([data-type="taskList"]) > li > p,
+  .note-editor ol > li > p {
+    margin: 0;
   }
 
   .note-editor li[data-type="taskItem"] {
@@ -580,12 +643,22 @@
   }
   .note-editor {
     letter-spacing: -0.005em;
+    caret-color: var(--accent);
+  }
+  /* Solid heading color — color:transparent + background-clip hides the caret */
+  .note-editor h1,
+  .note-editor h2,
+  .note-editor h3,
+  .note-editor h4 {
+    color: var(--text-primary);
+    -webkit-text-fill-color: var(--text-primary);
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    caret-color: var(--accent);
   }
   .note-editor h1 {
-    background: linear-gradient(180deg, #f8f8fb 0%, #d4d4dc 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    text-shadow: 0 0 28px rgba(0, 200, 255, 0.08);
   }
   .fade-in {
     animation: noteFadeIn var(--duration-base) var(--motion-ease) both;

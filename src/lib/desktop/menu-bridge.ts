@@ -2,7 +2,7 @@
  * Listen for native Tauri menu events and map them to store actions.
  */
 
-import { isDesktopShell } from "@/lib/platform";
+import { confirmDesktopShell } from "@/lib/platform";
 
 type MenuHandlers = {
   openVault: () => void;
@@ -14,12 +14,15 @@ type MenuHandlers = {
   toggleSource: () => void;
 };
 
-export async function bindDesktopMenu(handlers: MenuHandlers): Promise<() => void> {
-  if (!isDesktopShell()) return () => {};
+export async function bindDesktopMenu(
+  handlers: MenuHandlers,
+): Promise<() => void> {
+  const desktop = await confirmDesktopShell();
+  if (!desktop) return () => {};
   try {
     const { listen } = await import("@tauri-apps/api/event");
     const un = await listen<string>("nexus-menu", (ev) => {
-      const id = ev.payload;
+      const id = String(ev.payload ?? "");
       switch (id) {
         case "open_vault":
           handlers.openVault();
@@ -49,7 +52,8 @@ export async function bindDesktopMenu(handlers: MenuHandlers): Promise<() => voi
     return () => {
       void un();
     };
-  } catch {
+  } catch (err) {
+    console.warn("[nexus] menu bridge failed", err);
     return () => {};
   }
 }

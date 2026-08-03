@@ -5,10 +5,12 @@ import { fileURLToPath, URL } from "node:url";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const desktopDir = fileURLToPath(new URL("./desktop", import.meta.url));
+const host = process.env.TAURI_DEV_HOST;
 
 /**
- * Static SPA build for Tauri — no TanStack Start SSR / Nitro.
- * Output: dist-desktop/ with index.html at root (frontendDist).
+ * Static SPA for Tauri — no TanStack Start SSR / Nitro.
+ * Dev: tauri.conf beforeDevCommand → npm run dev:desktop
+ * Prod: dist-desktop/ as frontendDist
  */
 export default defineConfig({
   plugins: [tailwindcss(), viteReact()],
@@ -23,15 +25,22 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   server: {
-    host: "0.0.0.0",
+    // Tauri expects a fixed port; bind all interfaces so the webview can reach it.
+    host: host || "0.0.0.0",
     port: 8080,
     strictPort: true,
+    hmr: host
+      ? { protocol: "ws", host, port: 1421 }
+      : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
     fs: { allow: [rootDir] },
   },
   build: {
     outDir: fileURLToPath(new URL("./dist-desktop", import.meta.url)),
     emptyOutDir: true,
-    target: "esnext",
+    // WKWebView on modern macOS is Chromium-adjacent enough for es2022+
+    target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari15",
+    minify: !process.env.TAURI_ENV_DEBUG,
+    sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
 });

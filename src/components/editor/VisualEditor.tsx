@@ -2,20 +2,22 @@ import { useCallback, useEffect, useRef } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
+import TextAlign from "@tiptap/extension-text-align";
 import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
+import { Wikilink } from "@/lib/markdown/wikilink-extension";
 import {
-  Wikilink,
   markdownWithWikilinksToHtml,
   htmlDocToMarkdown,
-} from "@/lib/markdown/wikilink-extension";
+} from "@/lib/markdown/serialize";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import {
@@ -32,7 +34,7 @@ interface Props {
 
 /**
  * Visual view of a single note. Parent remounts via key when note/mode changes.
- * Flush always compares live TipTap DOM → store so Source never sees stale Markdown.
+ * Always: Markdown store ↔ GFM HTML (tables, tasks) ↔ TipTap ↔ clean Markdown.
  */
 export function VisualEditor({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
@@ -46,9 +48,18 @@ export function VisualEditor({ noteId, content }: Props) {
   noteIdRef.current = noteId;
   contentRef.current = content;
 
+  const paintWikilinks = (ed: Editor) => {
+    ed.view.dom.querySelectorAll("span[data-wikilink]").forEach((pill) => {
+      const t = pill.getAttribute("data-wikilink") || "";
+      const hit = resolveWikilink(t, useVaultStore.getState().nodes);
+      pill.classList.toggle("is-missing", !hit);
+    });
+  };
+
   const commit = useCallback(
     (ed: Editor, opts?: { force?: boolean }) => {
       if (applying.current) return;
+      if (!ed || ed.isDestroyed) return;
       const id = noteIdRef.current;
       let serialized: string;
       try {
@@ -58,8 +69,11 @@ export function VisualEditor({ noteId, content }: Props) {
       }
       const prev =
         useVaultStore.getState().nodes[id]?.content ?? baselineMd.current;
-      // On force flush (mode switch), still skip pure noise — but never skip real edits
-      if (!opts?.force && isOnlySerializationNoise(prev, serialized) && !userEdited.current) {
+      if (
+        !opts?.force &&
+        isOnlySerializationNoise(prev, serialized) &&
+        !userEdited.current
+      ) {
         return;
       }
       if (isOnlySerializationNoise(prev, serialized)) {
@@ -85,15 +99,29 @@ export function VisualEditor({ noteId, content }: Props) {
         StarterKit.configure({
           heading: { levels: [1, 2, 3, 4] },
           codeBlock: { HTMLAttributes: { class: "note-code" } },
+          bulletList: false,
         }),
+        StyledBulletList,
         Placeholder.configure({
           placeholder: "Start writing… Use [[wikilinks]] to connect ideas.",
         }),
-        TaskList,
-        TaskItem.configure({ nested: true }),
+        TaskList.configure({
+          HTMLAttributes: { "data-type": "taskList" },
+        }),
+        TaskItem.configure({
+          nested: true,
+          HTMLAttributes: { "data-type": "taskItem" },
+        }),
         Image.configure({ inline: false, allowBase64: true }),
         Link.configure({ openOnClick: false, autolink: true }),
-        Table.configure({ resizable: false }),
+        TextAlign.configure({
+          types: ["heading", "paragraph"],
+          alignments: ["left", "center", "right"],
+        }),
+        Table.configure({
+          resizable: true,
+          HTMLAttributes: { class: "note-table" },
+        }),
         TableRow,
         TableHeader,
         TableCell,
@@ -118,13 +146,7 @@ export function VisualEditor({ noteId, content }: Props) {
         baselineMd.current = contentRef.current;
         userEdited.current = false;
         requestAnimationFrame(() => {
-          ed.view.dom
-            .querySelectorAll("span[data-wikilink]")
-            .forEach((pill) => {
-              const t = pill.getAttribute("data-wikilink") || "";
-              const hit = resolveWikilink(t, useVaultStore.getState().nodes);
-              pill.classList.toggle("is-missing", !hit);
-            });
+          paintWikilinks(ed);
           applying.current = false;
         });
       },
@@ -132,24 +154,24 @@ export function VisualEditor({ noteId, content }: Props) {
         if (applying.current) return;
         userEdited.current = true;
         if (saveTimer.current) clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => commit(ed), 250);
+        saveTimer.current = setTimeout(() => commit(ed), 200);
       },
     },
     [noteId],
   );
 
-  // External / store content while mounted (e.g. title rename updates H1)
+  // External / store content while mounted (Hermes, title rename, Source flush)
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     if (userEdited.current) return;
     if (isOnlySerializationNoise(baselineMd.current, content)) return;
     applying.current = true;
     baselineMd.current = content;
     contentRef.current = content;
-    editor.commands.setContent(markdownWithWikilinksToHtml(content || ""), {
-      emitUpdate: false,
-    });
+    const html = markdownWithWikilinksToHtml(content || "");
+    editor.commands.setContent(html, { emitUpdate: false });
     requestAnimationFrame(() => {
+      paintWikilinks(editor);
       applying.current = false;
     });
   }, [editor, content]);
@@ -162,8 +184,7 @@ export function VisualEditor({ noteId, content }: Props) {
         saveTimer.current = null;
       }
       try {
-        // Always push live DOM → store on mode/note switch
-        commit(editor, { force: true });
+        if (!editor.isDestroyed) commit(editor, { force: true });
       } catch {
         /* destroyed */
       }

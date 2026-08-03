@@ -37,7 +37,7 @@ import {
   setDesktopVaultRoot,
   writeDesktopNote,
 } from "./tauri-adapter";
-import { isDesktopShell, canOpenLocalVaultFolder } from "@/lib/platform";
+import { isDesktopShell, canOpenLocalVaultFolder, confirmDesktopShell } from "@/lib/platform";
 import type { CloudProvider, CloudSession } from "@/lib/cloud/oauth";
 import { getPrefs } from "@/lib/prefs/preferences";
 import {
@@ -437,7 +437,8 @@ export const useVaultStore = create<VaultStore>()(
       openFolderAsVault: async () => {
         set({ connecting: true });
         try {
-          if (isDesktopShell()) {
+          const desktop = (await confirmDesktopShell()) || isDesktopShell();
+          if (desktop) {
             const root = await pickDesktopVaultFolder();
             if (!root) {
               set({ connecting: false });
@@ -540,7 +541,8 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       reopenRecentVault: async (id: string) => {
-        if (isDesktopShell()) {
+        const desktop = (await confirmDesktopShell()) || isDesktopShell();
+        if (desktop) {
           const recent = get().recentVaults.find((r) => r.id === id);
           const root = recent?.path || getDesktopVaultRoot();
           if (!root || recent?.mode === "demo") {
@@ -1164,8 +1166,9 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       flushDirty: () => {
+        flushActiveEditors();
         set({ dirtyNoteIds: [] });
-        get().setToast("Saved");
+        get().setToast(isDiskVault(get().mode) ? "Saved to disk" : "Saved");
       },
 
       connectCloud: async (provider) => {
