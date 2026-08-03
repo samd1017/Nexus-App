@@ -34,13 +34,15 @@ import {
   isBulletStyle,
 } from "@/lib/markdown/bullet-styles";
 import { InsertFieldDialog } from "./InsertFieldDialog";
+import { importImageFromPicker } from "@/lib/vault/image-import";
 
-type DialogKind = null | "link" | "image";
+type DialogKind = null | "link";
 
 export function EditorToolbar({ editor }: { editor: Editor }) {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [linkSeed, setLinkSeed] = useState("https://");
+  const [importingImage, setImportingImage] = useState(false);
 
   useEffect(() => {
     const onUp = () => bump();
@@ -74,12 +76,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       setDialog(null);
       return;
     }
-    editor
-      .chain()
-      .focus()
-      .extendMarkRange("link")
-      .setLink({ href })
-      .run();
+    editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
     setDialog(null);
   };
 
@@ -88,14 +85,37 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     setDialog(null);
   };
 
-  const applyImage = (src: string) => {
-    const path = src.trim();
-    if (!path) {
-      setDialog(null);
-      return;
+  const pickAndInsertImage = async () => {
+    if (importingImage) return;
+    setImportingImage(true);
+    try {
+      const imported = await importImageFromPicker();
+      if (!imported) return;
+      editor
+        .chain()
+        .focus()
+        .setImage({
+          src: imported.previewUrl,
+          alt: imported.alt,
+          // @ts-expect-error vaultSrc is a custom attr on VaultImage
+          vaultSrc: imported.vaultPath.startsWith("data:")
+            ? null
+            : imported.vaultPath,
+        })
+        .run();
+      // Ensure data-vault-src lands on the DOM node for serialization
+      requestAnimationFrame(() => {
+        const imgs = editor.view.dom.querySelectorAll("img");
+        const last = imgs[imgs.length - 1] as HTMLImageElement | undefined;
+        if (last && imported.vaultPath && !imported.vaultPath.startsWith("data:")) {
+          last.setAttribute("data-vault-src", imported.vaultPath);
+          last.setAttribute("src", imported.previewUrl);
+          last.setAttribute("alt", imported.alt);
+        }
+      });
+    } finally {
+      setImportingImage(false);
     }
-    editor.chain().focus().setImage({ src: path }).run();
-    setDialog(null);
   };
 
   const btn = (
@@ -223,10 +243,11 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             "Link",
           )}
           {btn(
-            false,
-            () => setDialog("image"),
+            importingImage,
+            () => void pickAndInsertImage(),
             <ImageIcon size={14} />,
-            "Image",
+            importingImage ? "Importing image…" : "Insert image from file",
+            importingImage,
           )}
           {btn(
             inTable,
@@ -361,16 +382,6 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         secondaryLabel={editor.isActive("link") ? "Remove link" : undefined}
         onSecondary={editor.isActive("link") ? removeLink : undefined}
         onConfirm={applyLink}
-        onClose={() => setDialog(null)}
-      />
-      <InsertFieldDialog
-        open={dialog === "image"}
-        title="Insert image"
-        label="Image path or URL"
-        placeholder="assets/photo.png or https://…"
-        initialValue="assets/"
-        confirmLabel="Insert image"
-        onConfirm={applyImage}
         onClose={() => setDialog(null)}
       />
     </>

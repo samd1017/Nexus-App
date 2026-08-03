@@ -6,7 +6,8 @@ import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import Image from "@tiptap/extension-image";
+import { VaultImage } from "@/lib/editor/vault-image";
+import { resolveVaultImageUrl } from "@/lib/vault/image-import";
 import Link from "@tiptap/extension-link";
 import TextAlign from "@tiptap/extension-text-align";
 import { Table } from "@tiptap/extension-table";
@@ -48,12 +49,45 @@ export function VisualEditor({ noteId, content }: Props) {
   noteIdRef.current = noteId;
   contentRef.current = content;
 
-  const paintWikilinks = (ed: Editor) => {
+  const paintEditorExtras = (ed: Editor) => {
     ed.view.dom.querySelectorAll("span[data-wikilink]").forEach((pill) => {
       const t = pill.getAttribute("data-wikilink") || "";
       const hit = resolveWikilink(t, useVaultStore.getState().nodes);
       pill.classList.toggle("is-missing", !hit);
     });
+    // Resolve vault-relative images → blob preview URLs
+    void (async () => {
+      const imgs = Array.from(
+        ed.view.dom.querySelectorAll("img[src], img[data-vault-src]"),
+      ) as HTMLImageElement[];
+      for (const img of imgs) {
+        const vault =
+          img.getAttribute("data-vault-src") ||
+          ((!img.src.startsWith("http") &&
+            !img.src.startsWith("blob:") &&
+            !img.src.startsWith("data:") &&
+            img.getAttribute("src")) ||
+            "");
+        const srcAttr = img.getAttribute("src") || "";
+        const key =
+          img.getAttribute("data-vault-src") ||
+          (srcAttr &&
+          !srcAttr.startsWith("http") &&
+          !srcAttr.startsWith("blob:") &&
+          !srcAttr.startsWith("data:")
+            ? srcAttr
+            : null);
+        if (!key) continue;
+        if (!img.getAttribute("data-vault-src")) {
+          img.setAttribute("data-vault-src", key);
+        }
+        if (srcAttr.startsWith("blob:") || srcAttr.startsWith("data:")) continue;
+        const url = await resolveVaultImageUrl(key);
+        if (url && !ed.isDestroyed) {
+          img.setAttribute("src", url);
+        }
+      }
+    })();
   };
 
   const commit = useCallback(
@@ -112,7 +146,7 @@ export function VisualEditor({ noteId, content }: Props) {
           nested: true,
           HTMLAttributes: { "data-type": "taskItem" },
         }),
-        Image.configure({ inline: false, allowBase64: true }),
+        VaultImage.configure({ inline: false, allowBase64: true }),
         Link.configure({ openOnClick: false, autolink: true }),
         TextAlign.configure({
           types: ["heading", "paragraph"],
@@ -146,7 +180,7 @@ export function VisualEditor({ noteId, content }: Props) {
         baselineMd.current = contentRef.current;
         userEdited.current = false;
         requestAnimationFrame(() => {
-          paintWikilinks(ed);
+          paintEditorExtras(ed);
           applying.current = false;
         });
       },
@@ -171,7 +205,7 @@ export function VisualEditor({ noteId, content }: Props) {
     const html = markdownWithWikilinksToHtml(content || "");
     editor.commands.setContent(html, { emitUpdate: false });
     requestAnimationFrame(() => {
-      paintWikilinks(editor);
+      paintEditorExtras(editor);
       applying.current = false;
     });
   }, [editor, content]);

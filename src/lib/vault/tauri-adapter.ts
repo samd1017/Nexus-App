@@ -348,4 +348,53 @@ export function startDesktopWatch(
   };
 }
 
+
+export async function writeDesktopBinary(
+  root: string,
+  relPath: string,
+  data: Uint8Array,
+): Promise<void> {
+  const { writeFile, mkdir } = await import("@tauri-apps/plugin-fs");
+  const parts = relPath.replace(/\\/g, "/").split("/").filter(Boolean);
+  parts.pop();
+  if (parts.length) {
+    await mkdir(joinRoot(root, parts.join("/")), { recursive: true });
+  }
+  await writeFile(joinRoot(root, relPath), data);
+}
+
+export async function readDesktopBinary(
+  root: string,
+  relPath: string,
+): Promise<Uint8Array> {
+  const { readFile } = await import("@tauri-apps/plugin-fs");
+  return readFile(joinRoot(root, relPath));
+}
+
+/** Native Finder/Explorer image picker (desktop shell). */
+export async function pickDesktopImageFile(): Promise<{
+  path: string;
+  name: string;
+  data: Uint8Array;
+} | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: false,
+    filters: [
+      {
+        name: "Images",
+        extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"],
+      },
+    ],
+    title: "Choose image",
+  });
+  if (selected == null) return null;
+  const path = Array.isArray(selected) ? selected[0] : selected;
+  if (!path || typeof path !== "string") return null;
+  const { readFile } = await import("@tauri-apps/plugin-fs");
+  const data = await readFile(path);
+  const name = path.replace(/\\/g, "/").split("/").pop() || "image.png";
+  return { path, name, data };
+}
+
 export { joinRoot, basename as desktopBasename };

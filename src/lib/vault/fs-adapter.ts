@@ -386,6 +386,29 @@ export async function writeNoteFile(
   await writable.close();
 }
 
+
+export async function writeBinaryFile(
+  root: FileSystemDirectoryHandle,
+  path: string,
+  data: BufferSource | Blob,
+): Promise<void> {
+  const parts = path.split("/").filter(Boolean);
+  const fileName = parts.pop()!;
+  const dir = await getDirAtPath(root, parts.join("/"), true);
+  const fileHandle = await dir.getFileHandle(fileName, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(data);
+  await writable.close();
+}
+
+export async function readBinaryFile(
+  root: FileSystemDirectoryHandle,
+  path: string,
+): Promise<Blob> {
+  const file = await readFileAtPath(root, path);
+  return file;
+}
+
 export async function createFolderOnDisk(
   root: FileSystemDirectoryHandle,
   path: string,

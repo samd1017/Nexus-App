@@ -120,6 +120,19 @@ turndown.addRule("styledListItem", {
   },
 });
 
+
+turndown.addRule("vaultImage", {
+  filter: "img",
+  replacement: (_content, node) => {
+    const el = node as HTMLElement;
+    const vault = el.getAttribute("data-vault-src");
+    const src = vault || el.getAttribute("src") || "";
+    const alt = el.getAttribute("alt") || "";
+    if (!src) return "";
+    return `![${alt}](${src})`;
+  },
+});
+
 const AMP = "&" + "amp;";
 const LT = "&" + "lt;";
 const GT = "&" + "gt;";
