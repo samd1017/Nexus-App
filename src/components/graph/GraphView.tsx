@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import SpriteText from "three-spritetext";
@@ -453,6 +453,8 @@ export function GraphView({ mode, className }: Props) {
   const hoverRef = useRef<string | null>(null);
   const neighborMapRef = useRef<Map<string, Set<string>>>(new Map());
   const nodes = useVaultStore((s) => s.nodes);
+  // Defer heavy graph rebuilds when agents dump many files at once
+  const deferredNodes = useDeferredValue(nodes);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const setGraphMode = useVaultStore((s) => s.setGraphMode);
@@ -468,7 +470,7 @@ export function GraphView({ mode, className }: Props) {
   activeRef.current = activeNoteId;
 
   const data = useMemo(() => {
-    const g = buildGraph(nodes);
+    const g = buildGraph(deferredNodes);
     return {
       nodes: g.nodes.map((n) => ({
         id: n.id,
@@ -483,7 +485,7 @@ export function GraphView({ mode, className }: Props) {
         target: e.target,
       })) as GLink[],
     };
-  }, [nodes]);
+  }, [deferredNodes]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);

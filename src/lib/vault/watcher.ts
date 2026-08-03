@@ -129,7 +129,7 @@ export class VaultWatcher {
 
   /** After app writes, suppress echo + refresh baseline */
   async acknowledgeWrite(dir: FileSystemDirectoryHandle) {
-    this.suppressUntil = Date.now() + 600;
+    this.suppressUntil = Date.now() + 1500;
     try {
       this.lastSigs = await scanSignatures(dir);
       // keep lastScan nodes in sync lazily on next poll

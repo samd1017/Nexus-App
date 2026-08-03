@@ -39,6 +39,17 @@ import {
 } from "./tauri-adapter";
 import { isDesktopShell, canOpenLocalVaultFolder, confirmDesktopShell } from "@/lib/platform";
 import type { CloudProvider, CloudSession } from "@/lib/cloud/oauth";
+import {
+  buildPathIndex,
+  collectFolderPaths,
+  defaultNoteContent,
+  ensureMdPath,
+  pathToName,
+  titleFromPath,
+  uniquePath,
+  type BulkImportInput,
+  type BulkImportResult,
+} from "./bulk";
 import { getPrefs } from "@/lib/prefs/preferences";
 import {
   beginCloudOAuth,
@@ -56,6 +67,116 @@ let desktopWatchAck: (() => void) | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
 let watcherAck: ((dir: FileSystemDirectoryHandle) => Promise<void>) | null = null;
 let lastExternalToastAt = 0;
+
+/** Coalesce rapid create/import storms (agent bulk writes). */
+const CREATE_BATCH_MS = 48;
+const DISK_ACK_MS = 120;
+const EXTERNAL_DEBOUNCE_MS = 80;
+
+type PendingDiskOp = () => Promise<void>;
+let pendingDiskOps: PendingDiskOp[] = [];
+let diskFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let externalSnapTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingExternal: {
+  nodes: Record<string, VaultNode>;
+  rootIds: string[];
+} | null = null;
+
+type StageBuf = {
+  nodes: Record<string, VaultNode>;
+  rootIds: string[];
+  expandedFolders: string[];
+  dirtyNoteIds: string[];
+  activeNoteId: string | null;
+};
+let stageBuf: StageBuf | null = null;
+let stageTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueDiskWrite(fn: () => Promise<void>) {
+  writeQueue = writeQueue.then(fn).catch((err) => {
+    console.error("[vault] disk write failed", err);
+  });
+  return writeQueue;
+}
+
+function flushDiskOps() {
+  if (diskFlushTimer) {
+    clearTimeout(diskFlushTimer);
+    diskFlushTimer = null;
+  }
+  const ops = pendingDiskOps;
+  pendingDiskOps = [];
+  if (!ops.length) return;
+  void queueDiskWrite(async () => {
+    for (const op of ops) {
+      try {
+        await op();
+      } catch (err) {
+        console.error("[vault] bulk disk op failed", err);
+      }
+    }
+    if (desktopRoot) desktopWatchAck?.();
+    else if (fsaRoot && watcherAck) await watcherAck(fsaRoot);
+  });
+}
+
+function enqueueDiskOp(op: PendingDiskOp, immediate = false) {
+  pendingDiskOps.push(op);
+  if (immediate) {
+    flushDiskOps();
+    return;
+  }
+  if (diskFlushTimer) clearTimeout(diskFlushTimer);
+  diskFlushTimer = setTimeout(flushDiskOps, DISK_ACK_MS);
+}
+
+function beginStage(get: () => { nodes: Record<string, VaultNode>; rootIds: string[]; expandedFolders: string[]; dirtyNoteIds: string[]; activeNoteId: string | null }): StageBuf {
+  if (!stageBuf) {
+    stageBuf = {
+      nodes: { ...get().nodes },
+      rootIds: [...get().rootIds],
+      expandedFolders: [...get().expandedFolders],
+      dirtyNoteIds: [...get().dirtyNoteIds],
+      activeNoteId: get().activeNoteId,
+    };
+  }
+  return stageBuf;
+}
+
+function scheduleStageFlush(set: (partial: Record<string, unknown>) => void) {
+  if (stageTimer) return;
+  stageTimer = setTimeout(() => {
+    stageTimer = null;
+    const s = stageBuf;
+    stageBuf = null;
+    if (!s) return;
+    set({
+      nodes: s.nodes,
+      rootIds: s.rootIds,
+      expandedFolders: s.expandedFolders,
+      dirtyNoteIds: s.dirtyNoteIds,
+      activeNoteId: s.activeNoteId,
+    });
+  }, CREATE_BATCH_MS);
+}
+
+function flushStageNow(set: (partial: Record<string, unknown>) => void) {
+  if (stageTimer) {
+    clearTimeout(stageTimer);
+    stageTimer = null;
+  }
+  const s = stageBuf;
+  stageBuf = null;
+  if (!s) return;
+  set({
+    nodes: s.nodes,
+    rootIds: s.rootIds,
+    expandedFolders: s.expandedFolders,
+    dirtyNoteIds: s.dirtyNoteIds,
+    activeNoteId: s.activeNoteId,
+  });
+}
+
 
 export function getFsaRoot(): FileSystemDirectoryHandle | null {
   return fsaRoot;
@@ -110,22 +231,21 @@ function stableId(path: string): string {
   return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
 }
 
-function queueDiskWrite(fn: () => Promise<void>) {
-  writeQueue = writeQueue.then(fn).catch((err) => {
-    console.error("[vault] disk write failed", err);
-  });
-  return writeQueue;
-}
 
-async function persistNoteIfFsa(path: string, content: string) {
+async function persistNoteIfFsa(
+  path: string,
+  content: string,
+  opts?: { ack?: boolean },
+) {
+  const ack = opts?.ack !== false;
   if (desktopRoot) {
     await writeDesktopNote(desktopRoot, path, content);
-    desktopWatchAck?.();
+    if (ack) desktopWatchAck?.();
     return;
   }
   if (!fsaRoot) return;
   await writeNoteFile(fsaRoot, path, content);
-  if (watcherAck) await watcherAck(fsaRoot);
+  if (ack && watcherAck) await watcherAck(fsaRoot);
 }
 
 interface VaultStore {
@@ -171,14 +291,27 @@ interface VaultStore {
     opts?: { external?: boolean },
   ) => void;
   renameNode: (id: string, newName: string) => void;
-  createNote: (parentId: string | null, title?: string) => string;
-  createFolder: (parentId: string | null, name?: string) => string;
+  createNote: (
+    parentId: string | null,
+    title?: string,
+    opts?: { activate?: boolean },
+  ) => string;
+  createFolder: (
+    parentId: string | null,
+    name?: string,
+    opts?: { expand?: boolean },
+  ) => string;
+  importBulk: (input: BulkImportInput) => BulkImportResult;
   deleteNode: (id: string) => void;
   moveNode: (id: string, newParentId: string | null) => void;
   setCommandOpen: (open: boolean) => void;
   setToast: (msg: string | null) => void;
   simulateHermesWrite: () => void;
   applyExternalSnapshot: (
+    nodes: Record<string, VaultNode>,
+    rootIds: string[],
+  ) => void;
+  _applyExternalSnapshotNow: (
     nodes: Record<string, VaultNode>,
     rootIds: string[],
   ) => void;
@@ -668,6 +801,7 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       setActiveNote: (id) => {
+        flushStageNow(set as (p: Record<string, unknown>) => void);
         // Flush dirty editor into the CURRENT note before changing selection
         flushActiveEditors();
         if (id === get().activeNoteId) return;
@@ -761,14 +895,42 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       renameNode: (id, newName) => {
+        flushStageNow(set as (p: Record<string, unknown>) => void);
         const node = get().nodes[id];
         if (!node) return;
         let name = newName.trim();
         if (!name) return;
-        if (node.kind === "note" && !name.endsWith(".md")) name += ".md";
+        if (node.kind === "note") {
+          name = name.replace(/\.md$/i, "");
+          if (!name) return;
+          name = `${name}.md`;
+        }
         const parent = parentPath(node.path);
-        const newPath = parent ? pathJoin(parent, name) : name;
+        let newPath = parent ? pathJoin(parent, name) : name;
         if (newPath === node.path && name === node.name) return;
+        const conflict = Object.values(get().nodes).find(
+          (n) => n.id !== id && n.path === newPath,
+        );
+        if (conflict) {
+          const stem = name.replace(/\.md$/i, "");
+          const ext = node.kind === "note" ? ".md" : "";
+          let i = 1;
+          const paths = new Set(Object.values(get().nodes).map((n) => n.path));
+          while (
+            paths.has(
+              parent
+                ? pathJoin(parent, `${stem} ${i}${ext}`)
+                : `${stem} ${i}${ext}`,
+            )
+          ) {
+            i++;
+          }
+          name = `${stem} ${i}${ext}`;
+          newPath = parent ? pathJoin(parent, name) : name;
+          get().setToast(
+            `Name in use — saved as ${name.replace(/\.md$/i, "")}`,
+          );
+        }
         const oldPath = node.path;
         const nodes = { ...get().nodes };
         const titleOnly = name.replace(/\.md$/i, "");
@@ -828,27 +990,26 @@ export const useVaultStore = create<VaultStore>()(
         }
       },
 
-      createNote: (parentId, title = "Untitled") => {
-        const parent = parentId ? get().nodes[parentId] : null;
+
+      createNote: (parentId, title = "Untitled", opts) => {
+        const activate = opts?.activate !== false;
+        const stage = beginStage(get);
+        const parent = parentId ? stage.nodes[parentId] : null;
         const base = slugifyTitle(title) || "Untitled";
         let name = base.endsWith(".md") ? base : `${base}.md`;
         let path = parent ? pathJoin(parent.path, name) : name;
         let i = 1;
-        const paths = new Set(Object.values(get().nodes).map((n) => n.path));
+        const paths = new Set(Object.values(stage.nodes).map((n) => n.path));
         while (paths.has(path)) {
           const stem = base.replace(/\.md$/i, "");
           name = `${stem} ${i}.md`;
           path = parent ? pathJoin(parent.path, name) : name;
           i++;
         }
-        const id =
-          get().mode === "fsa"
-            ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
-            : get().mode === "desktop"
-              ? "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
-              : makeId(path);
+        // Always unique IDs — path-based ids collide after rename + create
+        const id = makeId(path);
         const content = `# ${title.replace(/\.md$/i, "")}\n\n`;
-        const node: VaultNode = {
+        stage.nodes[id] = {
           id,
           path,
           name,
@@ -857,44 +1018,42 @@ export const useVaultStore = create<VaultStore>()(
           mtime: Date.now(),
           content,
         };
-        const rootIds =
-          parentId == null ? [...get().rootIds, id] : get().rootIds;
-        const expanded = parentId
-          ? get().expandedFolders.includes(parentId)
-            ? get().expandedFolders
-            : [...get().expandedFolders, parentId]
-          : get().expandedFolders;
-        set({
-          nodes: { ...get().nodes, [id]: node },
-          rootIds,
-          activeNoteId: id,
-          expandedFolders: expanded,
-          dirtyNoteIds: [...get().dirtyNoteIds, id],
-        });
+        if (parentId == null && !stage.rootIds.includes(id)) {
+          stage.rootIds = [...stage.rootIds, id];
+        }
+        if (parentId && !stage.expandedFolders.includes(parentId)) {
+          stage.expandedFolders = [...stage.expandedFolders, parentId];
+        }
+        if (activate) stage.activeNoteId = id;
+        if (!stage.dirtyNoteIds.includes(id)) {
+          stage.dirtyNoteIds = [...stage.dirtyNoteIds, id];
+        }
+        scheduleStageFlush(set as (p: Record<string, unknown>) => void);
         if (isDiskVault(get().mode)) {
-          void queueDiskWrite(() => persistNoteIfFsa(path, content));
+          const pth = path;
+          const body = content;
+          enqueueDiskOp(async () => {
+            await persistNoteIfFsa(pth, body, { ack: false });
+          });
         }
         return id;
       },
 
-      createFolder: (parentId, name = "New Folder") => {
-        const parent = parentId ? get().nodes[parentId] : null;
+      createFolder: (parentId, name = "New Folder", opts) => {
+        const expand = opts?.expand !== false;
+        const stage = beginStage(get);
+        const parent = parentId ? stage.nodes[parentId] : null;
         let folderName = slugifyTitle(name) || "New Folder";
         let path = parent ? pathJoin(parent.path, folderName) : folderName;
-        const paths = new Set(Object.values(get().nodes).map((n) => n.path));
+        const paths = new Set(Object.values(stage.nodes).map((n) => n.path));
         let i = 1;
         while (paths.has(path)) {
           folderName = `${name} ${i}`;
           path = parent ? pathJoin(parent.path, folderName) : folderName;
           i++;
         }
-        const id =
-          get().mode === "fsa"
-            ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
-            : get().mode === "desktop"
-              ? "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_")
-              : stableId(path) + "_" + Math.random().toString(36).slice(2, 6);
-        const node: VaultNode = {
+        const id = makeId(path);
+        stage.nodes[id] = {
           id,
           path,
           name: folderName,
@@ -902,30 +1061,191 @@ export const useVaultStore = create<VaultStore>()(
           parentId,
           mtime: Date.now(),
         };
-        const rootIds =
-          parentId == null ? [...get().rootIds, id] : get().rootIds;
-        set({
-          nodes: { ...get().nodes, [id]: node },
-          rootIds,
-          expandedFolders: [...get().expandedFolders, id],
-        });
+        if (parentId == null && !stage.rootIds.includes(id)) {
+          stage.rootIds = [...stage.rootIds, id];
+        }
+        if (expand && !stage.expandedFolders.includes(id)) {
+          stage.expandedFolders = [...stage.expandedFolders, id];
+        }
+        scheduleStageFlush(set as (p: Record<string, unknown>) => void);
         if (get().mode === "desktop" && desktopRoot) {
           const root = desktopRoot;
-          void queueDiskWrite(async () => {
-            await createDesktopFolder(root, path);
-            desktopWatchAck?.();
+          const pth = path;
+          enqueueDiskOp(async () => {
+            await createDesktopFolder(root, pth);
           });
         } else if (get().mode === "fsa" && fsaRoot) {
           const root = fsaRoot;
-          void queueDiskWrite(async () => {
-            await createFolderOnDisk(root, path);
-            if (watcherAck) await watcherAck(root);
+          const pth = path;
+          enqueueDiskOp(async () => {
+            await createFolderOnDisk(root, pth);
           });
         }
         return id;
       },
 
+      importBulk: (input) => {
+        flushStageNow(set as (p: Record<string, unknown>) => void);
+        const activateLast = input.activateLast === true;
+        const folderSpecs = input.folders ?? [];
+        const noteSpecs = (input.notes ?? []).map((n) => ({
+          ...n,
+          path: ensureMdPath(n.path),
+        }));
+        const implied = collectFolderPaths([
+          ...folderSpecs.map((f) => f.path),
+          ...noteSpecs.map((n) => n.path),
+        ]);
+        const allFolderPaths = Array.from(
+          new Set([
+            ...implied,
+            ...folderSpecs.map((f) =>
+              f.path.replace(/\\/g, "/").replace(/^\/+/, ""),
+            ),
+          ]),
+        ).sort(
+          (a, b) =>
+            a.split("/").length - b.split("/").length || a.localeCompare(b),
+        );
+
+        const nodes: Record<string, VaultNode> = { ...get().nodes };
+        let rootIds = [...get().rootIds];
+        const pathToId = buildPathIndex(nodes);
+        const existingPaths = new Set(
+          Object.values(nodes).map((n) => n.path),
+        );
+        const folderIds: string[] = [];
+        const noteIds: string[] = [];
+        let created = 0;
+        let skipped = 0;
+        const now = Date.now();
+        const diskOps: Array<() => Promise<void>> = [];
+        const expanded = new Set(get().expandedFolders);
+
+        for (const fpath of allFolderPaths) {
+          if (!fpath) continue;
+          if (existingPaths.has(fpath)) {
+            skipped++;
+            continue;
+          }
+          const parent = parentPath(fpath);
+          const parentId = parent ? pathToId.get(parent) ?? null : null;
+          if (parent && !parentId) {
+            skipped++;
+            continue;
+          }
+          const id = makeId(fpath);
+          nodes[id] = {
+            id,
+            path: fpath,
+            name: pathToName(fpath),
+            kind: "folder",
+            parentId,
+            mtime: now,
+          };
+          pathToId.set(fpath, id);
+          existingPaths.add(fpath);
+          folderIds.push(id);
+          created++;
+          if (parentId == null) rootIds.push(id);
+          expanded.add(id);
+          if (get().mode === "desktop" && desktopRoot) {
+            const root = desktopRoot;
+            diskOps.push(async () => {
+              await createDesktopFolder(root, fpath);
+            });
+          } else if (get().mode === "fsa" && fsaRoot) {
+            const root = fsaRoot;
+            diskOps.push(async () => {
+              await createFolderOnDisk(root, fpath);
+            });
+          }
+        }
+
+        for (const spec of noteSpecs) {
+          let path = spec.path;
+          if (existingPaths.has(path)) {
+            const existingId = pathToId.get(path);
+            if (existingId && nodes[existingId]?.kind === "note") {
+              const title = spec.title || titleFromPath(path);
+              const content = defaultNoteContent(title, spec.content);
+              nodes[existingId] = {
+                ...nodes[existingId],
+                content,
+                mtime: now,
+              };
+              noteIds.push(existingId);
+              created++;
+              if (isDiskVault(get().mode)) {
+                diskOps.push(async () => {
+                  await persistNoteIfFsa(path, content, { ack: false });
+                });
+              }
+              continue;
+            }
+            path = uniquePath(path, existingPaths);
+          }
+          const parent = parentPath(path);
+          const parentId = parent ? pathToId.get(parent) ?? null : null;
+          if (parent && !parentId) {
+            skipped++;
+            continue;
+          }
+          const title = spec.title || titleFromPath(path);
+          const content = defaultNoteContent(title, spec.content);
+          const id = makeId(path);
+          nodes[id] = {
+            id,
+            path,
+            name: pathToName(path),
+            kind: "note",
+            parentId,
+            mtime: now,
+            content,
+          };
+          pathToId.set(path, id);
+          existingPaths.add(path);
+          noteIds.push(id);
+          created++;
+          if (parentId == null) rootIds.push(id);
+          if (parentId) expanded.add(parentId);
+          if (isDiskVault(get().mode)) {
+            diskOps.push(async () => {
+              await persistNoteIfFsa(path, content, { ack: false });
+            });
+          }
+        }
+
+        rootIds = Array.from(new Set(rootIds)).filter((id) => nodes[id]);
+        const lastNote = noteIds.length ? noteIds[noteIds.length - 1] : null;
+        set({
+          nodes,
+          rootIds,
+          expandedFolders: Array.from(expanded),
+          activeNoteId:
+            activateLast && lastNote ? lastNote : get().activeNoteId,
+          dirtyNoteIds:
+            activateLast && lastNote
+              ? Array.from(new Set([...get().dirtyNoteIds, lastNote]))
+              : get().dirtyNoteIds,
+          toast: input.silent
+            ? get().toast
+            : created
+              ? `Imported ${created} item${created === 1 ? "" : "s"}${
+                  skipped ? ` (${skipped} skipped)` : ""
+                }`
+              : get().toast,
+          lastExternalSync: now,
+        });
+
+        for (const op of diskOps) enqueueDiskOp(op);
+        if (diskOps.length >= 10) flushDiskOps();
+
+        return { folderIds, noteIds, created, skipped };
+      },
+
       deleteNode: (id) => {
+        flushStageNow(set as (p: Record<string, unknown>) => void);
         const nodes = { ...get().nodes };
         const target = nodes[id];
         if (!target) return;
@@ -1090,6 +1410,21 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       applyExternalSnapshot: (nodes, rootIds) => {
+        pendingExternal = { nodes, rootIds };
+        if (externalSnapTimer) clearTimeout(externalSnapTimer);
+        const size = Object.keys(nodes).length;
+        const wait =
+          size > 80 ? EXTERNAL_DEBOUNCE_MS + 40 : EXTERNAL_DEBOUNCE_MS;
+        externalSnapTimer = setTimeout(() => {
+          externalSnapTimer = null;
+          const pending = pendingExternal;
+          pendingExternal = null;
+          if (!pending) return;
+          get()._applyExternalSnapshotNow(pending.nodes, pending.rootIds);
+        }, wait);
+      },
+
+      _applyExternalSnapshotNow: (nodes, rootIds) => {
         const prev = get().nodes;
         // Skip no-op snapshots (performance on large vaults)
         const prevSig = Object.values(prev)
@@ -1212,8 +1547,16 @@ export const useVaultStore = create<VaultStore>()(
 
 // Dev/QA hook — single store instance used by the UI
 if (typeof window !== "undefined") {
-  (window as unknown as { __NOTEAPP__?: { store: typeof useVaultStore } }).__NOTEAPP__ = {
+  (
+    window as unknown as {
+      __NOTEAPP__?: {
+        store: typeof useVaultStore;
+        importBulk: (input: BulkImportInput) => BulkImportResult;
+      };
+    }
+  ).__NOTEAPP__ = {
     store: useVaultStore,
+    importBulk: (input) => useVaultStore.getState().importBulk(input),
   };
 }
 

@@ -337,7 +337,7 @@ export function startDesktopWatch(
       timer = null;
     },
     acknowledge: () => {
-      suppressUntil = Date.now() + 1200;
+      suppressUntil = Date.now() + 1800;
       // refresh signature after own write so we don't thrash
       void scanDesktopSignatures(root)
         .then((s) => {
