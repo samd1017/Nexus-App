@@ -368,6 +368,115 @@
     font-weight: 600;
   }
 
+
+  /* Resizable vault images */
+  .note-editor .nexus-image-wrap {
+    display: flex;
+    width: 100%;
+    margin: 0.9rem 0;
+    position: relative;
+  }
+
+  .note-editor .nexus-image-wrap[data-align="left"] {
+    justify-content: flex-start;
+  }
+
+  .note-editor .nexus-image-wrap[data-align="center"] {
+    justify-content: center;
+  }
+
+  .note-editor .nexus-image-wrap[data-align="right"] {
+    justify-content: flex-end;
+  }
+
+  .note-editor .nexus-image-frame {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    line-height: 0;
+  }
+
+  .note-editor .nexus-image-el {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  }
+
+  .note-editor .nexus-image-wrap.is-selected .nexus-image-el {
+    outline: 2px solid rgba(0, 200, 255, 0.55);
+    outline-offset: 2px;
+  }
+
+  .note-editor .nexus-image-handle {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 200, 255, 0.7);
+    background: linear-gradient(135deg, #00c8ff, #7b61ff);
+    box-shadow: 0 0 0 2px rgba(5, 5, 7, 0.85);
+    cursor: nwse-resize;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease;
+    padding: 0;
+  }
+
+  .note-editor .nexus-image-wrap.is-selected .nexus-image-handle,
+  .note-editor .nexus-image-wrap.is-resizing .nexus-image-handle {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .note-editor .nexus-image-toolbar {
+    position: absolute;
+    top: -2.35rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 5px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: rgba(12, 12, 15, 0.94);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(10px);
+    z-index: 5;
+  }
+
+  .note-editor .nexus-image-wrap.is-selected .nexus-image-toolbar {
+    display: inline-flex;
+  }
+
+  .note-editor .nexus-image-toolbar button {
+    min-width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .note-editor .nexus-image-toolbar button:hover {
+    background: rgba(0, 200, 255, 0.12);
+    color: var(--accent);
+  }
+
+  .note-editor .nexus-image-sep {
+    width: 1px;
+    height: 14px;
+    margin: 0 3px;
+    background: var(--border);
+  }
+
   .note-editor img {
     max-width: 100%;
     border-radius: var(--radius-md);

@@ -124,11 +124,32 @@ turndown.addRule("styledListItem", {
 turndown.addRule("vaultImage", {
   filter: "img",
   replacement: (_content, node) => {
-    const el = node as HTMLElement;
-    const vault = el.getAttribute("data-vault-src");
-    const src = vault || el.getAttribute("src") || "";
-    const alt = el.getAttribute("alt") || "";
+    const img = node as HTMLElement;
+    const vault = img.getAttribute("data-vault-src");
+    let src = vault || img.getAttribute("src") || "";
+    // never write blob: into markdown
+    if (src.startsWith("blob:") && vault) src = vault;
+    if (src.startsWith("blob:")) return "";
+    const alt = img.getAttribute("alt") || "";
+    const widthRaw =
+      img.getAttribute("width") ||
+      img.getAttribute("data-width") ||
+      (img.style?.width ? String(parseInt(img.style.width, 10)) : "");
+    const wNum = widthRaw ? parseInt(String(widthRaw), 10) : NaN;
+    const wrap = img.closest?.(".nexus-image-wrap") as HTMLElement | null;
+    const align =
+      img.getAttribute("data-align") ||
+      wrap?.getAttribute("data-align") ||
+      "center";
     if (!src) return "";
+    // Sized or non-default align → HTML so layout survives round-trip
+    if ((Number.isFinite(wNum) && wNum > 0) || (align && align !== "center")) {
+      const wAttr =
+        Number.isFinite(wNum) && wNum > 0 ? ` width="${wNum}"` : "";
+      const aAttr = align && align !== "center" ? ` data-align="${align}"` : "";
+      const vAttr = vault ? ` data-vault-src="${vault}"` : "";
+      return `\n\n<img src="${src}" alt="${alt}"${wAttr}${aAttr}${vAttr} />\n\n`;
+    }
     return `![${alt}](${src})`;
   },
 });
