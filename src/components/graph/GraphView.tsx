@@ -7,6 +7,7 @@ import { buildGraph } from "@/lib/graph/build-graph";
 import { Maximize2, Minimize2, Network } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePrefsStore, type PhysicsIntensity } from "@/lib/prefs/preferences";
+import { isDesktopShell } from "@/lib/platform";
 
 interface Props {
   mode: "panel" | "fullscreen";
@@ -20,6 +21,7 @@ type GNode = {
   preview: string;
   path: string;
   degree: number;
+  folder: string;
   x?: number;
   y?: number;
   z?: number;
@@ -351,6 +353,7 @@ function createOrb(
   mode: "panel" | "fullscreen",
   accent: THREE.Color,
   showLabel: boolean,
+  desktopBoost: boolean,
 ): THREE.Object3D {
   const group = new THREE.Group();
   const isActive = node.id === activeId;
@@ -362,68 +365,101 @@ function createOrb(
   const full = mode === "fullscreen";
   const panel = mode === "panel";
   const segs = full ? 72 : 56;
+  const sizeBoost = desktopBoost ? 1.14 : 1;
 
-  const base = full ? 3.0 : panel ? 2.4 : 2.3;
-  const rank = isActive || isHover ? 1 : isHub ? 0.82 : 0.62;
+  const base = (full ? 3.15 : panel ? 2.55 : 2.4) * sizeBoost;
+  const rank = isActive || isHover ? 1 : isHub ? 0.84 : 0.68;
   const radius =
     base +
-    Math.pow(Math.max(1, node.val), 0.55) * (full ? 1.7 : 1.35) * rank +
-    (isActive || isHover ? 0.45 : 0);
+    Math.pow(Math.max(1, node.val), 0.55) * (full ? 1.75 : 1.4) * rank +
+    (isActive || isHover ? 0.5 : 0);
 
   const bodyColor =
     isActive || isHover
-      ? new THREE.Color(0x4a5260)
+      ? new THREE.Color(desktopBoost ? 0x5c6678 : 0x4a5260)
       : isHub
-        ? new THREE.Color(0x3c4452)
-        : new THREE.Color(0x343c48);
+        ? new THREE.Color(desktopBoost ? 0x4a5466 : 0x3c4452)
+        : new THREE.Color(desktopBoost ? 0x424a5a : 0x343c48);
 
   if (dim) {
-    const mul = 1 - dimStrength * 0.55;
-    bodyColor.multiplyScalar(mul);
+    bodyColor.multiplyScalar(1 - dimStrength * 0.5);
   }
 
-  const bodyOpacity = dim ? 1 - dimStrength * 0.55 : 1;
+  const bodyOpacity = dim ? 1 - dimStrength * 0.5 : 1;
+
+  let emissive = accent.clone().multiplyScalar(desktopBoost ? 0.22 : 0.12);
+  let emissiveIntensity = desktopBoost ? 0.055 : 0.028;
+  if (isActive || isHover) {
+    emissive = accent.clone();
+    emissiveIntensity = desktopBoost ? 0.16 : 0.1;
+  } else if (neighbors?.has(node.id)) {
+    emissive = accent.clone().multiplyScalar(0.55);
+    emissiveIntensity = desktopBoost ? 0.1 : 0.055;
+  }
 
   const body = new THREE.Mesh(
     new THREE.SphereGeometry(radius, segs, segs),
     new THREE.MeshPhysicalMaterial({
       color: bodyColor,
-      metalness: 0.96,
-      roughness: isActive || isHover ? 0.12 : isHub ? 0.2 : 0.28,
-      clearcoat: isActive || isHover ? 0.8 : 0.45,
-      clearcoatRoughness: isActive || isHover ? 0.05 : 0.14,
+      metalness: desktopBoost ? 0.88 : 0.94,
+      roughness: isActive || isHover ? 0.14 : isHub ? 0.22 : 0.3,
+      clearcoat: isActive || isHover ? 0.75 : desktopBoost ? 0.55 : 0.42,
+      clearcoatRoughness: isActive || isHover ? 0.06 : 0.16,
       transparent: dim && dimStrength > 0.5,
       opacity: bodyOpacity,
       depthWrite: !(dim && dimStrength > 0.5),
       transmission: 0,
-      specularIntensity: isActive || isHover ? 1.45 : 1.15,
+      specularIntensity: isActive || isHover ? 1.5 : desktopBoost ? 1.35 : 1.15,
       specularColor: new THREE.Color(0xe8eef6),
-      emissive:
-        isActive || isHover
-          ? accent.clone()
-          : neighbors?.has(node.id)
-            ? accent.clone().multiplyScalar(0.35)
-            : new THREE.Color(0x000000),
-      emissiveIntensity:
-        isActive || isHover ? 0.08 : neighbors?.has(node.id) ? 0.04 : 0,
-      envMapIntensity: isActive || isHover ? 1.55 : isHub ? 1.2 : 1.05,
+      emissive,
+      emissiveIntensity,
+      envMapIntensity: isActive || isHover
+        ? desktopBoost
+          ? 1.85
+          : 1.55
+        : isHub
+          ? desktopBoost
+            ? 1.45
+            : 1.2
+          : desktopBoost
+            ? 1.3
+            : 1.05,
       side: THREE.FrontSide,
     }),
   );
   body.renderOrder = dim && dimStrength > 0.5 ? 0 : 1;
   group.add(body);
 
+  if (!dim || dimStrength < 0.4) {
+    const shell = new THREE.Mesh(
+      new THREE.SphereGeometry(
+        radius * 1.045,
+        Math.min(segs, 48),
+        Math.min(segs, 48),
+      ),
+      new THREE.MeshBasicMaterial({
+        color: accent.clone().multiplyScalar(desktopBoost ? 0.55 : 0.35),
+        transparent: true,
+        opacity: desktopBoost ? 0.09 : 0.05,
+        depthWrite: false,
+        side: THREE.BackSide,
+      }),
+    );
+    shell.renderOrder = 0;
+    group.add(shell);
+  }
+
   if (isActive || isHover) {
-    const tube = radius * 0.013;
+    const tube = radius * 0.014;
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(radius * 1.08, tube, 12, full ? 88 : 64),
       new THREE.MeshPhysicalMaterial({
         color: accent.clone().lerp(new THREE.Color(0xd0d8e4), 0.3),
-        metalness: 0.95,
+        metalness: 0.92,
         roughness: 0.14,
         emissive: accent.clone(),
-        emissiveIntensity: isHover && !isActive ? 0.28 : 0.2,
-        envMapIntensity: 1.2,
+        emissiveIntensity: isHover && !isActive ? 0.32 : 0.24,
+        envMapIntensity: 1.25,
       }),
     );
     ring.rotation.x = Math.PI / 2;
@@ -444,6 +480,60 @@ function createOrb(
   }
 
   return group;
+}
+
+/** Soft spatial clustering by folder (no visible links required). */
+function forceFolderCluster(strength = 0.055) {
+  let nodes: Array<{
+    folder?: string;
+    x?: number;
+    y?: number;
+    z?: number;
+    vx?: number;
+    vy?: number;
+    vz?: number;
+  }> = [];
+
+  function force(alpha: number) {
+    if (!nodes.length) return;
+    const groups = new Map<string, typeof nodes>();
+    for (const n of nodes) {
+      const key = n.folder || "";
+      if (!key) continue;
+      let g = groups.get(key);
+      if (!g) {
+        g = [];
+        groups.set(key, g);
+      }
+      g.push(n);
+    }
+    const k = strength * alpha;
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      let cx = 0,
+        cy = 0,
+        cz = 0;
+      for (const n of group) {
+        cx += n.x ?? 0;
+        cy += n.y ?? 0;
+        cz += n.z ?? 0;
+      }
+      const inv = 1 / group.length;
+      cx *= inv;
+      cy *= inv;
+      cz *= inv;
+      for (const n of group) {
+        n.vx = (n.vx ?? 0) + (cx - (n.x ?? 0)) * k;
+        n.vy = (n.vy ?? 0) + (cy - (n.y ?? 0)) * k;
+        n.vz = (n.vz ?? 0) + (cz - (n.z ?? 0)) * k;
+      }
+    }
+  }
+
+  force.initialize = (initNodes: typeof nodes) => {
+    nodes = initNodes;
+  };
+  return force;
 }
 
 export function GraphView({ mode, className }: Props) {
@@ -468,6 +558,7 @@ export function GraphView({ mode, className }: Props) {
   const [hintVisible, setHintVisible] = useState(true);
 
   activeRef.current = activeNoteId;
+  const desktopBoost = isDesktopShell();
 
   const data = useMemo(() => {
     const g = buildGraph(deferredNodes);
@@ -479,6 +570,7 @@ export function GraphView({ mode, className }: Props) {
         preview: n.preview,
         path: n.path,
         degree: n.degree,
+        folder: n.folder ?? "",
       })) as GNode[],
       links: g.edges.map((e) => ({
         source: e.source,
@@ -537,6 +629,7 @@ export function GraphView({ mode, className }: Props) {
         mode,
         accent,
         shouldShowLabel(n),
+        desktopBoost,
       );
     };
 
@@ -656,9 +749,14 @@ export function GraphView({ mode, className }: Props) {
     let envMap: THREE.Texture | null = null;
     try {
       const renderer = graph.renderer();
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.12;
+      renderer.toneMappingExposure = desktopBoost ? 1.32 : 1.12;
+      renderer.setPixelRatio(
+        Math.min(
+          Math.max(window.devicePixelRatio || 1, desktopBoost ? 1.5 : 1),
+          2.5,
+        ),
+      );
       if ("outputColorSpace" in renderer) {
         (renderer as THREE.WebGLRenderer).outputColorSpace =
           THREE.SRGBColorSpace;
@@ -690,13 +788,22 @@ export function GraphView({ mode, className }: Props) {
       });
       remove.forEach((l) => scene.remove(l));
 
-      const ambient = new THREE.AmbientLight(0x4a5260, 0.14);
-      const hemi = new THREE.HemisphereLight(0x1c2a3c, 0x03050a, 0.38);
-      const key = new THREE.DirectionalLight(0xf0f4f8, 1.15);
+      const ambI = desktopBoost ? 0.28 : 0.14;
+      const hemiI = desktopBoost ? 0.55 : 0.38;
+      const keyI = desktopBoost ? 1.45 : 1.15;
+      const ambient = new THREE.AmbientLight(0x5a6474, ambI);
+      const hemi = new THREE.HemisphereLight(0x2a3a50, 0x03050a, hemiI);
+      const key = new THREE.DirectionalLight(0xf0f4f8, keyI);
       key.position.set(60, 95, 45);
-      const fill = new THREE.DirectionalLight(0x3a4a5c, 0.42);
+      const fill = new THREE.DirectionalLight(
+        0x4a5a70,
+        desktopBoost ? 0.58 : 0.42,
+      );
       fill.position.set(-55, 10, -40);
-      const rim = new THREE.DirectionalLight(0xb0c8e0, 0.32);
+      const rim = new THREE.DirectionalLight(
+        0xb0c8e0,
+        desktopBoost ? 0.48 : 0.32,
+      );
       rim.position.set(-40, 30, -60);
 
       scene.add(ambient, hemi, key, fill, rim);
@@ -718,6 +825,10 @@ export function GraphView({ mode, className }: Props) {
         | { distance?: (n: number) => unknown }
         | undefined;
       linkF?.distance?.(phys.distance);
+      graph.d3Force(
+        "folder",
+        forceFolderCluster(mode === "fullscreen" ? 0.055 : 0.07),
+      );
       graph.d3AlphaDecay(phys.alpha);
       graph.d3VelocityDecay(phys.velocity);
     } catch {
@@ -871,6 +982,7 @@ export function GraphView({ mode, className }: Props) {
         mode,
         accent,
         shouldShowLabel(n),
+        desktopBoost,
       );
     };
 

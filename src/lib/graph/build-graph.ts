@@ -4,6 +4,12 @@ import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
 import { normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import { previewSnippet } from "@/lib/markdown/serialize";
 
+export function parentFolderOf(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
 export function buildGraph(nodes: Record<string, VaultNode>): {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -35,6 +41,7 @@ export function buildGraph(nodes: Record<string, VaultNode>): {
     path: n.path,
     degree: degree.get(n.id) ?? 0,
     preview: previewSnippet(n.content ?? "", 100),
+    folder: parentFolderOf(n.path),
   }));
 
   return { nodes: gNodes, edges };

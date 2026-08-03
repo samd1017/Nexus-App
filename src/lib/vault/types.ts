@@ -77,6 +77,8 @@ export interface GraphNode {
   path: string;
   degree: number;
   preview: string;
+  /** Parent folder path ("" = vault root) — used for soft spatial clustering */
+  folder: string;
 }
 
 export interface GraphEdge {
