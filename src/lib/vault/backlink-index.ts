@@ -1,6 +1,7 @@
 /**
  * Reverse backlink index — target key → note ids that link to it.
- * Built once per vault snapshot (cached by structure/content signature).
+ * Phase 1: generation-based cache (no O(n) vaultSig string joins).
+ * Phase 4: true single-note incremental patch on save.
  */
 
 import type { VaultNode } from "./types";
@@ -9,20 +10,10 @@ import {
   extractWikilinks,
   normalizeLinkTarget,
 } from "@/lib/markdown/wikilinks";
+import { ensureVaultIndex } from "./indexes";
 
-let cachedSig = "";
+let cachedGen = -1;
 let cachedIndex: Map<string, string[]> | null = null;
-
-function vaultSig(nodes: Record<string, VaultNode>): string {
-  return Object.values(nodes)
-    .filter((n) => n.kind === "note")
-    .map(
-      (n) =>
-        `${n.id}\0${n.path}\0${n.mtime}\0${(n.content ?? "").length}`,
-    )
-    .sort()
-    .join("|");
-}
 
 /**
  * Map of normalized wikilink target keys → source note ids (unique, insertion order).
@@ -31,8 +22,8 @@ function vaultSig(nodes: Record<string, VaultNode>): string {
 export function buildReverseIndex(
   nodes: Record<string, VaultNode>,
 ): Map<string, string[]> {
-  const sig = vaultSig(nodes);
-  if (cachedIndex && cachedSig === sig) return cachedIndex;
+  const gen = ensureVaultIndex(nodes).generation();
+  if (cachedIndex && cachedGen === gen) return cachedIndex;
 
   const index = new Map<string, string[]>();
 
@@ -56,7 +47,7 @@ export function buildReverseIndex(
     }
   }
 
-  cachedSig = sig;
+  cachedGen = gen;
   cachedIndex = index;
   return index;
 }
@@ -72,6 +63,6 @@ export function noteTargetKeys(note: VaultNode): string[] {
 }
 
 export function invalidateBacklinkIndex(): void {
-  cachedSig = "";
+  cachedGen = -1;
   cachedIndex = null;
 }

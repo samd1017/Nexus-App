@@ -4,20 +4,25 @@ import { noteTitle } from "@/lib/vault/types";
 import { previewSnippet } from "@/lib/markdown/serialize";
 import { notesForTag } from "@/lib/vault/tags";
 import { getOrphanNotes } from "@/lib/vault/broken-links";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
+
+/** Cap Fuse content docs — full-body Bitap does not scale past ~1–2k notes. */
+const FUSE_CONTENT_CAP = 1200;
 
 interface SearchDoc {
   id: string;
   path: string;
   title: string;
+  /** Truncated body for fuzzy content hits (Phase 1); Phase 4 replaces with FTS */
   content: string;
   mtime: number;
 }
 
-/** Cached Fuse index — rebuilt when vault structure / titles / content change */
-let cachedKey = "";
+/** Cached Fuse index — invalidated by vaultIndex generation (not O(n) string keys) */
+let cachedGen = -1;
 let cachedFuse: Fuse<SearchDoc> | null = null;
 let cachedDocs: SearchDoc[] = [];
-/** Per-note signature so a single content edit can patch without full key recompute thrash */
+/** Per-note signature so a single content edit can patch without full remap */
 let cachedNoteSigs = new Map<string, string>();
 
 function noteSig(n: VaultNode): string {
@@ -25,12 +30,9 @@ function noteSig(n: VaultNode): string {
   return `${noteTitle(n)}\0${n.path}\0${n.mtime}\0${(n.content ?? "").length}`;
 }
 
-function vaultKey(nodes: Record<string, VaultNode>): string {
-  return Object.values(nodes)
-    .filter((n) => n.kind === "note")
-    .map((n) => `${n.id}:${noteSig(n)}`)
-    .sort()
-    .join("|");
+function truncateForIndex(content: string): string {
+  if (content.length <= FUSE_CONTENT_CAP) return content;
+  return content.slice(0, FUSE_CONTENT_CAP);
 }
 
 function rebuildFuse(docs: SearchDoc[]): Fuse<SearchDoc> {
@@ -42,14 +44,16 @@ function rebuildFuse(docs: SearchDoc[]): Fuse<SearchDoc> {
     ],
     threshold: 0.34,
     includeScore: true,
+    // ignoreLocation on full bodies was O(N·C·Q) — keep for truncated snippets only
     ignoreLocation: true,
     minMatchCharLength: 1,
   });
 }
 
 function getFuse(nodes: Record<string, VaultNode>): Fuse<SearchDoc> {
-  const key = vaultKey(nodes);
-  if (cachedFuse && cachedKey === key) return cachedFuse;
+  const idx = ensureVaultIndex(nodes);
+  const gen = idx.generation();
+  if (cachedFuse && cachedGen === gen) return cachedFuse;
 
   const notes = Object.values(nodes).filter((n) => n.kind === "note");
   const nextSigs = new Map<string, string>();
@@ -83,17 +87,17 @@ function getFuse(nodes: Record<string, VaultNode>): Fuse<SearchDoc> {
         const id = changed[0];
         const n = nodes[id];
         if (n && n.kind === "note") {
-          const idx = cachedDocs.findIndex((d) => d.id === id);
-          if (idx >= 0) {
-            cachedDocs[idx] = {
+          const docIdx = cachedDocs.findIndex((d) => d.id === id);
+          if (docIdx >= 0) {
+            cachedDocs[docIdx] = {
               id: n.id,
               path: n.path,
               title: noteTitle(n),
-              content: n.content ?? "",
+              content: truncateForIndex(n.content ?? ""),
               mtime: n.mtime,
             };
             cachedFuse = rebuildFuse(cachedDocs);
-            cachedKey = key;
+            cachedGen = gen;
             cachedNoteSigs = nextSigs;
             return cachedFuse;
           }
@@ -106,12 +110,12 @@ function getFuse(nodes: Record<string, VaultNode>): Fuse<SearchDoc> {
     id: n.id,
     path: n.path,
     title: noteTitle(n),
-    content: n.content ?? "",
+    content: truncateForIndex(n.content ?? ""),
     mtime: n.mtime,
   }));
 
   cachedFuse = rebuildFuse(cachedDocs);
-  cachedKey = key;
+  cachedGen = gen;
   cachedNoteSigs = nextSigs;
   return cachedFuse;
 }
@@ -126,7 +130,11 @@ export function searchVault(
   limit = 20,
 ): SearchHit[] {
   const q = query.trim();
+  const idx = ensureVaultIndex(nodes);
+
   if (!q) {
+    // Prefer recent-by-mtime without sorting all notes when N is huge:
+    // still O(n log n) but only on metadata; Phase 4 uses a recency heap/index.
     return Object.values(nodes)
       .filter((n) => n.kind === "note")
       .sort((a, b) => b.mtime - a.mtime)
@@ -169,19 +177,21 @@ export function searchVault(
   }
 
   const lower = q.toLowerCase();
-  const notes = Object.values(nodes).filter((n) => n.kind === "note");
 
-  // Exact / prefix title boosts first
+  // Exact / prefix title boosts via title index (metadata only)
   const exact: SearchHit[] = [];
   const prefix: SearchHit[] = [];
-  for (const n of notes) {
-    const title = noteTitle(n);
-    const t = title.toLowerCase();
+  const titleHits = idx.suggest(nodes, q, Math.max(limit * 4, 40));
+  for (const h of titleHits) {
+    if (h.kind !== "note") continue;
+    const n = nodes[h.id];
+    if (!n || n.kind !== "note") continue;
+    const t = h.title.toLowerCase();
     if (t === lower) {
       exact.push({
         noteId: n.id,
         path: n.path,
-        title,
+        title: h.title,
         snippet: previewSnippet(n.content ?? "", 100),
         score: 100,
         matchType: "title",
@@ -190,7 +200,7 @@ export function searchVault(
       prefix.push({
         noteId: n.id,
         path: n.path,
-        title,
+        title: h.title,
         snippet: previewSnippet(n.content ?? "", 100),
         score: 80 + Math.min(10, n.mtime / 1e13),
         matchType: "title",
@@ -206,9 +216,11 @@ export function searchVault(
     const pathHit = r.item.path.toLowerCase().includes(lower);
     // Recency nudge (max ~0.05)
     const recency = Math.min(0.05, (r.item.mtime / Date.now()) * 0.05);
+    // Prefer full body for snippet if still in store (eager mode)
+    const full = nodes[r.item.id]?.content ?? r.item.content;
     const snippet = titleHit
-      ? previewSnippet(r.item.content, 100)
-      : extractSnippet(r.item.content, q);
+      ? previewSnippet(full, 100)
+      : extractSnippet(full, q);
     return {
       noteId: r.item.id,
       path: r.item.path,
@@ -243,7 +255,7 @@ function extractSnippet(content: string, query: string, radius = 50): string {
 }
 
 export function invalidateSearchCache(): void {
-  cachedKey = "";
+  cachedGen = -1;
   cachedFuse = null;
   cachedDocs = [];
   cachedNoteSigs = new Map();

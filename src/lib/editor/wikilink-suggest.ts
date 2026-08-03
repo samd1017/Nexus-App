@@ -4,8 +4,7 @@
 
 import type { Editor } from "@tiptap/react";
 import type { VaultNode } from "@/lib/vault/types";
-import { noteTitle } from "@/lib/vault/types";
-import { normalizeLinkTarget } from "@/lib/markdown/wikilinks";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
 
 export type WikilinkSuggestItem = {
   id: string;
@@ -34,33 +33,8 @@ export function buildSuggestItems(
   query: string,
   limit = 40,
 ): WikilinkSuggestItem[] {
-  const q = normalizeLinkTarget(query);
-  const list: WikilinkSuggestItem[] = [];
-  for (const n of Object.values(nodes)) {
-    const title = n.kind === "note" ? noteTitle(n) : n.name;
-    const pathNoMd = n.path.replace(/\.md$/i, "");
-    const hay = `${title} ${pathNoMd}`.toLowerCase();
-    if (q && !hay.includes(q) && !normalizeLinkTarget(title).includes(q)) {
-      continue;
-    }
-    list.push({
-      id: n.id,
-      kind: n.kind,
-      title,
-      path: n.path,
-      // Prefer title for notes, path for folders / nested notes with collisions
-      target: n.kind === "note" ? title : pathNoMd,
-    });
-  }
-  list.sort((a, b) => {
-    // Prefer notes, then prefix match, then alpha
-    if (a.kind !== b.kind) return a.kind === "note" ? -1 : 1;
-    const aq = normalizeLinkTarget(a.title).startsWith(q) ? 0 : 1;
-    const bq = normalizeLinkTarget(b.title).startsWith(q) ? 0 : 1;
-    if (aq !== bq) return aq - bq;
-    return a.title.localeCompare(b.title);
-  });
-  return list.slice(0, limit);
+  // Phase 1: structural title/path index (no body scan)
+  return ensureVaultIndex(nodes).suggest(nodes, query, limit);
 }
 
 /** Scan text before cursor for an unfinished `[[query` (no closing ]]). */

@@ -77,6 +77,7 @@ import { recordNoteVisit } from "./visit-history";
 import { trackVisit } from "./session-recents";
 import { pushNav } from "./nav-history";
 import { pushPulse } from "./pulse";
+import { ensureVaultIndex, vaultIndex } from "./indexes";
 
 /** Nexus keys (Wave S5). Dual-read legacy noteapp-* on load; always write nexus-*. */
 const STORAGE_KEY = "nexus-vault-v1";
@@ -2282,13 +2283,9 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       getChildren: (parentId) => {
-        const all = Object.values(get().nodes).filter(
-          (n) => n.parentId === parentId,
-        );
-        return all.sort((a, b) => {
-          if (a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
+        // Phase 1 scale: O(k) adjacency via vaultIndex (was O(n) full scan)
+        const nodes = get().nodes;
+        return ensureVaultIndex(nodes).getChildren(nodes, parentId);
       },
 
       flushDirty: () => {
@@ -2357,11 +2354,13 @@ if (typeof window !== "undefined") {
       __NOTEAPP__?: {
         store: typeof useVaultStore;
         importBulk: (input: BulkImportInput) => BulkImportResult;
+        vaultIndex: typeof vaultIndex;
       };
     }
   ).__NOTEAPP__ = {
     store: useVaultStore,
     importBulk: (input) => useVaultStore.getState().importBulk(input),
+    vaultIndex,
   };
 }
 

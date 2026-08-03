@@ -20,6 +20,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import type { NoteTemplateId } from "@/lib/vault/templates";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 /**
@@ -140,14 +141,10 @@ const TreeNode = memo(function TreeNode({
   }, [renaming, node.id]);
 
   const expanded = expandedFolders.includes(node.id);
-  // Stable child fingerprint so memo'd TreeNode still updates when siblings change
+  // Phase 1 scale: O(k) child fingerprint via structural index (was O(n) vault scan)
   const childSig = useVaultStore((s) => {
     if (node.kind !== "folder") return "";
-    return Object.values(s.nodes)
-      .filter((n) => n.parentId === node.id)
-      .map((n) => `${n.id}:${n.name}:${n.kind}:${n.mtime}`)
-      .sort()
-      .join("|");
+    return ensureVaultIndex(s.nodes).childSignature(s.nodes, node.id);
   });
   const children = useMemo(
     () => (node.kind === "folder" && expanded ? getChildren(node.id) : []),
