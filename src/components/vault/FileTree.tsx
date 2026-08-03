@@ -16,7 +16,10 @@ import { useVaultStore } from "@/lib/vault/store";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 
-const DND_MIME = "application/x-nexus-node-id";
+/**
+ * Pointer-based tree DnD — works in browser AND Tauri/WKWebView (Mac app).
+ * HTML5 Drag-and-Drop is unreliable in WKWebView, so we do not depend on it.
+ */
 
 type CtxMenu =
   | { kind: "item"; nodeId: string; x: number; y: number }
@@ -27,6 +30,14 @@ type DropTarget =
   | { type: "folder"; id: string }
   | { type: "root" }
   | null;
+
+type DragSession = {
+  id: string;
+  startX: number;
+  startY: number;
+  active: boolean; // passed movement threshold
+  pointerId: number;
+};
 
 function displayName(node: VaultNode): string {
   return node.kind === "note" ? noteTitle(node) : node.name;
@@ -45,6 +56,38 @@ function isDescendant(
   return false;
 }
 
+function resolveDropFromPoint(
+  clientX: number,
+  clientY: number,
+  dragId: string,
+  nodes: Record<string, VaultNode>,
+): DropTarget {
+  const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+  if (!el) return { type: "root" };
+  const row = el.closest("[data-node-id]") as HTMLElement | null;
+  if (row) {
+    const id = row.getAttribute("data-node-id");
+    const kind = row.getAttribute("data-node-kind");
+    if (id && kind === "folder" && id !== dragId) {
+      // reject drop into self/descendant
+      if (!isDescendant(nodes, dragId, id)) {
+        return { type: "folder", id };
+      }
+    }
+    // Hovering a note: treat as its parent folder if any, else root
+    if (id && kind === "note") {
+      const parentId = nodes[id]?.parentId ?? null;
+      if (parentId && parentId !== dragId && !isDescendant(nodes, dragId, parentId)) {
+        return { type: "folder", id: parentId };
+      }
+      return { type: "root" };
+    }
+  }
+  // Inside the tree panel but not on a row → root
+  if (el.closest("[data-file-tree]")) return { type: "root" };
+  return null;
+}
+
 function TreeNode({
   node,
   depth,
@@ -52,9 +95,8 @@ function TreeNode({
   setRenamingId,
   openCtx,
   dragId,
-  setDragId,
   dropTarget,
-  setDropTarget,
+  onPointerDragStart,
 }: {
   node: VaultNode;
   depth: number;
@@ -62,9 +104,8 @@ function TreeNode({
   setRenamingId: (id: string | null) => void;
   openCtx: (menu: CtxMenu) => void;
   dragId: string | null;
-  setDragId: (id: string | null) => void;
   dropTarget: DropTarget;
-  setDropTarget: (t: DropTarget) => void;
+  onPointerDragStart: (id: string, e: React.PointerEvent) => void;
 }) {
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const expandedFolders = useVaultStore((s) => s.expandedFolders);
@@ -72,14 +113,11 @@ function TreeNode({
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const getChildren = useVaultStore((s) => s.getChildren);
   const renameNode = useVaultStore((s) => s.renameNode);
-  const moveNode = useVaultStore((s) => s.moveNode);
-  const nodes = useVaultStore((s) => s.nodes);
 
   const renaming = renamingId === node.id;
   const [nameDraft, setNameDraft] = useState(displayName(node));
   const inputRef = useRef<HTMLInputElement>(null);
   const skipBlur = useRef(false);
-  const expandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!renaming) setNameDraft(displayName(node));
@@ -94,13 +132,6 @@ function TreeNode({
       });
     }
   }, [renaming, node.id]);
-
-  useEffect(
-    () => () => {
-      if (expandTimer.current) clearTimeout(expandTimer.current);
-    },
-    [],
-  );
 
   const expanded = expandedFolders.includes(node.id);
   const children =
@@ -137,7 +168,11 @@ function TreeNode({
   const openNote = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (renaming) return;
+    if (renaming || dragId) return;
+    // Ignore the click that follows a completed drag (Mac + web)
+    if ((window as unknown as { __nexusSuppressTreeClick?: boolean }).__nexusSuppressTreeClick) {
+      return;
+    }
     if (node.kind === "folder") {
       toggleFolder(node.id);
       return;
@@ -145,22 +180,15 @@ function TreeNode({
     setActiveNote(node.id);
   };
 
-  const canAcceptDrop = (draggedId: string) => {
-    if (node.kind !== "folder") return false;
-    if (draggedId === node.id) return false;
-    // can't drop into own descendant if dragging a folder
-    if (isDescendant(nodes, draggedId, node.id)) return false;
-    return true;
-  };
-
   return (
     <div>
       <div
         className={cn(
-          "tree-item group relative flex w-full items-center gap-1.5 text-left",
+          "tree-item group relative flex w-full items-center gap-1.5 text-left select-none",
           isActive && "is-active",
-          isDragging && "opacity-45",
-          isDropHover && "ring-1 ring-[var(--accent)] bg-[rgba(0,200,255,0.08)]",
+          isDragging && "opacity-40",
+          isDropHover &&
+            "ring-1 ring-[var(--accent)] bg-[rgba(0,200,255,0.1)]",
         )}
         style={{ paddingLeft: 8 + depth * 14 }}
         role="treeitem"
@@ -168,92 +196,19 @@ function TreeNode({
         aria-expanded={node.kind === "folder" ? expanded : undefined}
         data-node-id={node.id}
         data-node-kind={node.kind}
-        draggable={!renaming}
-        onDragStart={(e) => {
-          if (renaming) {
-            e.preventDefault();
-            return;
-          }
-          e.stopPropagation();
-          e.dataTransfer.setData(DND_MIME, node.id);
-          e.dataTransfer.setData("text/plain", node.id);
-          e.dataTransfer.effectAllowed = "move";
-          setDragId(node.id);
-          // ghost label
-          try {
-            const ghost = document.createElement("div");
-            ghost.textContent = displayName(node);
-            ghost.style.cssText =
-              "position:fixed;top:-100px;left:-100px;padding:4px 10px;border-radius:8px;background:#16161a;color:#f2f2f7;border:1px solid rgba(0,200,255,0.35);font:12.5px Inter,system-ui;pointer-events:none;";
-            document.body.appendChild(ghost);
-            e.dataTransfer.setDragImage(ghost, 12, 12);
-            requestAnimationFrame(() => ghost.remove());
-          } catch {
-            /* ignore */
-          }
-        }}
-        onDragEnd={() => {
-          setDragId(null);
-          setDropTarget(null);
-          if (expandTimer.current) {
-            clearTimeout(expandTimer.current);
-            expandTimer.current = null;
-          }
-        }}
-        onDragOver={(e) => {
-          const dragged =
-            dragId ||
-            e.dataTransfer.types.includes(DND_MIME) ||
-            e.dataTransfer.types.includes("text/plain");
-          if (!dragged) return;
-          const id = dragId;
-          if (node.kind === "folder") {
-            if (id && !canAcceptDrop(id)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            e.dataTransfer.dropEffect = "move";
-            setDropTarget({ type: "folder", id: node.id });
-            // Auto-expand collapsed folders while hovering
-            if (!expanded && !expandTimer.current) {
-              expandTimer.current = setTimeout(() => {
-                expandTimer.current = null;
-                if (!useVaultStore.getState().expandedFolders.includes(node.id)) {
-                  toggleFolder(node.id);
-                }
-              }, 450);
-            }
-          }
-        }}
-        onDragLeave={(e) => {
-          // Only clear if leaving this row (not entering a child)
-          const related = e.relatedTarget as Node | null;
-          if (related && e.currentTarget.contains(related)) return;
-          if (dropTarget?.type === "folder" && dropTarget.id === node.id) {
-            setDropTarget(null);
-          }
-          if (expandTimer.current) {
-            clearTimeout(expandTimer.current);
-            expandTimer.current = null;
-          }
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation(); // never bubble to root "move to root" zone
-          const draggedId =
-            e.dataTransfer.getData(DND_MIME) ||
-            e.dataTransfer.getData("text/plain") ||
-            dragId;
-          setDropTarget(null);
-          setDragId(null);
-          if (!draggedId) return;
-          if (node.kind !== "folder") return;
-          if (!canAcceptDrop(draggedId)) return;
-          moveNode(draggedId, node.id);
+        onPointerDown={(e) => {
+          if (renaming) return;
+          // Left button only; ignore interactive chrome
+          if (e.button !== 0) return;
+          const t = e.target as HTMLElement;
+          if (t.closest("input,button,[role='button'],a")) return;
+          onPointerDragStart(node.id, e);
         }}
         onClick={openNote}
         onDoubleClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
+          if (dragId) return;
           setRenamingId(node.id);
         }}
         onContextMenu={(e) => {
@@ -295,7 +250,6 @@ function TreeNode({
           <input
             ref={inputRef}
             autoFocus
-            draggable={false}
             className="min-w-0 flex-1 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[13px] text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
             value={nameDraft}
             onChange={(e) => setNameDraft(e.target.value)}
@@ -313,7 +267,7 @@ function TreeNode({
             }}
             onClick={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
-            onDragStart={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.stopPropagation()}
           />
         ) : (
           <span className="min-w-0 flex-1 cursor-grab truncate active:cursor-grabbing">
@@ -324,8 +278,7 @@ function TreeNode({
         <div
           className="titlebar-no-drag relative ml-auto hidden shrink-0 group-hover:flex"
           onClick={(e) => e.stopPropagation()}
-          draggable={false}
-          onDragStart={(e) => e.preventDefault()}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           <span
             role="button"
@@ -333,7 +286,9 @@ function TreeNode({
             className="icon-btn flex h-6 w-6 items-center justify-center"
             onClick={(e) => {
               e.stopPropagation();
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const rect = (
+                e.currentTarget as HTMLElement
+              ).getBoundingClientRect();
               openCtx({
                 kind: "item",
                 nodeId: node.id,
@@ -370,9 +325,8 @@ function TreeNode({
               setRenamingId={setRenamingId}
               openCtx={openCtx}
               dragId={dragId}
-              setDragId={setDragId}
               dropTarget={dropTarget}
-              setDropTarget={setDropTarget}
+              onPointerDragStart={onPointerDragStart}
             />
           ))}
         </div>
@@ -423,6 +377,18 @@ export function FileTree() {
   const [ctx, setCtx] = useState<CtxMenu>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget>(null);
+  const [ghost, setGhost] = useState<{
+    x: number;
+    y: number;
+    label: string;
+  } | null>(null);
+
+  const sessionRef = useRef<DragSession | null>(null);
+  const suppressClickRef = useRef(false);
+  const dropTargetRef = useRef<DropTarget>(null);
+  const expandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
 
   const roots = useMemo(() => {
     return rootIds
@@ -449,6 +415,124 @@ export function FileTree() {
       window.removeEventListener("keydown", onKey);
     };
   }, [ctx]);
+
+  // Global pointer move/up for cross-webview-safe DnD
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const s = sessionRef.current;
+      if (!s) return;
+      const dx = e.clientX - s.startX;
+      const dy = e.clientY - s.startY;
+      if (!s.active) {
+        if (Math.hypot(dx, dy) < 6) return;
+        s.active = true;
+        setDragId(s.id);
+        const n = nodesRef.current[s.id];
+        setGhost({
+          x: e.clientX,
+          y: e.clientY,
+          label: n ? displayName(n) : "Moving…",
+        });
+        document.body.style.cursor = "grabbing";
+        document.body.style.userSelect = "none";
+      } else {
+        setGhost((g) =>
+          g ? { ...g, x: e.clientX, y: e.clientY } : g,
+        );
+      }
+
+      const target = resolveDropFromPoint(
+        e.clientX,
+        e.clientY,
+        s.id,
+        nodesRef.current,
+      );
+      dropTargetRef.current = target;
+      setDropTarget(target);
+
+      // Auto-expand folders under the cursor
+      if (target?.type === "folder") {
+        const fid = target.id;
+        if (!useVaultStore.getState().expandedFolders.includes(fid)) {
+          if (!expandTimer.current) {
+            expandTimer.current = setTimeout(() => {
+              expandTimer.current = null;
+              if (
+                sessionRef.current?.active &&
+                dropTargetRef.current?.type === "folder" &&
+                dropTargetRef.current.id === fid
+              ) {
+                const exp = useVaultStore.getState().expandedFolders;
+                if (!exp.includes(fid)) {
+                  useVaultStore.getState().toggleFolder(fid);
+                }
+              }
+            }, 420);
+          }
+        }
+      } else if (expandTimer.current) {
+        clearTimeout(expandTimer.current);
+        expandTimer.current = null;
+      }
+    };
+
+    const endDrag = (e: PointerEvent) => {
+      const s = sessionRef.current;
+      if (!s) return;
+      sessionRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      if (expandTimer.current) {
+        clearTimeout(expandTimer.current);
+        expandTimer.current = null;
+      }
+
+      const wasActive = s.active;
+      const target = dropTargetRef.current;
+      setDragId(null);
+      setDropTarget(null);
+      setGhost(null);
+      dropTargetRef.current = null;
+
+      if (!wasActive) return; // treat as click — click handler still fires
+
+      // Suppress the synthetic click that follows pointerup after a drag
+      (window as unknown as { __nexusSuppressTreeClick?: boolean }).__nexusSuppressTreeClick = true;
+      window.setTimeout(() => {
+        (window as unknown as { __nexusSuppressTreeClick?: boolean }).__nexusSuppressTreeClick = false;
+      }, 80);
+      e.preventDefault();
+
+      if (!target) return;
+      if (target.type === "folder") {
+        if (target.id === s.id) return;
+        if (isDescendant(nodesRef.current, s.id, target.id)) return;
+        useVaultStore.getState().moveNode(s.id, target.id);
+      } else if (target.type === "root") {
+        useVaultStore.getState().moveNode(s.id, null);
+      }
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+    };
+  }, []);
+
+  const onPointerDragStart = (id: string, e: React.PointerEvent) => {
+    // Don't capture yet — only after threshold, so clicks still work
+    sessionRef.current = {
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+      pointerId: e.pointerId,
+    };
+  };
 
   const ctxNode = ctx?.kind === "item" ? nodes[ctx.nodeId] : null;
 
@@ -477,9 +561,11 @@ export function FileTree() {
 
   return (
     <div
+      data-file-tree
       className={cn(
-        "relative min-h-full px-2 pb-8",
-        rootDropActive && "rounded-lg ring-1 ring-inset ring-[rgba(0,200,255,0.35)]",
+        "titlebar-no-drag relative min-h-full px-2 pb-8",
+        rootDropActive &&
+          "rounded-lg ring-1 ring-inset ring-[rgba(0,200,255,0.35)]",
       )}
       role="tree"
       aria-label="Vault files"
@@ -492,31 +578,6 @@ export function FileTree() {
           parentId: null,
         });
       }}
-      onDragOver={(e) => {
-        if (!dragId && !e.dataTransfer.types.includes(DND_MIME)) return;
-        // Allow drop on empty tree area → vault root
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        setDropTarget({ type: "root" });
-      }}
-      onDragLeave={(e) => {
-        const related = e.relatedTarget as Node | null;
-        if (related && e.currentTarget.contains(related)) return;
-        if (dropTarget?.type === "root") setDropTarget(null);
-      }}
-      onDrop={(e) => {
-        // Only empty-area / root drops (folder rows stopPropagation)
-        e.preventDefault();
-        const draggedId =
-          e.dataTransfer.getData(DND_MIME) ||
-          e.dataTransfer.getData("text/plain") ||
-          dragId;
-        const toRoot = dropTarget?.type === "root" || e.target === e.currentTarget;
-        setDropTarget(null);
-        setDragId(null);
-        if (!draggedId || !toRoot) return;
-        moveNode(draggedId, null);
-      }}
     >
       {roots.map((node) => (
         <TreeNode
@@ -527,9 +588,8 @@ export function FileTree() {
           setRenamingId={setRenamingId}
           openCtx={setCtx}
           dragId={dragId}
-          setDragId={setDragId}
           dropTarget={dropTarget}
-          setDropTarget={setDropTarget}
+          onPointerDragStart={onPointerDragStart}
         />
       ))}
       {roots.length === 0 ? (
@@ -541,6 +601,18 @@ export function FileTree() {
       {dragId ? (
         <div className="pointer-events-none sticky bottom-1 mt-3 rounded-md border border-dashed border-[rgba(0,200,255,0.28)] bg-[rgba(0,200,255,0.05)] px-2 py-1.5 text-center text-[10.5px] text-[var(--text-muted)]">
           Drop on a folder to nest · drop empty space for root
+        </div>
+      ) : null}
+
+      {ghost ? (
+        <div
+          className="pointer-events-none fixed z-[100] rounded-lg border border-[rgba(0,200,255,0.4)] bg-[rgba(15,15,18,0.95)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.55)]"
+          style={{
+            left: ghost.x + 12,
+            top: ghost.y + 12,
+          }}
+        >
+          {ghost.label}
         </div>
       ) : null}
 

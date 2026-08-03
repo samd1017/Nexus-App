@@ -581,7 +581,10 @@
       background var(--duration-fast) var(--motion-ease),
       color var(--duration-fast) var(--motion-ease),
       border-color var(--duration-fast) var(--motion-ease);
-  }
+    touch-action: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
 
   .tree-item:hover {
     background: rgba(255, 255, 255, 0.04);

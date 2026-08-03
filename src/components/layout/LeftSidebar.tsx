@@ -40,7 +40,7 @@ export function LeftSidebar() {
         onClick={() => setLeftOpen(false)}
       />
       <aside
-        className="panel-slide glass-panel absolute inset-y-0 left-0 z-30 flex h-full w-[min(280px,86vw)] shrink-0 flex-col border-r border-[var(--border)] bg-[rgba(15,15,18,0.94)] md:relative md:z-0 md:bg-[rgba(15,15,18,0.78)]"
+        className="titlebar-no-drag panel-slide glass-panel absolute inset-y-0 left-0 z-30 flex h-full w-[min(280px,86vw)] shrink-0 flex-col border-r border-[var(--border)] bg-[rgba(15,15,18,0.94)] md:relative md:z-0 md:bg-[rgba(15,15,18,0.78)]"
         style={{ width: leftWidth }}
       >
         <VaultSwitcher />
