@@ -6,6 +6,7 @@ import {
   Network,
   Radio,
   Sparkles,
+  AlertTriangle,
 } from "lucide-react";
 import { useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
@@ -25,8 +26,18 @@ export function WelcomeScreen() {
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const connecting = useVaultStore((s) => s.connecting);
   const recentVaults = useVaultStore((s) => s.recentVaults);
+  const folderAccessLost = useVaultStore((s) => s.folderAccessLost);
   const [createName, setCreateName] = useState("Nexus Vault");
   const [showCreate, setShowCreate] = useState(false);
+
+  const topRecent = recentVaults[0] ?? null;
+  const hasRecents = recentVaults.length > 0;
+
+  const openTopRecent = () => {
+    if (!topRecent) return;
+    if (topRecent.mode === "demo") openDemoVault();
+    else void reopenRecentVault(topRecent.id);
+  };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]">
@@ -60,14 +71,63 @@ export function WelcomeScreen() {
         </h1>
         <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-[var(--text-secondary)]">
           Local-first. Zero accounts. Real{" "}
-          <span className="text-[var(--text-primary)]">.md</span> files Hermes can
-          edit. Visual editor, live graph, progressive power.
+          <span className="text-[var(--text-primary)]">.md</span> files you own.
+          Visual editor, live graph, progressive power.
         </p>
 
+        {/* H3: FSA permission recovery banner */}
+        {folderAccessLost ? (
+          <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[14px] border border-[rgba(255,159,10,0.35)] bg-[rgba(255,159,10,0.08)] px-4 py-3">
+            <AlertTriangle size={16} className="shrink-0 text-[var(--warning,#FF9F0A)]" />
+            <div className="min-w-0 flex-1 text-[13px] text-[var(--text-secondary)]">
+              Folder access lost — click to re-open
+            </div>
+            <button
+              type="button"
+              className="primary-btn min-h-9"
+              disabled={connecting}
+              onClick={() => void openFolderAsVault()}
+            >
+              <FolderOpen size={14} />
+              {connecting ? "Opening…" : "Re-open folder"}
+            </button>
+          </div>
+        ) : null}
+
         <div className="mt-8 flex flex-wrap gap-3">
+          {hasRecents && topRecent ? (
+            <>
+              <button
+                type="button"
+                className="primary-btn min-h-11"
+                disabled={connecting}
+                onClick={openTopRecent}
+              >
+                <HardDrive size={16} />
+                {connecting ? "Opening…" : `Open ${topRecent.name}`}
+              </button>
+              <button
+                type="button"
+                className="ghost-btn min-h-11"
+                onClick={() => openDemoVault()}
+              >
+                <Sparkles size={16} />
+                Explore demo
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="primary-btn min-h-11"
+              onClick={() => openDemoVault()}
+            >
+              <Sparkles size={16} />
+              Explore demo
+            </button>
+          )}
           <button
             type="button"
-            className="primary-btn min-h-11"
+            className="ghost-btn min-h-11"
             disabled={connecting}
             onClick={() => void openFolderAsVault()}
           >
@@ -82,14 +142,6 @@ export function WelcomeScreen() {
           >
             <FolderPlus size={16} />
             New vault…
-          </button>
-          <button
-            type="button"
-            className="ghost-btn min-h-11"
-            onClick={() => openDemoVault()}
-          >
-            <Sparkles size={16} className="text-[var(--accent-violet)]" />
-            Explore demo
           </button>
         </div>
 
@@ -149,8 +201,8 @@ export function WelcomeScreen() {
             },
             {
               icon: <Radio size={16} />,
-              title: "Hermes-ready",
-              body: "External writes appear within ~1 second via live watch.",
+              title: "Live on disk",
+              body: "Edits from other apps appear within about a second.",
             },
           ].map((f) => (
             <div

@@ -172,7 +172,11 @@ async function walkCollect(
         const path = relPath ? pathJoin(relPath, name) : name;
         onDir(path, name, relPath);
         await walk(handle as FileSystemDirectoryHandle, path);
-      } else if (handle.kind === "file" && name.toLowerCase().endsWith(".md")) {
+      } else if (
+        // Wave S3: no full lazy-load; only .md notes are scanned (skip binaries/non-md)
+        handle.kind === "file" &&
+        name.toLowerCase().endsWith(".md")
+      ) {
         const path = relPath ? pathJoin(relPath, name) : name;
         const fh = handle as FileSystemFileHandle;
         const file = await fh.getFile();

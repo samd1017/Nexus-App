@@ -23,6 +23,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import {
   isOnlySerializationNoise,
+  normalizeMarkdown,
   preferCleanWrite,
 } from "@/lib/markdown/purity";
 import { registerVisualFlush, flushActiveEditors } from "@/lib/editor/flush";
@@ -33,6 +34,7 @@ import {
   insertWikilinkSuggestion,
   type WikilinkSuggestItem,
 } from "@/lib/editor/wikilink-suggest";
+import { dailyNotePath } from "@/lib/vault/templates";
 import { EditorToolbar } from "./EditorToolbar";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 
@@ -69,6 +71,54 @@ function openWikilinkTarget(target: string) {
 }
 
 /**
+ * True when daily template Focus section still has only empty bullets
+ * (e.g. `## Focus\n\n- \n`).
+ */
+function hasEmptyFocusBullet(markdown: string): boolean {
+  const focusMatch =
+    /^##\s+Focus\s*\n([\s\S]*?)(?=^##\s+|\s*$)/m.exec(markdown);
+  if (!focusMatch) return false;
+  const body = focusMatch[1].trim();
+  if (!body) return true;
+  const lines = body.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return true;
+  return lines.every((line) => /^\s*-\s*$/.test(line));
+}
+
+/** Place caret in first empty paragraph under ## Focus, else focus end of first list item. */
+function morningAutofocusEditor(ed: Editor): void {
+  let afterFocus = false;
+  let targetPos: number | null = null;
+  ed.state.doc.descendants((node, pos) => {
+    if (targetPos != null) return false;
+    if (node.type.name === "heading") {
+      const text = node.textContent.trim().toLowerCase();
+      if (text === "focus") {
+        afterFocus = true;
+        return;
+      }
+      if (afterFocus) {
+        afterFocus = false;
+        return false;
+      }
+    }
+    if (
+      afterFocus &&
+      node.type.name === "paragraph" &&
+      node.textContent.trim() === ""
+    ) {
+      targetPos = pos + 1;
+      return false;
+    }
+  });
+  if (targetPos != null) {
+    ed.chain().focus().setTextSelection(targetPos).run();
+  } else {
+    ed.commands.focus();
+  }
+}
+
+/**
  * Visual view of a single note. Parent remounts via key when note/mode changes.
  * Always: Markdown store ↔ GFM HTML (tables, tasks) ↔ TipTap ↔ clean Markdown.
  */
@@ -80,6 +130,8 @@ export function VisualEditor({ noteId, content }: Props) {
   const baselineMd = useRef(content);
   const noteIdRef = useRef(noteId);
   const contentRef = useRef(content);
+  /** Morning autofocus: once per note id open */
+  const morningFocusedFor = useRef<string | null>(null);
   noteIdRef.current = noteId;
   contentRef.current = content;
 
@@ -159,7 +211,8 @@ export function VisualEditor({ noteId, content }: Props) {
 
   const commit = useCallback(
     (ed: Editor, opts?: { force?: boolean }) => {
-      if (applying.current) return;
+      // Mid setContent: skip unless force flush after real user input
+      if (applying.current && !(opts?.force && userEdited.current)) return;
       if (!ed || ed.isDestroyed) return;
       const id = noteIdRef.current;
       let serialized: string;
@@ -170,18 +223,22 @@ export function VisualEditor({ noteId, content }: Props) {
       }
       const prev =
         useVaultStore.getState().nodes[id]?.content ?? baselineMd.current;
-      if (
-        !opts?.force &&
-        isOnlySerializationNoise(prev, serialized) &&
-        !userEdited.current
-      ) {
+      const edited = userEdited.current;
+      const noise = isOnlySerializationNoise(prev, serialized);
+
+      // Serialization-only rewrites: skip unless the user actually typed
+      if (noise && !edited) {
         return;
       }
-      if (isOnlySerializationNoise(prev, serialized)) {
-        userEdited.current = false;
-        return;
-      }
-      const md = preferCleanWrite(prev, serialized);
+
+      // User-typed path: honor normalize-level diffs (preferCleanWrite would
+      // drop fingerprint-equal but normalize-different edits). Force flush
+      // with userEdited still reaches here so rapid Visual↔Source never drops input.
+      const md = edited
+        ? normalizeMarkdown(prev) === normalizeMarkdown(serialized)
+          ? prev
+          : normalizeMarkdown(serialized)
+        : preferCleanWrite(prev, serialized);
       if (md === prev) {
         userEdited.current = false;
         return;
@@ -329,6 +386,28 @@ export function VisualEditor({ noteId, content }: Props) {
     });
   }, [editor, content]);
 
+  // Morning autofocus: today's daily with empty Focus bullet — once per note open
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    if (morningFocusedFor.current === noteId) return;
+    const node = useVaultStore.getState().nodes[noteId];
+    if (!node || node.kind !== "note") return;
+    if (node.path !== dailyNotePath(new Date())) return;
+    const body = node.content ?? content;
+    if (!hasEmptyFocusBullet(body)) return;
+    morningFocusedFor.current = noteId;
+    // Wait for onCreate setContent paint
+    const t = window.setTimeout(() => {
+      if (editor.isDestroyed) return;
+      try {
+        morningAutofocusEditor(editor);
+      } catch {
+        /* ignore */
+      }
+    }, 40);
+    return () => window.clearTimeout(t);
+  }, [editor, noteId, content]);
+
   useEffect(() => {
     if (!editor) return;
     const flushNow = () => {
@@ -354,25 +433,14 @@ export function VisualEditor({ noteId, content }: Props) {
   }, [editor, commit]);
 
   // Keep suggest handleKeyDown closure fresh — rebind via editor prop is static;
-  // use DOM keydown fallback on the editor root for Mac reliability
+  // use DOM keyup on the editor root for Mac reliability
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;
-    const onKey = (event: KeyboardEvent) => {
-      if (!suggestOpen) return;
-      if (
-        event.key === "ArrowDown" ||
-        event.key === "ArrowUp" ||
-        event.key === "Enter" ||
-        event.key === "Tab" ||
-        event.key === "Escape"
-      ) {
-        // handled in editorProps if focus inside; also handle here
-      }
-    };
-    dom.addEventListener("keyup", () => refreshSuggest(editor));
-    return () => dom.removeEventListener("keyup", () => refreshSuggest(editor));
-  }, [editor, suggestOpen, refreshSuggest]);
+    const onKeyUp = () => refreshSuggest(editor);
+    dom.addEventListener("keyup", onKeyUp);
+    return () => dom.removeEventListener("keyup", onKeyUp);
+  }, [editor, refreshSuggest]);
 
   const pickSuggest = (item: WikilinkSuggestItem) => {
     if (!editor) return;

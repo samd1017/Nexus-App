@@ -1,5 +1,5 @@
 /**
- * Detect open [[query]] while typing — shared by Visual editor autocomplete.
+ * Detect open [[query]] while typing — shared by Visual + Source editors.
  */
 
 import type { Editor } from "@tiptap/react";
@@ -79,7 +79,7 @@ export function detectOpenWikilink(
     "\0",
     "\0",
   );
-  // Match last [[... without ]] 
+  // Match last [[... without ]]
   const m = textBefore.match(/\[\[([^\]\n]*)$/);
   if (!m) return null;
   const query = m[1] ?? "";
@@ -95,6 +95,81 @@ export function detectOpenWikilink(
   };
 }
 
+/**
+ * Source (textarea) variant: detect open `[[query` before cursor index.
+ */
+export function detectOpenWikilinkInText(
+  text: string,
+  cursor: number,
+): { query: string; from: number; to: number } | null {
+  if (cursor < 0 || cursor > text.length) return null;
+  const start = Math.max(0, cursor - 80);
+  const before = text.slice(start, cursor);
+  const m = before.match(/\[\[([^\]\n]*)$/);
+  if (!m) return null;
+  const query = m[1] ?? "";
+  const from = cursor - query.length - 2;
+  if (from < 0) return null;
+  return { query, from, to: cursor };
+}
+
+/**
+ * Approximate caret viewport rect inside a textarea (mirror technique).
+ */
+export function coordsAtTextareaCaret(
+  ta: HTMLTextAreaElement,
+  cursor: number,
+): { left: number; top: number; bottom: number } {
+  try {
+    const style = window.getComputedStyle(ta);
+    const mirror = document.createElement("div");
+    mirror.style.position = "absolute";
+    mirror.style.visibility = "hidden";
+    mirror.style.overflow = "hidden";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.wordWrap = "break-word";
+    mirror.style.top = "0";
+    mirror.style.left = "-9999px";
+    mirror.style.width = `${ta.clientWidth}px`;
+    mirror.style.font = style.font;
+    mirror.style.fontSize = style.fontSize;
+    mirror.style.fontFamily = style.fontFamily;
+    mirror.style.fontWeight = style.fontWeight;
+    mirror.style.lineHeight = style.lineHeight;
+    mirror.style.letterSpacing = style.letterSpacing;
+    mirror.style.padding = style.padding;
+    mirror.style.border = style.border;
+    mirror.style.boxSizing = style.boxSizing;
+
+    const text = ta.value.slice(0, cursor);
+    // Preserve trailing newline so caret sits on the next visual line
+    mirror.textContent = text.endsWith("\n") ? text + "\u200b" : text;
+    const marker = document.createElement("span");
+    marker.textContent = "\u200b";
+    mirror.appendChild(marker);
+    document.body.appendChild(mirror);
+
+    const taRect = ta.getBoundingClientRect();
+    const markerRect = marker.getBoundingClientRect();
+    const mirrorRect = mirror.getBoundingClientRect();
+    const left =
+      taRect.left + (markerRect.left - mirrorRect.left) - ta.scrollLeft;
+    const top =
+      taRect.top + (markerRect.top - mirrorRect.top) - ta.scrollTop;
+    const lineH =
+      markerRect.height || parseFloat(style.lineHeight) || 18;
+    document.body.removeChild(mirror);
+    return {
+      left: Math.max(8, left),
+      top: Math.max(8, top),
+      bottom: Math.max(8, top + lineH),
+    };
+  } catch {
+    const r = ta.getBoundingClientRect();
+    return { left: r.left + 16, top: r.top + 24, bottom: r.top + 48 };
+  }
+}
+
 export function coordsAtPos(editor: Editor, pos: number) {
   try {
     const coords = editor.view.coordsAtPos(pos);
@@ -108,7 +183,7 @@ export function coordsAtPos(editor: Editor, pos: number) {
   }
 }
 
-/** Replace [[query with a wikilink mark pill */
+/** Replace [[query with a wikilink mark pill (Visual editor) */
 export function insertWikilinkSuggestion(
   editor: Editor,
   range: { from: number; to: number },
@@ -132,4 +207,16 @@ export function insertWikilinkSuggestion(
     })
     .insertContent(" ")
     .run();
+}
+
+/** Insert `[[target]]` into a source string at range */
+export function insertWikilinkInSource(
+  text: string,
+  range: { from: number; to: number },
+  item: WikilinkSuggestItem,
+): { next: string; cursor: number } {
+  // Source uses plain markdown wikilinks; prefer target (= title for notes)
+  const token = `[[${item.target}]]`;
+  const next = text.slice(0, range.from) + token + text.slice(range.to);
+  return { next, cursor: range.from + token.length };
 }

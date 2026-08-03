@@ -1,0 +1,33 @@
+{
+  "errors": [],
+  "errorCount": 0,
+  "afterDemo": {
+    "vaultId": "demo-vault",
+    "activePath": "Journal/2026-08-03.md",
+    "activeTitle": "# Monday, August 3, 2026",
+    "noteCount": 10,
+    "graphMode": "panel",
+    "rightOpen": true,
+    "leftOpen": true
+  },
+  "trafficLights": 0,
+  "journal": 3,
+  "todayBtn": 1,
+  "yesterdayBtn": 1,
+  "focusState": {
+    "files": 0,
+    "leftAside": 0,
+    "focusMode": "true",
+    "hasJournal": true
+  },
+  "graphExport": 1,
+  "hopBtn": 1,
+  "ghostBtn": 1,
+  "hasAbout": true,
+  "hasReduced": true,
+  "hasOpenToday": true,
+  "mobileOverflow": false,
+  "has1hop": true,
+  "createMissing": true,
+  "welcomeHasAccess": true
+}

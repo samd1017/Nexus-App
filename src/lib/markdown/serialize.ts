@@ -10,6 +10,7 @@ export {
   preferCleanWrite,
   normalizeMarkdown,
   markdownFingerprint,
+  normalizeLineEndings,
 } from "./purity";
 import {
   styleFromMarker,
@@ -30,6 +31,17 @@ const turndown = new TurndownService({
   emDelimiter: "*",
   strongDelimiter: "**",
   hr: "---",
+});
+
+turndown.addRule("frontmatter", {
+  filter: (node) =>
+    node.nodeName === "PRE" &&
+    (node as HTMLElement).getAttribute("data-frontmatter") === "true",
+  replacement: (_content, node) => {
+    const code = (node as HTMLElement).querySelector("code");
+    const yaml = code?.textContent ?? (node as HTMLElement).textContent ?? "";
+    return `---\n${yaml.replace(/\n+$/, "")}\n---\n\n`;
+  },
 });
 
 turndown.addRule("wikilink", {
@@ -278,14 +290,43 @@ export function markdownToHtml(md: string): string {
   const raw = (md || "").replace(/\r\n/g, "\n");
   if (!raw.trim()) return "<p></p>";
 
+  // Wave 1: peel YAML frontmatter so marked never turns --- into <hr>
+  let frontmatterHtml = "";
+  let body = raw;
+  const fm = raw.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (fm) {
+    const yaml = fm[1] ?? "";
+    frontmatterHtml = `<pre data-frontmatter="true" class="nexus-frontmatter"><code>${escapeHtml(yaml)}</code></pre>`;
+    body = raw.slice(fm[0].length);
+  }
+
+  // Protect fenced + inline code from wikilink promotion
+  const codeHold: string[] = [];
+  const withCodeHeld = body
+    .replace(/```[\s\S]*?```/g, (full) => {
+      const i = codeHold.length;
+      codeHold.push(full);
+      return `%%CODE${i}%%`;
+    })
+    .replace(/`[^`\n]+`/g, (full) => {
+      const i = codeHold.length;
+      codeHold.push(full);
+      return `%%CODE${i}%%`;
+    });
+
   const placeholders: string[] = [];
-  const protectedMd = raw.replace(/\[\[([^\]]+)\]\]/g, (full) => {
+  const protectedMd = withCodeHeld.replace(/\[\[([^\]]+)\]\]/g, (full) => {
     const i = placeholders.length;
     placeholders.push(full);
     return `%%WIKI${i}%%`;
   });
 
-  let html = marked.parse(protectedMd, { async: false }) as string;
+  // Restore code tokens before marked so fences parse correctly
+  const forMarked = protectedMd.replace(/%%CODE(\d+)%%/g, (_, n) => {
+    return codeHold[Number(n)] ?? "";
+  });
+
+  let html = marked.parse(forMarked, { async: false }) as string;
 
   html = html.replace(/%%WIKI(\d+)%%/g, (_, n) => {
     const full = placeholders[Number(n)] ?? "";
@@ -297,7 +338,11 @@ export function markdownToHtml(md: string): string {
   });
 
   html = normalizeTaskListsForTipTap(html);
-  html = annotateBulletListsFromMarkdown(raw, html);
+  html = annotateBulletListsFromMarkdown(body, html);
+
+  if (frontmatterHtml) {
+    return frontmatterHtml + (html || "<p></p>");
+  }
   return html || "<p></p>";
 }
 

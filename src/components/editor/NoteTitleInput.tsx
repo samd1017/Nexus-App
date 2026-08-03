@@ -28,7 +28,7 @@ export function NoteTitleInput({ noteId }: { noteId: string }) {
 
   return (
     <input
-      className="w-full bg-transparent text-[15px] font-semibold tracking-tight text-[var(--text-primary)] outline-none titlebar-no-drag"
+      className="note-title-input w-full bg-transparent text-[15px] font-semibold tracking-tight outline-none titlebar-no-drag"
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onBlur={commit}

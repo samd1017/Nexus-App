@@ -9,7 +9,7 @@ import { t as Heading } from "./tiptap__extension-heading.mjs";
 import { t as HorizontalRule } from "./@tiptap/extension-horizontal-rule+[...].mjs";
 import { t as Italic } from "./tiptap__extension-italic.mjs";
 import { t as Link } from "./@tiptap/extension-link+[...].mjs";
-import { i as OrderedList, n as ListItem, r as ListKeymap, t as BulletList } from "./tiptap__extension-list.mjs";
+import { a as OrderedList, i as ListKeymap, n as BulletList, r as ListItem } from "./@tiptap/extension-bullet-list+[...].mjs";
 import { t as Paragraph } from "./tiptap__extension-paragraph.mjs";
 import { t as Strike } from "./tiptap__extension-strike.mjs";
 import { t as Text } from "./tiptap__extension-text.mjs";

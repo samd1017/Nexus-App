@@ -1,13 +1,23 @@
-import { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import SpriteText from "three-spritetext";
 import { useVaultStore } from "@/lib/vault/store";
 import { buildGraph } from "@/lib/graph/build-graph";
-import { Maximize2, Minimize2, Network } from "lucide-react";
+import { getContentLinkSig } from "@/lib/markdown/wikilinks";
+import {
+  Maximize2,
+  Minimize2,
+  Network,
+  Download,
+  Focus,
+  Globe2,
+  Ghost,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePrefsStore, type PhysicsIntensity } from "@/lib/prefs/preferences";
 import { isDesktopShell } from "@/lib/platform";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 interface Props {
   mode: "panel" | "fullscreen";
@@ -22,10 +32,18 @@ type GNode = {
   path: string;
   degree: number;
   folder: string;
+  ghost?: boolean;
+  ghostTarget?: string;
   x?: number;
   y?: number;
   z?: number;
+  __threeObj?: THREE.Object3D;
 };
+
+type NeighborhoodMode = "all" | "1hop";
+
+const LOD_SEGMENT_THRESHOLD = 250;
+const LOD_CAP = 400;
 
 type GLink = {
   source: string | GNode;
@@ -51,6 +69,26 @@ function physicsParams(intensity: PhysicsIntensity) {
     return { charge: -130, distance: 28, velocity: 0.22, alpha: 0.015 };
   }
   return { charge: -85, distance: 36, velocity: 0.3, alpha: 0.02 };
+}
+
+
+/** G3: stronger folder hue separation via distinct HSL palette slots */
+function folderTintColor(folder: string, desktopBoost: boolean): THREE.Color {
+  let h = 2166136261;
+  const key = folder || "__root__";
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const hues = [205, 160, 285, 35, 125, 330, 50, 240, 15, 175];
+  const hue = hues[Math.abs(h) % hues.length] / 360;
+  const sat = desktopBoost ? 0.42 : 0.36;
+  const light = desktopBoost ? 0.4 : 0.34;
+  return new THREE.Color().setHSL(hue, sat, light);
+}
+
+function folderColorHex(folder: string, desktopBoost: boolean): string {
+  return `#${folderTintColor(folder, desktopBoost).getHexString()}`;
 }
 
 function buildStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
@@ -354,17 +392,32 @@ function createOrb(
   accent: THREE.Color,
   showLabel: boolean,
   desktopBoost: boolean,
+  lowDetail = false,
 ): THREE.Object3D {
   const group = new THREE.Group();
+  const isGhost = !!node.ghost;
   const isActive = node.id === activeId;
   const isHover = node.id === hoverId;
-  const isHub = node.degree >= 3;
+  const isHub = !isGhost && node.degree >= 3;
   const inFocus =
     !focusId || node.id === focusId || (neighbors?.has(node.id) ?? false);
   const dim = !!focusId && !inFocus && dimStrength > 0;
   const full = mode === "fullscreen";
   const panel = mode === "panel";
-  const segs = full ? 72 : 56;
+  // G5 LOD segments
+  const segs = lowDetail
+    ? isGhost
+      ? 12
+      : full
+        ? 28
+        : 20
+    : isGhost
+      ? full
+        ? 32
+        : 24
+      : full
+        ? 72
+        : 56;
   const sizeBoost = desktopBoost ? 1.14 : 1;
 
   const base = (full ? 3.15 : panel ? 2.55 : 2.4) * sizeBoost;
@@ -374,18 +427,24 @@ function createOrb(
     Math.pow(Math.max(1, node.val), 0.55) * (full ? 1.75 : 1.4) * rank +
     (isActive || isHover ? 0.5 : 0);
 
-  const bodyColor =
-    isActive || isHover
-      ? new THREE.Color(desktopBoost ? 0x5c6678 : 0x4a5260)
-      : isHub
-        ? new THREE.Color(desktopBoost ? 0x4a5466 : 0x3c4452)
-        : new THREE.Color(desktopBoost ? 0x424a5a : 0x343c48);
+  let bodyColor = folderTintColor(node.folder, desktopBoost);
+  if (node.ghost) {
+    bodyColor = new THREE.Color(desktopBoost ? 0x2a323c : 0x222830);
+  } else if (isActive || isHover) {
+    bodyColor = bodyColor
+      .clone()
+      .lerp(new THREE.Color(desktopBoost ? 0x5c6678 : 0x4a5260), 0.55);
+  } else if (isHub) {
+    bodyColor = bodyColor
+      .clone()
+      .lerp(new THREE.Color(desktopBoost ? 0x4a5466 : 0x3c4452), 0.35);
+  }
 
   if (dim) {
     bodyColor.multiplyScalar(1 - dimStrength * 0.5);
   }
 
-  const bodyOpacity = dim ? 1 - dimStrength * 0.5 : 1;
+  const bodyOpacity = dim ? Math.max(0.08, 1 - dimStrength * 0.92) : isGhost ? 0.38 : 1;
 
   let emissive = accent.clone().multiplyScalar(desktopBoost ? 0.22 : 0.12);
   let emissiveIntensity = desktopBoost ? 0.055 : 0.028;
@@ -405,9 +464,9 @@ function createOrb(
       roughness: isActive || isHover ? 0.14 : isHub ? 0.22 : 0.3,
       clearcoat: isActive || isHover ? 0.75 : desktopBoost ? 0.55 : 0.42,
       clearcoatRoughness: isActive || isHover ? 0.06 : 0.16,
-      transparent: dim && dimStrength > 0.5,
+      transparent: dim || isGhost,
       opacity: bodyOpacity,
-      depthWrite: !(dim && dimStrength > 0.5),
+      depthWrite: !(dim || isGhost),
       transmission: 0,
       specularIntensity: isActive || isHover ? 1.5 : desktopBoost ? 1.35 : 1.15,
       specularColor: new THREE.Color(0xe8eef6),
@@ -482,6 +541,51 @@ function createOrb(
   return group;
 }
 
+
+/** W5: mutate materials on existing orbs — avoids full nodeThreeObject rebuild on hover */
+function tintOrbHover(
+  obj: THREE.Object3D | undefined | null,
+  on: boolean,
+  accent: THREE.Color,
+) {
+  if (!obj) return;
+  obj.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mat = mesh.material as THREE.MeshPhysicalMaterial & {
+      userData: Record<string, unknown>;
+    };
+    if (!mat || typeof mat.emissiveIntensity !== "number") return;
+    if (on) {
+      if (mat.userData.__w5HoverBase == null) {
+        mat.userData.__w5HoverBase = {
+          ei: mat.emissiveIntensity,
+          rough: mat.roughness,
+          er: mat.emissive?.r ?? 0,
+          eg: mat.emissive?.g ?? 0,
+          eb: mat.emissive?.b ?? 0,
+        };
+      }
+      mat.emissiveIntensity = Math.max(mat.emissiveIntensity, 0.14);
+      if (mat.emissive) mat.emissive.copy(accent);
+      if (typeof mat.roughness === "number") {
+        mat.roughness = Math.min(mat.roughness, 0.16);
+      }
+      mat.needsUpdate = true;
+    } else {
+      const b = mat.userData.__w5HoverBase as
+        | { ei: number; rough: number; er: number; eg: number; eb: number }
+        | undefined;
+      if (!b) return;
+      mat.emissiveIntensity = b.ei;
+      if (mat.emissive) mat.emissive.setRGB(b.er, b.eg, b.eb);
+      if (typeof mat.roughness === "number") mat.roughness = b.rough;
+      delete mat.userData.__w5HoverBase;
+      mat.needsUpdate = true;
+    }
+  });
+}
+
 /** Soft spatial clustering by folder (no visible links required). */
 function forceFolderCluster(strength = 0.055) {
   let nodes: Array<{
@@ -536,6 +640,62 @@ function forceFolderCluster(strength = 0.055) {
   return force;
 }
 
+
+/** G2 Soft 1-hop: keep all nodes, filter edges to neighborhood, dim outsiders */
+function softNeighborhood(
+  data: { nodes: GNode[]; links: GLink[] },
+  mode: NeighborhoodMode,
+  activeNoteId: string | null,
+  neighborMap: Map<string, Set<string>>,
+): { nodes: GNode[]; links: GLink[]; hopKeep: Set<string> | null } {
+  if (mode !== "1hop" || !activeNoteId) {
+    return { nodes: data.nodes, links: data.links, hopKeep: null };
+  }
+  const neigh = neighborMap.get(activeNoteId);
+  const keep = new Set<string>([activeNoteId, ...(neigh ?? [])]);
+  const links = data.links.filter((l) => {
+    const [s, t] = linkIds(l);
+    return keep.has(s) && keep.has(t);
+  });
+  return { nodes: data.nodes, links, hopKeep: keep };
+}
+
+/** G5 LOD: max 400 highest-degree notes + active + neighbors */
+function applyLodCap(
+  data: { nodes: GNode[]; links: GLink[] },
+  activeNoteId: string | null,
+  neighborMap: Map<string, Set<string>>,
+): { nodes: GNode[]; links: GLink[]; lowDetail: boolean } {
+  const real = data.nodes.filter((n) => !n.ghost);
+  const lowDetail = real.length > LOD_SEGMENT_THRESHOLD;
+  if (real.length <= LOD_CAP) {
+    return { nodes: data.nodes, links: data.links, lowDetail };
+  }
+  const must = new Set<string>();
+  if (activeNoteId) {
+    must.add(activeNoteId);
+    const neigh = neighborMap.get(activeNoteId);
+    if (neigh) for (const id of neigh) must.add(id);
+  }
+  const sorted = [...real].sort((a, b) => b.degree - a.degree);
+  const keep = new Set(must);
+  for (const n of sorted) {
+    if (keep.size >= LOD_CAP) break;
+    keep.add(n.id);
+  }
+  for (const l of data.links) {
+    const [s, t] = linkIds(l);
+    if (s.startsWith("ghost:") && keep.has(t)) keep.add(s);
+    if (t.startsWith("ghost:") && keep.has(s)) keep.add(t);
+  }
+  const nodes = data.nodes.filter((n) => keep.has(n.id));
+  const links = data.links.filter((l) => {
+    const [s, t] = linkIds(l);
+    return keep.has(s) && keep.has(t);
+  });
+  return { nodes, links, lowDetail: true };
+}
+
 export function GraphView({ mode, className }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
@@ -556,9 +716,38 @@ export function GraphView({ mode, className }: Props) {
   const accentCustom = usePrefsStore((s) => s.accentCustom);
   const [hoverName, setHoverName] = useState<string | null>(null);
   const [hintVisible, setHintVisible] = useState(true);
+  const [neighborhood, setNeighborhood] = useState<NeighborhoodMode>("all");
+  const [showGhosts, setShowGhosts] = useState(true);
+  const hopKeepRef = useRef<Set<string> | null>(null);
+  const neighborhoodRef = useRef<NeighborhoodMode>("all");
+  const lowDetailRef = useRef(false);
+  /** W5: nodeId → last Object3D from paintOrb (for hover material mutation) */
+  const nodeObjMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  const hoverAppliedRef = useRef<string | null>(null);
+  const hoverThrottleRef = useRef<number | null>(null);
+  const prevActiveFlyRef = useRef<string | null | undefined>(undefined);
+  const createNote = useVaultStore((s) => s.createNote);
 
   activeRef.current = activeNoteId;
+  neighborhoodRef.current = neighborhood;
   const desktopBoost = isDesktopShell();
+
+  // Wave S1: rebuild graph only when link structure / note identity changes
+  // (not on every content keystroke). Fingerprint = id|path|name|wikilink targets.
+  const linkStructureKey = useMemo(() => {
+    const parts: string[] = [];
+    for (const n of Object.values(deferredNodes)) {
+      if (n.kind === "note") {
+        parts.push(
+          `${n.id}\0${n.path}\0${n.name}\0${getContentLinkSig(n.content ?? "")}`,
+        );
+      } else {
+        parts.push(`${n.id}\0${n.path}\0folder`);
+      }
+    }
+    parts.sort();
+    return parts.join("\n");
+  }, [deferredNodes]);
 
   const data = useMemo(() => {
     const g = buildGraph(deferredNodes);
@@ -571,17 +760,142 @@ export function GraphView({ mode, className }: Props) {
         path: n.path,
         degree: n.degree,
         folder: n.folder ?? "",
+        ghost: n.ghost,
+        ghostTarget: n.ghostTarget,
       })) as GNode[],
       links: g.edges.map((e) => ({
         source: e.source,
         target: e.target,
       })) as GLink[],
     };
-  }, [deferredNodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- S1: structure key only
+  }, [linkStructureKey]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);
   }, [data]);
+
+  const realNoteCount = useMemo(
+    () => data.nodes.filter((n) => !n.ghost).length,
+    [data.nodes],
+  );
+  const realLinkCount = useMemo(
+    () =>
+      data.links.filter((l) => {
+        const [s, t] = linkIds(l);
+        return !s.startsWith("ghost:") && !t.startsWith("ghost:");
+      }).length,
+    [data.links],
+  );
+  const ghostCount = useMemo(
+    () => data.nodes.filter((n) => n.ghost).length,
+    [data.nodes],
+  );
+
+  const topFolders = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of data.nodes) {
+      if (n.ghost) continue;
+      const key = n.folder || "";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .filter(([, c]) => c > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([folder, count]) => ({
+        folder,
+        label: folder ? folder.split("/").pop() || folder : "Root",
+        count,
+        color: folderColorHex(folder, desktopBoost),
+      }));
+  }, [data.nodes, desktopBoost]);
+
+  const displayData = useMemo(() => {
+    let base: { nodes: GNode[]; links: GLink[] } = data;
+    if (!showGhosts) {
+      base = {
+        nodes: data.nodes.filter((n) => !n.ghost),
+        links: data.links.filter((l) => {
+          const [s, t] = linkIds(l);
+          return !s.startsWith("ghost:") && !t.startsWith("ghost:");
+        }),
+      };
+    }
+    const lod = applyLodCap(base, activeNoteId, neighborMapRef.current);
+    lowDetailRef.current = lod.lowDetail;
+    const soft = softNeighborhood(
+      { nodes: lod.nodes, links: lod.links },
+      neighborhood,
+      activeNoteId,
+      neighborMapRef.current,
+    );
+    hopKeepRef.current = soft.hopKeep;
+    return { nodes: soft.nodes, links: soft.links };
+  }, [data, neighborhood, activeNoteId, showGhosts]);
+
+  const shownNoteCount = useMemo(
+    () => displayData.nodes.filter((n) => !n.ghost).length,
+    [displayData.nodes],
+  );
+
+  /** G1: 2x export with footer */
+  const exportPng = useCallback(() => {
+    const g = graphRef.current;
+    const host = hostRef.current;
+    if (!g || !host) return;
+    try {
+      const renderer = g.renderer() as THREE.WebGLRenderer;
+      const { width, height } = host.getBoundingClientRect();
+      if (width < 2 || height < 2) return;
+      const prevPr = renderer.getPixelRatio();
+      const exportW = Math.round(width * 2);
+      const exportH = Math.round(height * 2);
+      renderer.setPixelRatio(1);
+      renderer.setSize(exportW, exportH, false);
+      g.width(exportW).height(exportH);
+      renderer.render(g.scene(), g.camera() as THREE.Camera);
+      const src = renderer.domElement;
+      const out = document.createElement("canvas");
+      out.width = src.width;
+      out.height = src.height;
+      const ctx = out.getContext("2d");
+      if (!ctx) throw new Error("2d");
+      ctx.drawImage(src, 0, 0);
+      const footerH = Math.max(32, Math.round(out.height * 0.04));
+      ctx.fillStyle = "rgba(3, 5, 10, 0.78)";
+      ctx.fillRect(0, out.height - footerH, out.width, footerH);
+      ctx.fillStyle = "rgba(210, 218, 230, 0.92)";
+      const fontPx = Math.max(13, Math.round(footerH * 0.42));
+      ctx.font = `500 ${fontPx}px system-ui, -apple-system, Segoe UI, Arial, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(
+        `Nexus · ${realNoteCount} notes · ${realLinkCount} links`,
+        out.width / 2,
+        out.height - footerH / 2,
+      );
+      const url = out.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "nexus-graph.png";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      renderer.setPixelRatio(prevPr);
+      g.width(width).height(height);
+      renderer.setSize(width, height, false);
+      renderer.render(g.scene(), g.camera() as THREE.Camera);
+    } catch {
+      try {
+        const { width, height } = host.getBoundingClientRect();
+        g.width(width).height(height);
+      } catch {
+        /* ok */
+      }
+    }
+  }, [realNoteCount, realLinkCount]);
 
   useEffect(() => {
     setHintVisible(true);
@@ -600,11 +914,18 @@ export function GraphView({ mode, className }: Props) {
     const particleCount = graphParticles ? (mode === "panel" ? 1 : 3) : 0;
 
     const focusId = () => hoverRef.current || activeRef.current;
-    const dimStrength = () =>
-      hoverRef.current ? 1 : activeRef.current ? 0.35 : 0;
+    const dimStrength = () => {
+      if (hoverRef.current) return 1;
+      if (neighborhoodRef.current === "1hop" && activeRef.current) return 0.9;
+      if (activeRef.current) return 0.35;
+      return 0;
+    };
 
     const neighborSet = (id: string | null): Set<string> | null => {
       if (!id) return null;
+      if (neighborhoodRef.current === "1hop" && hopKeepRef.current) {
+        return hopKeepRef.current;
+      }
       return neighborMapRef.current.get(id) ?? new Set();
     };
 
@@ -612,14 +933,22 @@ export function GraphView({ mode, className }: Props) {
       const f = focusId();
       const ns = neighborSet(f);
       if (n.id === activeRef.current || n.id === hoverRef.current) return true;
-      if (f && ns?.has(n.id)) return true;
+      if (f && ns?.has(n.id) && n.id !== f) return true;
       if (hoverRef.current) return false;
+      if (n.ghost) return false;
+      if (
+        neighborhoodRef.current === "1hop" &&
+        hopKeepRef.current &&
+        !hopKeepRef.current.has(n.id)
+      ) {
+        return false;
+      }
       return n.degree >= 3;
     };
 
     const paintOrb = (n: GNode) => {
       const f = focusId();
-      return createOrb(
+      const obj = createOrb(
         n,
         activeRef.current,
         hoverRef.current,
@@ -630,7 +959,10 @@ export function GraphView({ mode, className }: Props) {
         accent,
         shouldShowLabel(n),
         desktopBoost,
+        lowDetailRef.current,
       );
+      nodeObjMapRef.current.set(n.id, obj);
+      return obj;
     };
 
     const edgeStyle = (
@@ -723,6 +1055,11 @@ export function GraphView({ mode, className }: Props) {
         const node = n as GNode;
         if (!node?.id) return;
         setHintVisible(false);
+        if (node.ghost) {
+          const title = node.ghostTarget || node.name;
+          createNote(null, title);
+          return;
+        }
         setGraphMode("panel");
         setLeftOpen(true);
         if (typeof window !== "undefined" && window.innerWidth >= 1200) {
@@ -732,15 +1069,62 @@ export function GraphView({ mode, className }: Props) {
       })
       .onNodeHover((n: object | null) => {
         const node = n as GNode | null;
-        hoverRef.current = node?.id ?? null;
+        const nextId = node?.id ?? null;
+        // W5: skip if hover id unchanged (mousemove within same node)
+        if (nextId === hoverRef.current) return;
+        hoverRef.current = nextId;
         setHoverName(node?.name ?? null);
         el.style.cursor = node ? "pointer" : "grab";
-        if (graphRef.current) {
-          applyEdgeStyles(graphRef.current);
-          graphRef.current
-            .nodeThreeObject((nn: object) => paintOrb(nn as GNode))
-            .refresh();
+
+        // W5: throttle hover visuals to 50ms; mutate materials + link colors only
+        const flushHover = () => {
+          hoverThrottleRef.current = null;
+          const g = graphRef.current;
+          if (!g) return;
+          const id = hoverRef.current;
+          if (id === hoverAppliedRef.current) return;
+          const prev = hoverAppliedRef.current;
+          hoverAppliedRef.current = id;
+
+          const resolveObj = (nid: string): THREE.Object3D | undefined => {
+            const mapped = nodeObjMapRef.current.get(nid);
+            if (mapped) return mapped;
+            const nodes = (g.graphData()?.nodes ?? []) as GNode[];
+            const hit = nodes.find((x) => x.id === nid);
+            const obj = hit?.__threeObj;
+            if (obj) nodeObjMapRef.current.set(nid, obj);
+            return obj;
+          };
+
+          // Clear previous hover (+ light neighbor tint)
+          const clearIds = new Set<string>();
+          if (prev) {
+            clearIds.add(prev);
+            const pn = neighborMapRef.current.get(prev);
+            if (pn) for (const x of pn) clearIds.add(x);
+          }
+          for (const cid of clearIds) {
+            tintOrbHover(resolveObj(cid), false, accent);
+          }
+          // Apply new hover + neighbors
+          if (id) {
+            tintOrbHover(resolveObj(id), true, accent);
+            const ns = neighborMapRef.current.get(id);
+            if (ns) {
+              for (const nid of ns) {
+                if (nid === id) continue;
+                tintOrbHover(resolveObj(nid), true, accent);
+              }
+            }
+          }
+          // Link colors only — do NOT reassign nodeThreeObject / full refresh
+          applyEdgeStyles(g);
+        };
+
+        if (hoverThrottleRef.current != null) {
+          window.clearTimeout(hoverThrottleRef.current);
         }
+        hoverThrottleRef.current = window.setTimeout(flushHover, 50);
       })
       .onBackgroundClick(() => setHintVisible(false));
 
@@ -883,7 +1267,7 @@ export function GraphView({ mode, className }: Props) {
     ro.observe(el);
     const { width, height } = el.getBoundingClientRect();
     graph.width(width).height(height);
-    graph.graphData(data);
+    graph.graphData(displayData);
 
     window.setTimeout(() => {
       try {
@@ -896,6 +1280,12 @@ export function GraphView({ mode, className }: Props) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      if (hoverThrottleRef.current != null) {
+        window.clearTimeout(hoverThrottleRef.current);
+        hoverThrottleRef.current = null;
+      }
+      hoverAppliedRef.current = null;
+      nodeObjMapRef.current.clear();
       el.removeEventListener("pointerdown", hideHint);
       ro.disconnect();
       try {
@@ -939,12 +1329,69 @@ export function GraphView({ mode, className }: Props) {
     setGraphMode,
     setLeftOpen,
     setRightOpen,
+    createNote,
   ]);
 
   useEffect(() => {
     if (!graphRef.current) return;
-    graphRef.current.graphData(data);
-  }, [data]);
+    graphRef.current.graphData(displayData);
+  }, [displayData]);
+
+  /** W5: camera fly-to when activeNoteId changes (not on hover) */
+  useEffect(() => {
+    const g = graphRef.current;
+    if (!g || !activeNoteId) {
+      prevActiveFlyRef.current = activeNoteId;
+      return;
+    }
+    // Skip first mount / same id (avoid fighting zoomToFit)
+    if (prevActiveFlyRef.current === undefined) {
+      prevActiveFlyRef.current = activeNoteId;
+      return;
+    }
+    if (prevActiveFlyRef.current === activeNoteId) return;
+    prevActiveFlyRef.current = activeNoteId;
+
+    const fly = () => {
+      const graph = graphRef.current;
+      if (!graph) return;
+      const nodes = (graph.graphData()?.nodes ?? []) as GNode[];
+      const node = nodes.find((n) => n.id === activeNoteId);
+      if (!node || node.x == null || node.y == null || node.z == null) return;
+
+      const lookAt = { x: node.x, y: node.y, z: node.z };
+      let cam: { x: number; y: number; z: number };
+      try {
+        cam = graph.cameraPosition();
+      } catch {
+        return;
+      }
+      const dx = cam.x - lookAt.x;
+      const dy = cam.y - lookAt.y;
+      const dz = cam.z - lookAt.z;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const dist = mode === "fullscreen" ? 160 : 110;
+      // Keep roughly same viewing angle, pull in/out to target distance
+      const scale = dist / len;
+      try {
+        graph.cameraPosition(
+          {
+            x: lookAt.x + dx * scale,
+            y: lookAt.y + dy * scale,
+            z: lookAt.z + dz * scale,
+          },
+          lookAt,
+          750,
+        );
+      } catch {
+        /* ok */
+      }
+    };
+
+    // Wait a frame so graphData / layout coords settle after active change
+    const t = window.setTimeout(fly, 80);
+    return () => window.clearTimeout(t);
+  }, [activeNoteId, mode]);
 
   useEffect(() => {
     if (!graphRef.current) return;
@@ -953,11 +1400,18 @@ export function GraphView({ mode, className }: Props) {
     const particleCount = graphParticles ? (mode === "panel" ? 1 : 3) : 0;
 
     const focusId = () => hoverRef.current || activeNoteId;
-    const dimStrength = () =>
-      hoverRef.current ? 1 : activeNoteId ? 0.35 : 0;
+    const dimStrength = () => {
+      if (hoverRef.current) return 1;
+      if (neighborhood === "1hop" && activeNoteId) return 0.9;
+      if (activeNoteId) return 0.35;
+      return 0;
+    };
 
     const neighborSet = (id: string | null): Set<string> | null => {
       if (!id) return null;
+      if (neighborhood === "1hop" && hopKeepRef.current) {
+        return hopKeepRef.current;
+      }
       return neighborMapRef.current.get(id) ?? new Set();
     };
 
@@ -965,14 +1419,22 @@ export function GraphView({ mode, className }: Props) {
       const f = focusId();
       const ns = neighborSet(f);
       if (n.id === activeNoteId || n.id === hoverRef.current) return true;
-      if (f && ns?.has(n.id)) return true;
+      if (f && ns?.has(n.id) && n.id !== f) return true;
       if (hoverRef.current) return false;
+      if (n.ghost) return false;
+      if (
+        neighborhood === "1hop" &&
+        hopKeepRef.current &&
+        !hopKeepRef.current.has(n.id)
+      ) {
+        return false;
+      }
       return n.degree >= 3;
     };
 
     const paintOrb = (n: GNode) => {
       const f = focusId();
-      return createOrb(
+      const obj = createOrb(
         n,
         activeNoteId,
         hoverRef.current,
@@ -983,7 +1445,10 @@ export function GraphView({ mode, className }: Props) {
         accent,
         shouldShowLabel(n),
         desktopBoost,
+        lowDetailRef.current,
       );
+      nodeObjMapRef.current.set(n.id, obj);
+      return obj;
     };
 
     const edgeStyle = (link: GLink) => {
@@ -1032,13 +1497,14 @@ export function GraphView({ mode, className }: Props) {
       };
     };
 
+    hoverAppliedRef.current = null;
     graphRef.current
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
       .linkColor((link) => edgeStyle(link as GLink).color)
       .linkWidth((link) => edgeStyle(link as GLink).width)
       .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles)
       .refresh();
-  }, [activeNoteId, mode, accentPreset, accentCustom, graphParticles]);
+  }, [activeNoteId, mode, accentPreset, accentCustom, graphParticles, desktopBoost, neighborhood, showGhosts]);
 
   return (
     <div
@@ -1057,41 +1523,124 @@ export function GraphView({ mode, className }: Props) {
       />
 
       <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2 rounded-full border border-white/[0.06] bg-black/40 px-3 py-1.5 backdrop-blur-sm">
-          <Network
-            size={12}
-            className="shrink-0 text-[var(--accent)] opacity-70"
-          />
-          <span className="truncate text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
-            {data.nodes.length} notes
-            <span className="mx-1.5 opacity-50">·</span>
-            {data.links.length} links
-            {hoverName ? (
-              <>
-                <span className="mx-1.5 opacity-50">·</span>
-                <span className="text-[var(--text-secondary)] transition-opacity duration-200">
-                  {hoverName}
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <div className="flex min-w-0 items-center gap-2 rounded-full border border-white/[0.06] bg-black/40 px-3 py-1.5 backdrop-blur-sm">
+            <Network
+              size={12}
+              className="shrink-0 text-[var(--accent)] opacity-70"
+            />
+            <span className="truncate text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
+              {realNoteCount} notes
+              <span className="mx-1.5 opacity-50">·</span>
+              {realLinkCount} links
+              {ghostCount > 0 ? (
+                <>
+                  <span className="mx-1.5 opacity-50">·</span>
+                  <span className="opacity-70">
+                    {showGhosts ? ghostCount : 0}/{ghostCount} missing
+                  </span>
+                </>
+              ) : null}
+              {neighborhood === "1hop" ? (
+                <>
+                  <span className="mx-1.5 opacity-50">·</span>
+                  <span className="text-[var(--accent)] opacity-80">1-hop</span>
+                </>
+              ) : null}
+              {hoverName ? (
+                <>
+                  <span className="mx-1.5 opacity-50">·</span>
+                  <span className="text-[var(--text-secondary)] transition-opacity duration-200">
+                    {hoverName}
+                  </span>
+                </>
+              ) : null}
+            </span>
+          </div>
+          {realNoteCount > LOD_CAP ? (
+            <div className="pointer-events-none px-1 text-[10px] tracking-wide text-[var(--text-muted)] opacity-70">
+              Showing {shownNoteCount} of {realNoteCount} notes
+            </div>
+          ) : null}
+          {topFolders.length > 0 ? (
+            <div className="pointer-events-none flex flex-wrap items-center gap-1.5 px-1">
+              {topFolders.map((f) => (
+                <span
+                  key={f.folder || "__root__"}
+                  className="inline-flex items-center gap-1 rounded-full border border-white/[0.06] bg-black/35 px-2 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)] backdrop-blur-sm"
+                  title={`${f.label} · ${f.count} notes`}
+                >
+                  <span
+                    className="inline-block h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: f.color }}
+                  />
+                  <span className="max-w-[72px] truncate">{f.label}</span>
                 </span>
-              </>
-            ) : null}
-          </span>
+              ))}
+            </div>
+          ) : null}
         </div>
-        <button
-          type="button"
-          className="icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40"
-          title={
-            mode === "fullscreen" ? "Exit fullscreen graph" : "Expand graph"
-          }
-          onClick={() =>
-            setGraphMode(mode === "fullscreen" ? "panel" : "fullscreen")
-          }
-        >
-          {mode === "fullscreen" ? (
-            <Minimize2 size={14} />
-          ) : (
-            <Maximize2 size={14} />
-          )}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {ghostCount > 0 ? (
+            <button
+              type="button"
+              className={cn(
+                "icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40",
+                !showGhosts && "border-[var(--accent)]/40 text-[var(--accent)]",
+              )}
+              title={showGhosts ? "Hide missing (ghost) nodes" : "Show missing (ghost) nodes"}
+              onClick={() => setShowGhosts((v) => !v)}
+            >
+              <Ghost size={14} className={cn(!showGhosts && "opacity-50")} />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={cn(
+              "icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40",
+              neighborhood === "1hop" &&
+                "border-[var(--accent)]/40 text-[var(--accent)]",
+            )}
+            title={
+              neighborhood === "1hop"
+                ? "Show full graph"
+                : "Neighborhood: soft 1-hop (dim outsiders)"
+            }
+            onClick={() =>
+              setNeighborhood((m) => (m === "all" ? "1hop" : "all"))
+            }
+          >
+            {neighborhood === "1hop" ? (
+              <Focus size={14} />
+            ) : (
+              <Globe2 size={14} />
+            )}
+          </button>
+          <button
+            type="button"
+            className="icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40"
+            title="Export graph PNG"
+            onClick={exportPng}
+          >
+            <Download size={14} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40"
+            title={
+              mode === "fullscreen" ? "Exit fullscreen graph" : "Expand graph"
+            }
+            onClick={() =>
+              setGraphMode(mode === "fullscreen" ? "panel" : "fullscreen")
+            }
+          >
+            {mode === "fullscreen" ? (
+              <Minimize2 size={14} />
+            ) : (
+              <Maximize2 size={14} />
+            )}
+          </button>
+        </div>
       </div>
 
       <div ref={hostRef} className="relative z-[1] min-h-0 flex-1 touch-none" />
@@ -1104,18 +1653,14 @@ export function GraphView({ mode, className }: Props) {
         </div>
       ) : null}
 
-      {data.nodes.length === 0 ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center px-6 text-center">
-          <Network
-            size={16}
-            className="mb-3 text-[var(--text-muted)] opacity-40"
+      {realNoteCount === 0 ? (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6">
+          <EmptyState
+            icon={<Network size={16} />}
+            title="No linked notes"
+            description="Add [[wikilinks]] between notes to map structure."
+            className="max-w-[280px] border-white/[0.06] bg-black/40"
           />
-          <p className="text-[13px] font-medium text-[var(--text-secondary)]">
-            No linked notes
-          </p>
-          <p className="mt-1 max-w-[240px] text-[12px] leading-snug text-[var(--text-muted)]">
-            Add [[wikilinks]] between notes to map structure.
-          </p>
         </div>
       ) : null}
     </div>

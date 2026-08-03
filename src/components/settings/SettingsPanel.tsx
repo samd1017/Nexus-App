@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Settings, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -12,6 +12,7 @@ import {
   type Density,
   type PhysicsIntensity,
 } from "@/lib/prefs/preferences";
+import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { useVaultStore } from "@/lib/vault/store";
 
@@ -31,6 +32,7 @@ export function SettingsPanel() {
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) setCustomDraft(prefs.accentCustom);
@@ -38,14 +40,50 @@ export function SettingsPanel() {
 
   useEffect(() => {
     if (!open) return;
+    const root = dialogRef.current;
+    // Focus dialog container on open
+    const prev = document.activeElement as HTMLElement | null;
+    if (root) {
+      if (!root.hasAttribute("tabindex")) root.tabIndex = -1;
+      root.focus({ preventScroll: true });
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         setOpen(false);
+        return;
+      }
+      // Simple focus trap — Tab cycles within dialog
+      if (e.key !== "Tab" || !root) return;
+      const focusable = root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      const list = Array.from(focusable).filter(
+        (el) => el.offsetParent !== null || el === root,
+      );
+      if (list.length === 0) {
+        e.preventDefault();
+        root.focus();
+        return;
+      }
+      const first = list[0];
+      const last = list[list.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first || !root.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last || !root.contains(active)) {
+        e.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      prev?.focus?.({ preventScroll: true });
+    };
   }, [open, setOpen]);
 
   if (!open) return null;
@@ -69,10 +107,12 @@ export function SettingsPanel() {
         onClick={() => setOpen(false)}
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[18px] border border-[var(--border)] shadow-[var(--shadow-elevated)]"
+        tabIndex={-1}
+        className="glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[18px] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(255,255,255,0.08)] bg-white/[0.03] text-[var(--accent)]">
@@ -188,6 +228,22 @@ export function SettingsPanel() {
               checked={prefs.graphParticles}
               onChange={(v) => updatePrefs({ graphParticles: v })}
             />
+            <ToggleRow
+              className="mt-3"
+              label="Reduced motion"
+              description="Minimize animations and transitions"
+              checked={prefs.reducedMotion}
+              onChange={(v) => updatePrefs({ reducedMotion: v })}
+            />
+            <ToggleRow
+              className="mt-3"
+              label="Focus mode"
+              description="Hide side panels for distraction-free writing (⌘.)"
+              checked={prefs.focusMode}
+              onChange={(v) => {
+                setFocusMode(v);
+              }}
+            />
           </Section>
 
           {/* Editor */}
@@ -282,6 +338,34 @@ export function SettingsPanel() {
               checked={prefs.openLastVault}
               onChange={(v) => updatePrefs({ openLastVault: v })}
             />
+            <div className="mt-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                    Launch note
+                  </div>
+                  <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
+                    Which note to open when a vault mounts
+                  </p>
+                </div>
+                <select
+                  className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12.5px] text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                  value={prefs.launchNoteMode ?? (prefs.openTodayOnLaunch ? "today" : "last")}
+                  onChange={(e) =>
+                    updatePrefs({
+                      launchNoteMode: e.target.value as
+                        | "today"
+                        | "last"
+                        | "smart",
+                    })
+                  }
+                >
+                  <option value="today">Today's daily</option>
+                  <option value="last">Last note</option>
+                  <option value="smart">Smart (daily habit)</option>
+                </select>
+              </div>
+            </div>
           </Section>
 
           {/* Keyboard */}
@@ -311,6 +395,10 @@ export function SettingsPanel() {
               <HelpItem
                 title="Editing"
                 body="Visual is the rich editor. Source shows clean Markdown. They stay in sync. Type [[ to link notes or folders."
+              />
+              <HelpItem
+                title="Daily notes & templates"
+                body="⌘D opens today's Journal page. Create Meeting, Idea, or Project notes from the command palette or file tree context menu."
               />
               <HelpItem
                 title="Graph"
@@ -343,6 +431,9 @@ export function SettingsPanel() {
                 <div className="text-[12.5px] text-[var(--accent)]">
                   {NEXUS_TAGLINE}
                 </div>
+                <p className="mt-1.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                  Local-first Markdown notes for humans and agents.
+                </p>
                 <div className="mt-1 text-[12px] text-[var(--text-muted)]">
                   Version {NEXUS_VERSION}
                 </div>

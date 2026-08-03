@@ -42,6 +42,14 @@ export function extractWikilinkTargets(markdown: string): string[] {
   return [...seen];
 }
 
+/**
+ * Stable fingerprint of wikilink targets in a note body.
+ * Used by GraphView to skip rebuilds when only non-link content changes (Wave S1).
+ */
+export function getContentLinkSig(markdown: string): string {
+  return extractWikilinkTargets(markdown).join("\0");
+}
+
 /** Normalize a note title / path for fuzzy wikilink matching */
 export function normalizeLinkTarget(target: string): string {
   return target

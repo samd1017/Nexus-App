@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { TitleBar } from "@/components/chrome/TitleBar";
 import { KeyboardShortcuts } from "@/components/chrome/KeyboardShortcuts";
 import { Toast } from "@/components/chrome/Toast";
+import { DeleteConfirmHost } from "@/components/chrome/DeleteConfirmHost";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { EditorPane } from "@/components/editor/EditorPane";
 import { RightPanel } from "@/components/right/RightPanel";
@@ -20,6 +21,7 @@ import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
 import { startDesktopWatch } from "@/lib/vault/tauri-adapter";
 import { applyPrefsToDom, getPrefs, usePrefsStore } from "@/lib/prefs/preferences";
 import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
+import { bindWindowState } from "@/lib/desktop/window-state";
 
 export function AppShell() {
   const bootstrap = useVaultStore((s) => s.bootstrap);
@@ -36,6 +38,15 @@ export function AppShell() {
     applyPrefsToDom(getPrefs());
     void bootstrap();
   }, [bootstrap]);
+
+  // Wave S7: persist main window size (desktop only)
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void bindWindowState().then((fn) => {
+      un = fn;
+    });
+    return () => un?.();
+  }, []);
 
   // Native Tauri menu → store actions
   useEffect(() => {
@@ -56,24 +67,16 @@ export function AppShell() {
     return () => un?.();
   }, []);
 
-  // Responsive side panels — only set defaults when vault opens / width crosses bands
+  // Responsive panels only on small screens when a vault opens.
+  // Desktop/tablet keep persisted leftOpen/rightOpen/widths (Wave B layout memory).
   useEffect(() => {
     if (!vaultId) return;
-    const apply = () => {
-      const w = window.innerWidth;
-      if (w < 900) {
-        setLeftOpen(false);
-        setRightOpen(false);
-      } else if (w < 1200) {
-        setRightOpen(false);
-        setLeftOpen(true);
-      } else {
-        setLeftOpen(true);
-        setRightOpen(true);
-      }
-    };
-    apply();
-    // only when vault opens, not every resize (avoids fighting user toggles)
+    const w = window.innerWidth;
+    if (w < 900) {
+      setLeftOpen(false);
+      setRightOpen(false);
+    }
+    // Do not force open/closed on wider viewports — honor saved settings.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vaultId]);
 
@@ -146,6 +149,7 @@ export function AppShell() {
         </div>
         <Toast />
         <SettingsPanel />
+        <DeleteConfirmHost />
         <KeyboardShortcuts />
       </div>
     );
@@ -162,6 +166,7 @@ export function AppShell() {
       <CommandPalette />
       <KeyboardShortcuts />
       <SettingsPanel />
+      <DeleteConfirmHost />
       <Toast />
     </div>
   );

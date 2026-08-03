@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
 import type { Editor } from "@tiptap/react";
+import * as Popover from "@radix-ui/react-popover";
 import {
   Bold,
   Italic,
@@ -26,6 +27,7 @@ import {
   Rows3,
   Columns3,
   Heading,
+  MoreHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -43,6 +45,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [linkSeed, setLinkSeed] = useState("https://");
   const [importingImage, setImportingImage] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     const onUp = () => bump();
@@ -63,6 +66,13 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     const raw = editor.getAttributes("bulletList").bulletStyle;
     return isBulletStyle(raw) ? raw : "disc";
   })();
+
+  const moreActive =
+    editor.isActive({ textAlign: "left" }) ||
+    editor.isActive({ textAlign: "center" }) ||
+    editor.isActive({ textAlign: "right" }) ||
+    editor.isActive("codeBlock") ||
+    editor.isActive("blockquote");
 
   const openLinkDialog = () => {
     const prev = (editor.getAttributes("link").href as string | undefined) || "";
@@ -143,10 +153,37 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     </button>
   );
 
+  const moreItem = (
+    active: boolean,
+    onClick: () => void,
+    icon: React.ReactNode,
+    label: string,
+  ) => (
+    <button
+      type="button"
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onClick();
+        setMoreOpen(false);
+      }}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors",
+        active
+          ? "bg-[rgba(0,200,255,0.12)] text-[var(--accent)]"
+          : "text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
+      )}
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center opacity-80">
+        {icon}
+      </span>
+      <span className="flex-1">{label}</span>
+    </button>
+  );
+
   return (
     <>
       <div className="flex flex-col gap-0 border-b border-[var(--border)]">
-        <div className="flex flex-wrap items-center gap-0.5 px-3 py-1.5">
+        <div className="flex flex-nowrap items-center gap-0.5 overflow-x-auto px-3 py-1.5">
           {btn(
             editor.isActive("bold"),
             () => editor.chain().focus().toggleBold().run(),
@@ -180,25 +217,6 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
           )}
           <Sep />
           {btn(
-            editor.isActive({ textAlign: "left" }),
-            () => editor.chain().focus().setTextAlign("left").run(),
-            <AlignLeft size={14} />,
-            "Align left",
-          )}
-          {btn(
-            editor.isActive({ textAlign: "center" }),
-            () => editor.chain().focus().setTextAlign("center").run(),
-            <AlignCenter size={14} />,
-            "Align center",
-          )}
-          {btn(
-            editor.isActive({ textAlign: "right" }),
-            () => editor.chain().focus().setTextAlign("right").run(),
-            <AlignRight size={14} />,
-            "Align right",
-          )}
-          <Sep />
-          {btn(
             inBullet,
             () => editor.chain().focus().toggleBulletList().run(),
             <List size={14} />,
@@ -215,25 +233,6 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             () => editor.chain().focus().toggleTaskList().run(),
             <ListChecks size={14} />,
             "Task list",
-          )}
-          <Sep />
-          {btn(
-            editor.isActive("codeBlock"),
-            () => editor.chain().focus().toggleCodeBlock().run(),
-            <Code2 size={14} />,
-            "Code block",
-          )}
-          {btn(
-            editor.isActive("blockquote"),
-            () => editor.chain().focus().toggleBlockquote().run(),
-            <Quote size={14} />,
-            "Quote",
-          )}
-          {btn(
-            false,
-            () => editor.chain().focus().setHorizontalRule().run(),
-            <Minus size={14} />,
-            "Divider",
           )}
           <Sep />
           {btn(
@@ -262,6 +261,76 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             <TableIcon size={14} />,
             inTable ? "Table selected" : "Insert table",
           )}
+          <Sep />
+          <Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
+            <Popover.Trigger asChild>
+              <button
+                type="button"
+                title="More formatting"
+                onMouseDown={(e) => e.preventDefault()}
+                className={cn(
+                  "icon-btn h-7 w-7",
+                  (moreOpen || moreActive) && "is-active",
+                )}
+                aria-label="More formatting"
+              >
+                <MoreHorizontal size={14} />
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                side="bottom"
+                align="end"
+                sideOffset={6}
+                className="z-[80] w-[200px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,18,22,0.97)] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl"
+                onOpenAutoFocus={(e) => e.preventDefault()}
+              >
+                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                  Align
+                </div>
+                {moreItem(
+                  editor.isActive({ textAlign: "left" }),
+                  () => editor.chain().focus().setTextAlign("left").run(),
+                  <AlignLeft size={14} />,
+                  "Align left",
+                )}
+                {moreItem(
+                  editor.isActive({ textAlign: "center" }),
+                  () => editor.chain().focus().setTextAlign("center").run(),
+                  <AlignCenter size={14} />,
+                  "Align center",
+                )}
+                {moreItem(
+                  editor.isActive({ textAlign: "right" }),
+                  () => editor.chain().focus().setTextAlign("right").run(),
+                  <AlignRight size={14} />,
+                  "Align right",
+                )}
+                <div className="my-1 h-px bg-[var(--border)]" />
+                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                  Blocks
+                </div>
+                {moreItem(
+                  editor.isActive("codeBlock"),
+                  () => editor.chain().focus().toggleCodeBlock().run(),
+                  <Code2 size={14} />,
+                  "Code block",
+                )}
+                {moreItem(
+                  editor.isActive("blockquote"),
+                  () => editor.chain().focus().toggleBlockquote().run(),
+                  <Quote size={14} />,
+                  "Quote",
+                )}
+                {moreItem(
+                  false,
+                  () => editor.chain().focus().setHorizontalRule().run(),
+                  <Minus size={14} />,
+                  "Divider",
+                )}
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
         </div>
 
         {inBullet ? (
@@ -389,5 +458,5 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
 }
 
 function Sep() {
-  return <div className="mx-1 h-4 w-px bg-[var(--border)]" />;
+  return <div className="mx-1 h-4 w-px shrink-0 bg-[var(--border)]" />;
 }

@@ -1,4 +1,4 @@
-import { o as TaskList } from "./tiptap__extension-list.mjs";
+import { s as TaskList } from "./@tiptap/extension-bullet-list+[...].mjs";
 //#region node_modules/@tiptap/extension-task-list/dist/index.js
 var index_default = TaskList;
 //#endregion

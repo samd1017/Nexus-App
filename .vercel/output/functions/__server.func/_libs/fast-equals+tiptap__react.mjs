@@ -1,8 +1,7 @@
-import { r as __toESM } from "../_runtime.mjs";
+import { i as __toESM } from "../_runtime.mjs";
 import { n as require_jsx_runtime } from "./radix-ui__react-context+react.mjs";
-import { r as require_react } from "./@radix-ui/react-compose-refs+[...].mjs";
+import { l as require_react_dom, u as require_react } from "./@floating-ui/react-dom+[...].mjs";
 import { g as require_shim, h as require_with_selector } from "./@tanstack/react-router+[...].mjs";
-import { s as require_react_dom } from "./@radix-ui/react-dialog+[...].mjs";
 import { n as Editor } from "./@tiptap/core+[...].mjs";
 //#region node_modules/fast-equals/dist/es/index.mjs
 var import_jsx_runtime = require_jsx_runtime();

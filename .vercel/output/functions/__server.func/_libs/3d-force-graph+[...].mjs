@@ -1,4 +1,4 @@
-import { r as __toESM, t as __commonJSMin } from "../_runtime.mjs";
+import { i as __toESM, t as __commonJSMin } from "../_runtime.mjs";
 /**
 * @license
 * Copyright 2010-2026 Three.js Authors

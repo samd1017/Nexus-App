@@ -6,6 +6,8 @@ import {
   PanelRightClose,
   PanelRightOpen,
   FilePlus2,
+  CalendarDays,
+  Focus,
 } from "lucide-react";
 import { useVaultStore, getBreadcrumbs } from "@/lib/vault/store";
 import { VisualEditor } from "./VisualEditor";
@@ -13,6 +15,9 @@ import { SourceEditor } from "./SourceEditor";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import { NoteTitleInput } from "./NoteTitleInput";
 import { NexusMark, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { setFocusMode } from "@/lib/prefs/focus-mode";
+import { NewNoteMenu } from "@/components/vault/NewNoteMenu";
 
 export function EditorPane() {
   const nodes = useVaultStore((s) => s.nodes);
@@ -22,9 +27,10 @@ export function EditorPane() {
   const mode = useVaultStore((s) => s.mode);
   const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
-  const createNote = useVaultStore((s) => s.createNote);
+  const openDailyNote = useVaultStore((s) => s.openDailyNote);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const setEditorMode = useVaultStore((s) => s.setEditorMode);
+  const focusMode = usePrefsStore((s) => s.focusMode);
 
   const note = useVaultStore((s) =>
     s.activeNoteId ? (s.nodes[s.activeNoteId] ?? null) : null,
@@ -48,13 +54,17 @@ export function EditorPane() {
           {NEXUS_TAGLINE}
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-          <button
-            type="button"
-            className="primary-btn"
-            onClick={() => createNote(null, "Untitled")}
-          >
+          <NewNoteMenu variant="primary" title="New note" align="left">
             <FilePlus2 size={16} />
             New note
+          </NewNoteMenu>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={() => openDailyNote()}
+          >
+            <CalendarDays size={16} />
+            Today's note
           </button>
           <button
             type="button"
@@ -96,45 +106,63 @@ export function EditorPane() {
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          <span className="mr-2 hidden text-[11px] text-[var(--text-muted)] sm:inline">
-            {mode === "fsa" ? "on disk · " : ""}
-            {formatRelativeTime(note.mtime)}
-          </span>
-          <button
-            type="button"
-            className={cn("chip-btn", editorMode === "visual" && "is-active")}
-            onClick={() => setEditorMode("visual")}
-            title="Visual mode"
-          >
-            <Eye size={13} />
-            <span className="hidden sm:inline">Visual</span>
-          </button>
-          <button
-            type="button"
-            className={cn("chip-btn", editorMode === "source" && "is-active")}
-            onClick={() => setEditorMode("source")}
-            title="Source mode (⌘E)"
-          >
-            <Code2 size={13} />
-            <span className="hidden sm:inline">Source</span>
-          </button>
-          <button
-            type="button"
-            className={cn("chip-btn", graphMode === "fullscreen" && "is-active")}
-            onClick={toggleGraphFullscreen}
-            title="Graph (⌘G)"
-          >
-            <Network size={13} />
-            <span className="hidden sm:inline">Graph</span>
-          </button>
-          <button
-            type="button"
-            className="icon-btn ml-1"
-            onClick={() => setRightOpen(!rightOpen)}
-            title="Toggle right panel"
-          >
-            {rightOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-          </button>
+          {focusMode ? (
+            <button
+              type="button"
+              className="chip-btn is-active"
+              title="Exit focus mode (⌘.)"
+              onClick={() => setFocusMode(false)}
+            >
+              <Focus size={13} />
+              <span className="hidden sm:inline">Exit focus</span>
+            </button>
+          ) : (
+            <>
+              <span className="mr-2 hidden text-[11px] text-[var(--text-muted)] sm:inline">
+                {mode === "fsa" ? "on disk · " : ""}
+                {formatRelativeTime(note.mtime)}
+              </span>
+              <button
+                type="button"
+                className={cn("chip-btn", editorMode === "visual" && "is-active")}
+                onClick={() => setEditorMode("visual")}
+                title="Visual mode"
+              >
+                <Eye size={13} />
+                <span className="hidden sm:inline">Visual</span>
+              </button>
+              <button
+                type="button"
+                className={cn("chip-btn", editorMode === "source" && "is-active")}
+                onClick={() => setEditorMode("source")}
+                title="Source mode (⌘E)"
+              >
+                <Code2 size={13} />
+                <span className="hidden sm:inline">Source</span>
+              </button>
+              <button
+                type="button"
+                className={cn("chip-btn", graphMode === "fullscreen" && "is-active")}
+                onClick={toggleGraphFullscreen}
+                title="Graph (⌘G)"
+              >
+                <Network size={13} />
+                <span className="hidden sm:inline">Graph</span>
+              </button>
+              <button
+                type="button"
+                className="icon-btn ml-1"
+                onClick={() => setRightOpen(!rightOpen)}
+                title="Toggle right panel"
+              >
+                {rightOpen ? (
+                  <PanelRightClose size={16} />
+                ) : (
+                  <PanelRightOpen size={16} />
+                )}
+              </button>
+            </>
+          )}
         </div>
       </div>
 

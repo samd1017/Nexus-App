@@ -2,56 +2,124 @@ import Fuse from "fuse.js";
 import type { SearchHit, VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import { previewSnippet } from "@/lib/markdown/serialize";
+import { notesForTag } from "@/lib/vault/tags";
+import { getOrphanNotes } from "@/lib/vault/broken-links";
 
 interface SearchDoc {
   id: string;
   path: string;
   title: string;
   content: string;
+  mtime: number;
 }
 
-/** Cached Fuse index — rebuilt only when vault note set changes */
+/** Cached Fuse index — rebuilt when vault structure / titles / content change */
 let cachedKey = "";
 let cachedFuse: Fuse<SearchDoc> | null = null;
 let cachedDocs: SearchDoc[] = [];
+/** Per-note signature so a single content edit can patch without full key recompute thrash */
+let cachedNoteSigs = new Map<string, string>();
+
+function noteSig(n: VaultNode): string {
+  // Title included so renames invalidate; content length + mtime catch edits
+  return `${noteTitle(n)}\0${n.path}\0${n.mtime}\0${(n.content ?? "").length}`;
+}
 
 function vaultKey(nodes: Record<string, VaultNode>): string {
-  // path + mtime + length — cheap, stable for incremental Hermes updates
   return Object.values(nodes)
     .filter((n) => n.kind === "note")
-    .map((n) => `${n.id}:${n.mtime}:${(n.content ?? "").length}`)
+    .map((n) => `${n.id}:${noteSig(n)}`)
     .sort()
     .join("|");
+}
+
+function rebuildFuse(docs: SearchDoc[]): Fuse<SearchDoc> {
+  return new Fuse(docs, {
+    keys: [
+      { name: "title", weight: 0.6 },
+      { name: "path", weight: 0.2 },
+      { name: "content", weight: 0.2 },
+    ],
+    threshold: 0.34,
+    includeScore: true,
+    ignoreLocation: true,
+    minMatchCharLength: 1,
+  });
 }
 
 function getFuse(nodes: Record<string, VaultNode>): Fuse<SearchDoc> {
   const key = vaultKey(nodes);
   if (cachedFuse && cachedKey === key) return cachedFuse;
 
-  cachedDocs = Object.values(nodes)
-    .filter((n) => n.kind === "note")
-    .map((n) => ({
-      id: n.id,
-      path: n.path,
-      title: noteTitle(n),
-      content: n.content ?? "",
-    }));
+  const notes = Object.values(nodes).filter((n) => n.kind === "note");
+  const nextSigs = new Map<string, string>();
+  for (const n of notes) nextSigs.set(n.id, noteSig(n));
 
-  cachedFuse = new Fuse(cachedDocs, {
-    keys: [
-      { name: "title", weight: 0.55 },
-      { name: "path", weight: 0.2 },
-      { name: "content", weight: 0.25 },
-    ],
-    threshold: 0.38,
-    includeScore: true,
-    ignoreLocation: true,
-    minMatchCharLength: 1,
-  });
+  // Incremental path: same note set + only one note's content/mtime changed → patch that doc
+  if (
+    cachedFuse &&
+    cachedDocs.length === notes.length &&
+    cachedNoteSigs.size === notes.length
+  ) {
+    const prevIds = new Set(cachedNoteSigs.keys());
+    const nextIds = new Set(nextSigs.keys());
+    let sameIds = prevIds.size === nextIds.size;
+    if (sameIds) {
+      for (const id of prevIds) {
+        if (!nextIds.has(id)) {
+          sameIds = false;
+          break;
+        }
+      }
+    }
+    if (sameIds) {
+      const changed: string[] = [];
+      for (const [id, sig] of nextSigs) {
+        if (cachedNoteSigs.get(id) !== sig) changed.push(id);
+      }
+      // Single-note content/title change: patch docs array and rebuild Fuse from it
+      // (Fuse has no true incremental API; still cheaper than re-mapping every note from store)
+      if (changed.length === 1) {
+        const id = changed[0];
+        const n = nodes[id];
+        if (n && n.kind === "note") {
+          const idx = cachedDocs.findIndex((d) => d.id === id);
+          if (idx >= 0) {
+            cachedDocs[idx] = {
+              id: n.id,
+              path: n.path,
+              title: noteTitle(n),
+              content: n.content ?? "",
+              mtime: n.mtime,
+            };
+            cachedFuse = rebuildFuse(cachedDocs);
+            cachedKey = key;
+            cachedNoteSigs = nextSigs;
+            return cachedFuse;
+          }
+        }
+      }
+    }
+  }
+
+  cachedDocs = notes.map((n) => ({
+    id: n.id,
+    path: n.path,
+    title: noteTitle(n),
+    content: n.content ?? "",
+    mtime: n.mtime,
+  }));
+
+  cachedFuse = rebuildFuse(cachedDocs);
   cachedKey = key;
+  cachedNoteSigs = nextSigs;
   return cachedFuse;
 }
 
+/**
+ * Ranking: exact title > title starts-with > path > fuzzy content.
+ * Recency is a light tie-breaker. `#tag` queries filter by tag.
+ */
 export function searchVault(
   nodes: Record<string, VaultNode>,
   query: string,
@@ -59,7 +127,6 @@ export function searchVault(
 ): SearchHit[] {
   const q = query.trim();
   if (!q) {
-    // Empty query: recent notes by mtime
     return Object.values(nodes)
       .filter((n) => n.kind === "note")
       .sort((a, b) => b.mtime - a.mtime)
@@ -74,10 +141,71 @@ export function searchVault(
       }));
   }
 
+  // Tag search: #project or tag:project
+  const tagMatch = /^#([\w/-]+)$/i.exec(q) || /^tag:([\w/-]+)$/i.exec(q);
+  if (tagMatch) {
+    return notesForTag(nodes, tagMatch[1])
+      .slice(0, limit)
+      .map((n) => ({
+        noteId: n.id,
+        path: n.path,
+        title: noteTitle(n),
+        snippet: `#${tagMatch[1].toLowerCase()}`,
+        score: 1,
+        matchType: "title" as const,
+      }));
+  }
+
+  // Operators: is:orphan
+  if (/^is:orphans?$/i.test(q) || /^orphans?$/i.test(q)) {
+    return getOrphanNotes(nodes, limit).map((o) => ({
+      noteId: o.id,
+      path: o.path,
+      title: o.title,
+      snippet: "orphan",
+      score: 1,
+      matchType: "title" as const,
+    }));
+  }
+
+  const lower = q.toLowerCase();
+  const notes = Object.values(nodes).filter((n) => n.kind === "note");
+
+  // Exact / prefix title boosts first
+  const exact: SearchHit[] = [];
+  const prefix: SearchHit[] = [];
+  for (const n of notes) {
+    const title = noteTitle(n);
+    const t = title.toLowerCase();
+    if (t === lower) {
+      exact.push({
+        noteId: n.id,
+        path: n.path,
+        title,
+        snippet: previewSnippet(n.content ?? "", 100),
+        score: 100,
+        matchType: "title",
+      });
+    } else if (t.startsWith(lower)) {
+      prefix.push({
+        noteId: n.id,
+        path: n.path,
+        title,
+        snippet: previewSnippet(n.content ?? "", 100),
+        score: 80 + Math.min(10, n.mtime / 1e13),
+        matchType: "title",
+      });
+    }
+  }
+  prefix.sort((a, b) => b.score - a.score);
+
   const fuse = getFuse(nodes);
-  return fuse.search(q, { limit }).map((r) => {
+  const fuzzy = fuse.search(q, { limit: limit * 2 }).map((r) => {
     const score = 1 - (r.score ?? 0);
-    const titleHit = r.item.title.toLowerCase().includes(q.toLowerCase());
+    const titleHit = r.item.title.toLowerCase().includes(lower);
+    const pathHit = r.item.path.toLowerCase().includes(lower);
+    // Recency nudge (max ~0.05)
+    const recency = Math.min(0.05, (r.item.mtime / Date.now()) * 0.05);
     const snippet = titleHit
       ? previewSnippet(r.item.content, 100)
       : extractSnippet(r.item.content, q);
@@ -86,10 +214,20 @@ export function searchVault(
       path: r.item.path,
       title: r.item.title,
       snippet,
-      score,
-      matchType: titleHit ? ("title" as const) : ("content" as const),
+      score: score + recency + (titleHit ? 0.15 : 0) + (pathHit ? 0.08 : 0),
+      matchType: (titleHit ? "title" : "content") as "title" | "content",
     };
   });
+
+  const seen = new Set<string>();
+  const out: SearchHit[] = [];
+  for (const hit of [...exact, ...prefix, ...fuzzy.sort((a, b) => b.score - a.score)]) {
+    if (seen.has(hit.noteId)) continue;
+    seen.add(hit.noteId);
+    out.push(hit);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function extractSnippet(content: string, query: string, radius = 50): string {
@@ -108,4 +246,5 @@ export function invalidateSearchCache(): void {
   cachedKey = "";
   cachedFuse = null;
   cachedDocs = [];
+  cachedNoteSigs = new Map();
 }

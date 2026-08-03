@@ -59,9 +59,51 @@ import {
   loadCloudSession,
   providerLabel,
 } from "@/lib/cloud/oauth";
+import {
+  buildDailyNoteContent,
+  buildTemplateContent,
+  dailyNotePath,
+  dailyNoteTitle,
+  formatDateISO,
+  getTemplate,
+  type NoteTemplateId,
+} from "./templates";
+import { loadNoteVisits, pushNoteVisit } from "./note-visits";
+import {
+  isOnlySerializationNoise,
+  markdownFingerprint,
+} from "@/lib/markdown/purity";
+import { recordNoteVisit } from "./visit-history";
+import { trackVisit } from "./session-recents";
+import { pushNav } from "./nav-history";
+import { pushPulse } from "./pulse";
 
-const STORAGE_KEY = "noteapp-vault-v2";
-const RECENT_KEY = "noteapp-recent-v2";
+/** Nexus keys (Wave S5). Dual-read legacy noteapp-* on load; always write nexus-*. */
+const STORAGE_KEY = "nexus-vault-v1";
+const STORAGE_KEY_LEGACY = "noteapp-vault-v2";
+const RECENT_KEY = "nexus-recent-v1";
+const RECENT_KEY_LEGACY = "noteapp-recent-v2";
+
+/** Copy legacy noteapp-* → nexus-* once when new key is absent. */
+function migrateNamingKeys(): void {
+  try {
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      const legacy = localStorage.getItem(STORAGE_KEY_LEGACY);
+      if (legacy) localStorage.setItem(STORAGE_KEY, legacy);
+    }
+    if (!localStorage.getItem(RECENT_KEY)) {
+      const legacy = localStorage.getItem(RECENT_KEY_LEGACY);
+      if (legacy) localStorage.setItem(RECENT_KEY, legacy);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+if (typeof window !== "undefined") {
+  migrateNamingKeys();
+}
+
 
 let fsaRoot: FileSystemDirectoryHandle | null = null;
 let desktopRoot: string | null = null;
@@ -69,6 +111,8 @@ let desktopWatchAck: (() => void) | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
 let watcherAck: ((dir: FileSystemDirectoryHandle) => Promise<void>) | null = null;
 let lastExternalToastAt = 0;
+let lastDiskResyncAt = 0;
+let diskWriteError: string | null = null;
 
 /** Coalesce rapid create/import storms (agent bulk writes). */
 const CREATE_BATCH_MS = 48;
@@ -83,6 +127,8 @@ let pendingExternal: {
   nodes: Record<string, VaultNode>;
   rootIds: string[];
 } | null = null;
+/** path → fingerprint of external body already shelved as .conflict-* */
+const shelvedConflicts = new Map<string, string>();
 
 type StageBuf = {
   nodes: Record<string, VaultNode>;
@@ -94,32 +140,62 @@ type StageBuf = {
 let stageBuf: StageBuf | null = null;
 let stageTimer: ReturnType<typeof setTimeout> | null = null;
 
-function queueDiskWrite(fn: () => Promise<void>) {
-  writeQueue = writeQueue.then(fn).catch((err) => {
-    console.error("[vault] disk write failed", err);
+async function resyncFromDiskAfterError() {
+  const now = Date.now();
+  if (now - lastDiskResyncAt < 1500) return;
+  lastDiskResyncAt = now;
+  try {
+    if (desktopRoot) {
+      const scan = await openDesktopVaultAt(desktopRoot);
+      useVaultStore.getState().applyExternalSnapshot(scan.nodes, scan.rootIds);
+    } else if (fsaRoot) {
+      const scan = await scanVault(fsaRoot);
+      useVaultStore.getState().applyExternalSnapshot(scan.nodes, scan.rootIds);
+    }
+  } catch (err) {
+    console.error("[vault] resync after write failure failed", err);
+  }
+}
+
+function reportDiskError(label: string, err: unknown) {
+  console.error("[vault] disk write failed", err);
+  const msg = err instanceof Error ? err.message : "Unknown disk error";
+  diskWriteError = msg;
+  queueMicrotask(() => {
+    try {
+      useVaultStore.getState().setToast(`Could not ${label}: ${msg}`);
+      void resyncFromDiskAfterError();
+    } catch {
+      /* ignore */
+    }
   });
+}
+
+function queueDiskWrite(fn: () => Promise<void>, label = "save") {
+  writeQueue = writeQueue.then(fn).catch((err) => reportDiskError(label, err));
   return writeQueue;
 }
 
-function flushDiskOps() {
+function flushDiskOps(): Promise<void> {
   if (diskFlushTimer) {
     clearTimeout(diskFlushTimer);
     diskFlushTimer = null;
   }
   const ops = pendingDiskOps;
   pendingDiskOps = [];
-  if (!ops.length) return;
-  void queueDiskWrite(async () => {
+  if (!ops.length) return writeQueue;
+  return queueDiskWrite(async () => {
     for (const op of ops) {
       try {
         await op();
       } catch (err) {
-        console.error("[vault] bulk disk op failed", err);
+        reportDiskError("update vault files", err);
+        throw err;
       }
     }
     if (desktopRoot) desktopWatchAck?.();
     else if (fsaRoot && watcherAck) await watcherAck(fsaRoot);
-  });
+  }, "update vault files");
 }
 
 function enqueueDiskOp(op: PendingDiskOp, immediate = false) {
@@ -202,10 +278,20 @@ function isDiskVault(mode: VaultMode): boolean {
   return mode === "fsa" || mode === "desktop";
 }
 
+/** Load recent vaults; dual-read legacy noteapp-recent-v2 → write nexus-recent-v1 (S5). */
 function loadRecents(): RecentVault[] {
   try {
-    const raw = localStorage.getItem(RECENT_KEY);
+    const raw =
+      localStorage.getItem(RECENT_KEY) ??
+      localStorage.getItem(RECENT_KEY_LEGACY);
     if (!raw) return [];
+    if (!localStorage.getItem(RECENT_KEY) && localStorage.getItem(RECENT_KEY_LEGACY)) {
+      try {
+        localStorage.setItem(RECENT_KEY, raw);
+      } catch {
+        /* ignore */
+      }
+    }
     return JSON.parse(raw) as RecentVault[];
   } catch {
     return [];
@@ -229,6 +315,26 @@ function makeId(path: string): string {
   );
 }
 
+/** Wave 6: expand only ancestors of active note (+ top-level Journal) — not every folder */
+function smartExpandedFolders(
+  nodes: Record<string, VaultNode>,
+  activeId: string | null,
+): string[] {
+  const out = new Set<string>();
+  for (const n of Object.values(nodes)) {
+    if (n.kind === "folder" && n.path === "Journal" && n.parentId == null) {
+      out.add(n.id);
+    }
+  }
+  let cur = activeId ? nodes[activeId] : null;
+  while (cur?.parentId) {
+    out.add(cur.parentId);
+    cur = nodes[cur.parentId] ?? null;
+  }
+  return Array.from(out);
+}
+
+
 function stableId(path: string): string {
   return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
 }
@@ -248,6 +354,28 @@ async function persistNoteIfFsa(
   if (!fsaRoot) return;
   await writeNoteFile(fsaRoot, path, content);
   if (ack && watcherAck) await watcherAck(fsaRoot);
+}
+
+/** Pending in-app delete confirm (window.confirm is blocked in many previews). */
+export type PendingDelete = {
+  id: string;
+  kind: "note" | "folder";
+  label: string;
+};
+
+/** Expand folder ancestors so the note is visible in the tree. */
+function expandPathToNote(
+  nodes: Record<string, VaultNode>,
+  noteId: string | null,
+): string[] {
+  if (!noteId) return [];
+  const out: string[] = [];
+  let cur = nodes[noteId]?.parentId ?? null;
+  while (cur) {
+    out.push(cur);
+    cur = nodes[cur]?.parentId ?? null;
+  }
+  return out;
 }
 
 interface VaultStore {
@@ -270,6 +398,9 @@ interface VaultStore {
   cloudSession: CloudSession | null;
   fsaSupported: boolean;
   connecting: boolean;
+  pendingDelete: PendingDelete | null;
+  recentNoteVisits: string[];
+  folderAccessLost: boolean;
 
   bootstrap: () => Promise<void>;
   openDemoVault: () => void;
@@ -283,6 +414,8 @@ interface VaultStore {
   toggleFolder: (id: string) => void;
   setLeftOpen: (open: boolean) => void;
   setRightOpen: (open: boolean) => void;
+  setLeftWidth: (w: number) => void;
+  setRightWidth: (w: number) => void;
   setEditorMode: (mode: EditorMode) => void;
   setGraphMode: (mode: GraphMode) => void;
   toggleEditorMode: () => void;
@@ -292,21 +425,35 @@ interface VaultStore {
   updateNoteContent: (
     id: string,
     content: string,
-    opts?: { external?: boolean },
+    opts?: { external?: boolean; source?: boolean },
   ) => void;
   renameNode: (id: string, newName: string) => void;
   createNote: (
     parentId: string | null,
     title?: string,
-    opts?: { activate?: boolean },
+    opts?: {
+      activate?: boolean;
+      template?: NoteTemplateId;
+      content?: string;
+      raw?: boolean;
+    },
   ) => string;
   createFolder: (
     parentId: string | null,
     name?: string,
     opts?: { expand?: boolean },
   ) => string;
+  createFromTemplate: (
+    templateId: NoteTemplateId,
+    parentId?: string | null,
+  ) => string;
+  openDailyNote: (opts?: { silent?: boolean }) => string;
+  openDailyNoteForDate: (date: Date, opts?: { silent?: boolean }) => string;
   importBulk: (input: BulkImportInput) => BulkImportResult;
   deleteNode: (id: string) => void;
+  requestDelete: (id: string) => void;
+  confirmPendingDelete: () => void;
+  cancelPendingDelete: () => void;
   moveNode: (id: string, newParentId: string | null) => void;
   setCommandOpen: (open: boolean) => void;
   setToast: (msg: string | null) => void;
@@ -321,7 +468,7 @@ interface VaultStore {
   ) => void;
   getActiveNote: () => VaultNode | null;
   getChildren: (parentId: string | null) => VaultNode[];
-  flushDirty: () => void;
+  flushDirty: () => Promise<void>;
   connectCloud: (provider: CloudProvider) => Promise<void>;
   disconnectCloud: () => void;
   refreshCloudSession: () => void;
@@ -332,6 +479,53 @@ function pushRecent(entry: RecentVault) {
   list.unshift(entry);
   saveRecents(list);
   return list;
+}
+
+/**
+ * Wave H / Habit Home: honor launch note preference after a vault is fully mounted.
+ * Silent so we don't toast on every open.
+ *
+ * launchNoteMode:
+ * - today: always open today's daily
+ * - last: leave restored last note
+ * - smart: open today when no active note, or active is a prior Journal daily
+ *
+ * openTodayOnLaunch remains as legacy mirror (true when mode is today/smart).
+ */
+function applyLaunchNotePreference(): void {
+  try {
+    const prefs = getPrefs();
+    const mode =
+      prefs.launchNoteMode ??
+      (prefs.openTodayOnLaunch ? "today" : "last");
+    if (mode === "last") return;
+    const st = useVaultStore.getState();
+    if (!st.vaultId) return;
+
+    if (mode === "smart") {
+      const activeId = st.activeNoteId;
+      const active = activeId ? st.nodes[activeId] : null;
+      const todayPath = dailyNotePath(new Date());
+      // Already on today — nothing to do
+      if (active?.kind === "note" && active.path === todayPath) return;
+      // Keep non-daily notes (projects, etc.)
+      if (
+        active?.kind === "note" &&
+        active.path &&
+        !/^Journal\/\d{4}-\d{2}-\d{2}\.md$/.test(active.path)
+      ) {
+        return;
+      }
+      // No note, or a prior daily → open today
+      st.openDailyNote({ silent: true });
+      return;
+    }
+
+    // today
+    st.openDailyNote({ silent: true });
+  } catch {
+    /* ignore */
+  }
 }
 
 export const useVaultStore = create<VaultStore>()(
@@ -356,6 +550,9 @@ export const useVaultStore = create<VaultStore>()(
       cloudSession: null,
       fsaSupported: false,
       connecting: false,
+      pendingDelete: null,
+      recentNoteVisits: loadNoteVisits(),
+      folderAccessLost: false,
 
       bootstrap: async () => {
         const recents = loadRecents();
@@ -363,9 +560,11 @@ export const useVaultStore = create<VaultStore>()(
         const cloudSession = loadCloudSession();
         set({
           recentVaults: recents,
+          recentNoteVisits: loadNoteVisits(),
           fsaSupported,
           cloudSession,
           ready: true,
+          folderAccessLost: false,
         });
 
         // Desktop: reopen last Tauri vault path
@@ -402,13 +601,12 @@ export const useVaultStore = create<VaultStore>()(
                 nodes: scan.nodes,
                 rootIds: scan.rootIds,
                 activeNoteId: active,
-                expandedFolders: Object.values(scan.nodes)
-                  .filter((n) => n.kind === "folder")
-                  .map((n) => n.id),
+                expandedFolders: smartExpandedFolders(scan.nodes, active),
                 recentVaults: recents2,
                 connecting: false,
                 dirtyNoteIds: [],
               });
+              applyLaunchNotePreference();
               return;
             } catch {
               desktopRoot = null;
@@ -453,18 +651,27 @@ export const useVaultStore = create<VaultStore>()(
                   nodes: scan.nodes,
                   rootIds: scan.rootIds,
                   activeNoteId: active,
-                  expandedFolders: Object.values(scan.nodes)
-                    .filter((n) => n.kind === "folder")
-                    .map((n) => n.id),
+                  expandedFolders: smartExpandedFolders(scan.nodes, active),
                   recentVaults: recents2,
                   connecting: false,
                   dirtyNoteIds: [],
                 });
+                applyLaunchNotePreference();
                 return;
               } catch {
                 fsaRoot = null;
-                set({ connecting: false });
+                set({
+                  connecting: false,
+                  folderAccessLost: true,
+                  toast: "Folder access lost — click to re-open",
+                });
               }
+            } else {
+              fsaRoot = null;
+              set({
+                folderAccessLost: true,
+                toast: "Folder access lost — click to re-open",
+              });
             }
           }
         }
@@ -477,6 +684,7 @@ export const useVaultStore = create<VaultStore>()(
           state.mode !== "desktop" &&
           Object.keys(state.nodes).length > 0
         ) {
+          applyLaunchNotePreference();
           return;
         }
 
@@ -526,10 +734,12 @@ export const useVaultStore = create<VaultStore>()(
             ...get().settings,
             lastNotePath: welcome?.path ?? null,
             editorMode: getPrefs().defaultEditorMode,
-            graphMode: getPrefs().defaultGraphView,
-            rightOpen: getPrefs().defaultGraphView === "panel",
+            // Wave G6: demo opens with graph panel visible
+            graphMode: "panel",
+            rightOpen: true,
           },
         });
+        applyLaunchNotePreference();
       },
 
       openLocalVault: (name, seed) => {
@@ -556,9 +766,7 @@ export const useVaultStore = create<VaultStore>()(
           nodes: data.nodes,
           rootIds: data.rootIds,
           activeNoteId: first?.id ?? null,
-          expandedFolders: Object.values(data.nodes)
-            .filter((n) => n.kind === "folder")
-            .map((n) => n.id),
+          expandedFolders: smartExpandedFolders(data.nodes, first?.id ?? null),
           dirtyNoteIds: [],
           recentVaults: recents,
           settings: {
@@ -569,10 +777,11 @@ export const useVaultStore = create<VaultStore>()(
             lastNotePath: first?.path ?? null,
           },
         });
+        applyLaunchNotePreference();
       },
 
       openFolderAsVault: async () => {
-        set({ connecting: true });
+        set({ connecting: true, folderAccessLost: false });
         try {
           const desktop = (await confirmDesktopShell()) || isDesktopShell();
           if (desktop) {
@@ -603,9 +812,7 @@ export const useVaultStore = create<VaultStore>()(
               nodes: scan.nodes,
               rootIds: scan.rootIds,
               activeNoteId: first?.id ?? null,
-              expandedFolders: Object.values(scan.nodes)
-                .filter((n) => n.kind === "folder")
-                .map((n) => n.id),
+              expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
               dirtyNoteIds: [],
               recentVaults: recents,
               connecting: false,
@@ -618,6 +825,7 @@ export const useVaultStore = create<VaultStore>()(
                 rightOpen: getPrefs().defaultGraphView === "panel",
               },
             });
+            applyLaunchNotePreference();
             return;
           }
           const handle = await pickVaultFolder();
@@ -654,9 +862,7 @@ export const useVaultStore = create<VaultStore>()(
             nodes: scan.nodes,
             rootIds: scan.rootIds,
             activeNoteId: first?.id ?? null,
-            expandedFolders: Object.values(scan.nodes)
-              .filter((n) => n.kind === "folder")
-              .map((n) => n.id),
+            expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
             dirtyNoteIds: [],
             recentVaults: recents,
             connecting: false,
@@ -669,6 +875,7 @@ export const useVaultStore = create<VaultStore>()(
               rightOpen: getPrefs().defaultGraphView === "panel",
             },
           });
+          applyLaunchNotePreference();
         } catch (e) {
           set({
             connecting: false,
@@ -730,9 +937,7 @@ export const useVaultStore = create<VaultStore>()(
               nodes: scan.nodes,
               rootIds: scan.rootIds,
               activeNoteId: first?.id ?? null,
-              expandedFolders: Object.values(scan.nodes)
-                .filter((n) => n.kind === "folder")
-                .map((n) => n.id),
+              expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
               dirtyNoteIds: [],
               recentVaults: recents,
               connecting: false,
@@ -745,6 +950,7 @@ export const useVaultStore = create<VaultStore>()(
                 rightOpen: getPrefs().defaultGraphView === "panel",
               },
             });
+            applyLaunchNotePreference();
             return;
           }
 
@@ -800,9 +1006,7 @@ export const useVaultStore = create<VaultStore>()(
             nodes: scan.nodes,
             rootIds: scan.rootIds,
             activeNoteId: first?.id ?? null,
-            expandedFolders: Object.values(scan.nodes)
-              .filter((n) => n.kind === "folder")
-              .map((n) => n.id),
+            expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
             dirtyNoteIds: [],
             recentVaults: recents,
             connecting: false,
@@ -815,6 +1019,7 @@ export const useVaultStore = create<VaultStore>()(
               rightOpen: getPrefs().defaultGraphView === "panel",
             },
           });
+          applyLaunchNotePreference();
         } catch (e) {
           set({
             connecting: false,
@@ -888,14 +1093,13 @@ export const useVaultStore = create<VaultStore>()(
               nodes: scan.nodes,
               rootIds: scan.rootIds,
               activeNoteId: first?.id ?? null,
-              expandedFolders: Object.values(scan.nodes)
-                .filter((n) => n.kind === "folder")
-                .map((n) => n.id),
+              expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
               dirtyNoteIds: [],
               recentVaults: recents,
               connecting: false,
               toast: `Reopened vault: ${name}`,
             });
+            applyLaunchNotePreference();
           } catch (e) {
             set({
               connecting: false,
@@ -938,14 +1142,13 @@ export const useVaultStore = create<VaultStore>()(
             nodes: scan.nodes,
             rootIds: scan.rootIds,
             activeNoteId: first?.id ?? null,
-            expandedFolders: Object.values(scan.nodes)
-              .filter((n) => n.kind === "folder")
-              .map((n) => n.id),
+            expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
             dirtyNoteIds: [],
             recentVaults: recents,
             connecting: false,
             toast: `Reopened vault: ${handle.name}`,
           });
+          applyLaunchNotePreference();
         } catch (e) {
           set({
             connecting: false,
@@ -971,6 +1174,7 @@ export const useVaultStore = create<VaultStore>()(
           dirtyNoteIds: [],
           lastExternalSync: null,
           expandedFolders: [],
+          pendingDelete: null,
           settings: {
             ...get().settings,
             graphMode: "panel",
@@ -985,8 +1189,22 @@ export const useVaultStore = create<VaultStore>()(
         flushActiveEditors();
         if (id === get().activeNoteId) return;
         const note = id ? get().nodes[id] : null;
+        const pathExpand = expandPathToNote(get().nodes, id);
+        const expanded = new Set([...get().expandedFolders, ...pathExpand]);
+        let recentNoteVisits = get().recentNoteVisits;
+        if (typeof id === "string" && note?.kind === "note") {
+          recentNoteVisits = pushNoteVisit(id, get().recentNoteVisits);
+          trackVisit(id);
+          pushNav(id);
+          const vaultId = get().vaultId;
+          if (vaultId && note.path) {
+            recordNoteVisit(vaultId, id, note.path);
+          }
+        }
         set({
           activeNoteId: id,
+          expandedFolders: Array.from(expanded),
+          recentNoteVisits,
           settings: {
             ...get().settings,
             lastNotePath: note?.path ?? get().settings.lastNotePath,
@@ -1007,6 +1225,20 @@ export const useVaultStore = create<VaultStore>()(
         set({ settings: { ...get().settings, leftOpen: open } }),
       setRightOpen: (open) =>
         set({ settings: { ...get().settings, rightOpen: open } }),
+      setLeftWidth: (w) =>
+        set({
+          settings: {
+            ...get().settings,
+            leftWidth: Math.min(480, Math.max(200, Math.round(w))),
+          },
+        }),
+      setRightWidth: (w) =>
+        set({
+          settings: {
+            ...get().settings,
+            rightWidth: Math.min(520, Math.max(260, Math.round(w))),
+          },
+        }),
       setEditorMode: (mode) => {
         flushActiveEditors();
         set({ settings: { ...get().settings, editorMode: mode } });
@@ -1048,13 +1280,19 @@ export const useVaultStore = create<VaultStore>()(
         });
       },
 
+      // Wave S1: content-only patch — spreads nodes[id] only; never rebuilds rootIds
       updateNoteContent: (id, content, opts) => {
         flushStageNow(set as (p: Record<string, unknown>) => void);
 
         const node = get().nodes[id];
         if (!node || node.kind !== "note") return;
         const prev = node.content ?? "";
-        const next = opts?.external ? content : preferCleanWrite(prev, content);
+        // Wave 1: Source intentional edits skip fingerprint purity gate
+        const next = opts?.external
+          ? content
+          : opts?.source
+            ? content
+            : preferCleanWrite(prev, content);
         if (prev === next) return;
         set({
           nodes: {
@@ -1189,7 +1427,17 @@ export const useVaultStore = create<VaultStore>()(
         }
         // Always unique IDs — path-based ids collide after rename + create
         const id = makeId(path);
-        const content = `# ${title.replace(/\.md$/i, "")}\n\n`;
+        const titleClean = title.replace(/\.md$/i, "");
+        let content: string;
+        if (opts?.raw && typeof opts.content === "string") {
+          content = opts.content;
+        } else if (typeof opts?.content === "string") {
+          content = opts.content;
+        } else if (opts?.template) {
+          content = buildTemplateContent(opts.template, titleClean);
+        } else {
+          content = `# ${titleClean}\n\n`;
+        }
         stage.nodes[id] = {
           id,
           path,
@@ -1205,7 +1453,10 @@ export const useVaultStore = create<VaultStore>()(
         if (parentId && !stage.expandedFolders.includes(parentId)) {
           stage.expandedFolders = [...stage.expandedFolders, parentId];
         }
-        if (activate) stage.activeNoteId = id;
+        if (activate) {
+          stage.activeNoteId = id;
+          pushNoteVisit(id);
+        }
         if (!stage.dirtyNoteIds.includes(id)) {
           stage.dirtyNoteIds = [...stage.dirtyNoteIds, id];
         }
@@ -1215,6 +1466,15 @@ export const useVaultStore = create<VaultStore>()(
           const body = content;
           enqueueDiskOp(async () => {
             await persistNoteIfFsa(pth, body, { ack: false });
+          });
+        }
+        // Wave 3: skip pulse when non-activating (bulk-style creates)
+        if (activate) {
+          pushPulse({
+            kind: "create",
+            path,
+            title: titleClean,
+            message: `Created ${path}`,
           });
         }
         return id;
@@ -1261,6 +1521,109 @@ export const useVaultStore = create<VaultStore>()(
           enqueueDiskOp(async () => {
             await createFolderOnDisk(root, pth);
           });
+        }
+        return id;
+      },
+
+      createFromTemplate: (templateId, parentId = null) => {
+        if (templateId === "daily") {
+          return get().openDailyNote();
+        }
+        const tpl = getTemplate(templateId);
+        const date = new Date();
+        let parent = parentId ?? null;
+        // Ensure preferred folder exists when no parent given
+        if (parent == null && tpl.preferredFolder) {
+          const folderPath = tpl.preferredFolder;
+          const existing = Object.values(get().nodes).find(
+            (n) => n.kind === "folder" && n.path === folderPath,
+          );
+          if (existing) {
+            parent = existing.id;
+          } else {
+            // Create nested path parts
+            let acc = "";
+            let curParent: string | null = null;
+            for (const part of folderPath.split("/").filter(Boolean)) {
+              acc = acc ? `${acc}/${part}` : part;
+              const hit = Object.values(get().nodes).find(
+                (n) => n.kind === "folder" && n.path === acc,
+              );
+              if (hit) {
+                curParent = hit.id;
+              } else {
+                curParent = get().createFolder(curParent, part, { expand: true });
+              }
+            }
+            parent = curParent;
+          }
+        }
+        const title = tpl.defaultTitle;
+        const content = buildTemplateContent(templateId, title, date);
+        return get().createNote(parent, title, { content, raw: true });
+      },
+
+      openDailyNote: (opts) => {
+        return get().openDailyNoteForDate(new Date(), opts);
+      },
+
+      openDailyNoteForDate: (date, opts) => {
+        const silent = opts?.silent === true;
+        const target = new Date(
+          date.getFullYear(),
+          date.getMonth(),
+          date.getDate(),
+        );
+        const path = dailyNotePath(target);
+        const existing = Object.values(get().nodes).find(
+          (n) => n.kind === "note" && n.path === path,
+        );
+        const today = new Date();
+        const isToday =
+          target.getFullYear() === today.getFullYear() &&
+          target.getMonth() === today.getMonth() &&
+          target.getDate() === today.getDate();
+        if (existing) {
+          get().setActiveNote(existing.id);
+          if (!silent) {
+            get().setToast(
+              isToday
+                ? "Opened today's daily note"
+                : `Opened daily note ${formatDateISO(target)}`,
+            );
+          }
+          return existing.id;
+        }
+        // Ensure Journal folder — use returned id (stage may not be flushed yet)
+        const existingJournal = Object.values(get().nodes).find(
+          (n) => n.kind === "folder" && n.path === "Journal",
+        );
+        let journalId: string | null = existingJournal?.id ?? null;
+        if (!journalId) {
+          journalId = get().createFolder(null, "Journal", { expand: true });
+        }
+        // H4: carry open loops from yesterday when creating today's daily
+        let yesterdayMarkdown: string | null = null;
+        if (isToday) {
+          const y = new Date(target);
+          y.setDate(y.getDate() - 1);
+          const yPath = dailyNotePath(y);
+          const yNote = Object.values(get().nodes).find(
+            (n) => n.kind === "note" && n.path === yPath,
+          );
+          yesterdayMarkdown = yNote?.content ?? null;
+        }
+        const content = buildDailyNoteContent(target, yesterdayMarkdown);
+        const id = get().createNote(journalId, dailyNoteTitle(target), {
+          content,
+          raw: true,
+        });
+        if (!silent) {
+          get().setToast(
+            isToday
+              ? "Created today's daily note"
+              : `Created daily note ${formatDateISO(target)}`,
+          );
         }
         return id;
       },
@@ -1430,11 +1793,6 @@ export const useVaultStore = create<VaultStore>()(
         const nodes = { ...get().nodes };
         const target = nodes[id];
         if (!target) return;
-        if (getPrefs().confirmDelete) {
-          const label = target.kind === "note" ? noteTitle(target) : target.name;
-          const ok = window.confirm(`Delete "${label}"? This cannot be undone.`);
-          if (!ok) return;
-        }
         const toDelete = new Set<string>();
         const walk = (nid: string) => {
           toDelete.add(nid);
@@ -1444,6 +1802,12 @@ export const useVaultStore = create<VaultStore>()(
         };
         walk(id);
         for (const d of toDelete) delete nodes[d];
+        pushPulse({
+          kind: "delete",
+          path: target.path,
+          title: target.kind === "note" ? noteTitle(target) : target.name,
+          message: `Deleted ${target.path}`,
+        });
         set({
           nodes,
           rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
@@ -1466,6 +1830,31 @@ export const useVaultStore = create<VaultStore>()(
           });
         }
       },
+
+      requestDelete: (id) => {
+        const node = get().nodes[id];
+        if (!node) return;
+        if (!getPrefs().confirmDelete) {
+          get().deleteNode(id);
+          return;
+        }
+        set({
+          pendingDelete: {
+            id,
+            kind: node.kind === "folder" ? "folder" : "note",
+            label: node.kind === "note" ? noteTitle(node) : node.name,
+          },
+        });
+      },
+
+      confirmPendingDelete: () => {
+        const p = get().pendingDelete;
+        if (!p) return;
+        set({ pendingDelete: null });
+        get().deleteNode(p.id);
+      },
+
+      cancelPendingDelete: () => set({ pendingDelete: null }),
 
       moveNode: (id, newParentId) => {
         flushStageNow(set as (p: Record<string, unknown>) => void);
@@ -1596,6 +1985,12 @@ export const useVaultStore = create<VaultStore>()(
           if (isDiskVault(mode)) {
             void queueDiskWrite(() => persistNoteIfFsa(path, content));
           }
+          pushPulse({
+            kind: "hermes",
+            path,
+            title: "Hermes Pulse",
+            message: "Hermes updated Systems/Hermes Pulse.md",
+          });
           set({
             lastExternalSync: Date.now(),
             hermesTick: get().hermesTick + 1,
@@ -1632,6 +2027,12 @@ export const useVaultStore = create<VaultStore>()(
           hermesTick: get().hermesTick + 1,
           toast: "Hermes created Systems/Hermes Pulse.md",
           activeNoteId: id,
+        });
+        pushPulse({
+          kind: "hermes",
+          path,
+          title: "Hermes Pulse",
+          message: "Hermes created Systems/Hermes Pulse.md",
         });
         if (isDiskVault(mode)) {
           void queueDiskWrite(() => persistNoteIfFsa(path, content));
@@ -1677,40 +2078,201 @@ export const useVaultStore = create<VaultStore>()(
           nextActive =
             Object.values(nodes).find((n) => n.path === activePath)?.id ?? null;
         }
-        // Preserve in-progress local edits on the active note when disk content is identical semantically
-        if (
-          nextActive &&
-          prev[nextActive]?.content != null &&
-          nodes[nextActive] &&
-          get().dirtyNoteIds.includes(nextActive)
-        ) {
-          const disk = nodes[nextActive];
-          const local = prev[nextActive];
-          // If user has dirty local edits, keep local content until save lands
+
+        // Path → new id for remapping UI sets across random create IDs
+        const pathToNewId = new Map<string, string>();
+        for (const n of Object.values(nodes)) {
+          pathToNewId.set(n.path, n.id);
+        }
+
+        // Preserve dirty local edits; on real diverge shelf disk as .conflict-*
+        const dirty = new Set(get().dirtyNoteIds);
+        const existingPaths = new Set(Object.values(nodes).map((n) => n.path));
+        let conflictToast: string | null = null;
+        let nextRootIds = rootIds;
+
+        for (const dirtyId of dirty) {
+          const local = prev[dirtyId];
+          if (!local || local.kind !== "note") continue;
+          const diskId =
+            nodes[dirtyId]?.kind === "note"
+              ? dirtyId
+              : Object.values(nodes).find(
+                  (n) => n.kind === "note" && n.path === local.path,
+                )?.id;
+          // Wave 1: external delete of dirty note — restore local
+          if (!diskId || !nodes[diskId]) {
+            const restoredId = makeId(local.path);
+            const parentPathStr = parentPath(local.path);
+            let parentId: string | null = null;
+            if (parentPathStr) {
+              parentId =
+                Object.values(nodes).find(
+                  (n) => n.kind === "folder" && n.path === parentPathStr,
+                )?.id ?? null;
+            }
+            nodes = {
+              ...nodes,
+              [restoredId]: {
+                ...local,
+                id: restoredId,
+                parentId,
+                mtime: Date.now(),
+                content: local.content ?? "",
+              },
+            };
+            pathToNewId.set(local.path, restoredId);
+            if (parentId == null && !nextRootIds.includes(restoredId)) {
+              nextRootIds = [...nextRootIds, restoredId];
+            }
+            existingPaths.add(local.path);
+            if (isDiskVault(get().mode)) {
+              const pth = local.path;
+              const body = local.content ?? "";
+              enqueueDiskOp(async () => {
+                await persistNoteIfFsa(pth, body, { ack: false });
+              });
+            }
+            conflictToast =
+              conflictToast ??
+              `Restored unsaved note ${pathToName(local.path)} (removed externally)`;
+            continue;
+          }
+          const disk = nodes[diskId];
+          const localBody = local.content ?? "";
+          const diskBody = disk.content ?? "";
+          if (
+            localBody === diskBody ||
+            isOnlySerializationNoise(localBody, diskBody)
+          ) {
+            nodes = {
+              ...nodes,
+              [diskId]: { ...disk, content: localBody, mtime: local.mtime },
+            };
+            continue;
+          }
+
+          // Real diverge: write disk body to sibling, keep local on primary
+          const diskFp = markdownFingerprint(diskBody);
+          if (shelvedConflicts.get(local.path) === diskFp) {
+            nodes = {
+              ...nodes,
+              [diskId]: { ...disk, content: localBody, mtime: local.mtime },
+            };
+            continue;
+          }
+          shelvedConflicts.set(local.path, diskFp);
+
+          const stamp = new Date()
+            .toISOString()
+            .replace(/[:.]/g, "-")
+            .slice(0, 19);
+          const base = local.path.replace(/\.md$/i, "");
+          let sibling = `${base}.conflict-${stamp}.md`;
+          let n = 1;
+          while (existingPaths.has(sibling)) {
+            sibling = `${base}.conflict-${stamp}-${n}.md`;
+            n++;
+          }
+          existingPaths.add(sibling);
+
           nodes = {
             ...nodes,
-            [nextActive]: { ...disk, content: local.content, mtime: local.mtime },
+            [diskId]: { ...disk, content: localBody, mtime: local.mtime },
           };
+
+          const siblingId = makeId(sibling);
+          nodes = {
+            ...nodes,
+            [siblingId]: {
+              id: siblingId,
+              path: sibling,
+              name: pathToName(sibling),
+              kind: "note",
+              parentId: disk.parentId,
+              mtime: Date.now(),
+              content: diskBody,
+            },
+          };
+          pathToNewId.set(sibling, siblingId);
+          if (disk.parentId == null && !nextRootIds.includes(siblingId)) {
+            nextRootIds = [...nextRootIds, siblingId];
+          }
+
+          if (isDiskVault(get().mode)) {
+            const siblingPath = sibling;
+            const body = diskBody;
+            enqueueDiskOp(async () => {
+              await persistNoteIfFsa(siblingPath, body, { ack: false });
+            });
+          }
+
+          conflictToast = `Conflict — kept your edits; disk copy saved as ${pathToName(sibling)}`;
         }
+
+        // T5: remap expandedFolders + dirtyNoteIds by path (old path → new id)
+        const remappedExpanded: string[] = [];
+        for (const id of get().expandedFolders) {
+          const p = prev[id]?.path;
+          if (!p) continue;
+          const nid = pathToNewId.get(p);
+          if (nid && nodes[nid]) remappedExpanded.push(nid);
+        }
+        const remappedDirty: string[] = [];
+        for (const id of get().dirtyNoteIds) {
+          const p = prev[id]?.path;
+          if (!p) continue;
+          const nid = pathToNewId.get(p);
+          if (nid && nodes[nid]?.kind === "note") remappedDirty.push(nid);
+        }
+        for (const path of [...shelvedConflicts.keys()]) {
+          const still = remappedDirty.some((id) => nodes[id]?.path === path);
+          if (!still) shelvedConflicts.delete(path);
+        }
+
         const now = Date.now();
         const shouldToast = now - lastExternalToastAt > 2500;
-        if (shouldToast) lastExternalToastAt = now;
+        if (shouldToast || conflictToast) lastExternalToastAt = now;
         set({
           nodes,
-          rootIds,
+          rootIds: nextRootIds,
           lastExternalSync: now,
           activeNoteId: nextActive,
-          toast: shouldToast ? "Vault updated from disk" : get().toast,
+          dirtyNoteIds: remappedDirty,
+          toast: conflictToast
+            ? conflictToast
+            : shouldToast
+              ? "Vault updated from disk"
+              : get().toast,
           expandedFolders: [
             ...new Set([
-              ...get().expandedFolders.filter((id) => nodes[id]),
-              ...Object.values(nodes)
-                .filter((n) => n.kind === "folder")
-                .map((n) => n.id)
-                .filter((id) => get().expandedFolders.includes(id)),
+              ...remappedExpanded,
+              ...expandPathToNote(nodes, nextActive),
             ]),
           ],
         });
+        // Wave 3 pulse: external sync / conflict paths
+        if (conflictToast) {
+          const activeP =
+            (nextActive && nodes[nextActive]?.path) ||
+            activePath ||
+            "vault";
+          pushPulse({
+            kind: "conflict",
+            path: activeP,
+            title: pathToName(activeP).replace(/\.md$/i, ""),
+            message: conflictToast,
+          });
+        } else if (shouldToast) {
+          pushPulse({
+            kind: "external",
+            path: activePath || "vault",
+            title: activePath
+              ? pathToName(activePath).replace(/\.md$/i, "")
+              : "Vault",
+            message: "Vault updated from disk",
+          });
+        }
       },
 
       getActiveNote: () => {
@@ -1731,8 +2293,22 @@ export const useVaultStore = create<VaultStore>()(
 
       flushDirty: () => {
         flushActiveEditors();
-        set({ dirtyNoteIds: [] });
-        get().setToast(isDiskVault(get().mode) ? "Saved to disk" : "Saved");
+        diskWriteError = null;
+        // Drain batched create/import ops into writeQueue, then wait for all disk ops
+        flushDiskOps();
+        const disk = isDiskVault(get().mode);
+        return writeQueue.then(() => {
+          if (diskWriteError) {
+            // reportDiskError already toasted; keep dirty so user can retry
+            return;
+          }
+          for (const id of get().dirtyNoteIds) {
+            const p = get().nodes[id]?.path;
+            if (p) shelvedConflicts.delete(p);
+          }
+          set({ dirtyNoteIds: [] });
+          get().setToast(disk ? "Saved to disk" : "Saved");
+        });
       },
 
       connectCloud: async (provider) => {

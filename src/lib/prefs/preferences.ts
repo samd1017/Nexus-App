@@ -13,6 +13,8 @@ export type Density = "comfortable" | "compact";
 export type PhysicsIntensity = "calm" | "standard" | "energetic";
 export type DefaultEditorMode = "visual" | "source";
 export type DefaultGraphView = "panel" | "hidden";
+/** Which note to open when a vault mounts */
+export type LaunchNoteMode = "today" | "last" | "smart";
 
 export interface NexusPrefs {
   accentPreset: AccentPreset;
@@ -26,6 +28,19 @@ export interface NexusPrefs {
   physicsIntensity: PhysicsIntensity;
   confirmDelete: boolean;
   openLastVault: boolean;
+  /** Open today's daily note when a vault opens (legacy; prefer launchNoteMode) */
+  openTodayOnLaunch: boolean;
+  /**
+   * Launch note preference:
+   * - today: always open today's Journal page
+   * - last: keep restored last note
+   * - smart: open today when no active note or last was a prior daily
+   */
+  launchNoteMode: LaunchNoteMode;
+  /** Distraction-free: hide side panels */
+  focusMode: boolean;
+  /** Reduce UI motion (animations / transitions) */
+  reducedMotion: boolean;
 }
 
 export const ACCENT_PRESETS: Record<
@@ -39,6 +54,17 @@ export const ACCENT_PRESETS: Record<
   rose: { label: "Rose", hex: "#FF453A" },
 };
 
+function osPrefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
 export const DEFAULT_PREFS: NexusPrefs = {
   accentPreset: "cyan",
   accentCustom: "#00C8FF",
@@ -51,20 +77,30 @@ export const DEFAULT_PREFS: NexusPrefs = {
   physicsIntensity: "standard",
   confirmDelete: true,
   openLastVault: true,
+  openTodayOnLaunch: true,
+  launchNoteMode: "today",
+  focusMode: false,
+  // Seeded from OS on first load when not yet persisted
+  reducedMotion: false,
 };
 
 export const NEXUS_VERSION = "1.0.0";
 
 export const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: "⌘ K", action: "Search / command palette" },
+  { keys: "⌘ O", action: "Open vault folder" },
   { keys: "⌘ ,", action: "Open Settings" },
+  { keys: "⌘ .", action: "Focus / zen mode" },
   { keys: "⌘ E", action: "Toggle Visual / Source" },
   { keys: "⌘ G", action: "Toggle graph fullscreen" },
   { keys: "⌘ N", action: "New note" },
+  { keys: "⌘ D", action: "Today's daily note" },
   { keys: "⌘ S", action: "Save (flush)" },
   { keys: "⌘ \\", action: "Toggle left sidebar" },
   { keys: "⌘ ⌥ \\", action: "Toggle right panel" },
+  { keys: "⌘ [ / ]", action: "Note history back / forward" },
   { keys: "Esc", action: "Close overlay / exit graph" },
+  { keys: "⌘ ⌫", action: "Delete current note" },
 ];
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -122,6 +158,8 @@ export function applyPrefsToDom(prefs: NexusPrefs): void {
     prefs.density === "compact" ? "3px" : "5px",
   );
   root.dataset.density = prefs.density;
+  root.dataset.reducedMotion = prefs.reducedMotion ? "true" : "false";
+  root.dataset.focusMode = prefs.focusMode ? "true" : "false";
 
   // Keep Tailwind theme token in sync where used
   root.style.setProperty("--color-accent", hex.toLowerCase());
@@ -135,51 +173,7 @@ interface PrefsStore extends NexusPrefs {
   resetPrefs: () => void;
 }
 
-export const usePrefsStore = create<PrefsStore>()(
-  persist(
-    (set, get) => ({
-      ...DEFAULT_PREFS,
-      settingsOpen: false,
-
-      setSettingsOpen: (open) => set({ settingsOpen: open }),
-      toggleSettings: () => set({ settingsOpen: !get().settingsOpen }),
-
-      updatePrefs: (patch) => {
-        set(patch);
-        const next = { ...get(), ...patch };
-        applyPrefsToDom(next);
-      },
-
-      resetPrefs: () => {
-        set({ ...DEFAULT_PREFS });
-        applyPrefsToDom(DEFAULT_PREFS);
-      },
-    }),
-    {
-      name: "nexus-prefs-v1",
-      partialize: (s) => ({
-        accentPreset: s.accentPreset,
-        accentCustom: s.accentCustom,
-        density: s.density,
-        graphParticles: s.graphParticles,
-        defaultEditorMode: s.defaultEditorMode,
-        editorFontSize: s.editorFontSize,
-        spellCheck: s.spellCheck,
-        defaultGraphView: s.defaultGraphView,
-        physicsIntensity: s.physicsIntensity,
-        confirmDelete: s.confirmDelete,
-        openLastVault: s.openLastVault,
-      }),
-      onRehydrateStorage: () => (state) => {
-        if (state) applyPrefsToDom(state);
-      },
-    },
-  ),
-);
-
-/** Snapshot helpers for non-React code */
-export function getPrefs(): NexusPrefs {
-  const s = usePrefsStore.getState();
+function snapshotPrefs(s: NexusPrefs): NexusPrefs {
   return {
     accentPreset: s.accentPreset,
     accentCustom: s.accentCustom,
@@ -192,5 +186,87 @@ export function getPrefs(): NexusPrefs {
     physicsIntensity: s.physicsIntensity,
     confirmDelete: s.confirmDelete,
     openLastVault: s.openLastVault,
+    openTodayOnLaunch: s.openTodayOnLaunch,
+    launchNoteMode: s.launchNoteMode,
+    focusMode: s.focusMode,
+    reducedMotion: s.reducedMotion,
   };
+}
+
+function normalizeLaunchNoteMode(
+  raw: unknown,
+  openTodayOnLaunch: boolean,
+): LaunchNoteMode {
+  if (raw === "today" || raw === "last" || raw === "smart") return raw;
+  // Migrate legacy boolean when launchNoteMode was never set
+  return openTodayOnLaunch ? "today" : "last";
+}
+
+export const usePrefsStore = create<PrefsStore>()(
+  persist(
+    (set, get) => ({
+      ...DEFAULT_PREFS,
+      settingsOpen: false,
+
+      setSettingsOpen: (open) => set({ settingsOpen: open }),
+      toggleSettings: () => set({ settingsOpen: !get().settingsOpen }),
+
+      updatePrefs: (patch) => {
+        // Keep openTodayOnLaunch in sync when launchNoteMode changes
+        const nextPatch: Partial<NexusPrefs> = { ...patch };
+        if (patch.launchNoteMode != null && patch.openTodayOnLaunch == null) {
+          nextPatch.openTodayOnLaunch = patch.launchNoteMode === "today" || patch.launchNoteMode === "smart";
+        }
+        if (patch.openTodayOnLaunch != null && patch.launchNoteMode == null) {
+          nextPatch.launchNoteMode = patch.openTodayOnLaunch ? "today" : "last";
+        }
+        set(nextPatch);
+        const next = { ...get(), ...nextPatch };
+        applyPrefsToDom(next);
+      },
+
+      resetPrefs: () => {
+        set({ ...DEFAULT_PREFS });
+        applyPrefsToDom(DEFAULT_PREFS);
+      },
+    }),
+    {
+      name: "nexus-prefs-v1",
+      partialize: (s) => snapshotPrefs(s),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<NexusPrefs> & Record<string, unknown>;
+        // Seed reducedMotion from OS on first load if never persisted
+        const hasReduced =
+          persisted != null &&
+          typeof persisted === "object" &&
+          "reducedMotion" in (persisted as object);
+        const reducedMotion = hasReduced
+          ? Boolean((p as NexusPrefs).reducedMotion)
+          : osPrefersReducedMotion();
+        const openTodayOnLaunch =
+          p.openTodayOnLaunch != null
+            ? Boolean(p.openTodayOnLaunch)
+            : DEFAULT_PREFS.openTodayOnLaunch;
+        const launchNoteMode = normalizeLaunchNoteMode(
+          p.launchNoteMode,
+          openTodayOnLaunch,
+        );
+        return {
+          ...current,
+          ...p,
+          reducedMotion,
+          openTodayOnLaunch,
+          launchNoteMode,
+        };
+      },
+      onRehydrateStorage: () => (state) => {
+        if (state) applyPrefsToDom(state);
+      },
+    },
+  ),
+);
+
+/** Snapshot helpers for non-React code */
+export function getPrefs(): NexusPrefs {
+  return snapshotPrefs(usePrefsStore.getState());
 }

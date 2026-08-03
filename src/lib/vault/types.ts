@@ -69,6 +69,8 @@ export interface Backlink {
   fromPath: string;
   fromTitle: string;
   context: string;
+  /** Wave 4: total mentions from this source note (when > 1) */
+  count?: number;
 }
 
 export interface GraphNode {
@@ -79,6 +81,10 @@ export interface GraphNode {
   preview: string;
   /** Parent folder path ("" = vault root) — used for soft spatial clustering */
   folder: string;
+  /** Unresolved wikilink target (ghost node) */
+  ghost?: boolean;
+  /** Original wikilink text when ghost — used to create the note on click */
+  ghostTarget?: string;
 }
 
 export interface GraphEdge {

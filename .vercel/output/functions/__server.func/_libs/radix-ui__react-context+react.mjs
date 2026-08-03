@@ -1,5 +1,5 @@
-import { r as __toESM, t as __commonJSMin } from "../_runtime.mjs";
-import { r as require_react } from "./@radix-ui/react-compose-refs+[...].mjs";
+import { i as __toESM, t as __commonJSMin } from "../_runtime.mjs";
+import { u as require_react } from "./@floating-ui/react-dom+[...].mjs";
 //#region node_modules/react/cjs/react-jsx-runtime.production.js
 /**
 * @license React

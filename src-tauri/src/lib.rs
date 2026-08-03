@@ -35,7 +35,7 @@ pub fn run() {
                 "toggle_source",
                 "Toggle Visual / Source",
                 true,
-                Some("CmdOrCtrl+\\"),
+                Some("CmdOrCtrl+E"),
             )?;
 
             // macOS app menu

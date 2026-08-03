@@ -190,7 +190,11 @@ async function walkNotes(
       const rel = relDir ? pathJoin(relDir, name) : name;
       onDir(rel, name, relDir);
       await walkNotes(root, rel, onFile, onDir);
-    } else if (entry.isFile && name.toLowerCase().endsWith(".md")) {
+    } else if (
+      // Wave S3: only .md notes loaded; non-md files skipped during vault scans
+      entry.isFile &&
+      name.toLowerCase().endsWith(".md")
+    ) {
       const rel = relDir ? pathJoin(relDir, name) : name;
       const abs = joinRoot(root, rel);
       try {
@@ -320,20 +324,16 @@ export async function renameDesktopPath(
   kind: "folder" | "note",
   content?: string,
 ): Promise<void> {
-  const { rename, readTextFile } = await import("@tauri-apps/plugin-fs");
-  if (kind === "note") {
-    let text = content;
-    if (text == null) {
-      text = await readTextFile(joinRoot(root, oldRel));
-    }
-    await writeDesktopNote(root, newRel, text);
-    await deleteDesktopPath(root, oldRel, "note");
-    return;
-  }
+  const { rename, writeTextFile } = await import("@tauri-apps/plugin-fs");
+  // Ensure destination parent exists, then atomic rename (notes + folders).
   const parentParts = newRel.replace(/\\/g, "/").split("/").filter(Boolean);
   parentParts.pop();
   if (parentParts.length) {
     await createDesktopFolder(root, parentParts.join("/"));
+  }
+  // If note content was updated (e.g. title heading sync), write to old path first
+  if (kind === "note" && content != null) {
+    await writeTextFile(joinRoot(root, oldRel), content);
   }
   await rename(joinRoot(root, oldRel), joinRoot(root, newRel));
 }
@@ -343,6 +343,131 @@ export async function openDesktopVaultAt(root: string): Promise<VaultScan> {
   return scanDesktopVault(root);
 }
 
+/**
+ * Incremental desktop rescan — only re-read note bodies whose mtime:size signature changed.
+ * Falls back to full scan on structural churn (many adds/removes).
+ */
+export async function incrementalScanDesktopVault(
+  root: string,
+  prev: VaultScan,
+): Promise<{ scan: VaultScan; changedPaths: string[] }> {
+  const { readTextFile, stat } = await import("@tauri-apps/plugin-fs");
+  const nextSigs = await scanDesktopSignatures(root);
+  const changedPaths: string[] = [];
+  const prevByPath = new Map(
+    Object.values(prev.nodes)
+      .filter((n) => n.kind === "note")
+      .map((n) => [n.path, n] as const),
+  );
+
+  const allPaths = new Set([
+    ...Object.keys(prev.signatures),
+    ...Object.keys(nextSigs),
+  ]);
+  for (const p of allPaths) {
+    if (prev.signatures[p] !== nextSigs[p]) changedPaths.push(p);
+  }
+
+  const structural =
+    Object.keys(nextSigs).length === 0 ||
+    changedPaths.length > 40 ||
+    Math.abs(Object.keys(nextSigs).length - Object.keys(prev.signatures).length) >
+      15;
+
+  if (structural) {
+    const scan = await scanDesktopVault(root);
+    return { scan, changedPaths: Object.keys(scan.signatures) };
+  }
+
+  const notePaths = Object.keys(nextSigs);
+  const folderPaths = new Set<string>();
+  for (const p of notePaths) {
+    const parts = p.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      folderPaths.add(parts.slice(0, i).join("/"));
+    }
+  }
+
+  const nodes: Record<string, VaultNode> = {};
+  const rootIds: string[] = [];
+  const folderIds = new Map<string, string>();
+
+  const sortedFolders = [...folderPaths].sort(
+    (a, b) => a.split("/").length - b.split("/").length,
+  );
+  for (const path of sortedFolders) {
+    const name = path.split("/").pop()!;
+    const parentPath = path.includes("/")
+      ? path.slice(0, path.lastIndexOf("/"))
+      : "";
+    const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+    const id = nodeId(path);
+    folderIds.set(path, id);
+    nodes[id] = {
+      id,
+      path,
+      name,
+      kind: "folder",
+      parentId,
+      mtime: Date.now(),
+    };
+    if (!parentPath) rootIds.push(id);
+  }
+
+  for (const path of notePaths) {
+    const name = path.split("/").pop()!;
+    const parentPath = path.includes("/")
+      ? path.slice(0, path.lastIndexOf("/"))
+      : "";
+    const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+    const id = nodeId(path);
+    let content: string;
+    let mtime: number;
+    if (prev.signatures[path] === nextSigs[path] && prevByPath.has(path)) {
+      const old = prevByPath.get(path)!;
+      content = old.content ?? "";
+      mtime = old.mtime;
+    } else {
+      const abs = joinRoot(root, path);
+      try {
+        content = await readTextFile(abs);
+        const meta = await stat(abs);
+        mtime = meta.mtime
+          ? typeof meta.mtime === "number"
+            ? meta.mtime
+            : new Date(meta.mtime).getTime()
+          : Date.now();
+      } catch (err) {
+        console.warn("[nexus] incremental read failed", abs, err);
+        content = prevByPath.get(path)?.content ?? "";
+        mtime = Date.now();
+      }
+    }
+    nodes[id] = {
+      id,
+      path,
+      name,
+      kind: "note",
+      parentId,
+      mtime,
+      content,
+    };
+    if (!parentPath) rootIds.push(id);
+  }
+
+  rootIds.sort((a, b) => {
+    const na = nodes[a];
+    const nb = nodes[b];
+    if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
+    return na.name.localeCompare(nb.name);
+  });
+
+  return {
+    scan: { nodes, rootIds, signatures: nextSigs },
+    changedPaths,
+  };
+}
+
 /** Poll-based watcher for desktop (no FileSystemObserver in WKWebView) */
 export function startDesktopWatch(
   root: string,
@@ -350,6 +475,7 @@ export function startDesktopWatch(
   intervalMs = 900,
 ): { stop: () => void; acknowledge: () => void } {
   let lastSig = "";
+  let lastScan: VaultScan | null = null;
   let suppressUntil = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   let busy = false;
@@ -360,9 +486,15 @@ export function startDesktopWatch(
     try {
       const sigs = await scanDesktopSignatures(root);
       const hash = JSON.stringify(sigs);
-      if (hash !== lastSig) {
-        lastSig = hash;
+      if (hash === lastSig) return;
+      lastSig = hash;
+      if (lastScan) {
+        const { scan } = await incrementalScanDesktopVault(root, lastScan);
+        lastScan = scan;
+        onChange(scan);
+      } else {
         const scan = await scanDesktopVault(root);
+        lastScan = scan;
         onChange(scan);
       }
     } catch (err) {
@@ -376,8 +508,11 @@ export function startDesktopWatch(
     try {
       const sigs = await scanDesktopSignatures(root);
       lastSig = JSON.stringify(sigs);
+      // Baseline scan for incremental reuse (content cached in lastScan)
+      lastScan = await scanDesktopVault(root);
     } catch {
       lastSig = "";
+      lastScan = null;
     }
     timer = setInterval(() => void tick(), intervalMs);
   })();

@@ -82,6 +82,10 @@ This demo vault is a tour of everything Nexus does — open notes, follow [[wiki
 3. Edit this page, switch to **Source**, then back — content stays in sync  
 4. Press **⌘K** and type \`hermes\`
 
+## See the graph first
+
+The right panel is already on **Graph** — orbit, zoom, and click a node. Press **⌘G** for fullscreen, or use the download icon to export a PNG.
+
 ## What stays true
 
 - Vault = ordinary **folder of \`.md\` files**

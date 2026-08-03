@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronDown,
   ChevronRight,
@@ -10,11 +11,16 @@ import {
   Pencil,
   FolderPlus,
   FilePlus,
+  Users,
+  Lightbulb,
+  FolderKanban,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useVaultStore } from "@/lib/vault/store";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
+import type { NoteTemplateId } from "@/lib/vault/templates";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /**
  * Pointer-based tree DnD — works in browser AND Tauri/WKWebView (Mac app).
@@ -88,7 +94,7 @@ function resolveDropFromPoint(
   return null;
 }
 
-function TreeNode({
+const TreeNode = memo(function TreeNode({
   node,
   depth,
   renamingId,
@@ -134,8 +140,21 @@ function TreeNode({
   }, [renaming, node.id]);
 
   const expanded = expandedFolders.includes(node.id);
-  const children =
-    node.kind === "folder" && expanded ? getChildren(node.id) : [];
+  // Stable child fingerprint so memo'd TreeNode still updates when siblings change
+  const childSig = useVaultStore((s) => {
+    if (node.kind !== "folder") return "";
+    return Object.values(s.nodes)
+      .filter((n) => n.parentId === node.id)
+      .map((n) => `${n.id}:${n.name}:${n.kind}:${n.mtime}`)
+      .sort()
+      .join("|");
+  });
+  const children = useMemo(
+    () => (node.kind === "folder" && expanded ? getChildren(node.id) : []),
+    // childSig captures membership/name/mtime under this folder
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [node.kind, node.id, expanded, getChildren, childSig],
+  );
   const isActive = node.kind === "note" && node.id === activeNoteId;
   const isDragging = dragId === node.id;
   const isDropHover =
@@ -276,15 +295,15 @@ function TreeNode({
         )}
 
         <div
-          className="titlebar-no-drag relative ml-auto hidden shrink-0 group-hover:flex"
+          className="titlebar-no-drag relative ml-auto flex shrink-0 opacity-70 group-hover:opacity-100"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <span
-            role="button"
-            tabIndex={0}
+          <button
+            type="button"
             className="icon-btn flex h-6 w-6 items-center justify-center"
             onClick={(e) => {
+              e.preventDefault();
               e.stopPropagation();
               const rect = (
                 e.currentTarget as HTMLElement
@@ -292,25 +311,15 @@ function TreeNode({
               openCtx({
                 kind: "item",
                 nodeId: node.id,
-                x: rect.right,
+                x: Math.min(rect.right, window.innerWidth - 12),
                 y: rect.bottom + 4,
               });
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                openCtx({
-                  kind: "item",
-                  nodeId: node.id,
-                  x: 120,
-                  y: 120,
-                });
-              }
-            }}
-            aria-label="Item actions"
+            aria-label={`Actions for ${displayName(node)}`}
+            title="Actions"
           >
             <MoreHorizontal size={14} />
-          </span>
+          </button>
         </div>
       </div>
 
@@ -333,7 +342,7 @@ function TreeNode({
       ) : null}
     </div>
   );
-}
+});
 
 function MenuBtn({
   icon,
@@ -367,8 +376,9 @@ export function FileTree() {
   const rootIds = useVaultStore((s) => s.rootIds);
   const nodes = useVaultStore((s) => s.nodes);
   const createNote = useVaultStore((s) => s.createNote);
+  const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createFolder = useVaultStore((s) => s.createFolder);
-  const deleteNode = useVaultStore((s) => s.deleteNode);
+  const requestDelete = useVaultStore((s) => s.requestDelete);
   const toggleFolder = useVaultStore((s) => s.toggleFolder);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const moveNode = useVaultStore((s) => s.moveNode);
@@ -402,16 +412,25 @@ export function FileTree() {
 
   useEffect(() => {
     if (!ctx) return;
-    const close = () => setCtx(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+    // Use pointerdown so we can ignore presses inside the menu; avoid
+    // the same click that opened the menu immediately closing it.
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("[data-nexus-ctx-menu]")) return;
+      if (t?.closest?.("[data-nexus-confirm]")) return;
+      setCtx(null);
     };
-    window.addEventListener("click", close);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("keydown", onKey);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCtx(null);
+    };
+    // Defer attach so the opening click/contextmenu doesn't close instantly
+    const timer = window.setTimeout(() => {
+      window.addEventListener("pointerdown", onPointerDown, true);
+      window.addEventListener("keydown", onKey);
+    }, 0);
     return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close, true);
+      window.clearTimeout(timer);
+      window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("keydown", onKey);
     };
   }, [ctx]);
@@ -557,6 +576,21 @@ export function FileTree() {
     requestAnimationFrame(() => setRenamingId(id));
   };
 
+  const createFromTemplateInCtx = (templateId: NoteTemplateId) => {
+    const parentId =
+      ctx?.kind === "empty"
+        ? ctx.parentId
+        : ctxNode?.kind === "folder"
+          ? ctxNode.id
+          : null;
+    setCtx(null);
+    if (parentId) {
+      const expanded = useVaultStore.getState().expandedFolders;
+      if (!expanded.includes(parentId)) toggleFolder(parentId);
+    }
+    createFromTemplate(templateId, parentId);
+  };
+
   const rootDropActive = dropTarget?.type === "root" && dragId != null;
 
   return (
@@ -593,9 +627,12 @@ export function FileTree() {
         />
       ))}
       {roots.length === 0 ? (
-        <p className="px-2 py-6 text-center text-[12.5px] text-[var(--text-muted)]">
-          Empty vault — right-click to add a note or folder.
-        </p>
+        <EmptyState
+          compact
+          className="mx-2 my-4"
+          title="Empty vault"
+          description="Right-click to add a note or folder."
+        />
       ) : null}
 
       {dragId ? (
@@ -616,14 +653,17 @@ export function FileTree() {
         </div>
       ) : null}
 
-      {ctx ? (
+      {ctx && typeof document !== "undefined"
+        ? createPortal(
         <div
-          className="glass-elevated fixed z-[90] min-w-[168px] rounded-[12px] p-1 shadow-[0_16px_48px_rgba(0,0,0,0.5)]"
+          data-nexus-ctx-menu
+          className="glass-elevated fixed z-[120] min-w-[176px] rounded-[12px] p-1 shadow-[0_16px_48px_rgba(0,0,0,0.5)]"
           style={{
-            left: Math.min(ctx.x, window.innerWidth - 180),
-            top: Math.min(ctx.y, window.innerHeight - 220),
+            left: Math.min(ctx.x, window.innerWidth - 200),
+            top: Math.min(ctx.y, window.innerHeight - 300),
           }}
           onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
           {ctx.kind === "empty" || (ctxNode && ctxNode.kind === "folder") ? (
@@ -641,6 +681,21 @@ export function FileTree() {
                         : null,
                   )
                 }
+              />
+              <MenuBtn
+                icon={<Users size={13} />}
+                label="New meeting"
+                onClick={() => createFromTemplateInCtx("meeting")}
+              />
+              <MenuBtn
+                icon={<Lightbulb size={13} />}
+                label="New idea"
+                onClick={() => createFromTemplateInCtx("idea")}
+              />
+              <MenuBtn
+                icon={<FolderKanban size={13} />}
+                label="New project"
+                onClick={() => createFromTemplateInCtx("project")}
               />
               <MenuBtn
                 icon={<FolderPlus size={13} />}
@@ -684,8 +739,10 @@ export function FileTree() {
                 label="Delete"
                 danger
                 onClick={() => {
-                  deleteNode(ctxNode.id);
+                  const id = ctxNode.id;
                   setCtx(null);
+                  // microtask so menu unmount doesn't eat the confirm open
+                  queueMicrotask(() => requestDelete(id));
                 }}
               />
             </>
@@ -696,8 +753,11 @@ export function FileTree() {
               Creates at vault root
             </p>
           ) : null}
-        </div>
-      ) : null}
+        </div>,
+        document.body,
+      )
+        : null}
+
     </div>
   );
 }
