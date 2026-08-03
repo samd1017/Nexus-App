@@ -1287,22 +1287,56 @@ export const useVaultStore = create<VaultStore>()(
       },
 
       moveNode: (id, newParentId) => {
+        flushStageNow(set as (p: Record<string, unknown>) => void);
         const node = get().nodes[id];
         if (!node || id === newParentId) return;
+        // No-op if already in that parent
+        if ((node.parentId ?? null) === (newParentId ?? null)) return;
+        // Prevent dropping a folder into itself or a descendant
         if (newParentId) {
           let p: string | null = newParentId;
           while (p) {
-            if (p === id) return;
+            if (p === id) {
+              get().setToast("Can't move a folder into itself");
+              return;
+            }
             p = get().nodes[p]?.parentId ?? null;
           }
         }
         const parent = newParentId ? get().nodes[newParentId] : null;
         if (newParentId && parent?.kind !== "folder") return;
-        const newPath = parent ? pathJoin(parent.path, node.name) : node.name;
+
+        let destName = node.name;
+        let newPath = parent ? pathJoin(parent.path, destName) : destName;
+        const occupied = new Set(
+          Object.values(get().nodes)
+            .filter((n) => n.id !== id)
+            .map((n) => n.path),
+        );
+        if (occupied.has(newPath)) {
+          // Auto-suffix on name collision in the destination
+          const isNote = node.kind === "note";
+          const stem = isNote ? destName.replace(/\.md$/i, "") : destName;
+          const ext = isNote ? ".md" : "";
+          let i = 1;
+          while (
+            occupied.has(
+              parent
+                ? pathJoin(parent.path, `${stem} ${i}${ext}`)
+                : `${stem} ${i}${ext}`,
+            )
+          ) {
+            i++;
+          }
+          destName = `${stem} ${i}${ext}`;
+          newPath = parent ? pathJoin(parent.path, destName) : destName;
+        }
+
         const oldPath = node.path;
         const nodes = { ...get().nodes };
         nodes[id] = {
           ...node,
+          name: destName,
           parentId: newParentId,
           path: newPath,
           mtime: Date.now(),
@@ -1310,17 +1344,31 @@ export const useVaultStore = create<VaultStore>()(
         if (node.kind === "folder") {
           const oldPrefix = oldPath + "/";
           for (const n of Object.values(nodes)) {
+            if (n.id === id) continue;
             if (n.path.startsWith(oldPrefix)) {
               nodes[n.id] = {
                 ...n,
                 path: newPath + n.path.slice(oldPath.length),
+                mtime: Date.now(),
               };
             }
           }
         }
         let rootIds = get().rootIds.filter((r) => r !== id);
         if (newParentId == null) rootIds = [...rootIds, id];
-        set({ nodes, rootIds });
+        const expanded = new Set(get().expandedFolders);
+        if (newParentId) expanded.add(newParentId);
+        set({
+          nodes,
+          rootIds,
+          expandedFolders: Array.from(expanded),
+          toast: `Moved to ${parent ? parent.path || parent.name : "vault root"}`,
+        });
+        // Clear toast shortly so it doesn't stick
+        window.setTimeout(() => {
+          if (get().toast?.startsWith("Moved to")) get().setToast(null);
+        }, 1800);
+
         if (get().mode === "desktop" && desktopRoot) {
           const root = desktopRoot;
           void queueDiskWrite(async () => {
