@@ -1,3 +1,10 @@
+<!-- Open Graph / Social Preview -->
+<meta property="og:title" content="Nexus - Notes for Humans and Agents" />
+<meta property="og:description" content="Local-first Markdown knowledge vault with a visual editor, live 3D force-directed graph, and Hermes-compatible plain files." />
+<meta property="og:image" content="https://raw.githubusercontent.com/samd1017/Nexus-App/main/social-preview.png" />
+<meta property="og:url" content="https://github.com/samd1017/Nexus-App" />
+<meta property="og:type" content="website" />
+
 <p align="center">
   <img src="public/favicon.svg" alt="Nexus" width="120" height="120" />
 </p>
