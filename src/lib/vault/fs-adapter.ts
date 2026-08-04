@@ -2,10 +2,20 @@
  * Real local vault via File System Access API.
  * Notes are plain .md files on disk — Hermes-compatible.
  * Supports full scan + incremental re-read of changed paths only.
+ * Wave C: pure path-patch tree merge when change set is small.
  */
 
 import type { VaultNode } from "./types";
 import { pathJoin } from "./types";
+import {
+  canPathPatchTree,
+  shouldFullStructuralRescan,
+} from "./rescan-policy";
+import {
+  applyNoteOpsToScan,
+  expandPathsToNoteTargets,
+  type NotePathOp,
+} from "./path-patch";
 
 const IDB_NAME = "noteapp-vault-handles-v2";
 const IDB_STORE = "handles";
@@ -133,8 +143,12 @@ export async function ensurePermission(
   }
 }
 
-function nodeId(path: string): string {
+export function fsaNodeId(path: string): string {
   return "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_");
+}
+
+function nodeId(path: string): string {
+  return fsaNodeId(path);
 }
 
 const SKIP_DIRS = new Set([
@@ -173,7 +187,6 @@ async function walkCollect(
         onDir(path, name, relPath);
         await walk(handle as FileSystemDirectoryHandle, path);
       } else if (
-        // Wave S3: no full lazy-load; only .md notes are scanned (skip binaries/non-md)
         handle.kind === "file" &&
         name.toLowerCase().endsWith(".md")
       ) {
@@ -233,23 +246,189 @@ export async function scanVault(
     const na = nodes[a];
     const nb = nodes[b];
     if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
-    return na.name.localeCompare(nb.name);
+    return na.name.localeCompare(nb.name, undefined, { numeric: true, sensitivity: "base" });
   });
 
   return { nodes, rootIds, signatures };
 }
 
+/** Meta-only open — no note bodies. */
+export async function scanVaultMeta(
+  root: FileSystemDirectoryHandle,
+  onProgress?: (scanned: number) => void,
+): Promise<VaultScan> {
+  const nodes: Record<string, VaultNode> = {};
+  const rootIds: string[] = [];
+  const signatures: Record<string, string> = {};
+  const folderIds = new Map<string, string>();
+  let scanned = 0;
+
+  await walkCollect(
+    root,
+    async (path, name, parentPath, file) => {
+      const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+      const id = nodeId(path);
+      nodes[id] = {
+        id,
+        path,
+        name,
+        kind: "note",
+        parentId,
+        mtime: file.lastModified,
+      };
+      signatures[path] = `${file.lastModified}:${file.size}`;
+      if (!parentPath) rootIds.push(id);
+      scanned += 1;
+      if (onProgress && scanned % 250 === 0) onProgress(scanned);
+    },
+    (path, name, parentPath) => {
+      const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
+      const id = nodeId(path);
+      folderIds.set(path, id);
+      nodes[id] = {
+        id,
+        path,
+        name,
+        kind: "folder",
+        parentId,
+        mtime: Date.now(),
+      };
+      if (!parentPath) rootIds.push(id);
+    },
+  );
+
+  rootIds.sort((a, b) => {
+    const na = nodes[a];
+    const nb = nodes[b];
+    if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
+    return na.name.localeCompare(nb.name, undefined, { numeric: true, sensitivity: "base" });
+  });
+
+  if (onProgress) onProgress(scanned);
+  return { nodes, rootIds, signatures };
+}
+
+/** Lightweight signature map for change detection. */
+export async function scanSignatures(
+  root: FileSystemDirectoryHandle,
+): Promise<Record<string, string>> {
+  const signatures: Record<string, string> = {};
+  await walkCollect(
+    root,
+    async (path, _name, _parentPath, file) => {
+      signatures[path] = `${file.lastModified}:${file.size}`;
+    },
+    () => {},
+  );
+  return signatures;
+}
+
+export function signaturesChanged(
+  a: Record<string, string>,
+  b: Record<string, string>,
+): boolean {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return true;
+  for (const k of ak) {
+    if (a[k] !== b[k]) return true;
+  }
+  return false;
+}
+
+/** Single-note body read (O(path depth), not full vault). */
+export async function readNoteFile(
+  root: FileSystemDirectoryHandle,
+  path: string,
+): Promise<string> {
+  const file = await readFileAtPath(root, path);
+  return file.text();
+}
+
+/**
+ * Wave C — pure path-patch: mutate prev.nodes only for changed paths.
+ */
+export async function patchFsaVaultPaths(
+  root: FileSystemDirectoryHandle,
+  prev: VaultScan,
+  paths: string[],
+  opts?: { metaOnly?: boolean; nextSigs?: Record<string, string> },
+): Promise<{ scan: VaultScan; changedPaths: string[] }> {
+  const metaOnly = !!opts?.metaOnly;
+  const nextSigs = opts?.nextSigs;
+  const targets = expandPathsToNoteTargets(paths, {
+    ...prev.signatures,
+    ...(nextSigs ?? {}),
+  });
+  if (nextSigs) {
+    for (const p of Object.keys(nextSigs)) {
+      if (prev.signatures[p] === undefined) targets.add(p);
+    }
+  }
+
+  const ops: NotePathOp[] = [];
+  for (const notePath of targets) {
+    try {
+      const file = await readFileAtPath(root, notePath);
+      const sig = `${file.lastModified}:${file.size}`;
+      if (prev.signatures[notePath] === sig && prev.nodes[nodeId(notePath)]) {
+        continue;
+      }
+      let content: string | undefined;
+      if (!metaOnly) {
+        content = await file.text();
+      }
+      ops.push({
+        path: notePath,
+        op: "upsert",
+        sig,
+        mtime: file.lastModified,
+        ...(content !== undefined ? { content } : {}),
+      });
+    } catch {
+      if (
+        prev.signatures[notePath] !== undefined ||
+        prev.nodes[nodeId(notePath)]
+      ) {
+        ops.push({ path: notePath, op: "delete" });
+      }
+    }
+  }
+
+  if (nextSigs) {
+    for (const p of Object.keys(prev.signatures)) {
+      if (nextSigs[p] === undefined && !ops.some((o) => o.path === p)) {
+        ops.push({ path: p, op: "delete" });
+      }
+    }
+  }
+
+  const { scan, changedPaths } = applyNoteOpsToScan(prev, ops, nodeId);
+  // Prefer authoritative nextSigs when provided (complete walk)
+  const signatures = nextSigs
+    ? { ...nextSigs }
+    : scan.signatures;
+  return {
+    scan: {
+      nodes: scan.nodes,
+      rootIds: scan.rootIds,
+      signatures,
+    },
+    changedPaths,
+  };
+}
+
+/**
+ * Incremental rescan — Wave C path-patch when !structural.
+ */
 export async function incrementalRescan(
   root: FileSystemDirectoryHandle,
   prev: VaultScan,
+  opts?: { metaOnly?: boolean },
 ): Promise<{ scan: VaultScan; changedPaths: string[] }> {
+  const metaOnly = !!opts?.metaOnly;
   const nextSigs = await scanSignatures(root);
   const changedPaths: string[] = [];
-  const prevByPath = new Map(
-    Object.values(prev.nodes)
-      .filter((n) => n.kind === "note")
-      .map((n) => [n.path, n] as const),
-  );
 
   const allPaths = new Set([
     ...Object.keys(prev.signatures),
@@ -259,94 +438,30 @@ export async function incrementalRescan(
     if (prev.signatures[p] !== nextSigs[p]) changedPaths.push(p);
   }
 
+  const prevCount = Object.keys(prev.signatures).length;
+  const nextCount = Object.keys(nextSigs).length;
   const structural =
-    Object.keys(nextSigs).length === 0 ||
-    changedPaths.length > 40 ||
-    Math.abs(Object.keys(nextSigs).length - Object.keys(prev.signatures).length) >
-      15;
+    nextCount === 0 ||
+    shouldFullStructuralRescan(changedPaths.length, prevCount, nextCount);
 
   if (structural) {
-    const scan = await scanVault(root);
+    const scan = metaOnly ? await scanVaultMeta(root) : await scanVault(root);
     return { scan, changedPaths: Object.keys(scan.signatures) };
   }
 
-  const notePaths = Object.keys(nextSigs);
-  const folderPaths = new Set<string>();
-  for (const p of notePaths) {
-    const parts = p.split("/");
-    for (let i = 1; i < parts.length; i++) {
-      folderPaths.add(parts.slice(0, i).join("/"));
-    }
+  // Wave C: always path-patch when we have a complete sig walk and !structural
+  if (changedPaths.length > 0) {
+    return patchFsaVaultPaths(root, prev, changedPaths, {
+      metaOnly,
+      nextSigs,
+    });
   }
 
-  const nodes: Record<string, VaultNode> = {};
-  const rootIds: string[] = [];
-  const folderIds = new Map<string, string>();
-
-  const sortedFolders = [...folderPaths].sort(
-    (a, b) => a.split("/").length - b.split("/").length,
-  );
-  for (const path of sortedFolders) {
-    const name = path.split("/").pop()!;
-    const parentPath = path.includes("/")
-      ? path.slice(0, path.lastIndexOf("/"))
-      : "";
-    const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
-    const id = nodeId(path);
-    folderIds.set(path, id);
-    nodes[id] = {
-      id,
-      path,
-      name,
-      kind: "folder",
-      parentId,
-      mtime: Date.now(),
-    };
-    if (!parentPath) rootIds.push(id);
-  }
-
-  for (const path of notePaths) {
-    const name = path.split("/").pop()!;
-    const parentPath = path.includes("/")
-      ? path.slice(0, path.lastIndexOf("/"))
-      : "";
-    const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
-    const id = nodeId(path);
-    let content: string;
-    let mtime: number;
-    if (prev.signatures[path] === nextSigs[path] && prevByPath.has(path)) {
-      const old = prevByPath.get(path)!;
-      content = old.content ?? "";
-      mtime = old.mtime;
-    } else {
-      const file = await readFileAtPath(root, path);
-      content = await file.text();
-      mtime = file.lastModified;
-    }
-    nodes[id] = {
-      id,
-      path,
-      name,
-      kind: "note",
-      parentId,
-      mtime,
-      content,
-    };
-    if (!parentPath) rootIds.push(id);
-  }
-
-  rootIds.sort((a, b) => {
-    const na = nodes[a];
-    const nb = nodes[b];
-    if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
-    return na.name.localeCompare(nb.name);
-  });
-
-  return {
-    scan: { nodes, rootIds, signatures: nextSigs },
-    changedPaths,
-  };
+  return { scan: prev, changedPaths: [] };
 }
+
+// Silence unused import if tree-shaken differently
+void canPathPatchTree;
 
 async function readFileAtPath(
   root: FileSystemDirectoryHandle,
@@ -389,7 +504,6 @@ export async function writeNoteFile(
   await writable.write(content);
   await writable.close();
 }
-
 
 export async function writeBinaryFile(
   root: FileSystemDirectoryHandle,
@@ -480,29 +594,21 @@ export async function pickVaultFolder(): Promise<FileSystemDirectoryHandle | nul
   }
 }
 
-export async function scanSignatures(
+/** List soft-deleted notes under `.trash/` (newest first). */
+export async function listFsaTrash(
   root: FileSystemDirectoryHandle,
-): Promise<Record<string, string>> {
-  const signatures: Record<string, string> = {};
-  await walkCollect(
-    root,
-    async (path, _name, _pp, file) => {
-      signatures[path] = `${file.lastModified}:${file.size}`;
-    },
-    () => {},
-  );
-  return signatures;
-}
-
-export function signaturesChanged(
-  a: Record<string, string>,
-  b: Record<string, string>,
-): boolean {
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return true;
-  for (const k of keysA) {
-    if (a[k] !== b[k]) return true;
+): Promise<Array<{ relPath: string; mtime: number }>> {
+  const out: Array<{ relPath: string; mtime: number }> = [];
+  try {
+    const trash = await root.getDirectoryHandle(".trash", { create: false });
+    for await (const [name, handle] of trash.entries()) {
+      if (handle.kind !== "file") continue;
+      if (!name.toLowerCase().endsWith(".md")) continue;
+      const file = await (handle as FileSystemFileHandle).getFile();
+      out.push({ relPath: `.trash/${name}`, mtime: file.lastModified });
+    }
+  } catch {
+    /* no trash */
   }
-  return false;
+  return out.sort((a, b) => b.mtime - a.mtime);
 }

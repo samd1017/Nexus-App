@@ -1,48 +1,140 @@
-# Nexus Vault Scaling Plan — 400k–500k Notes
+# Nexus Vault Scaling — Single Path to 300k–500k
 
-**Repo:** `cinder-apple-pine-blend` (dev). `nexus-app` stays until public release.  
-**Goal:** Comfortably handle **400,000–500,000** notes (Hermes-compatible plain-folder markdown), with headroom beyond that on desktop.
-
----
-
-## Current state (why 1–2k walls)
-
-Today the vault is an **eager in-memory mirror** of every `.md` body:
-
-| Layer | Behavior | Wall |
-|-------|----------|------|
-| **Store** | `nodes: Record<id, VaultNode>` with **full `content`** | RAM + shallow-copy on every edit |
-| **Tree** | `getChildren` = `Object.values.filter(parentId)` **O(n)** | Expanded folders thrash |
-| **FileTree** | No virtualization; `childSig` rescans whole vault | DOM + O(F×n) selectors |
-| **Search** | Fuse.js over **full bodies** (2nd copy); O(n) cache keys | Main-thread freezes |
-| **Backlinks/tags** | Full rebuild / full scan on edit | Panel open + save jank |
-| **Graph** | Builds from all bodies; renders LOD 400 | Build is the killer |
-| **FS/Tauri** | Sequential full-text walk on open | Minutes + multi-GB at 500k |
-
-**Verdict:** Demo-scale architecture. **500k is not a polish pass** — it needs tree indexes + lazy content + real FTS + virtualized UI.
+**Goal:** Comfortably handle **300k–500k** notes on Desktop (plain-folder markdown), with headroom beyond. Web = demo/QA only. Mobile later via shared DurableIndex schema.
 
 ---
 
-## Target architecture
+## Public-release plan (99%)
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  UI (Zustand): active note, expanded folders, settings, UI   │
-│  Hot metadata cache: id → {path,name,kind,parentId,mtime}    │
-├──────────────────────────────────────────────────────────────┤
-│  Structural indexes (always hot)                             │
-│  • childrenByParent  • pathToId  • titleToIds / prefix list  │
-│  • forward/reverse links  • tags                             │
-├──────────────────────────────────────────────────────────────┤
-│  Full-text (worker / native)                                 │
-│  Browser: MiniSearch/Orama (title+path+snippet)              │
-│  Desktop: SQLite FTS5 (Tauri)                                │
-├──────────────────────────────────────────────────────────────┤
-│  Bodies: disk is source of truth; LRU cache (~50–200 open)   │
-└──────────────────────────────────────────────────────────────┘
-```
+| Wave | Name | Status |
+|------|------|--------|
+| **A** | Trust (ship-stoppers) | **Shipped** |
+| **B** | Engine & agents | **Shipped** |
+| **C** | Product polish (first hour) | **Shipped** |
+| **D** | Desktop public package | Pending |
+| **E** | Proof & GA | Pending |
 
-**Performance targets @ 500k notes (desktop):**
+---
+
+## Wave A — Trust (shipped 2026-08)
+
+| Item | Status |
+|------|--------|
+| Sanitize Markdown HTML before Visual mode | **Done** |
+| Escape image attrs on serialize | **Done** |
+| Desktop CSP non-null | **Done** |
+| FS scope narrowed (no `/Users/**` whole-home write) | **Done** |
+| Rust vault root register + index path under app data | **Done** |
+| FSA trash hydrates body (never write empty then delete) | **Done** |
+| Unique `.trash/` names | **Done** |
+| Dirty badge + click-to-save + `beforeunload` | **Done** |
+| `closeVault` awaits `flushDirty` | **Done** |
+| Demo stays on Welcome (no launch-note hijack) | **Done** |
+| Unsupported folder-picker messaging | **Done** |
+| `__NOTEAPP__` DEV-only | **Done** |
+| Reverse link keys normalized | **Done** |
+| Wikilinks in code fences ignored | **Done** |
+
+## Wave B — Engine (shipped 2026-08)
+
+| Item | Status |
+|------|--------|
+| Open FTS reconcile without wipe | **Done** |
+| Memory mirror hydrate from SQLite on open | **Done** |
+| Upsert preserves FTS body when note unloaded | **Done** |
+| Path-incremental desktop watch (notify paths) | **Done** |
+| Raised full-rescan cliffs (not 40-change) | **Done** |
+| Native watch resync threshold 400 paths | **Done** |
+| External apply uses durable reconcile | **Done** |
+| Conflict Studio MVP (keep mine / take theirs / open both) | **Done** |
+| Automatic memory budget (LRU, no user toggle) | **Done** |
+| DurableIndex v3 contract frozen for mobile | **Done** |
+| Path-patch pure merge (`path-patch.ts`) | **Done** |
+| Stress harness `bench:stress` (50k meta) | **Done** |
+
+## Wave C — Product polish (shipped 2026-08)
+
+**Goal:** first hour feels finished · Design + UX re-score ≥ 85% · no first-run dead ends
+
+| Item | Status |
+|------|--------|
+| Visual system pass — solid panels, type tokens, accent CTAs, compact density | **Done** |
+| Editor paste (MD + images) + create-from-wikilink + task/table/image serialize fixes | **Done** |
+| Tag rail (vault tags) · empty vault CTAs · in-app trash restore (Pulse → Recently deleted) | **Done** |
+| Agent inbox vault-scoped · mark read · Open Pulse from toast | **Done** |
+| Keyboard file tree + icon aria-labels | **Done** |
+| EN-only UI · shortcuts show ⌘ or Ctrl by platform | **Done** |
+| Honest Settings copy (progressive open, cloud = synced folder) | **Done** |
+| Welcome: disable dead Open/Create when folder API unavailable | **Done** |
+
+### Wave C modules
+
+| Module | Role |
+|--------|------|
+| `src/lib/platform.ts` | `formatShortcut`, `isAppleModPlatform` |
+| `src/lib/vault/pulse.ts` | vaultId · read · clear · unread |
+| `src/lib/vault/trash.ts` | parse / list / restore helpers |
+| `src/lib/markdown/serialize.ts` | task normalize before sanitize; image chrome strip |
+| `src/components/right/PulseRail.tsx` | mark read · Recently deleted |
+| `src/components/chrome/Toast.tsx` | action → Open Pulse |
+| `src/components/layout/LeftSidebar.tsx` | Tags rail · solid panel · platform shortcuts |
+
+Still pending later (release ops / real hardware):
+
+- **Wave D:** sign + notarize + DMG + auto-update + product docs
+- **Wave E:** real-disk 100k/300k open numbers on Mac; closed beta → 1.0
+- Optional store-level O(k) apply without shallow-copy map
+
+---
+
+## DurableIndex v3 contract (frozen for mobile)
+
+Canonical module: [`src/lib/vault/index-contract.ts`](../src/lib/vault/index-contract.ts)
+
+- Schema version **3** (TS + Rust must match)
+- Tables: `meta_kv`, `note_meta`, `link_edge`, `tag_map`, `note_fts`, `vault_registry`, `capture_queue`
+- Index is **disposable** — markdown remains source of truth
+- Desktop path: `{appDataDir}/indexes/{fnv64(vault_root)}.sqlite`
+- Mobile path: vault under `Documents/NexusVaults/{vault_id}/`, index under `Library/NexusIndexes/{vault_id}.sqlite`
+- Migration: wipe derived tables + re-DDL when stored version < current
+- Upsert must **preserve FTS body** when note body is unloaded
+
+---
+
+## Current architecture (single path)
+
+Disk vaults always:
+
+1. **Meta-only open** + progressive open progress
+2. **Lazy body hydrate** + automatic LRU memory budget
+3. **DurableIndex** FTS (memory on web/FSA; SQLite on desktop)
+4. **Ego graph** (neighborhood)
+5. **Virtualized file tree**
+6. **Path-patch watch** for small external change sets (FSA + desktop)
+7. **Conflict Studio** for dirty vs disk diverge
+8. **Pulse inbox** vault-scoped with mark-read
+9. **Soft trash** + in-app restore
+
+Demo/local stay eager in-memory (not a size-based mode flip).
+
+---
+
+## Graph modes (hierarchical folder map)
+
+| Mode | When | Draw budget |
+|------|------|-------------|
+| **FullNotes** | `noteCount < 400` (demo / small vaults) | All notes + ghosts |
+| **FolderBrowse** | Large vault, map intent (root or drilled folder) | ≤320 child orbs |
+| **EgoLinks** | Large vault + ego intent + active note | ~2-hop neighborhood |
+
+- Folder spheres use the same metal `createOrb` pipeline (size via `val` only)
+- Click folder → enter level; click note → open + ego links; Esc → up one folder
+- Kill switch: `folderGraph: false` in scale-flags restores ego/full only
+- Never materializes 300k–500k orbs — claims are “whole vault **structure**”, not every note as an orb
+
+See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
+
+---
 
 | Operation | Target |
 |-----------|--------|
@@ -51,126 +143,9 @@ Today the vault is an **eager in-memory mirror** of every `.md` body:
 | Title / wikilink suggest | ≤ 10–20ms |
 | Full-text top-20 | ≤ 50ms (FTS5) |
 | Save note → indexes ready | O(tokens of that note) |
+| Path-patch 20 notes | << full tree rebuild |
 | Graph | Ego / cluster only — never 500k orbs |
-| RAM | Metadata ~150–300MB + LRU bodies, not multi-GB of all text |
-
----
-
-## Phased plan (agent mix)
-
-### Phase 0 — Measure (½ day)
-- Synthetic vault generator (10 / 1k / 10k / 50k notes)
-- Bench: open, getChildren×100, search, backlinks, graph build
-- Baseline numbers committed under `scripts/bench-scale.mjs`
-
-### Phase 1 — Tree + structural indexes  ✅ IN PROGRESS
-**Unblocks: 1k → ~10–20k (with full content still in RAM)**
-
-| Workstream | Agent focus | Deliverable |
-|------------|-------------|-------------|
-| **Index engine** | Data structures | `src/lib/vault/indexes.ts` — children, path, title, generations |
-| **Store wiring** | Zustand | `getChildren` O(k); path lookups via index; generation hooks |
-| **FileTree selectors** | UI perf | Replace O(n) `childSig` with `childSignature` |
-| **Search invalidation** | Search | Drop O(n) vaultKey strings; use index generation; truncate Fuse body |
-| **Wikilink suggest** | Editor | Title index path (no body scan) |
-| **Backlinks** | Index | Generation-based cache; later incremental patch |
-| **Tests** | QA | Unit + microbench for indexes |
-
-### Phase 2 — Virtualized tree + subscription hygiene
-**Unblocks: large folders (10k+ notes in one dir)**
-
-| Workstream | Deliverable |
-|------------|-------------|
-| Flattened visible rows + windowing | `@tanstack/react-virtual` or custom window |
-| Selectors | Never `useVaultStore(s => s.nodes)` for chrome |
-| Content edit identity | Isolate body updates from structure subscribers |
-| DnD | Hit-test virtual rows |
-
-### Phase 3 — Lazy bodies + adapter meta walk
-**Unblocks: 50k–100k without OOM**
-
-| Workstream | Deliverable |
-|------------|-------------|
-| Meta-only scan | `walkVaultMeta` / Tauri bulk walk command |
-| `readNote(path)` on open | Content only for active + dirty + LRU |
-| Incremental watch | Path patches; raise/remove “40 changes → full rescan” cliff |
-| Graph link index | Store outgoing links on save; no full-body graph key |
-
-### Phase 4 — Real search engine
-**Unblocks: snappy search at 100k+**
-
-| Workstream | Browser | Desktop |
-|------------|---------|---------|
-| Engine | MiniSearch/Orama in **Worker** | **SQLite FTS5** via Tauri |
-| Docs | title + path + first 2–4KB | Full body FTS |
-| Updates | Incremental add/remove/update | Delta on watch |
-| Tags / orphans | Persistent maps | SQL tables |
-
-### Phase 5 — Graph at scale
-- Default **ego graph** (1–2 hops from active)
-- Folder supernodes / cluster overview
-- Never force-layout full vault
-- Precomputed edge table in SQLite/IDB
-
-### Phase 6 — Desktop native path (500k headroom)
-- Rust: parallel walk, `notify` FS events, SQLite index DB beside vault (or in app data)
-- One IPC round-trip for meta listing
-- Optional: content hash for conflict/sync
-- Stress test 500k synthetic vault on Mac build
-
-### Phase 7 — Hardening
-- Progressive hydrate + open progress UI
-- Memory budgets / “large vault mode” prefs
-- Import tooling (Obsidian/Hermes folder) chunked
-- Docs for power users
-
----
-
-## Agent roster (specialized)
-
-Use parallel agents per phase; one owner integrates.
-
-| Agent | Owns |
-|-------|------|
-| **Architect** | Contracts, phase gates, non-goals |
-| **Index engineer** | `indexes.ts`, backlinks, tags, path/title maps |
-| **Store engineer** | `store.ts` mutations, generations, lazy content API |
-| **Search engineer** | Fuse → MiniSearch/Orama/FTS5, worker, cmdk debounce |
-| **Tree/UI engineer** | FileTree virtualization, LeftSidebar, selectors |
-| **FS/Desktop engineer** | fs-adapter, tauri-adapter, watcher, Rust walk |
-| **Graph engineer** | build-graph, GraphView LOD / ego mode |
-| **Perf/QA** | benches, Playwright large-vault smoke, memory snapshots |
-
----
-
-## Implementation status
-
-| Phase | Status |
-|-------|--------|
-| Phase 0 benches | Scaffolded (`scripts/bench-scale.mjs`) |
-| Phase 1 indexes | **Shipped:** structural index + store/search/tree/suggest wiring |
-| Phase 2 virtualization | Next |
-| Phase 3 lazy bodies | Planned |
-| Phase 4 FTS | Planned |
-| Phase 5–7 | Planned |
-
-### Phase 1 files
-
-- `src/lib/vault/indexes.ts` — core adjacency + path + title + generations
-- `src/lib/vault/store.ts` — `getChildren` via index
-- `src/components/vault/FileTree.tsx` — O(k) child signatures
-- `src/lib/search/fuse-search.ts` — generation cache + truncated content docs
-- `src/lib/vault/backlink-index.ts` — generation invalidation
-- `src/lib/editor/wikilink-suggest.ts` — title index suggest
-- `scripts/bench-scale.mjs` — microbench
-
----
-
-## Non-goals (for now)
-
-- Multi-user CRDT / cloud-native note DB (disk markdown stays source of truth)
-- Shipping index format into Hermes (index is disposable cache)
-- Rendering 500k nodes in 3D graph
+| RAM | Metadata ~150–300MB + LRU bodies |
 
 ---
 
@@ -178,5 +153,19 @@ Use parallel agents per phase; one owner integrates.
 
 1. **Markdown-on-disk remains canonical** (Hermes-compatible).
 2. **Desktop is the 500k primary path**; browser aims for solid 20–50k with progressive limits.
-3. **Fuse is transitional** — not the long-term full-text engine.
+3. **One scale-safe path** — no user Large Vault Mode toggle.
 4. **Indexes are derived** — safe to wipe and rebuild from files.
+5. **Conflict policy** — keep local on diverge; shelf disk as `.conflict-*`; Studio resolves after the fact.
+6. **Wave C polish** — first-hour UX; does not replace real-disk stress (Wave E).
+
+---
+
+## Stress fixture: large-test-vault (45k)
+
+| Path | Purpose |
+|------|---------|
+| `fixtures/large-test-vault.zip` | Source archive (unzip for desktop **Open folder…**) |
+| `public/large-test-vault/*` | Prebuilt seed for in-app **Open 45k test vault** |
+| `src/lib/vault/large-test-vault.ts` | Loader → `openLargeTestVault()` |
+
+Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder.

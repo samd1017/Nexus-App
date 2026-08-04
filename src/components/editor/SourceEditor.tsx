@@ -78,10 +78,12 @@ export function SourceEditor({ noteId, content }: Props) {
     bottom: 0,
   });
   const suggestOpenRef = useRef(false);
+  const suggestQueryRef = useRef("");
   const suggestItemsRef = useRef<WikilinkSuggestItem[]>([]);
   const suggestSelectedRef = useRef(0);
   const suggestRangeRef = useRef({ from: 0, to: 0 });
   suggestOpenRef.current = suggestOpen;
+  suggestQueryRef.current = suggestQuery;
   suggestItemsRef.current = suggestItems;
   suggestSelectedRef.current = suggestSelected;
   suggestRangeRef.current = { from: suggestFrom, to: suggestTo };
@@ -153,6 +155,27 @@ export function SourceEditor({ noteId, content }: Props) {
       applyValue(next, cursor);
     },
     [applyValue],
+  );
+
+  const createFromSuggest = useCallback(
+    (title: string) => {
+      const cleaned = title.trim();
+      if (!cleaned) return;
+      const state = useVaultStore.getState();
+      // Stay on current note — create linked note without activating
+      const id = state.createNote(null, cleaned, { activate: false });
+      const node = useVaultStore.getState().nodes[id];
+      const item: WikilinkSuggestItem = {
+        id,
+        kind: "note",
+        title: cleaned,
+        path: node?.path ?? `${cleaned}.md`,
+        target: cleaned,
+      };
+      state.setToast(`Created “${cleaned}”`);
+      pickSuggest(item);
+    },
+    [pickSuggest],
   );
 
   // Keep in sync with store/prop. Always reseed when noteId changes
@@ -233,6 +256,7 @@ export function SourceEditor({ noteId, content }: Props) {
         <textarea
           ref={taRef}
           className="source-editor min-h-[50vh] w-full flex-1"
+          aria-label="Markdown source"
           value={value}
           spellCheck={spellCheck}
           style={{ fontSize: editorFontSize }}
@@ -271,7 +295,14 @@ export function SourceEditor({ noteId, content }: Props) {
               return;
             }
             if (e.key === "Enter" || e.key === "Tab") {
-              if (!items.length) return;
+              if (!items.length) {
+                const q = suggestQueryRef.current.trim();
+                if (q && e.key === "Enter") {
+                  e.preventDefault();
+                  createFromSuggest(q);
+                }
+                return;
+              }
               e.preventDefault();
               const item = items[suggestSelectedRef.current] ?? items[0];
               if (item) pickSuggest(item);
@@ -290,6 +321,7 @@ export function SourceEditor({ noteId, content }: Props) {
           query={suggestQuery}
           rect={suggestRect}
           onSelect={pickSuggest}
+          onCreate={createFromSuggest}
           onHover={setSuggestSelected}
           onClose={() => setSuggestOpen(false)}
         />

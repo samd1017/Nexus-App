@@ -1,5 +1,6 @@
 {
   "name": "nexus",
+  "version": "0.1.0",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -18,7 +19,17 @@
     "build:desktop": "vite build --config vite.desktop.config.ts",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "bench:scale": "node scripts/bench-scale.mjs",
+    "bench:indexes": "node src/lib/vault/__tests__/indexes.bench.mjs",
+    "bench:stress": "node scripts/bench-vault-stress.mjs --notes 50000",
+    "test:wave-c": "node src/lib/vault/__tests__/wave-c.contract.mjs",
+    "test:fixture-integrity": "node scripts/verify-large-test-vault.mjs",
+    "test:partialize": "node scripts/test-partialize-policy.mjs",
+    "smoke": "node scripts/browser-smoke.mjs http://127.0.0.1:8080/ /workspace/screenshots/app-builder-preview.png",
+    "qa:gate": "npm run typecheck && npm run bench:indexes && npm run bench:scale && npm run test:wave-c && npm run test:folder-graph && npm run test:fixture-integrity && npm run test:partialize && npm run test:body-archive",
+    "test:folder-graph": "node src/lib/vault/__tests__/folder-graph.contract.mjs",
+    "test:body-archive": "node scripts/test-body-archive-lifecycle.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.0",
@@ -48,6 +59,7 @@
     "@tanstack/react-router": "^1.160.0",
     "@tanstack/react-start": "^1.160.0",
     "@tanstack/react-table": "^8.21.0",
+    "@tanstack/react-virtual": "^3.14.9",
     "@tanstack/router-plugin": "^1.160.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
@@ -117,5 +129,6 @@
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.1.0"
-  }
+  },
+  "version": "0.1.0"
 }

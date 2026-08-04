@@ -21,6 +21,11 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-persisted-scope = "2"
+# On-disk DurableIndex (FTS5 via bundled SQLite — no system lib required)
+rusqlite = { version = "0.32", features = ["bundled"] }
+# OS-level recursive file watching (replaces full-tree poll on desktop)
+notify = "6"
+notify-debouncer-mini = "0.4"
 
 [profile.release]
 codegen-units = 1

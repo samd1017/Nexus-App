@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import {
   FileText,
@@ -25,17 +25,23 @@ import {
   History,
   Focus,
   CircleHelp,
+  Database,
+  X,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
-import { searchVault } from "@/lib/search/fuse-search";
+import {
+  searchWithBackend as searchVault,
+  searchWithPathFolderOps,
+} from "@/lib/search/search-backend";
+
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
 import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
-import { loadNoteVisits } from "@/lib/vault/note-visits";
+import { recentNoteIdsForVault } from "@/lib/vault/visit-history";
 import {
   recentCommandIds,
   trackCommand,
@@ -45,12 +51,13 @@ import {
 import { previewSnippet } from "@/lib/markdown/serialize";
 import type { SearchHit } from "@/lib/vault/types";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
+import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
 
 const GROUP_HEADING =
   "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.12em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]";
 
 const ITEM_CLASS =
-  "cmdk-item flex cursor-pointer items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]";
+  "cmdk-item flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]";
 
 const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   daily: <CalendarDays size={15} />,
@@ -152,8 +159,9 @@ function allNotesAsHits(
 function topNotesByVisitMtime(
   nodes: Record<string, import("@/lib/vault/types").VaultNode>,
   limit: number,
+  vaultId?: string | null,
 ): SearchHit[] {
-  const visits = loadNoteVisits();
+  const visits = recentNoteIdsForVault(vaultId, nodes, limit);
   const seen = new Set<string>();
   const out: SearchHit[] = [];
   for (const id of visits) {
@@ -189,6 +197,13 @@ function topNotesByVisitMtime(
 
 export function CommandPalette() {
   const open = useVaultStore((s) => s.commandOpen);
+  if (!open) return null;
+  return <CommandPaletteOpen />;
+}
+
+function CommandPaletteOpen() {
+  const open = useVaultStore((s) => s.commandOpen);
+  const vaultId = useVaultStore((s) => s.vaultId);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const nodes = useVaultStore((s) => s.nodes);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
@@ -202,6 +217,7 @@ export function CommandPalette() {
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
   const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
+  const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
@@ -266,7 +282,7 @@ export function CommandPalette() {
 
   const hits = useMemo(() => {
     if (isEmptyQuery) {
-      return topNotesByVisitMtime(nodes, 10);
+      return topNotesByVisitMtime(nodes, 10, vaultId);
     }
     if (isTagBrowse && tagPartial === "" && !hasPathFolderOp) return [];
     if (exactTagQuery && !hasPathFolderOp) {
@@ -281,21 +297,23 @@ export function CommandPalette() {
     }
     if (wantsOrphans || wantsBroken || isCommandMode) return [];
 
-    let base: SearchHit[];
-    if (searchText) {
-      base = searchVault(nodes, searchText, 24);
-    } else if (hasPathFolderOp) {
-      base = allNotesAsHits(nodes, 48);
-    } else {
-      base = searchVault(nodes, raw, 16);
+    // Scale-safe path:/folder: via FTS needle + post-filter (not sample-then-filter)
+    if (hasPathFolderOp) {
+      return searchWithPathFolderOps(
+        nodes,
+        searchText,
+        pathFolderOps.pathFilter,
+        pathFolderOps.folderFilter,
+        16,
+      );
     }
-    return filterHitsByPathOps(
-      base,
-      pathFolderOps.pathFilter,
-      pathFolderOps.folderFilter,
-    ).slice(0, 16);
+    if (searchText) {
+      return searchVault(nodes, searchText, 16);
+    }
+    return searchVault(nodes, raw, 16);
   }, [
     nodes,
+    vaultId,
     raw,
     searchText,
     isEmptyQuery,
@@ -362,7 +380,7 @@ export function CommandPalette() {
           label: "New note",
           keywords: ["create", "add", "file"],
           icon: <FilePlus size={15} />,
-          shortcut: "⌘N",
+          shortcut: formatShortcut("N"),
           run: wrapRun("new-note", () => {
             createNote(null);
             setCommandOpen(false);
@@ -373,7 +391,7 @@ export function CommandPalette() {
           label: "Daily note",
           keywords: ["today", "journal", "daily"],
           icon: <CalendarDays size={15} />,
-          shortcut: "⌘D",
+          shortcut: formatShortcut("D"),
           run: wrapRun("daily", () => {
             openDailyNote();
             setCommandOpen(false);
@@ -404,7 +422,7 @@ export function CommandPalette() {
           label: "Toggle left sidebar",
           keywords: ["sidebar", "panel", "files", "tree"],
           icon: <PanelLeft size={15} />,
-          shortcut: "⌘\\",
+          shortcut: formatShortcut("\\"),
           run: wrapRun("toggle-left", () => {
             toggleLeft();
             setCommandOpen(false);
@@ -415,7 +433,7 @@ export function CommandPalette() {
           label: "Toggle right panel",
           keywords: ["outline", "backlinks", "panel"],
           icon: <PanelRight size={15} />,
-          shortcut: "⌘⌥\\",
+          shortcut: formatShortcut("\\", { alt: true }),
           run: wrapRun("toggle-right", () => {
             toggleRight();
             setCommandOpen(false);
@@ -426,7 +444,7 @@ export function CommandPalette() {
           label: "Toggle Visual / Source",
           keywords: ["editor", "source", "visual", "mode", "markdown"],
           icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-          shortcut: "⌘E",
+          shortcut: formatShortcut("E"),
           run: wrapRun("toggle-editor", () => {
             toggleEditorMode();
             setCommandOpen(false);
@@ -437,9 +455,21 @@ export function CommandPalette() {
           label: "Toggle graph",
           keywords: ["graph", "fullscreen", "network", "orbit"],
           icon: <Network size={15} />,
-          shortcut: "⌘G",
+          shortcut: formatShortcut("G"),
           run: wrapRun("toggle-graph", () => {
             toggleGraphFullscreen();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "reveal-active-in-graph",
+          label: "Reveal active note in graph",
+          keywords: ["graph", "reveal", "folder map", "ego", "locate"],
+          icon: <Network size={15} />,
+          run: wrapRun("reveal-active-in-graph", () => {
+            const id = useVaultStore.getState().activeNoteId;
+            if (id) useVaultStore.getState().revealInGraph?.(id);
+            else useVaultStore.getState().ensureGraphVisible?.();
             setCommandOpen(false);
           }),
         },
@@ -448,7 +478,7 @@ export function CommandPalette() {
           label: "Toggle focus mode",
           keywords: ["focus", "zen", "distraction", "fullscreen", "calm"],
           icon: <Focus size={15} />,
-          shortcut: "⌘.",
+          shortcut: formatShortcut("."),
           run: wrapRun("focus-mode", () => {
             const next = toggleFocusMode();
             setToast(next ? "Focus mode on" : "Focus mode off");
@@ -460,7 +490,7 @@ export function CommandPalette() {
           label: "Settings",
           keywords: ["preferences", "prefs", "options", "config"],
           icon: <Settings size={15} />,
-          shortcut: "⌘,",
+          shortcut: formatShortcut(","),
           run: wrapRun("settings", () => {
             usePrefsStore.getState().setSettingsOpen(true);
             setCommandOpen(false);
@@ -509,7 +539,7 @@ export function CommandPalette() {
           label: "Flush / save",
           keywords: ["save", "flush", "write", "disk"],
           icon: <Save size={15} />,
-          shortcut: "⌘S",
+          shortcut: formatShortcut("S"),
           run: wrapRun("save", () => {
             void flushDirty();
             setToast("Saved");
@@ -547,7 +577,9 @@ export function CommandPalette() {
         },
         {
           id: "reveal",
-          label: "Reveal in Finder",
+          label: isAppleModPlatform()
+            ? "Reveal in Finder"
+            : "Reveal in file manager",
           keywords: ["finder", "explorer", "show", "reveal", "folder"],
           icon: <ExternalLink size={15} />,
           shortcut: undefined as string | undefined,
@@ -567,6 +599,17 @@ export function CommandPalette() {
             setCommandOpen(false);
           }),
         },
+        ...(import.meta.env.DEV ? [{
+          id: "large-test-vault",
+          label: "Open 45k test vault",
+          keywords: ["large", "stress", "45k", "test", "scale", "benchmark"],
+          icon: <Database size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("large-test-vault", () => {
+            void openLargeTestVault();
+            setCommandOpen(false);
+          }),
+        }] : []),
         ...(import.meta.env.DEV
           ? [
               {
@@ -589,6 +632,7 @@ export function CommandPalette() {
       createNewVault,
       revealVaultInFinder,
       openDemoVault,
+      openLargeTestVault,
       simulateHermesWrite,
       setCommandOpen,
     ],
@@ -613,7 +657,7 @@ export function CommandPalette() {
         id: "new-note",
         label: "New note",
         icon: <FilePlus size={15} />,
-        shortcut: "⌘N",
+        shortcut: formatShortcut("N"),
         run: wrapRun("new-note", () => {
           createNote(null);
           setCommandOpen(false);
@@ -624,7 +668,7 @@ export function CommandPalette() {
         id: "daily",
         label: "Daily note",
         icon: <CalendarDays size={15} />,
-        shortcut: "⌘D",
+        shortcut: formatShortcut("D"),
         run: wrapRun("daily", () => {
           openDailyNote();
           setCommandOpen(false);
@@ -648,7 +692,7 @@ export function CommandPalette() {
         id: "toggle-left",
         label: "Toggle left sidebar",
         icon: <PanelLeft size={15} />,
-        shortcut: "⌘\\",
+        shortcut: formatShortcut("\\"),
         run: wrapRun("toggle-left", () => {
           toggleLeft();
           setCommandOpen(false);
@@ -659,7 +703,7 @@ export function CommandPalette() {
         id: "toggle-right",
         label: "Toggle right panel",
         icon: <PanelRight size={15} />,
-        shortcut: "⌘⌥\\",
+        shortcut: formatShortcut("\\", { alt: true }),
         run: wrapRun("toggle-right", () => {
           toggleRight();
           setCommandOpen(false);
@@ -670,7 +714,7 @@ export function CommandPalette() {
         id: "toggle-editor",
         label: "Toggle Visual / Source",
         icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-        shortcut: "⌘E",
+        shortcut: formatShortcut("E"),
         run: wrapRun("toggle-editor", () => {
           toggleEditorMode();
           setCommandOpen(false);
@@ -681,7 +725,7 @@ export function CommandPalette() {
         id: "toggle-graph",
         label: "Toggle graph",
         icon: <Network size={15} />,
-        shortcut: "⌘G",
+        shortcut: formatShortcut("G"),
         run: wrapRun("toggle-graph", () => {
           toggleGraphFullscreen();
           setCommandOpen(false);
@@ -692,7 +736,7 @@ export function CommandPalette() {
         id: "focus-mode",
         label: "Toggle focus mode",
         icon: <Focus size={15} />,
-        shortcut: "⌘.",
+        shortcut: formatShortcut("."),
         run: wrapRun("focus-mode", () => {
           const next = toggleFocusMode();
           setToast(next ? "Focus mode on" : "Focus mode off");
@@ -704,7 +748,7 @@ export function CommandPalette() {
         id: "settings",
         label: "Settings",
         icon: <Settings size={15} />,
-        shortcut: "⌘,",
+        shortcut: formatShortcut(","),
         run: wrapRun("settings", () => {
           usePrefsStore.getState().setSettingsOpen(true);
           setCommandOpen(false);
@@ -725,7 +769,7 @@ export function CommandPalette() {
         id: "save",
         label: "Flush / save",
         icon: <Save size={15} />,
-        shortcut: "⌘S",
+        shortcut: formatShortcut("S"),
         run: wrapRun("save", () => {
           void flushDirty();
           setToast("Saved");
@@ -757,6 +801,7 @@ export function CommandPalette() {
     flushDirty,
     setToast,
     openDemoVault,
+    openLargeTestVault,
     setCommandOpen,
   ]);
 
@@ -812,16 +857,26 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/65 px-4 pt-[10vh] backdrop-blur-[8px]"
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-[var(--overlay,rgba(0,0,0,0.65))] px-0 pt-0 backdrop-blur-[8px] sm:items-start sm:px-4 sm:pt-[10vh]"
       onClick={() => setCommandOpen(false)}
+      role="presentation"
     >
-      <Command
-        className="glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.1)]"
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        className="w-full max-w-xl"
         onClick={(e) => e.stopPropagation()}
+      >
+      <Command
+        className="glass-elevated max-h-[min(92dvh,720px)] w-full overflow-hidden rounded-t-[var(--radius-xl,16px)] shadow-[var(--shadow-elevated)] sm:max-h-none sm:rounded-[var(--radius-xl,16px)] sm:shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
         label="Command palette"
         shouldFilter={false}
       >
-        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4">
+        <div className="flex justify-center pt-2 sm:hidden" aria-hidden>
+          <div className="h-1 w-10 rounded-full bg-white/15" />
+        </div>
+        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]">
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
             value={query}
@@ -830,12 +885,20 @@ export function CommandPalette() {
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
           />
-          <kbd className="shrink-0 rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+          <button
+            type="button"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text-primary)] sm:hidden"
+            aria-label="Close command palette"
+            onClick={() => setCommandOpen(false)}
+          >
+            <X size={18} />
+          </button>
+          <kbd className="hidden shrink-0 rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] sm:inline">
             esc
           </kbd>
         </div>
 
-        <Command.List className="max-h-[min(480px,56vh)] overflow-y-auto p-2">
+        <Command.List className="max-h-[min(480px,50dvh)] overflow-y-auto overscroll-contain p-2 pb-[max(8px,env(safe-area-inset-bottom))] sm:max-h-[min(480px,56vh)]">
           <Command.Empty className="px-3 py-8 text-center">
             <div className="text-[13px] text-[var(--text-muted)]">
               {Object.keys(nodes).length === 0
@@ -1198,12 +1261,22 @@ export function CommandPalette() {
           <Hint keys="esc" label="close" />
           <span className="ml-auto flex items-center gap-1.5">
             <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-              ⌘K
+              {formatShortcut("K")}
             </kbd>
             <span>anytime</span>
           </span>
         </div>
+          <div className="border-t border-[var(--border)] p-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:hidden">
+            <button
+              type="button"
+              className="primary-btn w-full justify-center py-3 text-[14px]"
+              onClick={() => setCommandOpen(false)}
+            >
+              Close
+            </button>
+          </div>
       </Command>
+      </div>
     </div>
   );
 }

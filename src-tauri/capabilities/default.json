@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Nexus main window — vault FS, dialogs, menus",
+  "description": "Nexus main window — vault FS (dialog-granted + app data), dialogs, menus",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -29,13 +29,17 @@
     {
       "identifier": "fs:scope",
       "allow": [
-        { "path": "$HOME/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" },
+        { "path": "$RESOURCE/**" },
         { "path": "$DOCUMENT/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOWNLOAD/**" },
-        { "path": "$APPDATA/**" },
-        { "path": "/Volumes/**" },
-        { "path": "/Users/**" }
+        { "path": "$HOME/Documents/**" },
+        { "path": "$HOME/Desktop/**" },
+        { "path": "$HOME/Downloads/**" },
+        { "path": "$HOME/Library/Application Support/**" },
+        { "path": "$HOME/.local/share/**" }
       ]
     }
   ]

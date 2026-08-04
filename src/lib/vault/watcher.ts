@@ -8,9 +8,11 @@ import {
   incrementalRescan,
   scanSignatures,
   scanVault,
+  scanVaultMeta,
   signaturesChanged,
   type VaultScan,
 } from "./fs-adapter";
+import { shouldLazyBodies } from "./scale-flags";
 
 type WatchCallback = (event: {
   type: "change" | "create" | "delete";
@@ -55,7 +57,10 @@ export class VaultWatcher {
     this.cb = cb;
     this.dir = dir;
     try {
-      const full = await scanVault(dir);
+      // Wave A: large-vault mode baselines on meta only (no body flood)
+      const full = shouldLazyBodies("fsa")
+        ? await scanVaultMeta(dir)
+        : await scanVault(dir);
       this.lastScan = full;
       this.lastSigs = full.signatures;
     } catch {
@@ -101,10 +106,12 @@ export class VaultWatcher {
       const next = await scanSignatures(this.dir);
       if (!force && !signaturesChanged(this.lastSigs, next)) return;
 
+      const metaOnly = shouldLazyBodies("fsa");
       if (this.lastScan) {
         const { scan, changedPaths } = await incrementalRescan(
           this.dir,
           this.lastScan,
+          { metaOnly },
         );
         this.lastScan = scan;
         this.lastSigs = scan.signatures;
@@ -115,7 +122,9 @@ export class VaultWatcher {
           changedPaths,
         });
       } else {
-        const scan = await scanVault(this.dir);
+        const scan = metaOnly
+          ? await scanVaultMeta(this.dir)
+          : await scanVault(this.dir);
         this.lastScan = scan;
         this.lastSigs = scan.signatures;
         this.cb?.({ type: "change", path: "*", scan });

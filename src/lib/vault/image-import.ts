@@ -106,12 +106,70 @@ export type ImportedImage = {
 };
 
 /**
+ * Import a File (paste / drop / picker) into vault assets/, return paths.
+ * Demo / memory vault falls back to in-note data URL (no disk).
+ */
+export async function importImageFile(file: File): Promise<ImportedImage | null> {
+  const mode = useVaultStore.getState().mode;
+  const toast = (msg: string) => useVaultStore.getState().setToast(msg);
+  const alt = sanitizeFileName(file.name).replace(/\.[^.]+$/, "") || "image";
+
+  const desktop = await confirmDesktopShell();
+  if (desktop && getDesktopRoot()) {
+    try {
+      const root = getDesktopRoot()!;
+      const vaultPath = uniqueAssetPath(file.name);
+      const data = new Uint8Array(await file.arrayBuffer());
+      await writeDesktopBinary(root, vaultPath, data);
+      const blob = new Blob([toBlobPart(data)], {
+        type: file.type || mimeFromName(file.name),
+      });
+      const previewUrl = cachePreview(vaultPath, blob);
+      toast(`Image saved to ${vaultPath}`);
+      return { vaultPath, previewUrl, alt };
+    } catch (err) {
+      console.error("[nexus] desktop image import failed", err);
+      toast("Could not import image");
+      return null;
+    }
+  }
+
+  const fsa = getFsaRoot();
+  if (mode === "fsa" && fsa) {
+    try {
+      const vaultPath = uniqueAssetPath(file.name);
+      await writeBinaryFile(fsa, vaultPath, file);
+      const previewUrl = cachePreview(vaultPath, file);
+      toast(`Image saved to ${vaultPath}`);
+      return { vaultPath, previewUrl, alt };
+    } catch (err) {
+      console.error("[nexus] fsa image import failed", err);
+      toast("Could not write image into vault folder");
+    }
+  }
+
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  if (mode === "demo" || mode === "local") {
+    toast("Image embedded in note (open a folder vault to save as a file)");
+  }
+  return {
+    vaultPath: dataUrl,
+    previewUrl: dataUrl,
+    alt,
+  };
+}
+
+/**
  * Open OS file picker, copy image into vault assets/, return paths.
  * Demo / memory vault falls back to in-note data URL (no disk).
  */
 export async function importImageFromPicker(): Promise<ImportedImage | null> {
   const desktop = await confirmDesktopShell();
-  const mode = useVaultStore.getState().mode;
   const toast = (msg: string) => useVaultStore.getState().setToast(msg);
 
   if (desktop && getDesktopRoot()) {
@@ -140,39 +198,7 @@ export async function importImageFromPicker(): Promise<ImportedImage | null> {
 
   const file = await pickBrowserImageFile();
   if (!file) return null;
-
-  const fsa = getFsaRoot();
-  if (mode === "fsa" && fsa) {
-    try {
-      const vaultPath = uniqueAssetPath(file.name);
-      await writeBinaryFile(fsa, vaultPath, file);
-      const previewUrl = cachePreview(vaultPath, file);
-      toast(`Image saved to ${vaultPath}`);
-      return {
-        vaultPath,
-        previewUrl,
-        alt: sanitizeFileName(file.name).replace(/\.[^.]+$/, ""),
-      };
-    } catch (err) {
-      console.error("[nexus] fsa image import failed", err);
-      toast("Could not write image into vault folder");
-    }
-  }
-
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-  if (mode === "demo" || mode === "local") {
-    toast("Image embedded in note (open a folder vault to save as a file)");
-  }
-  return {
-    vaultPath: dataUrl,
-    previewUrl: dataUrl,
-    alt: sanitizeFileName(file.name).replace(/\.[^.]+$/, ""),
-  };
+  return importImageFile(file);
 }
 
 /** Resolve vault-relative image path → display URL for the visual editor. */

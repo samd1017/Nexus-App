@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Activity, Link2, ListTree, Network, Unlink, Hash, Plus } from "lucide-react";
-import { useVaultStore } from "@/lib/vault/store";
+import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
 import { getBrokenLinksForNote } from "@/lib/vault/broken-links";
 import {
@@ -16,8 +16,11 @@ import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { EmptyState } from "@/components/ui/EmptyState";
-
-type Tab = "backlinks" | "outline" | "graph" | "pulse";
+import {
+  getUnreadPulseCount,
+  subscribePulse,
+  getPulseVersion,
+} from "@/lib/vault/pulse";
 
 const DEFAULT_RIGHT_WIDTH = 340;
 
@@ -43,18 +46,30 @@ export function RightPanel() {
   const setToast = useVaultStore((s) => s.setToast);
   const createNote = useVaultStore((s) => s.createNote);
   const focusMode = usePrefsStore((s) => s.focusMode);
-  const [tab, setTab] = useState<Tab>("backlinks");
+  const tab = useVaultStore((s) => s.rightTab);
+  const setRightTab = useVaultStore((s) => s.setRightTab);
   const demoGraphPrimed = useRef<string | null>(null);
+  const openConflictCount = useVaultStore((s) => {
+    // Depend on nodes + dismissals so badge updates live
+    void s.nodes;
+    void s.dismissedConflictKeys;
+    return s.getOpenConflictCount();
+  });
+  // Re-render badge when pulse buffer changes
+  useSyncExternalStore(subscribePulse, getPulseVersion, getPulseVersion);
+  const unreadPulse = getUnreadPulseCount(vaultId);
 
   // G6: when demo vault opens, switch right panel to Graph tab
   useEffect(() => {
     if (mode === "demo" && vaultId && demoGraphPrimed.current !== vaultId) {
       demoGraphPrimed.current = vaultId;
-      setTab("graph");
+      setRightTab("graph");
     }
-  }, [mode, vaultId]);
+  }, [mode, vaultId, setRightTab]);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
+
+  const setTab = (id: RightTab) => setRightTab(id);
 
   const note = activeNoteId ? nodes[activeNoteId] : null;
 
@@ -131,12 +146,12 @@ export function RightPanel() {
 
   if (!rightOpen) {
     return (
-      <div className="flex w-11 shrink-0 flex-col items-center gap-1 border-l border-[var(--border)] bg-[var(--bg-primary)] py-3 sm:w-12">
+      <div className="hidden w-11 shrink-0 flex-col items-center gap-1 border-l border-[var(--border)] bg-[var(--bg-primary)] py-3 sm:w-12 lg:flex">
         {tabDefs.map(([id, Icon, label]) => (
           <button
             key={id}
             type="button"
-            className="icon-btn"
+            className="icon-btn relative"
             title={label}
             aria-label={label}
             onClick={() => {
@@ -145,6 +160,14 @@ export function RightPanel() {
             }}
           >
             <Icon size={16} />
+            {id === "pulse" && (openConflictCount > 0 || unreadPulse > 0) ? (
+              <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--danger)] px-0.5 text-[9px] font-semibold text-white">
+                {(() => {
+                  const n = Math.max(openConflictCount, unreadPulse);
+                  return n > 9 ? "9+" : n;
+                })()}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -160,7 +183,7 @@ export function RightPanel() {
         onClick={() => setRightOpen(false)}
       />
       <aside
-        className="panel-slide glass-panel absolute inset-y-0 right-0 z-30 flex h-full shrink-0 flex-col border-l border-[var(--border)] bg-[rgba(15,15,18,0.94)] lg:relative lg:z-0 lg:bg-[rgba(15,15,18,0.78)]"
+        className="panel-slide panel-solid absolute inset-y-0 right-0 z-30 flex h-full shrink-0 flex-col border-l border-[var(--border)] bg-[var(--panel-solid)] lg:relative lg:z-0"
         style={{ width: rightWidth }}
       >
         <div
@@ -193,12 +216,22 @@ export function RightPanel() {
             <button
               key={id}
               type="button"
-              className={cn("chip-btn flex-1 justify-center", tab === id && "is-active")}
+              className={cn(
+                "chip-btn relative flex-1 justify-center",
+                tab === id && "is-active",
+              )}
               onClick={() => setTab(id)}
               title={label}
+              aria-label={label}
+              aria-selected={tab === id}
             >
               <Icon size={13} />
               <span className="hidden xl:inline">{label}</span>
+              {id === "pulse" && (openConflictCount > 0 || unreadPulse > 0) ? (
+                <span className="ml-1 rounded-full bg-[rgba(255,69,58,0.15)] px-1.5 text-[10px] font-semibold text-[var(--danger)]">
+                  {Math.max(openConflictCount, unreadPulse)}
+                </span>
+              ) : null}
             </button>
           ))}
           <button
@@ -206,6 +239,7 @@ export function RightPanel() {
             className="icon-btn ml-1 h-7 w-7"
             onClick={() => setRightOpen(false)}
             title="Collapse panel"
+            aria-label="Collapse panel"
           >
             ×
           </button>
@@ -306,6 +340,7 @@ export function RightPanel() {
                             type="button"
                             className="icon-btn mt-0.5 h-6 w-6 shrink-0"
                             title={`Create note “${bl.target}”`}
+                            aria-label={`Create note “${bl.target}”`}
                             onClick={() => {
                               createNote(null, bl.target);
                               setToast(`Created “${bl.target}”`);

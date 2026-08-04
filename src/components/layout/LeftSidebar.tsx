@@ -4,6 +4,7 @@ import {
   FilePlus,
   FileText,
   FolderPlus,
+  Hash,
   PanelLeftClose,
   Search,
 } from "lucide-react";
@@ -18,6 +19,9 @@ import {
   formatDateISO,
   shiftDate,
 } from "@/lib/vault/templates";
+import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
+import { formatShortcut } from "@/lib/platform";
+import { openCommandPalette } from "@/components/search/CommandPalette";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_LEFT_WIDTH = 260;
@@ -41,10 +45,17 @@ export function LeftSidebar() {
   const createFolder = useVaultStore((s) => s.createFolder);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
   const openDailyNoteForDate = useVaultStore((s) => s.openDailyNoteForDate);
-  const nodes = useVaultStore((s) => s.nodes);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
+  const activePath = useVaultStore((s) => {
+    const id = s.activeNoteId;
+    if (!id) return null;
+    const n = s.nodes[id];
+    return n?.kind === "note" ? n.path : null;
+  });
   const recentNoteVisits = useVaultStore((s) => s.recentNoteVisits);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
+  const setToast = useVaultStore((s) => s.setToast);
+  const nodes = useVaultStore((s) => s.nodes);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
@@ -55,17 +66,20 @@ export function LeftSidebar() {
   const yesterdayIso = formatDateISO(yesterday);
   const todayPath = dailyNotePath(today);
   const yesterdayPath = dailyNotePath(yesterday);
-  const activePath =
-    activeNoteId && nodes[activeNoteId]?.kind === "note"
-      ? nodes[activeNoteId].path
-      : null;
   const isTodayActive = activePath === todayPath;
   const isYesterdayActive = activePath === yesterdayPath;
 
   const weekDays = useMemo(() => weekDaysMondayStart(new Date()), []);
 
-  // H2: visit-based Recent first, fall back to mtime
+  const vaultTags = useMemo(
+    () => collectVaultTags(nodes).slice(0, 12),
+    [nodes],
+  );
+
+  // H2: visit-based Recent first — resolve only visit ids (not full nodes map)
   const recentNotes = useMemo(() => {
+    const state = useVaultStore.getState();
+    const nodes = state.nodes;
     const byVisit: (typeof nodes)[string][] = [];
     const seen = new Set<string>();
     for (const id of recentNoteVisits ?? []) {
@@ -85,19 +99,20 @@ export function LeftSidebar() {
       if (byVisit.length >= 5) break;
     }
     return byVisit;
-  }, [nodes, recentNoteVisits]);
+  }, [recentNoteVisits, activeNoteId]);
 
   // H5: true focus — no rail at all
   if (focusMode) return null;
 
   if (!leftOpen) {
     return (
-      <div className="flex w-11 shrink-0 flex-col items-center border-r border-[var(--border)] bg-[var(--bg-primary)] py-3 sm:w-12">
+      <div className="hidden w-11 shrink-0 flex-col items-center border-r border-[var(--border)] bg-[var(--bg-primary)] py-3 sm:w-12 md:flex">
         <button
           type="button"
           className="icon-btn"
           onClick={() => setLeftOpen(true)}
-          title="Show sidebar (⌘\\)"
+          title={`Show sidebar (${formatShortcut("\\")})`}
+          aria-label="Show sidebar"
         >
           <PanelLeftClose size={16} className="rotate-180" />
         </button>
@@ -114,7 +129,7 @@ export function LeftSidebar() {
         onClick={() => setLeftOpen(false)}
       />
       <aside
-        className="titlebar-no-drag panel-slide glass-panel absolute inset-y-0 left-0 z-30 flex h-full w-[min(280px,86vw)] shrink-0 flex-col border-r border-[var(--border)] bg-[rgba(15,15,18,0.94)] md:relative md:z-0 md:bg-[rgba(15,15,18,0.78)]"
+        className="titlebar-no-drag panel-slide panel-solid absolute inset-y-0 left-0 z-30 flex h-full w-[min(280px,86vw)] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--panel-solid)] md:relative md:z-0"
         style={{ width: leftWidth }}
       >
         <VaultSwitcher />
@@ -124,11 +139,13 @@ export function LeftSidebar() {
             type="button"
             onClick={() => setCommandOpen(true)}
             className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-white/[0.03] px-2.5 text-left text-[12.5px] text-[var(--text-muted)] transition-colors hover:border-[rgba(0,200,255,0.25)] hover:text-[var(--text-secondary)]"
+            title={`Search (${formatShortcut("K")})`}
+            aria-label="Search"
           >
             <Search size={14} />
             <span className="flex-1 truncate">Search</span>
             <kbd className="hidden rounded border border-[var(--border)] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] sm:inline">
-              ⌘K
+              {formatShortcut("K")}
             </kbd>
           </button>
           <NewNoteMenu title="New note" variant="icon">
@@ -137,7 +154,8 @@ export function LeftSidebar() {
           <button
             type="button"
             className="icon-btn"
-            title="Daily note (⌘D)"
+            title={`Daily note (${formatShortcut("D")})`}
+            aria-label="Daily note"
             onClick={() => openDailyNote()}
           >
             <CalendarDays size={16} />
@@ -146,6 +164,7 @@ export function LeftSidebar() {
             type="button"
             className="icon-btn"
             title="New folder"
+            aria-label="New folder"
             onClick={() => createFolder(null)}
           >
             <FolderPlus size={16} />
@@ -238,6 +257,40 @@ export function LeftSidebar() {
           </div>
         ) : null}
 
+        {vaultTags.length > 0 ? (
+          <div className="mt-2 px-3">
+            <div className="sidebar-section-label px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+              Tags
+            </div>
+            <ul className="flex flex-wrap gap-1">
+              {vaultTags.map((t) => (
+                <li key={t.tag}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const hits = notesForTag(nodes, t.tag);
+                      if (hits[0]) setActiveNote(hits[0].id);
+                      if (hits.length > 1) {
+                        setToast(
+                          `#${t.tag} · ${hits.length} note${hits.length === 1 ? "" : "s"}`,
+                        );
+                        openCommandPalette(`#${t.tag}`);
+                      } else if (hits.length === 1) {
+                        setToast(`#${t.tag}`);
+                      }
+                    }}
+                    className="chip-btn gap-1 px-2 py-0.5 text-[11.5px]"
+                    title={`${t.count} note${t.count === 1 ? "" : "s"} tagged #${t.tag}`}
+                  >
+                    <Hash size={11} className="opacity-70" />
+                    {t.tag}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         <div className="sidebar-section-label mt-2 flex items-center justify-between px-4 pb-1">
           <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
             Files
@@ -247,12 +300,13 @@ export function LeftSidebar() {
             className="icon-btn h-6 w-6"
             onClick={() => setLeftOpen(false)}
             title="Collapse sidebar"
+            aria-label="Collapse sidebar"
           >
             <PanelLeftClose size={14} />
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto" data-tree-scroll>
           <FileTree />
         </div>
 

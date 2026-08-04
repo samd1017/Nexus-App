@@ -20,6 +20,10 @@ export type PulseEvent = {
   path: string;
   title?: string;
   message: string;
+  /** Vault that produced the event — used to filter when switching vaults */
+  vaultId?: string | null;
+  /** Inbox read state (Wave C) */
+  read?: boolean;
 };
 
 const MAX_EVENTS = 50;
@@ -56,10 +60,77 @@ export function pushPulse(
     path: event.path,
     title: event.title,
     message: event.message,
+    vaultId: event.vaultId ?? null,
+    read: event.read ?? false,
   };
   events = [full, ...events].slice(0, MAX_EVENTS);
   notify();
   return full;
+}
+
+/** Clear the entire pulse buffer (e.g. on vault close). */
+export function clearPulse(): void {
+  if (events.length === 0) return;
+  events = [];
+  notify();
+}
+
+/** Mark a single event as read. */
+export function markPulseRead(id: string): void {
+  let changed = false;
+  events = events.map((e) => {
+    if (e.id !== id || e.read) return e;
+    changed = true;
+    return { ...e, read: true };
+  });
+  if (changed) notify();
+}
+
+/** Mark all events (optionally vault-scoped) as read. */
+export function markAllPulseRead(vaultId?: string | null): void {
+  let changed = false;
+  events = events.map((e) => {
+    if (e.read) return e;
+    if (
+      vaultId != null &&
+      e.vaultId != null &&
+      e.vaultId !== vaultId
+    ) {
+      return e;
+    }
+    changed = true;
+    return { ...e, read: true };
+  });
+  if (changed) notify();
+}
+
+/** Whether an event belongs to the given vault (null vaultId = show all). */
+export function pulseEventMatchesVault(
+  ev: PulseEvent,
+  vaultId: string | null | undefined,
+): boolean {
+  if (vaultId == null) return true;
+  if (ev.vaultId == null) return true; // legacy / unscoped
+  return ev.vaultId === vaultId;
+}
+
+const INBOX_KINDS: ReadonlySet<PulseKind> = new Set([
+  "external",
+  "hermes",
+  "conflict",
+  "delete",
+]);
+
+/** Unread inbox-style events for a vault (for rail badges). */
+export function getUnreadPulseCount(
+  vaultId?: string | null,
+): number {
+  return events.filter(
+    (e) =>
+      !e.read &&
+      pulseEventMatchesVault(e, vaultId) &&
+      INBOX_KINDS.has(e.kind),
+  ).length;
 }
 
 export function getPulseEvents(): readonly PulseEvent[] {

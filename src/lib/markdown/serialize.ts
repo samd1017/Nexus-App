@@ -18,6 +18,7 @@ import {
   isBulletStyle,
   type BulletStyle,
 } from "./bullet-styles";
+import { sanitizeNoteHtml } from "./sanitize-html";
 
 marked.setOptions({
   gfm: true,
@@ -85,6 +86,22 @@ turndown.addRule("taskListItem", {
   },
 });
 
+/** Cell → markdown with basic strong/em when present. */
+function tableCellToMd(cell: Element): string {
+  const clone = cell.cloneNode(true) as HTMLElement;
+  // Inline strong/em first so textContent order is preserved after replace
+  clone.querySelectorAll("strong, b").forEach((el) => {
+    const t = (el.textContent ?? "").replace(/\n+/g, " ");
+    el.replaceWith(`**${t}**`);
+  });
+  clone.querySelectorAll("em, i").forEach((el) => {
+    const t = (el.textContent ?? "").replace(/\n+/g, " ");
+    el.replaceWith(`*${t}*`);
+  });
+  const t = (clone.textContent ?? "").replace(/\n+/g, " ").trim();
+  return t.replace(/\|/g, "\\|");
+}
+
 turndown.addRule("table", {
   filter: "table",
   replacement: (_content, node) => {
@@ -93,10 +110,9 @@ turndown.addRule("table", {
     if (!rows.length) return "";
     const lines: string[] = [];
     rows.forEach((row, ri) => {
-      const cells = Array.from(row.querySelectorAll("th,td")).map((c) => {
-        const t = (c.textContent ?? "").replace(/\n+/g, " ").trim();
-        return t.replace(/\|/g, "\\|");
-      });
+      const cells = Array.from(row.querySelectorAll("th,td")).map((c) =>
+        tableCellToMd(c),
+      );
       if (!cells.length) return;
       lines.push("| " + cells.join(" | ") + " |");
       if (ri === 0) {
@@ -158,11 +174,12 @@ turndown.addRule("vaultImage", {
     if ((Number.isFinite(wNum) && wNum > 0) || (align && align !== "center")) {
       const wAttr =
         Number.isFinite(wNum) && wNum > 0 ? ` width="${wNum}"` : "";
-      const aAttr = align && align !== "center" ? ` data-align="${align}"` : "";
-      const vAttr = vault ? ` data-vault-src="${vault}"` : "";
-      return `\n\n<img src="${src}" alt="${alt}"${wAttr}${aAttr}${vAttr} />\n\n`;
+      const aAttr =
+        align && align !== "center" ? ` data-align="${escapeAttr(align)}"` : "";
+      const vAttr = vault ? ` data-vault-src="${escapeAttr(vault)}"` : "";
+      return `\n\n<img src="${escapeAttr(src)}" alt="${escapeAttr(alt)}"${wAttr}${aAttr}${vAttr} />\n\n`;
     }
-    return `![${alt}](${src})`;
+    return `![${alt.replace(/[[\]]/g, "")}](${src})`;
   },
 });
 
@@ -327,6 +344,10 @@ export function markdownToHtml(md: string): string {
   });
 
   let html = marked.parse(forMarked, { async: false }) as string;
+  // Normalize tasks while marked still has checkbox inputs, then sanitize
+  // (sanitize allows input[type=checkbox] + label for TipTap task lists).
+  html = normalizeTaskListsForTipTap(html);
+  html = sanitizeNoteHtml(html);
 
   html = html.replace(/%%WIKI(\d+)%%/g, (_, n) => {
     const full = placeholders[Number(n)] ?? "";
@@ -337,8 +358,9 @@ export function markdownToHtml(md: string): string {
     return `<span data-wikilink="${escapeAttr(target)}" data-alias="${escapeAttr(alias)}" class="wikilink-pill">${escapeHtml(alias)}</span>`;
   });
 
-  html = normalizeTaskListsForTipTap(html);
   html = annotateBulletListsFromMarkdown(body, html);
+  // Second pass after we inject wikilink HTML (keep allowlisted data-* only)
+  html = sanitizeNoteHtml(html);
 
   if (frontmatterHtml) {
     return frontmatterHtml + (html || "<p></p>");
@@ -369,6 +391,16 @@ export function htmlDocToMarkdown(root: HTMLElement): string {
   clone
     .querySelectorAll(".ProseMirror-trailingBreak, .ProseMirror-separator")
     .forEach((n) => n.remove());
+  // Strip image chrome so resize handles/toolbars never hit disk
+  clone
+    .querySelectorAll(
+      ".nexus-image-toolbar, .nexus-image-handle, .nexus-image-resize",
+    )
+    .forEach((n) => n.remove());
+  clone.querySelectorAll(".nexus-image-wrap").forEach((wrap) => {
+    const img = wrap.querySelector("img");
+    if (img && wrap.parentNode) wrap.parentNode.replaceChild(img, wrap);
+  });
   // Keep checkbox state in data-checked for turndown
   clone.querySelectorAll('li[data-type="taskItem"]').forEach((li) => {
     const input = li.querySelector(

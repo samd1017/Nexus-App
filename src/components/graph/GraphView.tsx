@@ -3,8 +3,12 @@ import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import SpriteText from "three-spritetext";
 import { useVaultStore } from "@/lib/vault/store";
-import { buildGraph } from "@/lib/graph/build-graph";
+import { resolveGraphData, type GraphViewMode } from "@/lib/graph/build-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
+import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { vaultLinkIndex } from "@/lib/vault/link-index";
+import type { VaultNode } from "@/lib/vault/types";
 import {
   Maximize2,
   Minimize2,
@@ -13,6 +17,7 @@ import {
   Focus,
   Globe2,
   Ghost,
+  Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePrefsStore, type PhysicsIntensity } from "@/lib/prefs/preferences";
@@ -34,6 +39,9 @@ type GNode = {
   folder: string;
   ghost?: boolean;
   ghostTarget?: string;
+  kind?: "note" | "folder" | "aggregate";
+  noteCount?: number;
+  aggregate?: boolean;
   x?: number;
   y?: number;
   z?: number;
@@ -85,10 +93,6 @@ function folderTintColor(folder: string, desktopBoost: boolean): THREE.Color {
   const sat = desktopBoost ? 0.42 : 0.36;
   const light = desktopBoost ? 0.4 : 0.34;
   return new THREE.Color().setHSL(hue, sat, light);
-}
-
-function folderColorHex(folder: string, desktopBoost: boolean): string {
-  return `#${folderTintColor(folder, desktopBoost).getHexString()}`;
 }
 
 function buildStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
@@ -396,9 +400,11 @@ function createOrb(
 ): THREE.Object3D {
   const group = new THREE.Group();
   const isGhost = !!node.ghost;
+  const isAggregate = node.kind === "aggregate" || !!node.aggregate;
+  const isFolderNode = node.kind === "folder";
   const isActive = node.id === activeId;
   const isHover = node.id === hoverId;
-  const isHub = !isGhost && node.degree >= 3;
+  const isHub = !isGhost && !isAggregate && node.degree >= 3;
   const inFocus =
     !focusId || node.id === focusId || (neighbors?.has(node.id) ?? false);
   const dim = !!focusId && !inFocus && dimStrength > 0;
@@ -421,7 +427,7 @@ function createOrb(
   const sizeBoost = desktopBoost ? 1.14 : 1;
 
   const base = (full ? 3.15 : panel ? 2.55 : 2.4) * sizeBoost;
-  const rank = isActive || isHover ? 1 : isHub ? 0.84 : 0.68;
+  const rank = isActive || isHover ? 1 : isHub || isFolderNode ? 0.84 : 0.68;
   const radius =
     base +
     Math.pow(Math.max(1, node.val), 0.55) * (full ? 1.75 : 1.4) * rank +
@@ -430,11 +436,13 @@ function createOrb(
   let bodyColor = folderTintColor(node.folder, desktopBoost);
   if (node.ghost) {
     bodyColor = new THREE.Color(desktopBoost ? 0x2a323c : 0x222830);
+  } else if (isAggregate) {
+    bodyColor = bodyColor.clone().multiplyScalar(0.55);
   } else if (isActive || isHover) {
     bodyColor = bodyColor
       .clone()
       .lerp(new THREE.Color(desktopBoost ? 0x5c6678 : 0x4a5260), 0.55);
-  } else if (isHub) {
+  } else if (isHub || isFolderNode) {
     bodyColor = bodyColor
       .clone()
       .lerp(new THREE.Color(desktopBoost ? 0x4a5466 : 0x3c4452), 0.35);
@@ -444,7 +452,13 @@ function createOrb(
     bodyColor.multiplyScalar(1 - dimStrength * 0.5);
   }
 
-  const bodyOpacity = dim ? Math.max(0.08, 1 - dimStrength * 0.92) : isGhost ? 0.38 : 1;
+  const bodyOpacity = dim
+    ? Math.max(0.08, 1 - dimStrength * 0.92)
+    : isGhost
+      ? 0.38
+      : isAggregate
+        ? 0.48
+        : 1;
 
   let emissive = accent.clone().multiplyScalar(desktopBoost ? 0.22 : 0.12);
   let emissiveIntensity = desktopBoost ? 0.055 : 0.028;
@@ -461,12 +475,22 @@ function createOrb(
     new THREE.MeshPhysicalMaterial({
       color: bodyColor,
       metalness: desktopBoost ? 0.88 : 0.94,
-      roughness: isActive || isHover ? 0.14 : isHub ? 0.22 : 0.3,
-      clearcoat: isActive || isHover ? 0.75 : desktopBoost ? 0.55 : 0.42,
+      roughness: isActive || isHover
+        ? 0.14
+        : isHub || isFolderNode
+          ? 0.22
+          : 0.3,
+      clearcoat: isActive || isHover
+        ? 0.75
+        : isFolderNode
+          ? Math.min(0.72, (desktopBoost ? 0.55 : 0.42) + 0.08)
+          : desktopBoost
+            ? 0.55
+            : 0.42,
       clearcoatRoughness: isActive || isHover ? 0.06 : 0.16,
-      transparent: dim || isGhost,
+      transparent: dim || isGhost || isAggregate,
       opacity: bodyOpacity,
-      depthWrite: !(dim || isGhost),
+      depthWrite: !(dim || isGhost || isAggregate),
       transmission: 0,
       specularIntensity: isActive || isHover ? 1.5 : desktopBoost ? 1.35 : 1.15,
       specularColor: new THREE.Color(0xe8eef6),
@@ -702,9 +726,24 @@ export function GraphView({ mode, className }: Props) {
   const activeRef = useRef<string | null>(null);
   const hoverRef = useRef<string | null>(null);
   const neighborMapRef = useRef<Map<string, Set<string>>>(new Map());
-  const nodes = useVaultStore((s) => s.nodes);
-  // Defer heavy graph rebuilds when agents dump many files at once
+  // Narrow tick — avoid re-render on every body hydrate at 45k
+  const graphTick = useVaultStore((s) => {
+    const idx = ensureVaultIndex(s.nodes);
+    const n = idx.noteCount;
+    const large = shouldUseFolderGraph(n);
+    const scope = s.graphScopeMode ?? "vault";
+    if (large && scope !== "ego") {
+      return `f:${idx.structureGeneration}:${s.graphBrowsePath ?? ""}:${scope}:${n}`;
+    }
+    if (large) {
+      return `e:${vaultLinkIndex.generation}:${s.activeNoteId}:${n}`;
+    }
+    return `full:${idx.generation()}:${vaultLinkIndex.generation}`;
+  });
+  // Read nodes map only when graphTick forces a render
+  const nodes = useVaultStore.getState().nodes;
   const deferredNodes = useDeferredValue(nodes);
+  void graphTick;
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const setGraphMode = useVaultStore((s) => s.setGraphMode);
@@ -726,17 +765,44 @@ export function GraphView({ mode, className }: Props) {
   const hoverAppliedRef = useRef<string | null>(null);
   const hoverThrottleRef = useRef<number | null>(null);
   const prevActiveFlyRef = useRef<string | null | undefined>(undefined);
-  const createNote = useVaultStore((s) => s.createNote);
+  const graphScopeMode = useVaultStore((s) => s.graphScopeMode ?? "vault");
+  const graphBrowsePath = useVaultStore((s) => s.graphBrowsePath ?? "");
+  const enterGraphFolder = useVaultStore((s) => s.enterGraphFolder);
+  const enterGraphEgo = useVaultStore((s) => s.enterGraphEgo);
+  const returnFromGraphEgo = useVaultStore((s) => s.returnFromGraphEgo);
+  const resetGraphBrowse = useVaultStore((s) => s.resetGraphBrowse);
+  const [liveRegion, setLiveRegion] = useState("");
+  /** Skip first browse-path effect so it doesn't fight mount zoomToFit */
+  const browsePathReadyRef = useRef(false);
 
   activeRef.current = activeNoteId;
   neighborhoodRef.current = neighborhood;
   const desktopBoost = isDesktopShell();
 
-  // Wave S1: rebuild graph only when link structure / note identity changes
-  // (not on every content keystroke). Fingerprint = id|path|name|wikilink targets.
-  const linkStructureKey = useMemo(() => {
-    const parts: string[] = [];
-    for (const n of Object.values(deferredNodes)) {
+  const vaultNoteCount = useMemo(() => {
+    const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
+    return idx.noteCount;
+  }, [deferredNodes]);
+
+  const vaultFolderCount = useMemo(() => {
+    const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
+    return idx.folderCount;
+  }, [deferredNodes]);
+
+
+  // Mode-gated fingerprint — folder mode is O(1) structure gen + path (not O(N) links)
+  const graphStructureKey = useMemo(() => {
+    const large = shouldUseFolderGraph(vaultNoteCount);
+    const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
+    if (large && graphScopeMode !== "ego") {
+      return `folder:${idx.structureGeneration}:${graphBrowsePath}:${graphScopeMode}`;
+    }
+    if (large && graphScopeMode === "ego") {
+      return `ego:${vaultLinkIndex.generation}:${activeNoteId}`;
+    }
+    // Full notes (demo / small vault)
+    const parts: string[] = [`links:${vaultLinkIndex.generation}`];
+    for (const n of Object.values(deferredNodes as Record<string, VaultNode>)) {
       if (n.kind === "note") {
         parts.push(
           `${n.id}\0${n.path}\0${n.name}\0${getContentLinkSig(n.content ?? "")}`,
@@ -747,36 +813,65 @@ export function GraphView({ mode, className }: Props) {
     }
     parts.sort();
     return parts.join("\n");
-  }, [deferredNodes]);
+  }, [
+    deferredNodes,
+    vaultNoteCount,
+    graphBrowsePath,
+    graphScopeMode,
+    activeNoteId,
+    graphTick,
+  ]);
+
+  const resolved = useMemo(() => {
+    return resolveGraphData(deferredNodes as Record<string, VaultNode>, {
+      noteCount: vaultNoteCount,
+      activeNoteId,
+      graphBrowsePath: graphBrowsePath || "",
+      graphScopeMode: graphScopeMode || "vault",
+      structuralIndex: ensureVaultIndex(
+        deferredNodes as Record<string, VaultNode>,
+      ),
+    });
+  }, [graphStructureKey, activeNoteId, graphBrowsePath, graphScopeMode]);
+
+  const graphModeResolved: GraphViewMode = resolved.mode;
 
   const data = useMemo(() => {
-    const g = buildGraph(deferredNodes);
     return {
-      nodes: g.nodes.map((n) => ({
+      nodes: resolved.nodes.map((n) => ({
         id: n.id,
         name: n.title,
-        val: Math.max(1, n.degree + 1),
+        val:
+          n.val ??
+          Math.max(
+            1,
+            (n.noteCount ?? n.degree ?? 0) + (n.kind === "folder" ? 1 : 1),
+          ),
         preview: n.preview,
         path: n.path,
         degree: n.degree,
         folder: n.folder ?? "",
         ghost: n.ghost,
         ghostTarget: n.ghostTarget,
+        kind: n.kind,
+        noteCount: n.noteCount,
+        aggregate: n.aggregate,
       })) as GNode[],
-      links: g.edges.map((e) => ({
+      links: resolved.edges.map((e) => ({
         source: e.source,
         target: e.target,
       })) as GLink[],
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- S1: structure key only
-  }, [linkStructureKey]);
+  }, [resolved]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);
   }, [data]);
 
+  const stats = resolved.stats;
   const realNoteCount = useMemo(
-    () => data.nodes.filter((n) => !n.ghost).length,
+    () =>
+      data.nodes.filter((n) => !n.ghost && n.kind !== "aggregate").length,
     [data.nodes],
   );
   const realLinkCount = useMemo(
@@ -791,28 +886,40 @@ export function GraphView({ mode, className }: Props) {
     () => data.nodes.filter((n) => n.ghost).length,
     [data.nodes],
   );
+  const isPartialVaultGraph =
+    graphModeResolved === "ego" ||
+    (graphModeResolved === "folder" && stats.isPartialVault) ||
+    (vaultNoteCount > 0 &&
+      realNoteCount < vaultNoteCount &&
+      graphModeResolved !== "full");
 
-  const topFolders = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const n of data.nodes) {
-      if (n.ghost) continue;
-      const key = n.folder || "";
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .filter(([, c]) => c > 0)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([folder, count]) => ({
-        folder,
-        label: folder ? folder.split("/").pop() || folder : "Root",
-        count,
-        color: folderColorHex(folder, desktopBoost),
-      }));
-  }, [data.nodes, desktopBoost]);
+  const folderCrumbs = useMemo(() => {
+    const path = stats.levelPath || graphBrowsePath || "";
+    if (!path) return [] as string[];
+    return path.split("/").filter(Boolean);
+  }, [stats.levelPath, graphBrowsePath]);
+
+  /** Active note exists but isn't among current folder-map nodes. */
+  const activeNoteMissingFromFolderMap = useMemo(() => {
+    if (graphModeResolved !== "folder" || !activeNoteId) return false;
+    return !data.nodes.some((n) => n.id === activeNoteId);
+  }, [graphModeResolved, activeNoteId, data.nodes]);
+
+  // Honest folder badge totals: prefer true level children over drawn subset
+  const badgeFolderCount =
+    stats.childFolderCount || stats.shownFolderCount || 0;
+  const badgeNoteCount = stats.childNoteCount || stats.shownNoteCount || 0;
+
+  // Folder hues live on the orbs only — no multi-chip legend (clutters large vaults).
 
   const displayData = useMemo(() => {
     let base: { nodes: GNode[]; links: GLink[] } = data;
+    if (graphModeResolved === "folder") {
+      // Builder already capped; skip LOD that would cull degree-0 folders
+      hopKeepRef.current = null;
+      lowDetailRef.current = false;
+      return { nodes: base.nodes, links: base.links };
+    }
     if (!showGhosts) {
       base = {
         nodes: data.nodes.filter((n) => !n.ghost),
@@ -832,7 +939,7 @@ export function GraphView({ mode, className }: Props) {
     );
     hopKeepRef.current = soft.hopKeep;
     return { nodes: soft.nodes, links: soft.links };
-  }, [data, neighborhood, activeNoteId, showGhosts]);
+  }, [data, neighborhood, activeNoteId, showGhosts, graphModeResolved]);
 
   const shownNoteCount = useMemo(
     () => displayData.nodes.filter((n) => !n.ghost).length,
@@ -870,11 +977,15 @@ export function GraphView({ mode, className }: Props) {
       ctx.font = `500 ${fontPx}px system-ui, -apple-system, Segoe UI, Arial, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(
-        `Nexus · ${realNoteCount} notes · ${realLinkCount} links`,
-        out.width / 2,
-        out.height - footerH / 2,
-      );
+      const footer =
+        graphModeResolved === "folder"
+          ? `Nexus · folder map · ${badgeFolderCount} folders · ${badgeNoteCount} notes`
+          : graphModeResolved === "ego" || isPartialVaultGraph
+            ? `Nexus · ${realNoteCount} of ${vaultNoteCount} notes · near active`
+            : vaultFolderCount > 0
+              ? `Nexus · ${realNoteCount} notes · ${vaultFolderCount} folders · ${realLinkCount} links`
+              : `Nexus · ${realNoteCount} notes · ${realLinkCount} links`;
+      ctx.fillText(footer, out.width / 2, out.height - footerH / 2);
       const url = out.toDataURL("image/png");
       const a = document.createElement("a");
       a.href = url;
@@ -895,13 +1006,28 @@ export function GraphView({ mode, className }: Props) {
         /* ok */
       }
     }
-  }, [realNoteCount, realLinkCount]);
+  }, [
+    realNoteCount,
+    realLinkCount,
+    graphModeResolved,
+    isPartialVaultGraph,
+    vaultNoteCount,
+    vaultFolderCount,
+    badgeFolderCount,
+    badgeNoteCount,
+  ]);
 
   useEffect(() => {
     setHintVisible(true);
     const t = window.setTimeout(() => setHintVisible(false), 4500);
     return () => window.clearTimeout(t);
   }, [mode]);
+
+  const handleShowLinks = useCallback(() => {
+    if (!activeNoteId) return;
+    enterGraphEgo?.({ returnPath: graphBrowsePath || "" });
+    setLiveRegion("Showing links near the active note");
+  }, [activeNoteId, enterGraphEgo, graphBrowsePath]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -1055,17 +1181,64 @@ export function GraphView({ mode, className }: Props) {
         const node = n as GNode;
         if (!node?.id) return;
         setHintVisible(false);
-        if (node.ghost) {
-          const title = node.ghostTarget || node.name;
-          createNote(null, title);
+        const st = useVaultStore.getState();
+        if (node.kind === "aggregate" || node.aggregate) {
+          // Honesty: never silent no-op when cap hides siblings
+          const omitted = node.noteCount ?? 0;
+          const folderPath = (node.path || "")
+            .replace(/\\/g, "/")
+            .replace(/^\/+|\/+$/g, "");
+          const browsing = (st.graphBrowsePath || "")
+            .replace(/\\/g, "/")
+            .replace(/^\/+|\/+$/g, "");
+          // Enter folder if aggregate points at a path we aren't browsing
+          if (folderPath && folderPath !== browsing) {
+            const hit = Object.values(st.nodes).find(
+              (x) => x.kind === "folder" && x.path === folderPath,
+            );
+            if (hit) {
+              st.enterGraphFolder?.(folderPath);
+              st.setToast?.(
+                omitted > 0
+                  ? `Entered folder · ${omitted}+ items may still be capped`
+                  : "Entered folder",
+              );
+              setLiveRegion(`Entered ${folderPath}`);
+              return;
+            }
+          }
+          st.setToast?.(
+            omitted > 0
+              ? `Not expanded — ${omitted} more item${omitted === 1 ? "" : "s"} hidden by the folder map cap. Enter a folder or open a note for links.`
+              : "Not expanded — folder map is capped. Enter a folder or open a note for links.",
+          );
+          setLiveRegion("Aggregate not expanded");
           return;
         }
-        setGraphMode("panel");
-        setLeftOpen(true);
-        if (typeof window !== "undefined" && window.innerWidth >= 1200) {
-          setRightOpen(true);
+        if (node.kind === "folder") {
+          st.enterGraphFolder?.(node.path);
+          setLiveRegion(
+            `Entered ${node.name}. ${node.noteCount ?? 0} notes.`,
+          );
+          return;
         }
-        setActiveNote(node.id);
+        if (node.ghost) {
+          const title = node.ghostTarget || node.name;
+          st.createNote(null, title);
+          return;
+        }
+        st.setGraphMode("panel");
+        st.setLeftOpen(true);
+        if (typeof window !== "undefined" && window.innerWidth >= 1200) {
+          st.setRightOpen(true);
+        }
+        const noteCount = Object.values(st.nodes).filter(
+          (x) => x.kind === "note",
+        ).length;
+        if (shouldUseFolderGraph(noteCount)) {
+          st.enterGraphEgo?.({ returnPath: st.graphBrowsePath || "" });
+        }
+        st.setActiveNote(node.id);
       })
       .onNodeHover((n: object | null) => {
         const node = n as GNode | null;
@@ -1269,7 +1442,7 @@ export function GraphView({ mode, className }: Props) {
     graph.width(width).height(height);
     graph.graphData(displayData);
 
-    window.setTimeout(() => {
+    const zoomTimer = window.setTimeout(() => {
       try {
         graph.zoomToFit(650, mode === "fullscreen" ? 70 : 48);
       } catch {
@@ -1279,7 +1452,10 @@ export function GraphView({ mode, className }: Props) {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(zoomTimer);
       cancelAnimationFrame(raf);
+
+
       if (hoverThrottleRef.current != null) {
         window.clearTimeout(hoverThrottleRef.current);
         hoverThrottleRef.current = null;
@@ -1325,17 +1501,61 @@ export function GraphView({ mode, className }: Props) {
     physicsIntensity,
     accentPreset,
     accentCustom,
-    setActiveNote,
-    setGraphMode,
-    setLeftOpen,
-    setRightOpen,
-    createNote,
   ]);
 
   useEffect(() => {
     if (!graphRef.current) return;
     graphRef.current.graphData(displayData);
   }, [displayData]);
+
+  /** Debounced zoomToFit after folder path / scope change (skip first mount) */
+  useEffect(() => {
+    if (graphModeResolved !== "folder") {
+      browsePathReadyRef.current = false;
+      return;
+    }
+    if (!browsePathReadyRef.current) {
+      browsePathReadyRef.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      const g = graphRef.current;
+      if (!g) return;
+      try {
+        g.zoomToFit(650, mode === "fullscreen" ? 70 : 48);
+      } catch {
+        /* ok */
+      }
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [graphBrowsePath, graphScopeMode, graphModeResolved, mode]);
+
+  /** Fit camera when entering ego scope (including same-id Show links) */
+  useEffect(() => {
+    if (graphModeResolved !== "ego" || !activeNoteId) return;
+    const t = window.setTimeout(() => {
+      const g = graphRef.current;
+      if (!g) return;
+      try {
+        const nodes = (g.graphData()?.nodes ?? []) as GNode[];
+        const node = nodes.find((n) => n.id === activeNoteId);
+        if (node?.x != null && node.y != null && node.z != null) {
+          const lookAt = { x: node.x, y: node.y, z: node.z };
+          const dist = 180;
+          g.cameraPosition(
+            { x: lookAt.x, y: lookAt.y + dist * 0.35, z: lookAt.z + dist },
+            lookAt,
+            650,
+          );
+        } else {
+          g.zoomToFit(650, mode === "fullscreen" ? 70 : 48);
+        }
+      } catch {
+        /* ok */
+      }
+    }, 200);
+    return () => window.clearTimeout(t);
+  }, [graphModeResolved, graphStructureKey, activeNoteId, mode]);
 
   /** W5: camera fly-to when activeNoteId changes (not on hover) */
   useEffect(() => {
@@ -1512,6 +1732,14 @@ export function GraphView({ mode, className }: Props) {
         "graph-host relative flex min-h-0 flex-col overflow-hidden bg-[#03050a]",
         className,
       )}
+      role="region"
+      aria-label={
+        graphModeResolved === "folder"
+          ? "Folder map"
+          : graphModeResolved === "ego"
+            ? "Link neighborhood graph"
+            : "Note graph"
+      }
     >
       <div
         className="pointer-events-none absolute inset-0"
@@ -1530,18 +1758,64 @@ export function GraphView({ mode, className }: Props) {
               className="shrink-0 text-[var(--accent)] opacity-70"
             />
             <span className="truncate text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
-              {realNoteCount} notes
-              <span className="mx-1.5 opacity-50">·</span>
-              {realLinkCount} links
-              {ghostCount > 0 ? (
+              {graphModeResolved === "folder" ? (
                 <>
+                  {badgeFolderCount} folders
                   <span className="mx-1.5 opacity-50">·</span>
-                  <span className="opacity-70">
-                    {showGhosts ? ghostCount : 0}/{ghostCount} missing
+                  {badgeNoteCount} notes
+                  <span className="mx-1.5 opacity-50">·</span>
+                  <span className="text-[var(--accent)] opacity-80">
+                    {stats.levelPath
+                      ? `in ${stats.levelPath.split("/").pop()}`
+                      : "whole vault"}
+                  </span>
+                  {stats.capped ? (
+                    <>
+                      <span className="mx-1.5 opacity-50">·</span>
+                      <span className="opacity-70">
+                        Showing{" "}
+                        {stats.shownNoteCount + stats.shownFolderCount} of{" "}
+                        {stats.childFolderCount + stats.childNoteCount}
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              ) : graphModeResolved === "ego" || isPartialVaultGraph ? (
+                <>
+                  {realNoteCount} of {vaultNoteCount} notes
+                  <span className="mx-1.5 opacity-50">·</span>
+                  {realLinkCount} links
+                  <span className="mx-1.5 opacity-50">·</span>
+                  <span
+                    className="text-[var(--accent)] opacity-80"
+                    title="Showing links near the active note (large vault)"
+                  >
+                    near active
                   </span>
                 </>
-              ) : null}
-              {neighborhood === "1hop" ? (
+              ) : (
+                <>
+                  {vaultNoteCount || realNoteCount} notes
+                  {vaultFolderCount > 0 ? (
+                    <>
+                      <span className="mx-1.5 opacity-50">·</span>
+                      {vaultFolderCount} folder
+                      {vaultFolderCount === 1 ? "" : "s"}
+                    </>
+                  ) : null}
+                  <span className="mx-1.5 opacity-50">·</span>
+                  {realLinkCount} link{realLinkCount === 1 ? "" : "s"}
+                  {ghostCount > 0 ? (
+                    <>
+                      <span className="mx-1.5 opacity-50">·</span>
+                      <span className="opacity-70">
+                        {showGhosts ? ghostCount : 0}/{ghostCount} missing
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              )}
+              {neighborhood === "1hop" && graphModeResolved !== "folder" ? (
                 <>
                   <span className="mx-1.5 opacity-50">·</span>
                   <span className="text-[var(--accent)] opacity-80">1-hop</span>
@@ -1557,31 +1831,78 @@ export function GraphView({ mode, className }: Props) {
               ) : null}
             </span>
           </div>
-          {realNoteCount > LOD_CAP ? (
+          {folderCrumbs.length > 0 || graphModeResolved === "folder" ? (
+            <nav
+              data-graph-breadcrumb
+              className="pointer-events-auto flex min-w-0 flex-wrap items-center gap-1 rounded-full border border-white/[0.06] bg-black/40 px-2.5 py-1 backdrop-blur-sm"
+              aria-label="Folder map path"
+            >
+              <button
+                type="button"
+                className="rounded px-1.5 text-[10px] font-medium tracking-wide text-[var(--accent)] hover:bg-white/5"
+                onClick={() => resetGraphBrowse?.()}
+              >
+                Vault
+              </button>
+              {folderCrumbs.map((seg, i) => {
+                const path = folderCrumbs.slice(0, i + 1).join("/");
+                return (
+                  <span key={path} className="flex items-center gap-1">
+                    <span className="opacity-40">·</span>
+                    <button
+                      type="button"
+                      className="max-w-[88px] truncate rounded px-1.5 text-[10px] font-medium tracking-wide text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]"
+                      onClick={() => enterGraphFolder?.(path)}
+                    >
+                      {seg}
+                    </button>
+                  </span>
+                );
+              })}
+              {activeNoteId ? (
+                <>
+                  <span className="opacity-40">·</span>
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide",
+                      activeNoteMissingFromFolderMap
+                        ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                        : "border-[var(--border)] bg-white/[0.03] text-[var(--text-secondary)] hover:bg-white/[0.06] hover:text-[var(--text-primary)]",
+                    )}
+                    title="Show wikilink neighborhood for the active note"
+                    aria-label="Show links near active note"
+                    onClick={handleShowLinks}
+                  >
+                    <Link2 size={10} className="shrink-0 opacity-80" />
+                    Show links
+                  </button>
+                </>
+              ) : null}
+            </nav>
+          ) : null}
+          {realNoteCount > LOD_CAP && graphModeResolved !== "folder" ? (
             <div className="pointer-events-none px-1 text-[10px] tracking-wide text-[var(--text-muted)] opacity-70">
               Showing {shownNoteCount} of {realNoteCount} notes
             </div>
           ) : null}
-          {topFolders.length > 0 ? (
-            <div className="pointer-events-none flex flex-wrap items-center gap-1.5 px-1">
-              {topFolders.map((f) => (
-                <span
-                  key={f.folder || "__root__"}
-                  className="inline-flex items-center gap-1 rounded-full border border-white/[0.06] bg-black/35 px-2 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)] backdrop-blur-sm"
-                  title={`${f.label} · ${f.count} notes`}
-                >
-                  <span
-                    className="inline-block h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: f.color }}
-                  />
-                  <span className="max-w-[72px] truncate">{f.label}</span>
-                </span>
-              ))}
-            </div>
-          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {ghostCount > 0 ? (
+          {graphModeResolved === "ego" ? (
+            <button
+              type="button"
+              className="icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40 text-[var(--accent)]"
+              title="Vault folder map"
+              aria-label="Vault folder map"
+              onClick={() => {
+                if (returnFromGraphEgo) returnFromGraphEgo();
+                else resetGraphBrowse?.();
+              }}
+            >
+              <Globe2 size={14} />
+            </button>
+          ) : null}
+          {ghostCount > 0 && graphModeResolved !== "folder" ? (
             <button
               type="button"
               className={cn(
@@ -1589,11 +1910,13 @@ export function GraphView({ mode, className }: Props) {
                 !showGhosts && "border-[var(--accent)]/40 text-[var(--accent)]",
               )}
               title={showGhosts ? "Hide missing (ghost) nodes" : "Show missing (ghost) nodes"}
+              aria-label={showGhosts ? "Hide missing (ghost) nodes" : "Show missing (ghost) nodes"}
               onClick={() => setShowGhosts((v) => !v)}
             >
               <Ghost size={14} className={cn(!showGhosts && "opacity-50")} />
             </button>
           ) : null}
+          {graphModeResolved !== "folder" ? (
           <button
             type="button"
             className={cn(
@@ -1602,6 +1925,11 @@ export function GraphView({ mode, className }: Props) {
                 "border-[var(--accent)]/40 text-[var(--accent)]",
             )}
             title={
+              neighborhood === "1hop"
+                ? "Show full graph"
+                : "Neighborhood: soft 1-hop (dim outsiders)"
+            }
+            aria-label={
               neighborhood === "1hop"
                 ? "Show full graph"
                 : "Neighborhood: soft 1-hop (dim outsiders)"
@@ -1616,18 +1944,23 @@ export function GraphView({ mode, className }: Props) {
               <Globe2 size={14} />
             )}
           </button>
+          ) : null}
           <button
             type="button"
-            className="icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40"
+            className="icon-btn pointer-events-auto h-10 w-10 shrink-0 border border-white/[0.06] bg-black/40 sm:h-8 sm:w-8"
             title="Export graph PNG"
+            aria-label="Export graph PNG"
             onClick={exportPng}
           >
             <Download size={14} />
           </button>
           <button
             type="button"
-            className="icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40"
+            className="icon-btn pointer-events-auto h-10 w-10 shrink-0 border border-white/[0.06] bg-black/40 sm:h-8 sm:w-8"
             title={
+              mode === "fullscreen" ? "Exit fullscreen graph" : "Expand graph"
+            }
+            aria-label={
               mode === "fullscreen" ? "Exit fullscreen graph" : "Expand graph"
             }
             onClick={() =>
@@ -1643,23 +1976,55 @@ export function GraphView({ mode, className }: Props) {
         </div>
       </div>
 
-      <div ref={hostRef} className="relative z-[1] min-h-0 flex-1 touch-none" />
+      <div
+        ref={hostRef}
+        className="relative z-[1] min-h-0 flex-1 touch-none"
+        aria-hidden="true"
+      />
+
+      <div className="sr-only" role="status" aria-live="polite">
+        {liveRegion}
+      </div>
 
       {hintVisible ? (
         <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
           <div className="text-[10px] tracking-wide text-[var(--text-muted)] opacity-50">
-            Orbit · Zoom · Pan · Hover links · Click to open
+            {graphModeResolved === "folder"
+              ? "Orbit · Zoom · Pan · Click folder to enter · Click note to open · Esc up"
+              : "Orbit · Zoom · Pan · Hover links · Click to open"}
           </div>
         </div>
       ) : null}
 
-      {realNoteCount === 0 ? (
+      {displayData.nodes.length === 0 ? (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6">
           <EmptyState
             icon={<Network size={16} />}
-            title="No linked notes"
-            description="Add [[wikilinks]] between notes to map structure."
-            className="max-w-[280px] border-white/[0.06] bg-black/40"
+            title={
+              graphModeResolved === "folder"
+                ? !(stats.levelPath || graphBrowsePath)
+                  ? "Empty vault"
+                  : "Empty folder"
+                : graphModeResolved === "ego"
+                  ? "No neighborhood"
+                  : vaultNoteCount === 0
+                    ? "No notes yet"
+                    : "No graph nodes"
+            }
+            description={
+              graphModeResolved === "folder"
+                ? !(stats.levelPath || graphBrowsePath)
+                  ? "Add folders or notes to map structure."
+                  : "This level has no notes or subfolders yet."
+                : graphModeResolved === "ego"
+                  ? activeNoteId
+                    ? "This note has no resolved [[wikilinks]] in range."
+                    : "Open a note to see links near it."
+                  : vaultNoteCount === 0
+                    ? "Create a note to begin."
+                    : "Add [[wikilinks]] between notes to map structure."
+            }
+            className="max-w-[280px] border-[var(--border)] bg-[var(--glass-bg)] backdrop-blur-md"
           />
         </div>
       ) : null}

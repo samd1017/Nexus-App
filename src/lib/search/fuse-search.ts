@@ -27,7 +27,7 @@ let cachedNoteSigs = new Map<string, string>();
 
 function noteSig(n: VaultNode): string {
   // Title included so renames invalidate; content length + mtime catch edits
-  return `${noteTitle(n)}\0${n.path}\0${n.mtime}\0${(n.content ?? "").length}`;
+  return `${noteTitle(n)}\0${n.path}\0${n.mtime}\0${n.content === undefined ? "u" : n.content.length}`;
 }
 
 function truncateForIndex(content: string): string {

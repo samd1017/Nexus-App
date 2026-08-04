@@ -67,3 +67,28 @@ export function recentVisitsForVault(
     .filter((v) => v.vaultId === vaultId)
     .slice(0, limit);
 }
+
+/** Resolve vault-scoped visits to live note ids (path fallback for remount). */
+export function recentNoteIdsForVault(
+  vaultId: string | null | undefined,
+  nodes: Record<string, { kind?: string; path?: string }>,
+  limit = 12,
+): string[] {
+  if (!vaultId) return [];
+  const byPath = new Map<string, string>();
+  for (const [id, n] of Object.entries(nodes)) {
+    if (n?.kind === "note" && typeof n.path === "string") byPath.set(n.path, id);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of recentVisitsForVault(vaultId, 40)) {
+    let id: string | null = null;
+    if (nodes[v.noteId]?.kind === "note") id = v.noteId;
+    else if (v.path && byPath.has(v.path)) id = byPath.get(v.path)!;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= limit) break;
+  }
+  return out;
+}

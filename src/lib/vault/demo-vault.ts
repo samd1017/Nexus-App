@@ -59,6 +59,8 @@ export function buildDemoVault(): {
 
 **Notes for Humans and Agents.**
 
+#nexus #demo #local-first
+
 This demo vault is a tour of everything Nexus does — open notes, follow [[wikilinks]], switch Visual ↔ Source, search with **⌘K**, and watch the **graph** light up.
 
 ## Feature tour
@@ -106,7 +108,7 @@ The right panel is already on **Graph** — orbit, zoom, and click a node. Press
       projects.id,
       `# Local-first Vault
 
-Nexus treats a **folder** as the product. No proprietary database for your notes.
+Nexus treats a **folder** as the product. #architecture #local-first No proprietary database for your notes.
 
 ## How it works
 
@@ -174,6 +176,8 @@ On disk they stay plain text. In **Visual** mode they render as interactive pill
       "Graph View.md",
       research.id,
       `# Graph View
+
+#graph #links
 
 The graph turns [[wikilinks]] into a living map of your thinking.
 
@@ -286,6 +290,8 @@ Nexus keeps files clean so [[Hermes Compatibility]] and \`git diff\` stay honest
       "Hermes Compatibility.md",
       systems.id,
       `# Hermes Compatibility
+
+#agents #hermes
 
 Hermes (and any agent or script) should treat this vault as ordinary files.
 

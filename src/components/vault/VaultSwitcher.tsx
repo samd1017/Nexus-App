@@ -11,7 +11,11 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
-import { isDesktopShell } from "@/lib/platform";
+import {
+  formatShortcut,
+  isAppleModPlatform,
+  isDesktopShell,
+} from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,6 +30,7 @@ export function VaultSwitcher() {
   const mode = useVaultStore((s) => s.mode);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
+  const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
@@ -75,12 +80,22 @@ export function VaultSwitcher() {
   const canReveal = Boolean(vaultId && mode === "desktop" && vaultPath);
 
   const openRecent = (id: string, rMode: string) => {
+    if (connecting) return;
+    const r = recentVaults.find((x) => x.id === id);
     if (rMode === "demo") openDemoVault();
+    else if (
+      id === "large-test-vault-45k" ||
+      r?.id === "large-test-vault-45k" ||
+      (typeof r?.path === "string" && r.path.includes("Large Test Vault"))
+    )
+      if (import.meta.env.DEV) void openLargeTestVault();
+      else useVaultStore.getState().setToast("Large test vault is only available in development");
     else void reopenRecentVault(id);
     setOpen(false);
   };
 
   const submitCreate = () => {
+    if (connecting) return;
     const name = createName.trim() || "Nexus Vault";
     setCreateOpen(false);
     setOpen(false);
@@ -125,14 +140,15 @@ export function VaultSwitcher() {
               <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
                 Open Recent
               </div>
-              {recentVaults.slice(0, 8).map((r) => {
+              {recentVaults.slice(0, 8).map((r: any) => {
                 const active = r.id === vaultId;
                 return (
                   <button
                     key={r.id}
                     type="button"
+                    disabled={connecting}
                     className={cn(
-                      "flex w-full items-start gap-2 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05]",
+                      "flex w-full items-start gap-2 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-40",
                       active && "bg-[rgba(0,200,255,0.08)]",
                     )}
                     onClick={() => openRecent(r.id, r.mode)}
@@ -158,8 +174,10 @@ export function VaultSwitcher() {
           <MenuRow
             icon={<FolderOpen size={15} className="text-[var(--accent)]" />}
             label="Open…"
-            hint={desktop ? "⌘O" : undefined}
+            hint={desktop ? formatShortcut("O") : undefined}
+            disabled={connecting}
             onClick={() => {
+              if (connecting) return;
               void openFolderAsVault();
               setOpen(false);
             }}
@@ -167,7 +185,9 @@ export function VaultSwitcher() {
           <MenuRow
             icon={<FolderPlus size={15} className="text-[var(--accent)]" />}
             label="New Vault…"
+            disabled={connecting}
             onClick={() => {
+              if (connecting) return;
               setCreateName("Nexus Vault");
               setCreateOpen(true);
             }}
@@ -187,7 +207,13 @@ export function VaultSwitcher() {
                     }
                   />
                 }
-                label={desktop ? "Show in Finder" : "Show vault location"}
+                label={
+                  desktop
+                    ? isAppleModPlatform()
+                      ? "Show in Finder"
+                      : "Show in file manager"
+                    : "Show vault location"
+                }
                 disabled={!canReveal && desktop}
                 onClick={() => {
                   void revealVaultInFinder();
@@ -207,7 +233,7 @@ export function VaultSwitcher() {
             icon={<X size={15} />}
             label="Close"
             muted
-            disabled={!vaultId}
+            disabled={!vaultId || connecting}
             onClick={() => {
               closeVault();
               setOpen(false);
@@ -240,7 +266,9 @@ export function VaultSwitcher() {
                   />
                 }
                 label="Open demo vault"
+                disabled={connecting}
                 onClick={() => {
+                  if (connecting) return;
                   openDemoVault();
                   setOpen(false);
                   setMoreOpen(false);
@@ -300,6 +328,7 @@ export function VaultSwitcher() {
               <button
                 type="button"
                 className="primary-btn"
+                disabled={connecting}
                 onClick={submitCreate}
               >
                 Create…

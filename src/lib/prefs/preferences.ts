@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { applyScaleSafeDefaults } from "@/lib/vault/scale-flags";
+import { formatShortcut } from "@/lib/platform";
 
 export type AccentPreset =
   | "cyan"
@@ -41,6 +43,11 @@ export interface NexusPrefs {
   focusMode: boolean;
   /** Reduce UI motion (animations / transitions) */
   reducedMotion: boolean;
+  /**
+   * @deprecated Single-path scale is always on for disk vaults.
+   * Kept so older localStorage prefs rehydrate without error.
+   */
+  largeVaultMode?: boolean;
 }
 
 export const ACCENT_PRESETS: Record<
@@ -84,24 +91,36 @@ export const DEFAULT_PREFS: NexusPrefs = {
   reducedMotion: false,
 };
 
-export const NEXUS_VERSION = "1.0.0";
+export const NEXUS_VERSION = "0.1.0";
 
-export const SHORTCUTS: { keys: string; action: string }[] = [
-  { keys: "⌘ K", action: "Search / command palette" },
-  { keys: "⌘ O", action: "Open vault folder" },
-  { keys: "⌘ ,", action: "Open Settings" },
-  { keys: "⌘ .", action: "Focus / zen mode" },
-  { keys: "⌘ E", action: "Toggle Visual / Source" },
-  { keys: "⌘ G", action: "Toggle graph fullscreen" },
-  { keys: "⌘ N", action: "New note" },
-  { keys: "⌘ D", action: "Today's daily note" },
-  { keys: "⌘ S", action: "Save (flush)" },
-  { keys: "⌘ \\", action: "Toggle left sidebar" },
-  { keys: "⌘ ⌥ \\", action: "Toggle right panel" },
-  { keys: "⌘ [ / ]", action: "Note history back / forward" },
-  { keys: "Esc", action: "Close overlay / exit graph" },
-  { keys: "⌘ ⌫", action: "Delete current note" },
-];
+/** Platform-aware keyboard shortcut list for Settings (⌘ vs Ctrl). */
+export function getShortcuts(): { keys: string; action: string }[] {
+  return [
+    { keys: formatShortcut("K"), action: "Search / command palette" },
+    { keys: formatShortcut("O"), action: "Open vault folder" },
+    { keys: formatShortcut(","), action: "Open Settings" },
+    { keys: formatShortcut("."), action: "Focus / zen mode" },
+    { keys: formatShortcut("E"), action: "Toggle Visual / Source" },
+    { keys: formatShortcut("G"), action: "Toggle graph fullscreen" },
+    { keys: formatShortcut("N"), action: "New note" },
+    { keys: formatShortcut("D"), action: "Today's daily note" },
+    { keys: formatShortcut("S"), action: "Save (flush)" },
+    { keys: formatShortcut("\\"), action: "Toggle left sidebar" },
+    {
+      keys: formatShortcut("\\", { alt: true }),
+      action: "Toggle right panel",
+    },
+    {
+      keys: `${formatShortcut("[")} / ${formatShortcut("]")}`,
+      action: "Note history back / forward",
+    },
+    { keys: "Esc", action: "Close overlay / exit graph" },
+    { keys: formatShortcut("⌫"), action: "Delete current note" },
+  ];
+}
+
+/** @deprecated Prefer getShortcuts() so labels match current platform. */
+export const SHORTCUTS: { keys: string; action: string }[] = getShortcuts();
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -165,6 +184,11 @@ export function applyPrefsToDom(prefs: NexusPrefs): void {
   root.style.setProperty("--color-accent", hex.toLowerCase());
 }
 
+/** @deprecated Alias — scale is always single-path for disk vaults. */
+export function applyLargeVaultScaleFlags(_on?: boolean): void {
+  applyScaleSafeDefaults();
+}
+
 interface PrefsStore extends NexusPrefs {
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
@@ -202,6 +226,10 @@ function normalizeLaunchNoteMode(
   return openTodayOnLaunch ? "today" : "last";
 }
 
+if (typeof window !== "undefined") {
+  applyScaleSafeDefaults();
+}
+
 export const usePrefsStore = create<PrefsStore>()(
   persist(
     (set, get) => ({
@@ -212,10 +240,12 @@ export const usePrefsStore = create<PrefsStore>()(
       toggleSettings: () => set({ settingsOpen: !get().settingsOpen }),
 
       updatePrefs: (patch) => {
-        // Keep openTodayOnLaunch in sync when launchNoteMode changes
         const nextPatch: Partial<NexusPrefs> = { ...patch };
+        // Legacy field ignored — single path is automatic
+        delete nextPatch.largeVaultMode;
         if (patch.launchNoteMode != null && patch.openTodayOnLaunch == null) {
-          nextPatch.openTodayOnLaunch = patch.launchNoteMode === "today" || patch.launchNoteMode === "smart";
+          nextPatch.openTodayOnLaunch =
+            patch.launchNoteMode === "today" || patch.launchNoteMode === "smart";
         }
         if (patch.openTodayOnLaunch != null && patch.launchNoteMode == null) {
           nextPatch.launchNoteMode = patch.openTodayOnLaunch ? "today" : "last";
@@ -223,9 +253,11 @@ export const usePrefsStore = create<PrefsStore>()(
         set(nextPatch);
         const next = { ...get(), ...nextPatch };
         applyPrefsToDom(next);
+        applyScaleSafeDefaults();
       },
 
       resetPrefs: () => {
+        applyScaleSafeDefaults();
         set({ ...DEFAULT_PREFS });
         applyPrefsToDom(DEFAULT_PREFS);
       },
@@ -260,7 +292,10 @@ export const usePrefsStore = create<PrefsStore>()(
         };
       },
       onRehydrateStorage: () => (state) => {
-        if (state) applyPrefsToDom(state);
+        if (state) {
+          applyPrefsToDom(state);
+          applyScaleSafeDefaults();
+        }
       },
     },
   ),

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { FileText, Folder } from "lucide-react";
+import { FilePlus2, FileText, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { WikilinkSuggestItem } from "@/lib/editor/wikilink-suggest";
 
@@ -12,6 +12,8 @@ type Props = {
   onSelect: (item: WikilinkSuggestItem) => void;
   onHover: (index: number) => void;
   onClose: () => void;
+  /** Create a new note from the current query when there are no matches. */
+  onCreate?: (title: string) => void;
 };
 
 /** Floating autocomplete for [[wikilinks]] — notes + folders, scrollable. */
@@ -24,6 +26,7 @@ export function WikilinkSuggestMenu({
   onSelect,
   onHover,
   onClose,
+  onCreate,
 }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -44,6 +47,7 @@ export function WikilinkSuggestMenu({
     ? Math.max(8, rect.top - maxH - 6)
     : Math.min(rect.bottom + 6, window.innerHeight - 120);
   const left = Math.min(Math.max(8, rect.left), window.innerWidth - 320);
+  const createTitle = query.trim();
 
   return (
     <div
@@ -69,9 +73,30 @@ export function WikilinkSuggestMenu({
         className="max-h-[232px] overflow-y-auto overscroll-contain p-1"
       >
         {items.length === 0 ? (
-          <p className="px-2.5 py-3 text-[12.5px] text-[var(--text-muted)]">
-            No matches — keep typing or create the note later.
-          </p>
+          createTitle && onCreate ? (
+            <button
+              type="button"
+              data-idx={0}
+              role="option"
+              aria-selected
+              className="flex w-full items-center gap-2 rounded-lg bg-[rgba(0,200,255,0.12)] px-2.5 py-2 text-left text-[var(--text-primary)] transition-colors hover:bg-[rgba(0,200,255,0.18)]"
+              onClick={() => onCreate(createTitle)}
+            >
+              <FilePlus2 size={14} className="shrink-0 text-[var(--accent)]" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12.5px] font-medium">
+                  Create «{createTitle}»
+                </span>
+                <span className="block truncate text-[10px] text-[var(--text-muted)]">
+                  New note · Enter to create
+                </span>
+              </span>
+            </button>
+          ) : (
+            <p className="px-2.5 py-3 text-[12.5px] text-[var(--text-muted)]">
+              No matches — keep typing or create the note later.
+            </p>
+          )
         ) : (
           items.map((item, i) => (
             <button
