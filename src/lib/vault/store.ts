@@ -1794,7 +1794,12 @@ export const useVaultStore = create<VaultStore>()(
 			path = parent ? pathJoin(parent.path, name) : name;
 			i++;
 		}
-		const id = makeId(path, get().mode);
+		let id = makeId(path, get().mode);
+		let idN = 1;
+		while (stage.nodes[id] && stage.nodes[id].path !== path) {
+			id = makeId(path, get().mode) + "__" + idN;
+			idN++;
+		}
 		const titleClean = title.replace(/\.md$/i, "");
 		let content;
 		if (opts?.raw && typeof opts.content === "string") content = opts.content;
@@ -1833,6 +1838,8 @@ export const useVaultStore = create<VaultStore>()(
 				await persistNoteIfFsa(pth, body, { ack: false });
 			});
 		}
+		// Always materialize so activate:false callers (wikilink create) see nodes[id]
+		flushStageNow(set);
 		if (activate) {
 			pushPulse({
 				kind: "create",
@@ -1841,8 +1848,6 @@ export const useVaultStore = create<VaultStore>()(
 				message: `Created ${path}`,
 				vaultId: get().vaultId
 			});
-			// Stage flush may be async — record visits/nav after nodes include the new note
-			flushStageNow(set);
 			recordNoteOpen(get, set, id);
 		}
 		return id;
@@ -1860,7 +1865,12 @@ export const useVaultStore = create<VaultStore>()(
 			path = parent ? pathJoin(parent.path, folderName) : folderName;
 			i++;
 		}
-		const id = makeId(path, get().mode);
+		let id = makeId(path, get().mode);
+		let idN = 1;
+		while (stage.nodes[id] && stage.nodes[id].path !== path) {
+			id = makeId(path, get().mode) + "__" + idN;
+			idN++;
+		}
 		stage.nodes[id] = {
 			id,
 			path,
