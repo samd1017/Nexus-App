@@ -21,8 +21,8 @@ Nexus ships as a local-first web app and a **native Mac shell** powered by [Taur
 ## Install & run
 
 ```bash
-git clone https://github.com/samd1017/cinder-apple-pine-blend.git
-cd cinder-apple-pine-blend
+git clone https://github.com/samd1017/Nexus-App.git
+cd Nexus-App
 npm install
 ```
 
