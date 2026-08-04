@@ -1,3 +1,12 @@
+<!-- Open Graph / Twitter Card meta for social previews -->
+<meta property="og:title" content="Nexus - Notes for Humans and Agents" />
+<meta property="og:description" content="Local-first Markdown knowledge vault with a visual editor, live 3D force-directed graph, and Hermes-compatible plain files." />
+<meta property="og:image" content="https://raw.githubusercontent.com/samd1017/Nexus-App/main/social-preview.svg" />
+<meta property="og:image:width" content="512" />
+<meta property="og:image:height" content="512" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://raw.githubusercontent.com/samd1017/Nexus-App/main/social-preview.svg" />
+
 <p align="center">
   <img src="public/favicon.svg" alt="Nexus" width="120" height="120" />
 </p>
@@ -93,8 +102,6 @@ See [DESKTOP.md](DESKTOP.md) for full requirements and instructions.
 npm run tauri:dev     # development
 npm run tauri:build   # production build
 ```
-
----
 
 ## Contributing
 
