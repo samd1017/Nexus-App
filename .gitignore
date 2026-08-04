@@ -1,17 +1,46 @@
+# Dependencies
 node_modules/
-.project_id
-.github_repo
+.pnp
+.pnp.js
+
+# Build / output
+dist/
+dist-desktop/
+build/
+.vercel/
+*.local
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# Test / fixture data (do not ship)
+fixtures/
+public/large-test-vault/
+artifacts/
+screenshots/
+
+# Internal / agent
+.grok/
+AGENTS.md
+AGENTS.project.md
+startup.sh
+.node_modules.lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.log
+
+# Env
 .env
 .env.*
+!.env.example
 
-# Tauri / desktop
-src-tauri/target
-dist-desktop
-
-# Build / agent artifacts (not source)
-.vercel/output/
-screenshots/
-attachments/
-artifacts/
-/tmp/
-*.log
+# Coverage / misc
+coverage/
+*.tsbuildinfo
