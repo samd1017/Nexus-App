@@ -15,6 +15,7 @@ import {
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { useVaultStore } from "@/lib/vault/store";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
 import type { BodyCacheStats } from "@/lib/vault/body-cache";
 import type { VaultMode } from "@/lib/vault/types";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
@@ -69,8 +70,9 @@ export function SettingsPanel() {
   const vaultPath = useVaultStore((s) => s.vaultPath);
   const mode = useVaultStore((s) => s.mode);
   const vaultId = useVaultStore((s) => s.vaultId);
+  // O(1) after index sync — avoids Object.values filter on every settings open
   const noteCount = useVaultStore(
-    (s) => Object.values(s.nodes).filter((n) => n.kind === "note").length,
+    (s) => ensureVaultIndex(s.nodes).noteCount,
   );
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
@@ -155,7 +157,7 @@ export function SettingsPanel() {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[18px] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
+        className="glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(255,255,255,0.08)] bg-white/[0.03] text-[var(--accent)]">
@@ -661,28 +663,34 @@ function ToggleRow({
   onChange: (v: boolean) => void;
   className?: string;
 }) {
+  const labelId = useId();
+  const descId = useId();
   return (
-    <label
+    <div
       className={cn(
-        "flex cursor-pointer items-center justify-between gap-3 rounded-[12px] border border-transparent px-0.5 py-1",
+        "flex items-center justify-between gap-3 rounded-[12px] border border-transparent px-0.5 py-1",
         className,
       )}
     >
       <div className="min-w-0">
-        <div className="text-[13px] font-medium text-[var(--text-primary)]">
+        <div id={labelId} className="text-[13px] font-medium text-[var(--text-primary)]">
           {label}
         </div>
         {description ? (
-          <div className="text-[12px] text-[var(--text-muted)]">{description}</div>
+          <div id={descId} className="text-[12px] text-[var(--text-muted)]">
+            {description}
+          </div>
         ) : null}
       </div>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-labelledby={labelId}
+        aria-describedby={description ? descId : undefined}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200",
+          "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
           checked ? "bg-[var(--accent)]" : "bg-white/[0.12]",
         )}
       >
@@ -693,6 +701,6 @@ function ToggleRow({
           )}
         />
       </button>
-    </label>
+    </div>
   );
 }

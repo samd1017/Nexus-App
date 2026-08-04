@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import {
   FileText,
@@ -26,10 +26,14 @@ import {
   Focus,
   CircleHelp,
   Database,
+  X,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
-import { searchWithBackend as searchVault } from "@/lib/search/search-backend";
+import {
+  searchWithBackend as searchVault,
+  searchWithPathFolderOps,
+} from "@/lib/search/search-backend";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
@@ -37,7 +41,7 @@ import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
-import { loadNoteVisits } from "@/lib/vault/note-visits";
+import { recentNoteIdsForVault } from "@/lib/vault/visit-history";
 import {
   recentCommandIds,
   trackCommand,
@@ -53,7 +57,7 @@ const GROUP_HEADING =
   "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.12em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]";
 
 const ITEM_CLASS =
-  "cmdk-item flex cursor-pointer items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]";
+  "cmdk-item flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]";
 
 const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   daily: <CalendarDays size={15} />,
@@ -155,8 +159,9 @@ function allNotesAsHits(
 function topNotesByVisitMtime(
   nodes: Record<string, import("@/lib/vault/types").VaultNode>,
   limit: number,
+  vaultId?: string | null,
 ): SearchHit[] {
-  const visits = loadNoteVisits();
+  const visits = recentNoteIdsForVault(vaultId, nodes, limit);
   const seen = new Set<string>();
   const out: SearchHit[] = [];
   for (const id of visits) {
@@ -192,6 +197,13 @@ function topNotesByVisitMtime(
 
 export function CommandPalette() {
   const open = useVaultStore((s) => s.commandOpen);
+  if (!open) return null;
+  return <CommandPaletteOpen />;
+}
+
+function CommandPaletteOpen() {
+  const open = useVaultStore((s) => s.commandOpen);
+  const vaultId = useVaultStore((s) => s.vaultId);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const nodes = useVaultStore((s) => s.nodes);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
@@ -270,7 +282,7 @@ export function CommandPalette() {
 
   const hits = useMemo(() => {
     if (isEmptyQuery) {
-      return topNotesByVisitMtime(nodes, 10);
+      return topNotesByVisitMtime(nodes, 10, vaultId);
     }
     if (isTagBrowse && tagPartial === "" && !hasPathFolderOp) return [];
     if (exactTagQuery && !hasPathFolderOp) {
@@ -285,21 +297,23 @@ export function CommandPalette() {
     }
     if (wantsOrphans || wantsBroken || isCommandMode) return [];
 
-    let base: SearchHit[];
-    if (searchText) {
-      base = searchVault(nodes, searchText, 24);
-    } else if (hasPathFolderOp) {
-      base = allNotesAsHits(nodes, 48);
-    } else {
-      base = searchVault(nodes, raw, 16);
+    // Scale-safe path:/folder: via FTS needle + post-filter (not sample-then-filter)
+    if (hasPathFolderOp) {
+      return searchWithPathFolderOps(
+        nodes,
+        searchText,
+        pathFolderOps.pathFilter,
+        pathFolderOps.folderFilter,
+        16,
+      );
     }
-    return filterHitsByPathOps(
-      base,
-      pathFolderOps.pathFilter,
-      pathFolderOps.folderFilter,
-    ).slice(0, 16);
+    if (searchText) {
+      return searchVault(nodes, searchText, 16);
+    }
+    return searchVault(nodes, raw, 16);
   }, [
     nodes,
+    vaultId,
     raw,
     searchText,
     isEmptyQuery,
@@ -585,7 +599,7 @@ export function CommandPalette() {
             setCommandOpen(false);
           }),
         },
-        {
+        ...(import.meta.env.DEV ? [{
           id: "large-test-vault",
           label: "Open 45k test vault",
           keywords: ["large", "stress", "45k", "test", "scale", "benchmark"],
@@ -595,7 +609,7 @@ export function CommandPalette() {
             void openLargeTestVault();
             setCommandOpen(false);
           }),
-        },
+        }] : []),
         ...(import.meta.env.DEV
           ? [
               {
@@ -843,16 +857,26 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/65 px-4 pt-[10vh] backdrop-blur-[8px]"
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-[var(--overlay,rgba(0,0,0,0.65))] px-0 pt-0 backdrop-blur-[8px] sm:items-start sm:px-4 sm:pt-[10vh]"
       onClick={() => setCommandOpen(false)}
+      role="presentation"
     >
-      <Command
-        className="glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.1)]"
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        className="w-full max-w-xl"
         onClick={(e) => e.stopPropagation()}
+      >
+      <Command
+        className="glass-elevated max-h-[min(92dvh,720px)] w-full overflow-hidden rounded-t-[var(--radius-xl,16px)] shadow-[var(--shadow-elevated)] sm:max-h-none sm:rounded-[var(--radius-xl,16px)] sm:shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
         label="Command palette"
         shouldFilter={false}
       >
-        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4">
+        <div className="flex justify-center pt-2 sm:hidden" aria-hidden>
+          <div className="h-1 w-10 rounded-full bg-white/15" />
+        </div>
+        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]">
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
             value={query}
@@ -861,12 +885,20 @@ export function CommandPalette() {
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
           />
-          <kbd className="shrink-0 rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
+          <button
+            type="button"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text-primary)] sm:hidden"
+            aria-label="Close command palette"
+            onClick={() => setCommandOpen(false)}
+          >
+            <X size={18} />
+          </button>
+          <kbd className="hidden shrink-0 rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] sm:inline">
             esc
           </kbd>
         </div>
 
-        <Command.List className="max-h-[min(480px,56vh)] overflow-y-auto p-2">
+        <Command.List className="max-h-[min(480px,50dvh)] overflow-y-auto overscroll-contain p-2 pb-[max(8px,env(safe-area-inset-bottom))] sm:max-h-[min(480px,56vh)]">
           <Command.Empty className="px-3 py-8 text-center">
             <div className="text-[13px] text-[var(--text-muted)]">
               {Object.keys(nodes).length === 0
@@ -1234,7 +1266,17 @@ export function CommandPalette() {
             <span>anytime</span>
           </span>
         </div>
+          <div className="border-t border-[var(--border)] p-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:hidden">
+            <button
+              type="button"
+              className="primary-btn w-full justify-center py-3 text-[14px]"
+              onClick={() => setCommandOpen(false)}
+            >
+              Close
+            </button>
+          </div>
       </Command>
+      </div>
     </div>
   );
 }

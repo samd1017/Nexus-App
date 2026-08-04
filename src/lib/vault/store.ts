@@ -38,6 +38,7 @@ import {
   writeNoteFile,
   readNoteFile,
   listFsaTrash,
+  fsaNodeId,
 } from "./fs-adapter";
 import {
   createDesktopFolder,
@@ -52,6 +53,7 @@ import {
   writeDesktopNote,
   readDesktopNote,
   listDesktopTrash,
+  deskNodeId,
 } from "./tauri-adapter";
 import { isDesktopShell, canOpenLocalVaultFolder, confirmDesktopShell } from "@/lib/platform";
 import type { CloudProvider, CloudSession } from "@/lib/cloud/oauth";
@@ -87,9 +89,9 @@ import {
   isOnlySerializationNoise,
   markdownFingerprint,
 } from "@/lib/markdown/purity";
-import { recordNoteVisit } from "./visit-history";
+import { recordNoteVisit, recentNoteIdsForVault } from "./visit-history";
 import { trackVisit } from "./session-recents";
-import { pushNav } from "./nav-history";
+import { pushNav, resetNavHistory } from "./nav-history";
 import { clearPulse, pushPulse } from "./pulse";
 import { ensureVaultIndex, vaultIndex } from "./indexes";
 import {
@@ -100,6 +102,15 @@ import {
   touchBody,
   type BodyCacheStats,
 } from "./body-cache";
+import {
+  archiveBodiesFromNodes,
+  clearBodyArchive,
+  hasBodyArchive,
+  rekeyBodyArchive,
+  rekeyBodyArchivePrefix,
+  removeBodyFromArchive,
+  setBodyInArchive,
+} from "./body-archive";
 import { shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
   closeDurableIndex,
@@ -135,6 +146,7 @@ import {
   vaultScanFromNodeMeta,
   setOpenProgress,
 } from "./native-index";
+import { invalidateVaultTagsCache } from "./tags";
 
 export type RightTab = "backlinks" | "outline" | "graph" | "pulse";
 export type ToastAction = { label: string; kind: "open-pulse" };
@@ -201,6 +213,10 @@ let fsaRoot = null;
 let desktopRoot = null;
 /** In-flight body hydrates — dedupe concurrent ensureNoteBody */
 let bodyHydrateInflight = new Map();
+/** Conflict pair cache — invalidated by structureGeneration / nodes ref */
+let _conflictPairsCache = null;
+let _conflictPairsStructGen = -1;
+let _conflictPairsNodesRef = null;
 let desktopWatchAck = null;
 let writeQueue = Promise.resolve();
 let watcherAck = null;
@@ -359,6 +375,9 @@ function cancelVaultModuleState() {
 	pendingExternal = null;
 	shelvedConflicts.clear();
 	bodyHydrateInflight.clear();
+	_conflictPairsCache = null;
+	_conflictPairsStructGen = -1;
+	_conflictPairsNodesRef = null;
 	clearBodyTouches();
 	if (burstTimer) {
 		clearTimeout(burstTimer);
@@ -389,12 +408,19 @@ export function setDesktopWatchAck(fn) {
 function isDiskVault(mode) {
 	return mode === "fsa" || mode === "desktop" || mode === "sandbox";
 }
+function readExpandedFolders(get) {
+	return stageBuf ? stageBuf.expandedFolders : get().expandedFolders;
+}
+function writeExpandedFolders(set, next) {
+	if (stageBuf) stageBuf.expandedFolders = next;
+	set({ expandedFolders: next });
+}
 /** Wave A: after mount rebuild link maps; meta-only opens omit bodies. */
 function prepareMountedNodes(nodes, mode, keepIds = [], opts) {
 	rebuildLinkIndex(nodes);
 	clearBodyTouches();
 	const keep = new Set(keepIds.filter(Boolean));
-	const lazy = shouldLazyBodies(mode);
+	const lazy = shouldLazyBodies(mode, opts?.vaultId);
 	let result;
 	if (lazy) {
 		for (const id of keep) touchBody(id);
@@ -410,12 +436,12 @@ function prepareMountedNodes(nodes, mode, keepIds = [], opts) {
 }
 function maybeSyncDurableIndex(vaultId, mode, nodes) {
 	try {
-		syncDurableIndexFromNodes(vaultId, nodes, shouldUseDurableIndex(mode));
+		syncDurableIndexFromNodes(vaultId, nodes, shouldUseDurableIndex(mode, vaultId));
 	} catch {}
 }
-/** Prefer SQLite on desktop; memory on FSA/sandbox. Safe no-op for demo/local. */
+/** Prefer SQLite on desktop; memory on FSA/sandbox. Large-test local uses memory FTS. */
 async function prepareDurableIndex(vaultId, mode) {
-	if (!vaultId || !shouldUseDurableIndex(mode)) {
+	if (!vaultId || !shouldUseDurableIndex(mode, vaultId)) {
 		closeDurableIndex();
 		return;
 	}
@@ -548,8 +574,11 @@ function saveRecents(list) {
 		localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 10)));
 	} catch {}
 }
-function makeId(path) {
-	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_") + "_" + Math.random().toString(36).slice(2, 7);
+/** Path-stable id matching disk adapters so remount/watch keep the same id. */
+function makeId(path, mode) {
+	if (mode === "fsa") return fsaNodeId(path);
+	if (mode === "desktop") return deskNodeId(path);
+	return stableId(path);
 }
 /** Wave 6: expand only ancestors of active note (+ top-level Journal) — not every folder */
 function smartExpandedFolders(nodes, activeId) {
@@ -565,6 +594,29 @@ function smartExpandedFolders(nodes, activeId) {
 function stableId(path) {
 	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
 }
+/** Seed store MRU from vault-scoped visits (path-remap for remount). */
+function recentsForOpenVault(vaultId, nodes, limit = 12) {
+	return recentNoteIdsForVault(vaultId, nodes, limit);
+}
+/** Reset nav stack and seed with launch note (browser-like: ⌘[ inactive until second open). */
+function resetAndSeedNav(activeNoteId) {
+	resetNavHistory();
+	if (activeNoteId) pushNav(activeNoteId);
+}
+/** Record open in vault-scoped visits + nav + store MRU list. */
+function recordNoteOpen(get, set, id) {
+	const note = get().nodes[id];
+	if (!note || note.kind !== "note") return;
+	const vaultId = get().vaultId;
+	if (vaultId && note.path) recordNoteVisit(vaultId, id, note.path);
+	trackVisit(id);
+	pushNav(id);
+	const recentNoteVisits = vaultId
+		? recentNoteIdsForVault(vaultId, get().nodes, 12)
+		: [id, ...(get().recentNoteVisits || []).filter((x) => x !== id)].slice(0, 12);
+	set({ recentNoteVisits });
+}
+
 async function persistNoteIfFsa(path, content, opts) {
 	const ack = opts?.ack !== false;
 	if (desktopRoot) {
@@ -709,6 +761,8 @@ export const useVaultStore = create<VaultStore>()(
 						maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 					}
 					applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 					return;
 				} catch {
 					desktopRoot = null;
@@ -757,6 +811,8 @@ export const useVaultStore = create<VaultStore>()(
 							maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 						}
 						applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 						return;
 					} catch {
 						fsaRoot = null;
@@ -778,6 +834,8 @@ export const useVaultStore = create<VaultStore>()(
 		const state = get();
 		if (state.vaultId && state.mode !== "fsa" && state.mode !== "desktop" && Object.keys(state.nodes).length > 0) {
 			applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 			return;
 		}
 		set({
@@ -790,7 +848,12 @@ export const useVaultStore = create<VaultStore>()(
 		});
 	},
 	openDemoVault: () => {
+		// Don't clobber an in-flight vault open (e.g. large test vault)
+		if (get().connecting) return;
 		cancelVaultModuleState();
+		clearBodyArchive();
+		invalidateVaultTagsCache();
+		resetNavHistory();
 		fsaRoot = null;
 		desktopRoot = null;
 		setDesktopVaultRoot(null);
@@ -819,6 +882,7 @@ export const useVaultStore = create<VaultStore>()(
 			dirtyNoteIds: [],
 			lastExternalSync: null,
 			recentVaults: recents,
+			connecting: false,
 			settings: {
 				...get().settings,
 				lastNotePath: welcome?.path ?? null,
@@ -829,14 +893,26 @@ export const useVaultStore = create<VaultStore>()(
 		});
 		syncActiveBackend("demo");
 		maybeSyncDurableIndex(vaultId, "demo", nodes);
+		set({ recentNoteVisits: recentsForOpenVault(vaultId, nodes) });
+		resetAndSeedNav(get().activeNoteId);
 	},
 	openLargeTestVault: async () => {
+		if (import.meta.env.PROD) {
+			get().setToast("Large test vault is not available in production");
+			return;
+		}
+		// Single-flight: one concurrent open; connecting stays true until done/fail
+		if (get().connecting) return;
 		set({
 			connecting: true,
 			folderAccessLost: false
 		});
+		// Bump gen so in-flight disk/hydrate ops cancel. Do NOT clear body archive
+		// here — if re-open fails, stripped large-test nodes must still rehydrate.
+		cancelVaultModuleState();
+		const gen = vaultGen;
+		resetNavHistory();
 		try {
-			cancelVaultModuleState();
 			fsaRoot = null;
 			desktopRoot = null;
 			setDesktopVaultRoot(null);
@@ -848,27 +924,29 @@ export const useVaultStore = create<VaultStore>()(
 			});
 			const data = await buildLargeTestVault({
 				onProgress: (loaded, total, phase) => {
+					if (gen !== vaultGen) return;
 					setOpenProgress({
-						phase: phase === "notes" ? "indexing" : "walking",
+						phase: "walking",
 						scanned: loaded,
 						totalHint: total,
 						message:
 							phase === "notes"
-								? `Indexing large vault… ${loaded.toLocaleString()} / ${total.toLocaleString()} notes`
+								? `Loading notes… ${loaded.toLocaleString()} / ${total.toLocaleString()}`
 								: phase === "folders"
 									? "Building folder tree…"
 									: "Loading large test vault…"
 					});
 				}
 			});
+			// Stale open — another vault switch bumped gen; do not clobber
+			if (gen !== vaultGen) return;
+
 			const vaultId = LARGE_TEST_VAULT_ID;
 			const firstNote =
 				Object.values(data.nodes).find((n) => n.kind === "note" && n.path.startsWith("00-Inbox/")) ||
 				Object.values(data.nodes).find((n) => n.kind === "note");
-			// Expand top-level folders only (not every Archive month)
-			const expanded = Object.values(data.nodes)
-				.filter((n) => n.kind === "folder" && n.parentId == null)
-				.map((n) => n.id);
+			// Only expand ancestors of active note — not all top-level roots
+			const expanded = smartExpandedFolders(data.nodes, firstNote?.id ?? null);
 			const recents = pushRecent({
 				id: vaultId,
 				name: data.vaultName,
@@ -876,10 +954,26 @@ export const useVaultStore = create<VaultStore>()(
 				lastOpened: Date.now(),
 				mode: "local"
 			});
-			// Use local mode (eager bodies) so graph/search/index match real in-memory mount
-			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""]);
+
+			setOpenProgress({
+				phase: "indexing",
+				scanned: data.noteCount,
+				totalHint: data.noteCount,
+				message: "Building indexes…"
+			});
+
+			// Archive full bodies → durable FTS on full bodies → strip for store.
+			// Mode stays "local"; partialize skips LARGE_TEST_VAULT_ID from localStorage.
+			archiveBodiesFromNodes(data.nodes);
 			syncActiveBackend("local");
-			maybeSyncDurableIndex(vaultId, "local", nodes);
+			await prepareDurableIndex(vaultId, "local");
+			if (gen !== vaultGen) return;
+			maybeSyncDurableIndex(vaultId, "local", data.nodes);
+			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""], {
+				vaultId
+			});
+			if (gen !== vaultGen) return;
+			invalidateVaultTagsCache();
 			set({
 				vaultId,
 				vaultName: data.vaultName,
@@ -910,6 +1004,7 @@ export const useVaultStore = create<VaultStore>()(
 				message: ""
 			});
 		} catch (err) {
+			if (gen !== vaultGen) return;
 			console.error("[vault] openLargeTestVault failed", err);
 			const msg = err instanceof Error ? err.message : String(err);
 			set({
@@ -917,14 +1012,17 @@ export const useVaultStore = create<VaultStore>()(
 				toast: `Could not open large test vault: ${msg}`
 			});
 			setOpenProgress({
-				phase: "idle",
+				phase: "error",
 				scanned: 0,
 				totalHint: null,
-				message: ""
+				message: msg
 			});
 		}
 	},
 	openLocalVault: (name, seed) => {
+		cancelVaultModuleState();
+		clearBodyArchive();
+		invalidateVaultTagsCache();
 		fsaRoot = null;
 		desktopRoot = null;
 		setDesktopVaultRoot(null);
@@ -963,6 +1061,8 @@ export const useVaultStore = create<VaultStore>()(
 			}
 		});
 		applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 	},
 	openFolderAsVault: async () => {
 		set({
@@ -977,6 +1077,8 @@ export const useVaultStore = create<VaultStore>()(
 					return;
 				}
 				cancelVaultModuleState();
+				clearBodyArchive();
+				invalidateVaultTagsCache();
 				desktopRoot = root;
 				fsaRoot = null;
 				const { scan, metaOnly } = await loadDiskVaultScan("desktop");
@@ -1020,6 +1122,8 @@ export const useVaultStore = create<VaultStore>()(
 					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 				}
 				applyLaunchNotePreference();
+				set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+				resetAndSeedNav(get().activeNoteId);
 				return;
 			}
 			const handle = await pickVaultFolder();
@@ -1039,6 +1143,8 @@ export const useVaultStore = create<VaultStore>()(
 				return;
 			}
 			cancelVaultModuleState();
+			clearBodyArchive();
+			invalidateVaultTagsCache();
 			fsaRoot = handle;
 			const vaultId = "fsa-" + handle.name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
 			await saveDirectoryHandle(handle, {
@@ -1084,6 +1190,8 @@ export const useVaultStore = create<VaultStore>()(
 				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 			}
 			applyLaunchNotePreference();
+			set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+			resetAndSeedNav(get().activeNoteId);
 		} catch (e) {
 			set({
 				connecting: false,
@@ -1155,6 +1263,8 @@ export const useVaultStore = create<VaultStore>()(
 					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 				}
 				applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 				return;
 			}
 			const parent = await pickVaultFolder();
@@ -1233,6 +1343,8 @@ export const useVaultStore = create<VaultStore>()(
 				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 			}
 			applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 		} catch (e) {
 			set({
 				connecting: false,
@@ -1284,6 +1396,9 @@ export const useVaultStore = create<VaultStore>()(
 			}
 			set({ connecting: true });
 			try {
+				cancelVaultModuleState();
+				clearBodyArchive();
+				invalidateVaultTagsCache();
 				desktopRoot = root;
 				fsaRoot = null;
 				const { scan, metaOnly } = await loadDiskVaultScan("desktop");
@@ -1319,6 +1434,8 @@ export const useVaultStore = create<VaultStore>()(
 					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 				}
 				applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 			} catch (e) {
 				set({
 					connecting: false,
@@ -1343,6 +1460,9 @@ export const useVaultStore = create<VaultStore>()(
 				await get().openFolderAsVault();
 				return;
 			}
+			cancelVaultModuleState();
+			clearBodyArchive();
+			invalidateVaultTagsCache();
 			fsaRoot = handle;
 			const vaultId = id;
 			await saveDirectoryHandle(handle, {
@@ -1381,6 +1501,8 @@ export const useVaultStore = create<VaultStore>()(
 				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 			}
 			applyLaunchNotePreference();
+		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+		resetAndSeedNav(get().activeNoteId);
 		} catch (e) {
 			set({
 				connecting: false,
@@ -1398,6 +1520,9 @@ export const useVaultStore = create<VaultStore>()(
 			console.error("[vault] closeVault flushDirty failed", err);
 		}
 		cancelVaultModuleState();
+		clearBodyArchive();
+		invalidateVaultTagsCache();
+		resetNavHistory();
 		clearPulse();
 		closeDurableIndex();
 		invalidateIndexedSearch();
@@ -1409,6 +1534,12 @@ export const useVaultStore = create<VaultStore>()(
 		resetLinkIndex();
 		clearBodyTouches();
 		setActiveBackend(null);
+		setOpenProgress({
+			phase: "idle",
+			scanned: 0,
+			totalHint: null,
+			message: ""
+		});
 		set({
 			vaultId: null,
 			vaultName: "",
@@ -1417,10 +1548,12 @@ export const useVaultStore = create<VaultStore>()(
 			nodes: {},
 			rootIds: [],
 			activeNoteId: null,
+			recentNoteVisits: [],
 			dirtyNoteIds: [],
 			lastExternalSync: null,
 			expandedFolders: [],
 			pendingDelete: null,
+			connecting: false,
 			...GRAPH_SCOPE_DEFAULTS,
 			conflictStudioOpen: false,
 			conflictStudioFocus: null,
@@ -1443,11 +1576,15 @@ export const useVaultStore = create<VaultStore>()(
 		const expanded = new Set([...get().expandedFolders, ...pathExpand]);
 		let recentNoteVisits = get().recentNoteVisits;
 		if (typeof id === "string" && note?.kind === "note") {
-			recentNoteVisits = pushNoteVisit(id, get().recentNoteVisits);
-			trackVisit(id);
-			pushNav(id);
 			const vaultId = get().vaultId;
 			if (vaultId && note.path) recordNoteVisit(vaultId, id, note.path);
+			trackVisit(id);
+			pushNav(id);
+			recentNoteVisits = vaultId
+				? recentNoteIdsForVault(vaultId, get().nodes, 12)
+				: pushNoteVisit(id, get().recentNoteVisits);
+			// legacy dual-write for one release
+			if (vaultId) pushNoteVisit(id, get().recentNoteVisits);
 		}
 		set({
 			activeNoteId: id,
@@ -1461,9 +1598,14 @@ export const useVaultStore = create<VaultStore>()(
 		if (id && note?.kind === "note" && note.content === undefined) get().ensureNoteBody(id);
 		else if (id) touchBody(id);
 	},
+
 	toggleFolder: (id) => {
-		const cur = get().expandedFolders;
-		set({ expandedFolders: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] });
+		const cur = readExpandedFolders(get);
+		const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+		writeExpandedFolders(set, next);
+	},
+	setExpandedFolders: (ids) => {
+		writeExpandedFolders(set, Array.from(new Set(ids)));
 	},
 	setLeftOpen: (open) => set({ settings: {
 		...get().settings,
@@ -1526,6 +1668,9 @@ export const useVaultStore = create<VaultStore>()(
 		const prev = node.content ?? "";
 		const next = opts?.external ? content : opts?.source ? content : preferCleanWrite(prev, content);
 		if (prev === next) return;
+		// Keep body archive in sync for large-test lazy mounts
+		if (hasBodyArchive() && node.path) setBodyInArchive(node.path, next);
+		try { ensureVaultIndex(get().nodes).markDirty([id]); } catch {}
 		set({
 			nodes: {
 				...get().nodes,
@@ -1600,8 +1745,27 @@ export const useVaultStore = create<VaultStore>()(
 				path: newPath + n.path.slice(node.path.length),
 				mtime: Date.now()
 			};
+			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
+		} else if (node.kind === "note" && hasBodyArchive()) {
+			rekeyBodyArchive(oldPath, newPath);
+			if (typeof content === "string") setBodyInArchive(newPath, content);
 		}
 		set({ nodes });
+		// Keep durable FTS path/title in sync after rename
+		{
+			const n = nodes[id];
+			if (n?.kind === "note") {
+				removeDurableNote(id);
+				upsertDurableNoteFromNode(n);
+			} else if (n?.kind === "folder") {
+				for (const child of Object.values(nodes)) {
+					if (child.kind === "note" && (child.path === newPath || child.path.startsWith(newPath + "/"))) {
+						removeDurableNote(child.id);
+						upsertDurableNoteFromNode(child);
+					}
+				}
+			}
+		}
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
 			queueDiskWrite(async () => {
@@ -1630,7 +1794,7 @@ export const useVaultStore = create<VaultStore>()(
 			path = parent ? pathJoin(parent.path, name) : name;
 			i++;
 		}
-		const id = makeId(path);
+		const id = makeId(path, get().mode);
 		const titleClean = title.replace(/\.md$/i, "");
 		let content;
 		if (opts?.raw && typeof opts.content === "string") content = opts.content;
@@ -1648,11 +1812,17 @@ export const useVaultStore = create<VaultStore>()(
 		};
 		vaultLinkIndex.setNoteLinks(id, content);
 		touchBody(id);
+		if (hasBodyArchive()) setBodyInArchive(path, content);
+		const created = stage.nodes[id];
+		if (created?.kind === "note") {
+			upsertDurableNoteFromNode(created);
+			try { upsertIndexedNote(created); } catch {}
+		}
+		if (hasBodyArchive() && typeof content === "string") setBodyInArchive(path, content);
 		if (parentId == null && !stage.rootIds.includes(id)) stage.rootIds = [...stage.rootIds, id];
 		if (parentId && !stage.expandedFolders.includes(parentId)) stage.expandedFolders = [...stage.expandedFolders, parentId];
 		if (activate) {
 			stage.activeNoteId = id;
-			pushNoteVisit(id);
 		}
 		if (!stage.dirtyNoteIds.includes(id)) stage.dirtyNoteIds = [...stage.dirtyNoteIds, id];
 		scheduleStageFlush(set);
@@ -1663,13 +1833,18 @@ export const useVaultStore = create<VaultStore>()(
 				await persistNoteIfFsa(pth, body, { ack: false });
 			});
 		}
-		if (activate) pushPulse({
-			kind: "create",
-			path,
-			title: titleClean,
-			message: `Created ${path}`,
-			vaultId: get().vaultId
-		});
+		if (activate) {
+			pushPulse({
+				kind: "create",
+				path,
+				title: titleClean,
+				message: `Created ${path}`,
+				vaultId: get().vaultId
+			});
+			// Stage flush may be async — record visits/nav after nodes include the new note
+			flushStageNow(set);
+			recordNoteOpen(get, set, id);
+		}
 		return id;
 	},
 	createFolder: (parentId, name = "New Folder", opts) => {
@@ -1685,7 +1860,7 @@ export const useVaultStore = create<VaultStore>()(
 			path = parent ? pathJoin(parent.path, folderName) : folderName;
 			i++;
 		}
-		const id = makeId(path);
+		const id = makeId(path, get().mode);
 		stage.nodes[id] = {
 			id,
 			path,
@@ -1807,7 +1982,7 @@ export const useVaultStore = create<VaultStore>()(
 				skipped++;
 				continue;
 			}
-			const id = makeId(fpath);
+			const id = makeId(fpath, get().mode);
 			nodes[id] = {
 				id,
 				path: fpath,
@@ -1845,6 +2020,7 @@ export const useVaultStore = create<VaultStore>()(
 						content,
 						mtime: now
 					};
+					if (hasBodyArchive()) setBodyInArchive(path, content);
 					noteIds.push(existingId);
 					created++;
 					if (isDiskVault(get().mode)) diskOps.push(async () => {
@@ -1861,7 +2037,7 @@ export const useVaultStore = create<VaultStore>()(
 				continue;
 			}
 			const content = defaultNoteContent(spec.title || titleFromPath(path), spec.content);
-			const id = makeId(path);
+			const id = makeId(path, get().mode);
 			nodes[id] = {
 				id,
 				path,
@@ -1908,9 +2084,10 @@ export const useVaultStore = create<VaultStore>()(
 		const target = nodes[id];
 		if (!target) return;
 		const toDelete = new Set();
+		const idx = ensureVaultIndex(nodes);
 		const walk = (nid) => {
 			toDelete.add(nid);
-			for (const n of Object.values(nodes)) if (n.parentId === nid) walk(n.id);
+			for (const c of idx.getChildIds(nid)) walk(c);
 		};
 		walk(id);
 		const trashPayload = [];
@@ -1929,6 +2106,8 @@ export const useVaultStore = create<VaultStore>()(
 			});
 		}
 		for (const d of toDelete) {
+			const gone = nodes[d];
+			if (gone?.kind === "note" && hasBodyArchive()) removeBodyFromArchive(gone.path);
 			delete nodes[d];
 			vaultLinkIndex.removeNote(d);
 			removeBodyTouch(d);
@@ -2074,6 +2253,25 @@ export const useVaultStore = create<VaultStore>()(
 					mtime: Date.now()
 				};
 			}
+			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
+		} else if (node.kind === "note" && hasBodyArchive()) {
+			rekeyBodyArchive(oldPath, newPath);
+			if (typeof node.content === "string") setBodyInArchive(newPath, node.content);
+		}
+		// Keep durable FTS path/title in sync after move
+		{
+			const n = nodes[id];
+			if (n?.kind === "note") {
+				removeDurableNote(id);
+				upsertDurableNoteFromNode(n);
+			} else if (n?.kind === "folder") {
+				for (const child of Object.values(nodes)) {
+					if (child.kind === "note" && (child.path === newPath || child.path.startsWith(newPath + "/"))) {
+						removeDurableNote(child.id);
+						upsertDurableNoteFromNode(child);
+					}
+				}
+			}
 		}
 		let rootIds = get().rootIds.filter((r) => r !== id);
 		if (newParentId == null) rootIds = [...rootIds, id];
@@ -2179,7 +2377,7 @@ export const useVaultStore = create<VaultStore>()(
 			const parentPathStr = parts.join("/");
 			parentId = Object.values(stage.nodes).find((n) => n.kind === "folder" && n.path === parentPathStr)?.id ?? parentId;
 		}
-		const id = makeId(destPath);
+		const id = makeId(destPath, get().mode);
 		const titleClean = fileName.replace(/\.md$/i, "");
 		stage.nodes[id] = {
 			id,
@@ -2345,7 +2543,7 @@ export const useVaultStore = create<VaultStore>()(
 			if (!local || local.kind !== "note") continue;
 			const diskId = nodes[dirtyId]?.kind === "note" ? dirtyId : Object.values(nodes).find((n) => n.kind === "note" && n.path === local.path)?.id;
 			if (!diskId || !nodes[diskId]) {
-				const restoredId = makeId(local.path);
+				const restoredId = makeId(local.path, get().mode);
 				const parentPathStr = parentPath(local.path);
 				let parentId = null;
 				if (parentPathStr) parentId = Object.values(nodes).find((n) => n.kind === "folder" && n.path === parentPathStr)?.id ?? null;
@@ -2429,7 +2627,7 @@ export const useVaultStore = create<VaultStore>()(
 					mtime: local.mtime
 				}
 			};
-			const siblingId = makeId(sibling);
+			const siblingId = makeId(sibling, get().mode);
 			nodes = {
 				...nodes,
 				[siblingId]: {
@@ -2474,7 +2672,7 @@ export const useVaultStore = create<VaultStore>()(
 		const now = Date.now();
 		const shouldToast = now - lastExternalToastAt > 2500;
 		if (shouldToast || conflictToast) lastExternalToastAt = now;
-		if (shouldLazyBodies(get().mode)) {
+		if (shouldLazyBodies(get().mode, get().vaultId)) {
 			const keep = new Set([...remappedDirty]);
 			if (nextActive) keep.add(nextActive);
 			for (const id of dirty) {
@@ -2580,29 +2778,58 @@ export const useVaultStore = create<VaultStore>()(
 		if (inflight) return inflight;
 		const run = (async () => {
 			const mode = get().mode;
-			const vaultGen = get().vaultId;
+			// Module vaultGen — bumped by cancelVaultModuleState on vault switch
+			const genAtStart = vaultGen;
 			const path = node.path;
-			const backend = getActiveBackend() ?? backendFromMode(mode, fsaRoot, desktopRoot);
+			const backend = getActiveBackend() ?? backendFromMode(mode, fsaRoot, desktopRoot, () => ({
+				nodes: get().nodes,
+				rootIds: get().rootIds,
+				signatures: {}
+			}));
 			if (!backend?.readNote) return null;
 			try {
 				const content = await backend.readNote(path);
-				if (get().vaultId !== vaultGen) return null;
+				if (genAtStart !== vaultGen) return null;
 				const cur = get().nodes[id];
 				if (!cur || cur.kind !== "note") return null;
+				// Path may have changed during await (rename) — refuse stale write
+				if (cur.path !== path) return null;
 				if (cur.content !== undefined) {
 					touchBody(id);
 					return cur.content;
 				}
-				set({ nodes: {
-					...get().nodes,
-					[id]: {
-						...cur,
-						content,
-						mtime: cur.mtime
-					}
-				} });
-				vaultLinkIndex.setNoteLinks(id, content);
+				const protectedIds = new Set([id, ...get().dirtyNoteIds]);
+				const act = get().activeNoteId;
+				if (act) protectedIds.add(act);
 				touchBody(id);
+				const victims = pickEvictions(protectedIds);
+				const next = { ...get().nodes };
+				next[id] = {
+					...cur,
+					content,
+					mtime: cur.mtime
+				};
+				for (const v of victims) {
+					if (v === id) continue;
+					const n = next[v];
+					if (n?.kind === "note" && n.content !== undefined) {
+						if (hasBodyArchive()) setBodyInArchive(n.path, n.content);
+						next[v] = {
+							id: n.id,
+							path: n.path,
+							name: n.name,
+							kind: n.kind,
+							parentId: n.parentId,
+							mtime: n.mtime
+						};
+					}
+				}
+				const dirtyIds = [id, ...victims.filter((v) => v !== id)];
+				try {
+					ensureVaultIndex(get().nodes).markDirty(dirtyIds);
+				} catch {}
+				set({ nodes: next });
+				vaultLinkIndex.setNoteLinks(id, content);
 				upsertDurableNoteFromNode({
 					...cur,
 					content
@@ -2613,28 +2840,6 @@ export const useVaultStore = create<VaultStore>()(
 						content
 					});
 				} catch {}
-				const protectedIds = new Set([id, ...get().dirtyNoteIds]);
-				const act = get().activeNoteId;
-				if (act) protectedIds.add(act);
-				const victims = pickEvictions(protectedIds);
-				if (victims.length) {
-					const next = { ...get().nodes };
-					for (const v of victims) {
-						const n = next[v];
-						if (n?.kind === "note" && n.content !== undefined) {
-							next[v] = {
-								id: n.id,
-								path: n.path,
-								name: n.name,
-								kind: n.kind,
-								parentId: n.parentId,
-								mtime: n.mtime
-							};
-							removeBodyTouch(v);
-						}
-					}
-					set({ nodes: next });
-				}
 				return content;
 			} catch (e) {
 				console.warn("[nexus] ensureNoteBody failed", id, e);
@@ -2676,7 +2881,7 @@ export const useVaultStore = create<VaultStore>()(
 	},
 	getBodyMemoryStats: () => {
 		const st = get();
-		if (!shouldLazyBodies(st.mode)) return {
+		if (!shouldLazyBodies(st.mode, st.vaultId)) return {
 			loaded: 0,
 			max: 0,
 			protected: 0,
@@ -2688,7 +2893,7 @@ export const useVaultStore = create<VaultStore>()(
 		return getBodyCacheStats(protectedIds);
 	},
 	trimBodyCache: (opts) => {
-		if (!shouldLazyBodies(get().mode)) return 0;
+		if (!shouldLazyBodies(get().mode, get().vaultId)) return 0;
 		const protectedIds = new Set(get().dirtyNoteIds);
 		const act = get().activeNoteId;
 		if (act) protectedIds.add(act);
@@ -2699,6 +2904,7 @@ export const useVaultStore = create<VaultStore>()(
 		for (const v of victims) {
 			const n = next[v];
 			if (n?.kind === "note" && n.content !== undefined) {
+				if (hasBodyArchive()) setBodyInArchive(n.path, n.content);
 				next[v] = {
 					id: n.id,
 					path: n.path,
@@ -2710,11 +2916,34 @@ export const useVaultStore = create<VaultStore>()(
 				removeBodyTouch(v);
 			}
 		}
+		try {
+			ensureVaultIndex(get().nodes).markDirty(victims);
+		} catch {}
 		set({ nodes: next });
 		return victims.length;
 	},
-	getConflictPairs: () => detectConflictPairs(get().nodes),
-	getConflictItems: () => filterDismissed(flattenConflictItems(detectConflictPairs(get().nodes)), new Set(get().dismissedConflictKeys)),
+	getConflictPairs: () => {
+		const nodes = get().nodes;
+		const idx = ensureVaultIndex(nodes);
+		// Cache by structure generation — conflict siblings only appear via external shelving
+		if (
+			_conflictPairsCache &&
+			_conflictPairsStructGen === idx.structureGeneration &&
+			_conflictPairsNodesRef === nodes
+		) {
+			return _conflictPairsCache;
+		}
+		const pairs = detectConflictPairs(nodes);
+		_conflictPairsCache = pairs;
+		_conflictPairsStructGen = idx.structureGeneration;
+		_conflictPairsNodesRef = nodes;
+		return pairs;
+	},
+	getConflictItems: () => {
+		const pairs = get().getConflictPairs();
+		if (!pairs.length) return [];
+		return filterDismissed(flattenConflictItems(pairs), new Set(get().dismissedConflictKeys));
+	},
 	getOpenConflictCount: () => get().getConflictItems().length,
 	openConflictStudio: (focus) => {
 		const items = get().getConflictItems();
@@ -2803,7 +3032,7 @@ export const useVaultStore = create<VaultStore>()(
 			const existing = new Set(Object.values(get().nodes).map((n) => n.path));
 			const minePath = makeConflictSiblingPath(primaryPath, existing, "mine");
 			existing.add(minePath);
-			const mineId = makeId(minePath);
+			const mineId = makeId(minePath, get().mode);
 			const parentId = primary.parentId;
 			set({ nodes: {
 				...get().nodes,

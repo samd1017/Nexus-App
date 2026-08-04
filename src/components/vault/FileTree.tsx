@@ -97,6 +97,14 @@ function resolveDropFromPoint(
   return null;
 }
 
+function dropTargetsEqual(a: DropTarget, b: DropTarget): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.type !== b.type) return false;
+  if (a.type === "folder" && b.type === "folder") return a.id === b.id;
+  return true; // both root
+}
+
 function flattenVisible(
   rootIds: string[],
   nodes: Record<string, VaultNode>,
@@ -105,15 +113,9 @@ function flattenVisible(
   const idx = ensureVaultIndex(nodes);
   const exp = new Set(expanded);
   const rows: FlatRow[] = [];
+  // Index child lists are already sorted (folders first, then name) — do not copy+sort.
   const walk = (ids: string[], depth: number) => {
-    const sorted = [...ids].sort((a, b) => {
-      const na = nodes[a];
-      const nb = nodes[b];
-      if (!na || !nb) return 0;
-      if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
-      return na.name.localeCompare(nb.name);
-    });
-    for (const id of sorted) {
+    for (const id of ids) {
       const n = nodes[id];
       if (!n) continue;
       rows.push({ id, depth, kind: n.kind });
@@ -122,7 +124,9 @@ function flattenVisible(
       }
     }
   };
-  walk(rootIds, 0);
+  // Prefer index-sorted roots when in sync; fall back to store rootIds
+  const indexRoots = idx.getChildIds(null);
+  walk(indexRoots.length > 0 ? indexRoots : rootIds, 0);
   return rows;
 }
 
@@ -230,7 +234,7 @@ const TreeRow = memo(function TreeRow({
       className={cn(
         "tree-item group relative flex w-full items-center gap-1.5 text-left select-none",
         isActive && "is-active",
-        isFocused && !isActive && "bg-white/[0.04]",
+        isFocused && !isActive && "is-focused",
         isDragging && "opacity-40",
         isDropHover &&
           "ring-1 ring-[var(--accent)] bg-[rgba(0,200,255,0.1)]",
@@ -367,7 +371,7 @@ function MenuBtn({
   danger?: boolean;
 }) {
   return (
-    <button
+    <button role="menuitem"
       type="button"
       onClick={onClick}
       className={cn(
@@ -383,7 +387,7 @@ function MenuBtn({
   );
 }
 
-export function FileTree() {
+export const FileTree = memo(function FileTree() {
   const rootIds = useVaultStore((s) => s.rootIds);
   const expandedFolders = useVaultStore((s) => s.expandedFolders);
   // Structure generation only — not full nodes map for flatten invalidation
@@ -391,7 +395,8 @@ export function FileTree() {
     ensureVaultIndex(s.nodes);
     return ensureVaultIndex(s.nodes).structureGeneration;
   });
-  const nodeCount = useVaultStore((s) => Object.keys(s.nodes).length);
+  // O(1) after index sync — avoid Object.keys(s.nodes).length on every store tick
+  const nodeCount = useVaultStore((s) => ensureVaultIndex(s.nodes).nodeCount);
   const createNote = useVaultStore((s) => s.createNote);
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createFolder = useVaultStore((s) => s.createFolder);
@@ -405,16 +410,16 @@ export function FileTree() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const [ghost, setGhost] = useState<{
-    x: number;
-    y: number;
-    label: string;
-  } | null>(null);
+  // Ghost label only in React state; position updated via rAF + DOM
+  const [ghostLabel, setGhostLabel] = useState<string | null>(null);
 
   const sessionRef = useRef<DragSession | null>(null);
   const dropTargetRef = useRef<DropTarget>(null);
   const expandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
+  const ghostElRef = useRef<HTMLDivElement>(null);
+  const ghostRafRef = useRef<number | null>(null);
+  const pendingGhostPos = useRef<{ x: number; y: number } | null>(null);
 
   const flatRows = useMemo(() => {
     const nodes = useVaultStore.getState().nodes;
@@ -422,6 +427,10 @@ export function FileTree() {
     // structureGen + expanded + rootIds drive rebuild
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootIds, expandedFolders, structureGen, nodeCount]);
+
+  // Stabilize callbacks that would otherwise churn when flatRows identity changes
+  const flatRowsRef = useRef(flatRows);
+  flatRowsRef.current = flatRows;
 
   const useVirtual = true;
 
@@ -439,31 +448,30 @@ export function FileTree() {
       parentRef.current?.closest("[data-tree-scroll]") as HTMLElement | null,
     estimateSize: () => ROW_H,
     overscan: 12,
+    getItemKey: (index) => flatRows[index]?.id ?? index,
     enabled: useVirtual,
   });
 
   const focusedId = flatRows[focusedIndex]?.id ?? null;
 
-  const onFocusRow = useCallback(
-    (id: string) => {
-      const idx = flatRows.findIndex((r) => r.id === id);
-      if (idx >= 0) setFocusedIndex(idx);
-    },
-    [flatRows],
-  );
+  const onFocusRow = useCallback((id: string) => {
+    const idx = flatRowsRef.current.findIndex((r) => r.id === id);
+    if (idx >= 0) setFocusedIndex(idx);
+  }, []);
 
   const handleTreeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (renamingId || flatRows.length === 0) return;
+      const rows = flatRowsRef.current;
+      if (renamingId || rows.length === 0) return;
       const nodes = useVaultStore.getState().nodes;
-      const row = flatRows[focusedIndex];
+      const row = rows[focusedIndex];
       if (!row) return;
       const node = nodes[row.id];
       if (!node) return;
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        const next = Math.min(focusedIndex + 1, flatRows.length - 1);
+        const next = Math.min(focusedIndex + 1, rows.length - 1);
         setFocusedIndex(next);
         virtualizer.scrollToIndex(next, { align: "auto" });
         return;
@@ -481,7 +489,7 @@ export function FileTree() {
           const expanded = useVaultStore.getState().expandedFolders;
           if (!expanded.includes(node.id)) {
             toggleFolder(node.id);
-          } else if (focusedIndex < flatRows.length - 1) {
+          } else if (focusedIndex < rows.length - 1) {
             const next = focusedIndex + 1;
             setFocusedIndex(next);
             virtualizer.scrollToIndex(next, { align: "auto" });
@@ -499,7 +507,7 @@ export function FileTree() {
           }
         }
         if (node.parentId) {
-          const parentIdx = flatRows.findIndex((r) => r.id === node.parentId);
+          const parentIdx = rows.findIndex((r) => r.id === node.parentId);
           if (parentIdx >= 0) {
             setFocusedIndex(parentIdx);
             virtualizer.scrollToIndex(parentIdx, { align: "auto" });
@@ -518,7 +526,6 @@ export function FileTree() {
     },
     [
       renamingId,
-      flatRows,
       focusedIndex,
       toggleFolder,
       setActiveNote,
@@ -549,6 +556,15 @@ export function FileTree() {
   }, [ctx]);
 
   useEffect(() => {
+    const applyGhostPos = () => {
+      ghostRafRef.current = null;
+      const pos = pendingGhostPos.current;
+      const el = ghostElRef.current;
+      if (!pos || !el) return;
+      el.style.left = `${pos.x + 12}px`;
+      el.style.top = `${pos.y + 12}px`;
+    };
+
     const onMove = (e: PointerEvent) => {
       const s = sessionRef.current;
       if (!s) return;
@@ -560,20 +576,30 @@ export function FileTree() {
         s.active = true;
         setDragId(s.id);
         const n = nodes[s.id];
-        setGhost({
-          x: e.clientX,
-          y: e.clientY,
-          label: n ? displayName(n) : "Moving…",
-        });
+        pendingGhostPos.current = { x: e.clientX, y: e.clientY };
+        setGhostLabel(n ? displayName(n) : "Moving…");
         document.body.style.cursor = "grabbing";
         document.body.style.userSelect = "none";
+        // Position on next frame once ghost DOM exists
+        if (ghostRafRef.current == null) {
+          ghostRafRef.current = requestAnimationFrame(applyGhostPos);
+        }
       } else {
-        setGhost((g) => (g ? { ...g, x: e.clientX, y: e.clientY } : g));
+        // rAF + direct DOM — no setState per pointermove
+        pendingGhostPos.current = { x: e.clientX, y: e.clientY };
+        if (ghostRafRef.current == null) {
+          ghostRafRef.current = requestAnimationFrame(applyGhostPos);
+        }
       }
 
       const target = resolveDropFromPoint(e.clientX, e.clientY, s.id, nodes);
-      dropTargetRef.current = target;
-      setDropTarget(target);
+      // Only setState when drop target identity changes
+      if (!dropTargetsEqual(dropTargetRef.current, target)) {
+        dropTargetRef.current = target;
+        setDropTarget(target);
+      } else {
+        dropTargetRef.current = target;
+      }
 
       if (target?.type === "folder") {
         const fid = target.id;
@@ -610,12 +636,17 @@ export function FileTree() {
         clearTimeout(expandTimer.current);
         expandTimer.current = null;
       }
+      if (ghostRafRef.current != null) {
+        cancelAnimationFrame(ghostRafRef.current);
+        ghostRafRef.current = null;
+      }
+      pendingGhostPos.current = null;
 
       const wasActive = s.active;
       const target = dropTargetRef.current;
       setDragId(null);
       setDropTarget(null);
-      setGhost(null);
+      setGhostLabel(null);
       dropTargetRef.current = null;
 
       if (!wasActive) return;
@@ -644,6 +675,10 @@ export function FileTree() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
+      if (ghostRafRef.current != null) {
+        cancelAnimationFrame(ghostRafRef.current);
+        ghostRafRef.current = null;
+      }
     };
   }, []);
 
@@ -802,22 +837,23 @@ export function FileTree() {
         </div>
       ) : null}
 
-      {ghost ? (
+      {ghostLabel ? (
         <div
+          ref={ghostElRef}
           className="pointer-events-none fixed z-[100] rounded-lg border border-[rgba(0,200,255,0.4)] bg-[rgba(15,15,18,0.95)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.55)]"
           style={{
-            left: ghost.x + 12,
-            top: ghost.y + 12,
+            left: (pendingGhostPos.current?.x ?? 0) + 12,
+            top: (pendingGhostPos.current?.y ?? 0) + 12,
           }}
         >
-          {ghost.label}
+          {ghostLabel}
         </div>
       ) : null}
 
       {ctx && typeof document !== "undefined"
         ? createPortal(
             <div
-              data-nexus-ctx-menu
+              data-nexus-ctx-menu role="menu" aria-label="File actions"
               className="glass-elevated fixed z-[120] min-w-[176px] rounded-[12px] p-1 shadow-[0_16px_48px_rgba(0,0,0,0.5)]"
               style={{
                 left: Math.min(ctx.x, window.innerWidth - 200),
@@ -930,4 +966,4 @@ export function FileTree() {
         : null}
     </div>
   );
-}
+});

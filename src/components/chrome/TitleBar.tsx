@@ -4,7 +4,7 @@ import { formatRelativeTime } from "@/lib/utils";
 import { NexusWordmark } from "@/components/brand/NexusLogo";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
-import { formatShortcut, isDesktopShell } from "@/lib/platform";
+import { formatShortcut, isDesktopShell, isMacOS } from "@/lib/platform";
 
 /** Window chrome: branding + status. Native traffic lights live in the OS bar. */
 export function TitleBar() {
@@ -16,21 +16,22 @@ export function TitleBar() {
   const flushDirty = useVaultStore((s) => s.flushDirty);
   const setSettingsOpen = usePrefsStore((s) => s.setSettingsOpen);
   const focusMode = usePrefsStore((s) => s.focusMode);
-  const desktop = isDesktopShell();
+  // Traffic-light spacer only on macOS overlay titlebar (not Win/Linux Tauri)
+  const macOverlay = isDesktopShell() && isMacOS();
 
   return (
     <header
-      className="titlebar-drag relative z-40 flex h-11 shrink-0 items-center border-b border-[var(--border)] bg-[rgba(8,8,10,0.94)] px-3 backdrop-blur-xl"
+      className="titlebar-drag relative z-40 flex h-11 shrink-0 select-none items-center border-b border-[var(--border)] bg-[rgba(8,8,10,0.94)] px-3 backdrop-blur-xl"
       data-tauri-drag-region
     >
-      {/* Wave P: spacer only — no decorative traffic lights on web or desktop */}
+      {/* Wave P: spacer only for macOS traffic lights under Overlay titlebar */}
       <div
-        className={desktop ? "w-[72px] shrink-0" : "w-3 shrink-0 sm:w-4"}
+        className={macOverlay ? "w-[72px] shrink-0" : "w-3 shrink-0 sm:w-4"}
         aria-hidden
         data-tauri-drag-region
       />
 
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <div className="pointer-events-none absolute inset-0 hidden items-center justify-center sm:flex">
         <div className="flex items-center gap-2">
           <NexusWordmark size="sm" className="text-[var(--text-primary)]" />
           {vaultName && !focusMode ? (
@@ -70,7 +71,7 @@ export function TitleBar() {
               Live · {formatRelativeTime(lastExternalSync)}
             </span>
           ) : mode === "fsa" || mode === "desktop" ? (
-            <span className="rounded-full border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent)]">
+            <span className="rounded-full border border-[color-mix(in_srgb,var(--accent)_25%,transparent)] bg-[var(--accent-dim)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent)]">
               {mode === "desktop" ? "Desktop vault" : "Watching disk"}
             </span>
           ) : mode === "demo" ? (

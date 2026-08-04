@@ -69,6 +69,7 @@ export class VaultStructuralIndex {
   folderCount = 0;
 
   private lastNodesRef: Record<string, VaultNode> | null = null;
+  private pendingDirtyIds: string[] | null = null;
   /** id → last seen parentId for reparent detection */
   private parentOf = new Map<string, string | null>();
   private pathOf = new Map<string, string>();
@@ -92,16 +93,70 @@ export class VaultStructuralIndex {
     };
   }
 
+  /** Store hints content/meta patches before set({ nodes }). */
+  markDirty(ids: string[]): void {
+    if (!ids.length) return;
+    if (!this.pendingDirtyIds) this.pendingDirtyIds = ids.slice();
+    else this.pendingDirtyIds.push(...ids);
+  }
+
   /** Sync index to current nodes map. Patches when possible, full rebuild otherwise. */
   sync(nodes: Record<string, VaultNode>): void {
     if (this.lastNodesRef === nodes) return;
 
     if (!this.lastNodesRef) {
+      this.pendingDirtyIds = null;
       this.rebuild(nodes);
       return;
     }
 
     const prev = this.lastNodesRef;
+    const hinted = this.pendingDirtyIds;
+    this.pendingDirtyIds = null;
+
+    // Fast path: store-known dirty ids (avoids Object.keys over 45k map)
+    if (hinted && hinted.length > 0 && hinted.length <= 64) {
+      const uniq = Array.from(new Set(hinted));
+      const changed = uniq.filter((id) => nodes[id] !== prev[id] && nodes[id] != null);
+      if (
+        changed.length > 0 &&
+        changed.length === uniq.filter((id) => prev[id] != null || nodes[id] != null).length &&
+        changed.every((id) => prev[id] != null && nodes[id] != null)
+      ) {
+        let structural = false;
+        for (const id of changed) {
+          const before = prev[id]!;
+          const after = nodes[id]!;
+          if (
+            before.parentId !== after.parentId ||
+            before.path !== after.path ||
+            before.name !== after.name ||
+            before.kind !== after.kind
+          ) {
+            structural = true;
+          }
+          this.applyNodeDelta(before, after);
+        }
+        if (structural) {
+          this.structureGeneration += 1;
+          this.childSigCache.clear();
+          this.titleListDirty = true;
+          this.recount(nodes);
+        } else {
+          this.contentGeneration += 1;
+          for (const id of changed) {
+            const p = nodes[id]?.parentId;
+            if (p) this.childSigCache.delete(p);
+            else this.childSigCache.delete("__root__");
+          }
+          // content-only: skip recount
+        }
+        this.patchCount += 1;
+        this.lastNodesRef = nodes;
+        return;
+      }
+    }
+
     const prevKeys = Object.keys(prev);
     const nextKeys = Object.keys(nodes);
 
@@ -117,7 +172,8 @@ export class VaultStructuralIndex {
         this.lastNodesRef = nodes;
         return;
       }
-      if (changed.length <= 8) {
+      // Raise budget: body hydrate can touch many content-only victims
+      if (changed.length <= 64) {
         let structural = false;
         for (const id of changed) {
           const before = prev[id];
@@ -141,6 +197,7 @@ export class VaultStructuralIndex {
           this.structureGeneration += 1;
           this.childSigCache.clear();
           this.titleListDirty = true;
+          this.recount(nodes);
         } else {
           this.contentGeneration += 1;
           // content-only: refresh child sigs for parents of changed notes (mtime in sig)
@@ -149,10 +206,10 @@ export class VaultStructuralIndex {
             if (p) this.childSigCache.delete(p);
             else this.childSigCache.delete("__root__");
           }
+          // content-only: skip recount — counts unchanged
         }
         this.patchCount += 1;
         this.lastNodesRef = nodes;
-        this.recount(nodes);
         return;
       }
     }

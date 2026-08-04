@@ -1,22 +1,33 @@
 /**
- * Persist main window size across sessions (Wave S7).
+ * Persist main window size/position across sessions.
  * Desktop / Tauri only — no-op in the browser shell.
  * Wave Trust: flush dirty notes before quit.
  */
 
 import { confirmDesktopShell } from "@/lib/platform";
 
-const WINDOW_KEY = "nexus-window-v1";
+const WINDOW_KEY = "nexus-window-v2";
 
 type SavedWindow = {
   width: number;
   height: number;
+  x?: number;
+  y?: number;
+  maximized?: boolean;
 };
 
 function loadSaved(): SavedWindow | null {
   try {
     const raw = localStorage.getItem(WINDOW_KEY);
-    if (!raw) return null;
+    if (!raw) {
+      // migrate v1
+      const v1 = localStorage.getItem("nexus-window-v1");
+      if (v1) {
+        const v = JSON.parse(v1) as SavedWindow;
+        if (typeof v.width === "number" && typeof v.height === "number") return v;
+      }
+      return null;
+    }
     const v = JSON.parse(raw) as SavedWindow;
     if (
       typeof v.width === "number" &&
@@ -32,13 +43,16 @@ function loadSaved(): SavedWindow | null {
   return null;
 }
 
-function saveSize(width: number, height: number): void {
+function saveState(state: SavedWindow): void {
   try {
     localStorage.setItem(
       WINDOW_KEY,
       JSON.stringify({
-        width: Math.round(width),
-        height: Math.round(height),
+        width: Math.round(state.width),
+        height: Math.round(state.height),
+        x: state.x != null ? Math.round(state.x) : undefined,
+        y: state.y != null ? Math.round(state.y) : undefined,
+        maximized: Boolean(state.maximized),
       } satisfies SavedWindow),
     );
   } catch {
@@ -47,7 +61,7 @@ function saveSize(width: number, height: number): void {
 }
 
 /**
- * Restore last size and save on resize / close.
+ * Restore last size/position and save on resize / move / close.
  * Returns an unlisten cleanup.
  */
 export async function bindWindowState(): Promise<() => void> {
@@ -55,7 +69,7 @@ export async function bindWindowState(): Promise<() => void> {
   if (!desktop) return () => {};
 
   try {
-    const { getCurrentWindow, LogicalSize } = await import(
+    const { getCurrentWindow, LogicalSize, LogicalPosition } = await import(
       "@tauri-apps/api/window"
     );
     const win = getCurrentWindow();
@@ -63,38 +77,50 @@ export async function bindWindowState(): Promise<() => void> {
     const saved = loadSaved();
     if (saved) {
       try {
-        await win.setSize(new LogicalSize(saved.width, saved.height));
+        if (saved.maximized) {
+          await win.maximize();
+        } else {
+          await win.setSize(new LogicalSize(saved.width, saved.height));
+          if (typeof saved.x === "number" && typeof saved.y === "number") {
+            await win.setPosition(new LogicalPosition(saved.x, saved.y));
+          }
+        }
       } catch {
         /* min-size / monitor constraints — ignore */
       }
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleSave = (w: number, h: number) => {
+    const persist = async () => {
+      try {
+        const factor = await win.scaleFactor();
+        const physical = await win.innerSize();
+        const pos = await win.outerPosition();
+        const maximized = await win.isMaximized();
+        saveState({
+          width: physical.width / factor,
+          height: physical.height / factor,
+          x: pos.x / factor,
+          y: pos.y / factor,
+          maximized,
+        });
+      } catch {
+        /* ignore */
+      }
+    };
+    const scheduleSave = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => saveSize(w, h), 250);
+      timer = setTimeout(() => {
+        void persist();
+      }, 250);
     };
 
-    const unResize = await win.onResized(async () => {
-      try {
-        const factor = await win.scaleFactor();
-        const physical = await win.innerSize();
-        scheduleSave(physical.width / factor, physical.height / factor);
-      } catch {
-        /* ignore */
-      }
-    });
+    const unResize = await win.onResized(() => scheduleSave());
+    const unMove = await win.onMoved(() => scheduleSave());
 
     const unClose = await win.onCloseRequested(async (event) => {
-      // Prevent close until dirty flush completes
       event.preventDefault();
-      try {
-        const factor = await win.scaleFactor();
-        const physical = await win.innerSize();
-        saveSize(physical.width / factor, physical.height / factor);
-      } catch {
-        /* ignore */
-      }
+      await persist();
       try {
         const { useVaultStore } = await import("@/lib/vault/store");
         await useVaultStore.getState().flushDirty();
@@ -115,6 +141,7 @@ export async function bindWindowState(): Promise<() => void> {
     return () => {
       if (timer) clearTimeout(timer);
       unResize();
+      unMove();
       unClose();
     };
   } catch (err) {

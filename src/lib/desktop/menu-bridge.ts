@@ -10,6 +10,7 @@ type MenuHandlers = {
   settings: () => void;
   search: () => void;
   newNote: () => void;
+  save: () => void;
   toggleGraph: () => void;
   toggleSource: () => void;
 };
@@ -38,6 +39,9 @@ export async function bindDesktopMenu(
           break;
         case "new_note":
           handlers.newNote();
+          break;
+        case "save":
+          handlers.save();
           break;
         case "toggle_graph":
           handlers.toggleGraph();

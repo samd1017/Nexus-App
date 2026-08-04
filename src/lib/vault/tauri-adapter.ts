@@ -35,8 +35,12 @@ const SKIP_DIRS = new Set([
   "target",
 ]);
 
-function nodeId(path: string): string {
+export function deskNodeId(path: string): string {
   return "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_");
+}
+
+function nodeId(path: string): string {
+  return deskNodeId(path);
 }
 
 export function getDesktopVaultRoot(): string | null {
@@ -300,13 +304,30 @@ export async function scanDesktopVault(root: string): Promise<VaultScan> {
     const na = nodes[a];
     const nb = nodes[b];
     if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
-    return na.name.localeCompare(nb.name);
+    return na.name.localeCompare(nb.name, undefined, { numeric: true, sensitivity: "base" });
   });
 
   return { nodes, rootIds, signatures };
 }
 
+function sigMapHash(sigs: Record<string, string>): string {
+  // Compact fingerprint — avoid huge JSON.stringify of full vault every poll
+  let n = 0;
+  let h = 2166136261;
+  for (const k of Object.keys(sigs).sort()) {
+    n += 1;
+    const v = sigs[k]!;
+    const s = k + "\0" + v;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+  }
+  return n + ":" + (h >>> 0).toString(16);
+}
+
 export async function scanDesktopSignatures(
+
   root: string,
 ): Promise<Record<string, string>> {
   const signatures: Record<string, string> = {};
@@ -463,7 +484,7 @@ export async function scanDesktopVaultMeta(
     const na = nodes[a];
     const nb = nodes[b];
     if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
-    return na.name.localeCompare(nb.name);
+    return na.name.localeCompare(nb.name, undefined, { numeric: true, sensitivity: "base" });
   });
 
   return { nodes, rootIds, signatures };
@@ -628,7 +649,7 @@ export function startDesktopWatch(
     busy = true;
     try {
       const sigs = await scanDesktopSignatures(root);
-      const hash = JSON.stringify(sigs);
+      const hash = sigMapHash(sigs);
       if (hash === lastSig && lastScan) return;
       lastSig = hash;
       if (lastScan) {
@@ -659,7 +680,7 @@ export function startDesktopWatch(
   void (async () => {
     try {
       const sigs = await scanDesktopSignatures(root);
-      lastSig = JSON.stringify(sigs);
+      lastSig = sigMapHash(sigs);
       lastScan = metaOnly
         ? await scanDesktopVaultMeta(root)
         : await scanDesktopVault(root);
@@ -709,7 +730,7 @@ export function startDesktopWatch(
                   );
                   lastScan = scan;
                   // Soft-update signature hash from patch
-                  lastSig = JSON.stringify(scan.signatures);
+                  lastSig = sigMapHash(scan.signatures);
                   onChange(scan, changedPaths);
                 } catch (err) {
                   console.warn("[nexus] path patch failed; falling back", err);

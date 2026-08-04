@@ -114,7 +114,7 @@ export function ConfirmDialog({
         aria-labelledby="nexus-confirm-title"
         aria-describedby="nexus-confirm-message"
         className={cn(
-          "w-full max-w-[380px] rounded-[16px] border border-[var(--border)]",
+          "w-full max-w-[380px] rounded-[var(--radius-xl)] border border-[var(--border)]",
           "bg-[var(--bg-elevated,#16161A)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.55)]",
         )}
         onMouseDown={(e) => e.stopPropagation()}
@@ -124,7 +124,7 @@ export function ConfirmDialog({
             className={cn(
               "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border",
               danger
-                ? "border-[rgba(255,69,58,0.35)] bg-[rgba(255,69,58,0.12)] text-[#FF453A]"
+                ? "border-[rgba(255,69,58,0.35)] bg-[rgba(255,69,58,0.12)] text-[var(--danger)]"
                 : "border-[var(--border)] bg-white/[0.04] text-[var(--accent)]",
             )}
           >
@@ -160,7 +160,7 @@ export function ConfirmDialog({
             className={cn(
               "primary-btn",
               danger &&
-                "!border-[rgba(255,69,58,0.45)] !bg-[rgba(255,69,58,0.9)] !text-white hover:!bg-[#FF453A]",
+                "!border-[rgba(255,69,58,0.45)] !bg-[rgba(255,69,58,0.9)] !text-white hover:!bg-[var(--danger)]",
             )}
             onClick={onConfirm}
           >

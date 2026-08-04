@@ -91,7 +91,7 @@ export const DEFAULT_PREFS: NexusPrefs = {
   reducedMotion: false,
 };
 
-export const NEXUS_VERSION = "1.0.0";
+export const NEXUS_VERSION = "0.1.0";
 
 /** Platform-aware keyboard shortcut list for Settings (⌘ vs Ctrl). */
 export function getShortcuts(): { keys: string; action: string }[] {

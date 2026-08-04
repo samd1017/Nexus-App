@@ -29,6 +29,7 @@ export function ConflictStudioHost() {
   const openConflictPair = useVaultStore((s) => s.openConflictPair);
   const dismissConflictFromList = useVaultStore((s) => s.dismissConflictFromList);
   const getConflictItems = useVaultStore((s) => s.getConflictItems);
+  const dismissedConflictKeys = useVaultStore((s) => s.dismissedConflictKeys);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
 
@@ -36,12 +37,13 @@ export function ConflictStudioHost() {
   const [mobileSide, setMobileSide] = useState<"mine" | "theirs">("mine");
   const [confirmTake, setConfirmTake] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const prevFocusRef = useRef<HTMLElement | null>(null);
 
   // Resample when vault structure changes
   useEffect(() => {
     if (!open) return;
     setItems(getConflictItems());
-  }, [open, nodes, getConflictItems]);
+  }, [open, nodes, getConflictItems, dismissedConflictKeys]);
 
   const activeItem = useMemo(() => {
     if (!focus) return items[0] ?? null;
@@ -74,6 +76,52 @@ export function ConflictStudioHost() {
     if (primaryId) void ensureNoteBody(primaryId);
     if (siblingId) void ensureNoteBody(siblingId);
   }, [open, activeItem, primaryId, siblingId, ensureNoteBody]);
+
+
+  useEffect(() => {
+    if (!open) return;
+    prevFocusRef.current =
+      typeof document !== "undefined"
+        ? (document.activeElement as HTMLElement | null)
+        : null;
+    const root = panelRef.current;
+    if (root) {
+      root.tabIndex = -1;
+      try {
+        root.focus({ preventScroll: true });
+      } catch {
+        /* ignore */
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !panelRef.current || confirmTake) return;
+      const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable.length) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      const prev = prevFocusRef.current;
+      if (prev && typeof prev.focus === "function") {
+        try {
+          prev.focus({ preventScroll: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -110,7 +158,7 @@ export function ConflictStudioHost() {
           data-conflict-studio="true"
           className={cn(
             "glass-elevated flex w-full flex-col border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-2xl",
-            "h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[min(720px,90dvh)] sm:max-w-[min(920px,96vw)] sm:rounded-[18px]",
+            "h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[min(720px,90dvh)] sm:max-w-[min(920px,96vw)] sm:rounded-[var(--radius-xl)]",
           )}
         >
           <header className="flex shrink-0 items-start gap-3 border-b border-[var(--border)] px-4 py-3">
@@ -328,6 +376,7 @@ export function ConflictBanner() {
   const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
   const dismissConflictFromList = useVaultStore((s) => s.dismissConflictFromList);
   const getConflictItems = useVaultStore((s) => s.getConflictItems);
+  const dismissedConflictKeys = useVaultStore((s) => s.dismissedConflictKeys);
 
   const ctx = useMemo(() => {
     if (!activeNoteId) return null;
@@ -344,7 +393,7 @@ export function ConflictBanner() {
     if (!hit) return null;
     const viewingSibling = hit.sibling.id === activeNoteId;
     return { hit, viewingSibling };
-  }, [activeNoteId, nodes, getConflictItems]);
+  }, [activeNoteId, nodes, getConflictItems, dismissedConflictKeys]);
 
   if (!ctx) return null;
   const { hit, viewingSibling } = ctx;

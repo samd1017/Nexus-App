@@ -51,6 +51,26 @@ export function isMobileShell(): boolean {
   }
 }
 
+/** True for macOS desktop (not iOS/iPad) — traffic lights, overlay titlebar. */
+export function isMacOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  // Prefer userAgentData when available
+  try {
+    const uad = (
+      navigator as Navigator & { userAgentData?: { platform?: string } }
+    ).userAgentData;
+    if (uad?.platform) {
+      return /mac/i.test(uad.platform);
+    }
+  } catch {
+    /* ignore */
+  }
+  const p = navigator.platform || "";
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(ua) || /iPhone|iPad|iPod/i.test(p)) return false;
+  return /Mac/i.test(p) || /Mac OS X/i.test(ua);
+}
+
 /** Async confirm (preferred when opening vaults / menus) */
 export async function confirmDesktopShell(): Promise<boolean> {
   if (isDesktopShell()) return true;
@@ -90,6 +110,16 @@ export const MODULE_BOUNDARIES = {
 /** True when UI should show Apple-style ⌘ shortcuts (Mac/iOS). */
 export function isAppleModPlatform(): boolean {
   if (typeof navigator === "undefined") return false;
+  try {
+    const uad = (
+      navigator as Navigator & { userAgentData?: { platform?: string } }
+    ).userAgentData;
+    if (uad?.platform) {
+      return /mac|iphone|ipad|ipod/i.test(uad.platform);
+    }
+  } catch {
+    /* ignore */
+  }
   const p = navigator.platform || "";
   const ua = navigator.userAgent || "";
   return /Mac|iPhone|iPad|iPod/i.test(p) || /Mac OS X|iPhone|iPad|iPod/i.test(ua);

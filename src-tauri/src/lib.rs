@@ -194,6 +194,8 @@ pub fn run() {
                 MenuItem::with_id(handle, "search", "Search…", true, Some("CmdOrCtrl+K"))?;
             let new_note =
                 MenuItem::with_id(handle, "new_note", "New Note", true, Some("CmdOrCtrl+N"))?;
+            let save =
+                MenuItem::with_id(handle, "save", "Save", true, Some("CmdOrCtrl+S"))?;
             let toggle_graph = MenuItem::with_id(
                 handle,
                 "toggle_graph",
@@ -234,6 +236,7 @@ pub fn run() {
                     &close_vault,
                     &PredefinedMenuItem::separator(handle)?,
                     &new_note,
+                    &save,
                 ],
             )?;
 

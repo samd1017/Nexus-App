@@ -45,7 +45,7 @@ export function Toast() {
   const showOpenPulse = toastAction?.kind === "open-pulse";
 
   return (
-    <div className="pointer-events-none fixed bottom-6 left-1/2 z-[120] -translate-x-1/2">
+    <div className="pointer-events-none fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 z-[120] -translate-x-1/2">
       <div
         role="status"
         aria-live={variant === "error" ? "assertive" : "polite"}
@@ -66,7 +66,7 @@ export function Toast() {
         {showOpenPulse ? (
           <button
             type="button"
-            className="pointer-events-auto shrink-0 rounded-full border border-[rgba(0,200,255,0.4)] bg-[rgba(0,200,255,0.12)] px-2.5 py-0.5 text-[11.5px] font-semibold text-[var(--accent)] transition-colors hover:bg-[rgba(0,200,255,0.2)]"
+            className="pointer-events-auto shrink-0 rounded-full border border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[var(--accent-dim)] px-2.5 py-0.5 text-[11.5px] font-semibold text-[var(--accent)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)]"
             onClick={() => {
               openPulseRail();
               setToast(null);

@@ -40,13 +40,15 @@ export function WelcomeScreen() {
   const hasRecents = recentVaults.length > 0;
 
   const openTopRecent = () => {
-    if (!topRecent) return;
+    if (connecting || !topRecent) return;
     if (topRecent.mode === "demo") openDemoVault();
-    else if (topRecent.id === "large-test-vault-45k" || topRecent.path?.includes("Large Test Vault")) void openLargeTestVault();
+    else if (import.meta.env.DEV && (topRecent.id === "large-test-vault-45k" || topRecent.path?.includes("Large Test Vault"))) void openLargeTestVault();
+    else if (topRecent.id === "large-test-vault-45k" || topRecent.path?.includes("Large Test Vault")) setToast("Large test vault is only available in development");
     else void reopenRecentVault(topRecent.id);
   };
 
   const onOpenFolder = () => {
+    if (connecting) return;
     if (!fsaOk) {
       setToast(
         desktop
@@ -59,6 +61,7 @@ export function WelcomeScreen() {
   };
 
   const onCreateVault = () => {
+    if (connecting) return;
     if (!fsaOk) {
       setToast(
         desktop
@@ -77,7 +80,7 @@ export function WelcomeScreen() {
         className="pointer-events-none absolute inset-0 opacity-[0.4]"
         style={{
           backgroundImage:
-            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.14), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 80%, rgba(123,97,255,0.09), transparent 50%)",
+            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.08), transparent 55%)",
         }}
       />
       <div
@@ -95,6 +98,9 @@ export function WelcomeScreen() {
           <div>
             <NexusWordmark size="lg" showMark={false} />
             <div className="text-[12.5px] text-[var(--accent)]">{NEXUS_TAGLINE}</div>
+            <p className="mt-2 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+              Privacy: notes stay on your device. Nexus does not upload vault contents or require an account for core editing.
+            </p>
           </div>
         </div>
 
@@ -116,8 +122,12 @@ export function WelcomeScreen() {
               Use Chrome or Edge, install the desktop app for full vaults, or{" "}
               <button
                 type="button"
-                className="text-[var(--accent)] underline-offset-2 hover:underline"
-                onClick={() => openDemoVault()}
+                className="text-[var(--accent)] underline-offset-2 hover:underline disabled:opacity-40 disabled:no-underline"
+                disabled={connecting}
+                onClick={() => {
+                  if (connecting) return;
+                  openDemoVault();
+                }}
               >
                 explore the demo
               </button>{" "}
@@ -160,7 +170,11 @@ export function WelcomeScreen() {
               <button
                 type="button"
                 className="ghost-btn min-h-11"
-                onClick={() => openDemoVault()}
+                disabled={connecting}
+                onClick={() => {
+                  if (connecting) return;
+                  openDemoVault();
+                }}
               >
                 <Sparkles size={16} />
                 Explore demo
@@ -170,23 +184,29 @@ export function WelcomeScreen() {
             <button
               type="button"
               className="primary-btn min-h-11"
-              onClick={() => openDemoVault()}
+              disabled={connecting}
+              onClick={() => {
+                if (connecting) return;
+                openDemoVault();
+              }}
             >
               <Sparkles size={16} />
               Explore demo
             </button>
           )}
 
-          <button
-            type="button"
-            className="ghost-btn min-h-11"
-            disabled={connecting}
-            onClick={() => void openLargeTestVault()}
-            title="Open the 45,000-note stress vault (in-browser, real app shell)"
-          >
-            <Database size={16} />
-            {connecting ? "Loading 45k…" : "Open 45k test vault"}
-          </button>
+          {import.meta.env.DEV ? (
+            <button
+              type="button"
+              className="ghost-btn min-h-11"
+              disabled={connecting}
+              onClick={() => void openLargeTestVault()}
+              title="Open the 45,000-note stress vault (in-browser, real app shell)"
+            >
+              <Database size={16} />
+              {connecting ? "Loading 45k…" : "Open 45k test vault"}
+            </button>
+          ) : null}
 
           <button
             type="button"
@@ -203,7 +223,7 @@ export function WelcomeScreen() {
             className="ghost-btn min-h-11"
             disabled={connecting || !fsaOk}
             onClick={() => {
-              if (!fsaOk) return;
+              if (!fsaOk || connecting) return;
               setShowCreate((v) => !v);
             }}
             title={!fsaOk ? "Not available in this browser" : undefined}
@@ -281,10 +301,13 @@ export function WelcomeScreen() {
                 <li key={r.id}>
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+                    disabled={connecting}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => {
+                      if (connecting) return;
                       if (r.mode === "demo") openDemoVault();
-                      else if (r.id === "large-test-vault-45k" || (r.path && r.path.includes("Large Test Vault"))) void openLargeTestVault();
+                      else if (import.meta.env.DEV && (r.id === "large-test-vault-45k" || (r.path && r.path.includes("Large Test Vault")))) void openLargeTestVault();
+                      else if (r.id === "large-test-vault-45k" || (r.path && r.path.includes("Large Test Vault"))) setToast("Large test vault is only available in development");
                       else void reopenRecentVault(r.id);
                     }}
                   >

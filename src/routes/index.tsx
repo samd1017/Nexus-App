@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/layout/AppShell";
+import { ErrorBoundary } from "@/components/chrome/ErrorBoundary";
 import { ClientOnly } from "@/components/ClientOnly";
 import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
 
@@ -19,7 +20,7 @@ function Home() {
           </div>
         }
       >
-        <AppShell />
+        <ErrorBoundary><AppShell /></ErrorBoundary>
       </ClientOnly>
     </main>
   );

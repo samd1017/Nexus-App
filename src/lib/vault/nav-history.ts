@@ -45,6 +45,31 @@ export function goForward(): string | null {
   return stack[index] ?? null;
 }
 
+/**
+ * Walk back until a note id still exists in `isLive`, or stack is exhausted.
+ * Skips deleted / foreign-vault dead ids without burning extra keypresses.
+ */
+export function goBackLive(
+  isLive: (id: string) => boolean,
+): string | null {
+  while (canGoBack()) {
+    const id = goBack();
+    if (id && isLive(id)) return id;
+  }
+  return null;
+}
+
+/** Walk forward until a live note id, or exhaust forward stack. */
+export function goForwardLive(
+  isLive: (id: string) => boolean,
+): string | null {
+  while (canGoForward()) {
+    const id = goForward();
+    if (id && isLive(id)) return id;
+  }
+  return null;
+}
+
 /** Run a navigation that should not append to the history stack. */
 export function withHistoryNav<T>(fn: () => T): T {
   suppressPush = true;

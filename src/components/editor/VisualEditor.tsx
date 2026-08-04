@@ -158,10 +158,14 @@ export function VisualEditor({ noteId, content }: Props) {
     bottom: 0,
   });
   const suggestOpenRef = useRef(false);
+  const suggestQueryRef = useRef("");
   const suggestItemsRef = useRef<WikilinkSuggestItem[]>([]);
   const suggestSelectedRef = useRef(0);
   const suggestRangeRef = useRef({ from: 0, to: 0 });
+  const createFromSuggestRef = useRef<(title: string) => void>(() => {});
+  const pickSuggestRef = useRef<(item: WikilinkSuggestItem) => void>(() => {});
   suggestOpenRef.current = suggestOpen;
+  suggestQueryRef.current = suggestQuery;
   suggestItemsRef.current = suggestItems;
   suggestSelectedRef.current = suggestSelected;
   suggestRangeRef.current = { from: suggestFrom, to: suggestTo };
@@ -322,27 +326,19 @@ export function VisualEditor({ noteId, content }: Props) {
             return true;
           }
           if (event.key === "Enter" || event.key === "Tab") {
-            if (!items.length) return false;
+            if (!items.length) {
+              const q = suggestQueryRef.current.trim();
+              if (q && event.key === "Enter") {
+                event.preventDefault();
+                createFromSuggestRef.current(q);
+                return true;
+              }
+              return false;
+            }
             event.preventDefault();
             const item = items[suggestSelectedRef.current] ?? items[0];
             if (item) {
-              // Build a minimal editor-like chain from the view
-              const { from, to } = suggestRangeRef.current;
-              const { state, dispatch } = view;
-              const tr = state.tr;
-              tr.delete(from, to);
-              const mark = state.schema.marks.wikilink?.create({
-                target: item.target,
-                alias: item.title,
-              });
-              const textNode = state.schema.text(
-                item.title,
-                mark ? [mark] : undefined,
-              );
-              tr.insert(from, textNode);
-              tr.insertText(" ", from + item.title.length);
-              dispatch(tr);
-              setSuggestOpen(false);
+              pickSuggestRef.current(item);
             }
             return true;
           }
@@ -467,6 +463,27 @@ export function VisualEditor({ noteId, content }: Props) {
     }, 0);
   };
 
+  const createFromSuggest = (title: string) => {
+    const cleaned = title.trim();
+    if (!cleaned) return;
+    const state = useVaultStore.getState();
+    // Stay on current note — create linked note without activating
+    const id = state.createNote(null, cleaned, { activate: false });
+    const node = useVaultStore.getState().nodes[id];
+    const item: WikilinkSuggestItem = {
+      id,
+      kind: "note",
+      title: cleaned,
+      path: node?.path ?? `${cleaned}.md`,
+      target: cleaned,
+    };
+    state.setToast(`Created “${cleaned}”`);
+    pickSuggest(item);
+  };
+
+  pickSuggestRef.current = pickSuggest;
+  createFromSuggestRef.current = createFromSuggest;
+
   if (!editor) {
     return (
       <div
@@ -492,6 +509,7 @@ export function VisualEditor({ noteId, content }: Props) {
           query={suggestQuery}
           rect={suggestRect}
           onSelect={pickSuggest}
+          onCreate={createFromSuggest}
           onHover={setSuggestSelected}
           onClose={() => setSuggestOpen(false)}
         />

@@ -246,7 +246,7 @@ export async function scanVault(
     const na = nodes[a];
     const nb = nodes[b];
     if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
-    return na.name.localeCompare(nb.name);
+    return na.name.localeCompare(nb.name, undefined, { numeric: true, sensitivity: "base" });
   });
 
   return { nodes, rootIds, signatures };
@@ -301,7 +301,7 @@ export async function scanVaultMeta(
     const na = nodes[a];
     const nb = nodes[b];
     if (na.kind !== nb.kind) return na.kind === "folder" ? -1 : 1;
-    return na.name.localeCompare(nb.name);
+    return na.name.localeCompare(nb.name, undefined, { numeric: true, sensitivity: "base" });
   });
 
   if (onProgress) onProgress(scanned);

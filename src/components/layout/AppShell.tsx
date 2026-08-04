@@ -24,6 +24,7 @@ import { shouldLazyBodies } from "@/lib/vault/scale-flags";
 import { applyPrefsToDom, getPrefs, usePrefsStore } from "@/lib/prefs/preferences";
 import {
   getOpenProgress,
+  setOpenProgress,
   subscribeOpenProgress,
   type OpenProgress,
 } from "@/lib/vault/native-index";
@@ -43,10 +44,25 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
   // Brief ready flash then hide via phase returning idle (caller sets idle)
   if (progress.phase === "ready" && !progress.message) return null;
   const isError = progress.phase === "error";
-  const ratio =
-    progress.totalHint && progress.totalHint > 0
-      ? Math.min(1, progress.scanned / progress.totalHint)
-      : null;
+  const hasTotalHint =
+    progress.totalHint != null && progress.totalHint > 0;
+  const ratio = hasTotalHint
+    ? Math.min(1, progress.scanned / progress.totalHint!)
+    : null;
+  const valueNow =
+    hasTotalHint && !isError && progress.phase !== "ready"
+      ? Math.round(ratio! * 100)
+      : undefined;
+
+  const dismissError = () => {
+    setOpenProgress({
+      phase: "idle",
+      scanned: 0,
+      totalHint: null,
+      message: "",
+    });
+  };
+
   return (
     <div
       className={cn(
@@ -56,18 +72,33 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
           : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] text-[var(--text-secondary)]",
       )}
       data-open-progress={progress.phase}
-      role="status"
+      role={valueNow != null ? "progressbar" : "status"}
+      aria-valuenow={valueNow}
+      aria-valuemin={valueNow != null ? 0 : undefined}
+      aria-valuemax={valueNow != null ? 100 : undefined}
+      aria-busy={!isError && progress.phase !== "ready" ? true : undefined}
     >
       <div className="flex items-center gap-2">
         {!isError ? (
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
         ) : null}
-        <span>{progress.message || (isError ? "Open failed" : "Opening vault…")}</span>
+        <span className="min-w-0 flex-1">
+          {progress.message || (isError ? "Open failed" : "Opening vault…")}
+        </span>
         {progress.scanned > 0 ? (
           <span className="text-[var(--text-muted)]">
             · {progress.scanned.toLocaleString()} items
             {ratio != null ? ` · ${Math.round(ratio * 100)}%` : ""}
           </span>
+        ) : null}
+        {isError ? (
+          <button
+            type="button"
+            className="ghost-btn ml-auto shrink-0 px-2 py-0.5 text-[11px]"
+            onClick={dismissError}
+          >
+            Dismiss
+          </button>
         ) : null}
       </div>
       {ratio != null && !isError && progress.phase !== "ready" ? (
@@ -132,10 +163,16 @@ export function AppShell() {
   useEffect(() => {
     let un: (() => void) | undefined;
     void bindDesktopMenu({
-      openVault: () => void useVaultStore.getState().openFolderAsVault(),
+      openVault: () => {
+        if (useVaultStore.getState().connecting) return;
+        void useVaultStore.getState().openFolderAsVault();
+      },
       closeVault: () => useVaultStore.getState().closeVault(),
       settings: () => usePrefsStore.getState().setSettingsOpen(true),
       search: () => useVaultStore.getState().setCommandOpen(true),
+      save: () => {
+        void useVaultStore.getState().flushDirty();
+      },
       newNote: () => {
         useVaultStore.getState().createNote(null, "Untitled");
       },
@@ -147,14 +184,18 @@ export function AppShell() {
     return () => un?.();
   }, []);
 
-  // Responsive panels only on small screens when a vault opens.
+  // Responsive panels: close overlays on vault open and when shrinking below tablet.
   useEffect(() => {
     if (!vaultId) return;
-    const w = window.innerWidth;
-    if (w < 900) {
-      setLeftOpen(false);
-      setRightOpen(false);
-    }
+    const apply = () => {
+      if (window.innerWidth < 900) {
+        setLeftOpen(false);
+        setRightOpen(false);
+      }
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vaultId]);
 
@@ -226,12 +267,16 @@ export function AppShell() {
   if (!vaultId) {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-deepest)]">
+        <a href="#main-content" className="skip-link">
+          Skip to content
+        </a>
         <TitleBar />
         <OpenProgressBanner progress={openProgress} />
-        <div className="min-h-0 flex-1">
+        <main id="main-content" tabIndex={-1} className="min-h-0 flex-1 outline-none">
           <WelcomeScreen />
-        </div>
+        </main>
         <Toast />
+        <CommandPalette />
         <SettingsPanel />
         <DeleteConfirmHost />
         <ConflictStudioHost />
@@ -242,19 +287,26 @@ export function AppShell() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-deepest)] text-[var(--text-primary)]">
+      <a href="#main-content" className="skip-link">
+        Skip to content
+      </a>
       <TitleBar />
       <OpenProgressBanner progress={openProgress} />
-      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
+      >
         {graphMode !== "fullscreen" ? <LeftSidebar /> : null}
         {graphMode !== "fullscreen" ? <EditorPane /> : null}
         <RightPanel />
-      </div>
+      </main>
+      <Toast />
       <CommandPalette />
-      <KeyboardShortcuts />
       <SettingsPanel />
       <DeleteConfirmHost />
       <ConflictStudioHost />
-      <Toast />
+      <KeyboardShortcuts />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 /* Desktop SPA + app sources for class detection */
 @source "./**/*.{ts,tsx}";
 @source "../desktop/**/*.{ts,tsx}";
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+/* No remote font CDN — system stack only (desktop offline + privacy) */
 
 @theme {
   --color-bg-deepest: #050507;
@@ -20,12 +20,13 @@
   --color-warning: #ff9f0a;
   --color-danger: #ff453a;
 
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, system-ui, "Inter", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, "JetBrains Mono", Consolas, monospace;
 
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
+  --radius-xl: 16px;
 
   --ease-premium: cubic-bezier(0.2, 0.8, 0.2, 1);
   --duration-fast: 180ms;
@@ -55,8 +56,14 @@
     --danger: #ff453a;
     --glass-bg: rgba(15, 15, 18, 0.72);
     --glass-blur: 24px;
-    --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 200, 255, 0.04);
+    --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px color-mix(in srgb, var(--accent) 4%, transparent);
     --shadow-panel: 0 4px 24px rgba(0, 0, 0, 0.35);
+    --overlay: rgba(0, 0, 0, 0.65);
+    --graph-void: #03050a;
+    --danger-dim: color-mix(in srgb, var(--danger) 15%, transparent);
+    --warning-dim: color-mix(in srgb, var(--warning) 12%, transparent);
+    --success-dim: color-mix(in srgb, var(--success) 12%, transparent);
+    --radius-xl: 16px;
     --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
     /* Type scale */
     --text-xs: 11px;
@@ -78,6 +85,7 @@
   #app {
     height: 100%;
     margin: 0;
+    overscroll-behavior: none;
   }
 
   body {
@@ -97,13 +105,20 @@
   }
 
   ::selection {
-    background: rgba(0, 200, 255, 0.28);
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
     color: var(--text-primary);
   }
 
   :focus-visible {
-    outline: 2px solid rgba(0, 200, 255, 0.55);
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
     outline-offset: 2px;
+  }
+
+  @media (pointer: fine) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+    }
   }
 
   /* Scrollbars */
@@ -156,11 +171,37 @@
   .titlebar-drag {
     -webkit-app-region: drag;
     app-region: drag;
+    user-select: none;
   }
 
   .titlebar-no-drag {
     -webkit-app-region: no-drag;
     app-region: no-drag;
+  }
+
+  .overflow-y-auto,
+  .overflow-auto,
+  .overflow-y-scroll {
+    overscroll-behavior: contain;
+  }
+
+  .skip-link {
+    position: absolute;
+    left: 8px;
+    top: -100px;
+    z-index: 300;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    text-decoration: none;
+  }
+  .skip-link:focus {
+    top: 8px;
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: 2px;
   }
 
 
@@ -771,7 +812,7 @@
     gap: 8px;
     height: 40px;
     padding: 0 16px;
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     font-size: 14px;
     font-weight: 500;
     color: var(--text-primary);
