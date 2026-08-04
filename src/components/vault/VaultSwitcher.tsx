@@ -11,7 +11,11 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
-import { isDesktopShell } from "@/lib/platform";
+import {
+  formatShortcut,
+  isAppleModPlatform,
+  isDesktopShell,
+} from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
 /**
@@ -125,7 +129,7 @@ export function VaultSwitcher() {
               <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
                 Open Recent
               </div>
-              {recentVaults.slice(0, 8).map((r) => {
+              {recentVaults.slice(0, 8).map((r: any) => {
                 const active = r.id === vaultId;
                 return (
                   <button
@@ -158,7 +162,7 @@ export function VaultSwitcher() {
           <MenuRow
             icon={<FolderOpen size={15} className="text-[var(--accent)]" />}
             label="Open…"
-            hint={desktop ? "⌘O" : undefined}
+            hint={desktop ? formatShortcut("O") : undefined}
             onClick={() => {
               void openFolderAsVault();
               setOpen(false);
@@ -187,7 +191,13 @@ export function VaultSwitcher() {
                     }
                   />
                 }
-                label={desktop ? "Show in Finder" : "Show vault location"}
+                label={
+                  desktop
+                    ? isAppleModPlatform()
+                      ? "Show in Finder"
+                      : "Show in file manager"
+                    : "Show vault location"
+                }
                 disabled={!canReveal && desktop}
                 onClick={() => {
                   void revealVaultInFinder();

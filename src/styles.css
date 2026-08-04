@@ -12,7 +12,8 @@
   --color-border-subtle: #2a2a30;
   --color-text-primary: #f2f2f7;
   --color-text-secondary: #a1a1aa;
-  --color-text-muted: #6b6b76;
+  --color-text-muted: #9898a6;
+
   --color-accent: #00c8ff;
   --color-accent-violet: #7b61ff;
   --color-success: #30d158;
@@ -43,7 +44,8 @@
     --border-strong: #2a2a30;
     --text-primary: #f2f2f7;
     --text-secondary: #a1a1aa;
-    --text-muted: #6b6b76;
+    --text-muted: #9898a6;
+
     --accent: #00c8ff;
     --accent-dim: rgba(0, 200, 255, 0.15);
     --accent-glow: rgba(0, 200, 255, 0.35);
@@ -56,6 +58,14 @@
     --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 200, 255, 0.04);
     --shadow-panel: 0 4px 24px rgba(0, 0, 0, 0.35);
     --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    /* Type scale */
+    --text-xs: 11px;
+    --text-sm: 12.5px;
+    --text-base: 15px;
+    --text-md: 16px;
+    --text-lg: 20px;
+    --text-xl: 28px;
+    --panel-solid: #121216;
   }
 
   * {
@@ -120,6 +130,15 @@
     -webkit-backdrop-filter: blur(var(--glass-blur));
     border: 1px solid var(--border);
     box-shadow: var(--shadow-panel);
+  }
+
+  /* Solid sidebars — denser chrome, no translucent blur */
+  .panel-solid {
+    background: var(--panel-solid);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-panel);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .glass-elevated {
@@ -954,11 +973,25 @@
   font-size: 12.5px;
 }
 :root[data-density="compact"] .sidebar-section-label {
-  margin-top: 0.35rem;
-  padding-bottom: 0.15rem;
+  margin-top: 0.25rem;
+  padding-bottom: 0.1rem;
 }
 :root[data-density="compact"] .sidebar-toolbar {
   margin-top: 0.5rem;
+}
+:root[data-density="compact"] .daily-chip {
+  min-height: 22px;
+  padding: 0.12rem 0.4rem;
+  font-size: 11px;
+  gap: 0.15rem;
+}
+:root[data-density="compact"] .daily-chip--day {
+  height: 1.7rem;
+  width: 1.7rem;
+}
+:root[data-density="compact"] [aria-label="Week days"] {
+  gap: 0.1rem;
+  margin-bottom: 0.25rem;
 }
 :root[data-density="compact"] .titlebar-drag {
   height: 2.5rem;
@@ -973,6 +1006,34 @@
 :root[data-density="compact"] .cmdk-item {
   padding-top: 0.4rem;
   padding-bottom: 0.4rem;
+}
+
+/* Wave Safety/Polish: panel resize handles (were missing) */
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 20;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  transition: background 160ms ease;
+}
+.panel-resize-handle:hover,
+.panel-resize-handle:active {
+  background: rgba(0, 200, 255, 0.28);
+}
+.panel-resize-handle--right {
+  right: 0;
+}
+.panel-resize-handle--left {
+  left: 0;
+}
+
+/* Visual editor respects Settings font size */
+.note-editor {
+  font-size: var(--editor-font-size, 16px) !important;
 }
 
 /* Focus mode: kill panel transitions so zen feels instant */

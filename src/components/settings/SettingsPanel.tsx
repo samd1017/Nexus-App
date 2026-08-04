@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import {
   ACCENT_PRESETS,
   NEXUS_VERSION,
-  SHORTCUTS,
+  getShortcuts,
   isValidHex,
   resolveAccentHex,
   usePrefsStore,
@@ -15,6 +15,49 @@ import {
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { useVaultStore } from "@/lib/vault/store";
+import type { BodyCacheStats } from "@/lib/vault/body-cache";
+import type { VaultMode } from "@/lib/vault/types";
+import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
+
+function MemoryBudgetStatus({
+  open,
+  vaultId,
+  mode,
+}: {
+  open: boolean;
+  vaultId: string | null;
+  mode: VaultMode;
+}) {
+  const dirtyCount = useVaultStore((s) => s.dirtyNoteIds.length);
+  const activeNoteId = useVaultStore((s) => s.activeNoteId);
+  const [bodyStats, setBodyStats] = useState<BodyCacheStats | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const sample = () =>
+      setBodyStats(useVaultStore.getState().getBodyMemoryStats());
+    sample();
+    const t = window.setInterval(sample, 1500);
+    return () => clearInterval(t);
+  }, [open, vaultId, mode, dirtyCount, activeNoteId]);
+
+  return (
+    <div className="mt-2 border-t border-[var(--border)] pt-2">
+      <div className="text-[12px] font-medium text-[var(--text-secondary)]">
+        Memory budget
+      </div>
+      <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
+        {!vaultId
+          ? "Automatic when a folder vault is open"
+          : !bodyStats || bodyStats.max === 0
+            ? "Automatic · full in-memory (demo / browser vault)"
+            : bodyStats.underPressure
+              ? `Automatic · releasing pressure · In memory: ${bodyStats.loaded} / ${bodyStats.max} bodies (over soft cap) · Protected: ${bodyStats.protected} (active + unsaved) — unsaved notes stay loaded`
+              : `Automatic · note text kept only for recent and open notes · In memory: ${bodyStats.loaded} / ${bodyStats.max} bodies · Protected: ${bodyStats.protected} (active + unsaved)`}
+      </p>
+    </div>
+  );
+}
 
 export function SettingsPanel() {
   const open = usePrefsStore((s) => s.settingsOpen);
@@ -238,7 +281,7 @@ export function SettingsPanel() {
             <ToggleRow
               className="mt-3"
               label="Focus mode"
-              description="Hide side panels for distraction-free writing (⌘.)"
+              description={`Hide side panels for distraction-free writing (${formatShortcut(".")})`}
               checked={prefs.focusMode}
               onChange={(v) => {
                 setFocusMode(v);
@@ -338,7 +381,33 @@ export function SettingsPanel() {
               checked={prefs.openLastVault}
               onChange={(v) => updatePrefs({ openLastVault: v })}
             />
+            <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/60 px-3 py-2.5">
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                Vault scale
+              </div>
+              <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
+                Designed for large folders. Open is progressive (metadata first).
+                Search uses an on-disk index on desktop.
+                {noteCount > 0 ? (
+                  <>
+                    {" "}
+                    This vault:{" "}
+                    <span className="text-[var(--text-secondary)]">
+                      {noteCount.toLocaleString()} notes
+                    </span>
+                    {mode === "demo"
+                      ? " (demo — sample vault, not on disk)"
+                      : mode === "local"
+                        ? " (in-memory)"
+                        : " (bodies load as you open notes)"}
+                    .
+                  </>
+                ) : null}
+              </p>
+              <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} />
+            </div>
             <div className="mt-3">
+
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-[13px] font-medium text-[var(--text-primary)]">
@@ -371,7 +440,7 @@ export function SettingsPanel() {
           {/* Keyboard */}
           <Section title="Keyboard">
             <ul className="space-y-1.5">
-              {SHORTCUTS.map((s) => (
+              {getShortcuts().map((s) => (
                 <li
                   key={s.keys}
                   className="flex items-center justify-between gap-3 rounded-lg px-1 py-1.5 text-[13px]"
@@ -398,15 +467,15 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Daily notes & templates"
-                body="⌘D opens today's Journal page. Create Meeting, Idea, or Project notes from the command palette or file tree context menu."
+                body={`${formatShortcut("D")} opens today's Journal page. Create Meeting, Idea, or Project notes from the command palette or file tree context menu.`}
               />
               <HelpItem
                 title="Graph"
-                body="The graph maps [[wikilinks]] and gently clusters notes that share a folder. Click a node to open it."
+                body="The graph maps [[wikilinks]] and a folder map for large vaults: folder spheres open a level; notes open and show links near the active note. Small vaults still show every note. Click a node to open it."
               />
               <HelpItem
                 title="Cloud"
-                body="Nexus does not host accounts. Use Dropbox / Drive / OneDrive desktop sync, then Open… that local folder."
+                body="Nexus does not host accounts. Use Dropbox / Drive / OneDrive desktop sync, then Open… that synced folder as your vault."
               />
               <HelpItem
                 title="Hermes & agents"
@@ -414,7 +483,11 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Desktop"
-                body="On Mac, Show in Finder reveals the vault folder. Open Settings anytime with ⌘,."
+                body={
+                  isAppleModPlatform()
+                    ? `Reveal in Finder shows the vault folder. Open Settings anytime with ${formatShortcut(",")}.`
+                    : `Reveal in file manager shows the vault folder. Open Settings anytime with ${formatShortcut(",")}.`
+                }
               />
             </div>
             <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">

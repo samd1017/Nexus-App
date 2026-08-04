@@ -18,7 +18,14 @@
     "build:desktop": "vite build --config vite.desktop.config.ts",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "bench:scale": "node scripts/bench-scale.mjs",
+    "bench:indexes": "node src/lib/vault/__tests__/indexes.bench.mjs",
+    "bench:stress": "node scripts/bench-vault-stress.mjs --notes 50000",
+    "test:wave-c": "node src/lib/vault/__tests__/wave-c.contract.mjs",
+    "smoke": "node scripts/browser-smoke.mjs http://127.0.0.1:8080/ /workspace/screenshots/app-builder-preview.png",
+    "qa:gate": "npm run typecheck && npm run bench:indexes && npm run bench:scale && npm run test:wave-c && npm run test:folder-graph",
+    "test:folder-graph": "node src/lib/vault/__tests__/folder-graph.contract.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.0",
@@ -48,6 +55,7 @@
     "@tanstack/react-router": "^1.160.0",
     "@tanstack/react-start": "^1.160.0",
     "@tanstack/react-table": "^8.21.0",
+    "@tanstack/react-virtual": "^3.14.9",
     "@tanstack/router-plugin": "^1.160.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",

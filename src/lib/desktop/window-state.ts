@@ -1,6 +1,7 @@
 /**
  * Persist main window size across sessions (Wave S7).
  * Desktop / Tauri only — no-op in the browser shell.
+ * Wave Trust: flush dirty notes before quit.
  */
 
 import { confirmDesktopShell } from "@/lib/platform";
@@ -84,13 +85,30 @@ export async function bindWindowState(): Promise<() => void> {
       }
     });
 
-    const unClose = await win.onCloseRequested(async () => {
+    const unClose = await win.onCloseRequested(async (event) => {
+      // Prevent close until dirty flush completes
+      event.preventDefault();
       try {
         const factor = await win.scaleFactor();
         const physical = await win.innerSize();
         saveSize(physical.width / factor, physical.height / factor);
       } catch {
         /* ignore */
+      }
+      try {
+        const { useVaultStore } = await import("@/lib/vault/store");
+        await useVaultStore.getState().flushDirty();
+      } catch (err) {
+        console.warn("[nexus] quit flush failed", err);
+      }
+      try {
+        await win.destroy();
+      } catch {
+        try {
+          await win.close();
+        } catch {
+          /* ignore */
+        }
       }
     });
 

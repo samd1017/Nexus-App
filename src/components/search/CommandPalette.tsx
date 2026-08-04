@@ -28,7 +28,8 @@ import {
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
-import { searchVault } from "@/lib/search/fuse-search";
+import { searchWithBackend as searchVault } from "@/lib/search/search-backend";
+
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,7 @@ import {
 import { previewSnippet } from "@/lib/markdown/serialize";
 import type { SearchHit } from "@/lib/vault/types";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
+import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
 
 const GROUP_HEADING =
   "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.12em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]";
@@ -362,7 +364,7 @@ export function CommandPalette() {
           label: "New note",
           keywords: ["create", "add", "file"],
           icon: <FilePlus size={15} />,
-          shortcut: "⌘N",
+          shortcut: formatShortcut("N"),
           run: wrapRun("new-note", () => {
             createNote(null);
             setCommandOpen(false);
@@ -373,7 +375,7 @@ export function CommandPalette() {
           label: "Daily note",
           keywords: ["today", "journal", "daily"],
           icon: <CalendarDays size={15} />,
-          shortcut: "⌘D",
+          shortcut: formatShortcut("D"),
           run: wrapRun("daily", () => {
             openDailyNote();
             setCommandOpen(false);
@@ -404,7 +406,7 @@ export function CommandPalette() {
           label: "Toggle left sidebar",
           keywords: ["sidebar", "panel", "files", "tree"],
           icon: <PanelLeft size={15} />,
-          shortcut: "⌘\\",
+          shortcut: formatShortcut("\\"),
           run: wrapRun("toggle-left", () => {
             toggleLeft();
             setCommandOpen(false);
@@ -415,7 +417,7 @@ export function CommandPalette() {
           label: "Toggle right panel",
           keywords: ["outline", "backlinks", "panel"],
           icon: <PanelRight size={15} />,
-          shortcut: "⌘⌥\\",
+          shortcut: formatShortcut("\\", { alt: true }),
           run: wrapRun("toggle-right", () => {
             toggleRight();
             setCommandOpen(false);
@@ -426,7 +428,7 @@ export function CommandPalette() {
           label: "Toggle Visual / Source",
           keywords: ["editor", "source", "visual", "mode", "markdown"],
           icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-          shortcut: "⌘E",
+          shortcut: formatShortcut("E"),
           run: wrapRun("toggle-editor", () => {
             toggleEditorMode();
             setCommandOpen(false);
@@ -437,9 +439,21 @@ export function CommandPalette() {
           label: "Toggle graph",
           keywords: ["graph", "fullscreen", "network", "orbit"],
           icon: <Network size={15} />,
-          shortcut: "⌘G",
+          shortcut: formatShortcut("G"),
           run: wrapRun("toggle-graph", () => {
             toggleGraphFullscreen();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "reveal-active-in-graph",
+          label: "Reveal active note in graph",
+          keywords: ["graph", "reveal", "folder map", "ego", "locate"],
+          icon: <Network size={15} />,
+          run: wrapRun("reveal-active-in-graph", () => {
+            const id = useVaultStore.getState().activeNoteId;
+            if (id) useVaultStore.getState().revealInGraph?.(id);
+            else useVaultStore.getState().ensureGraphVisible?.();
             setCommandOpen(false);
           }),
         },
@@ -448,7 +462,7 @@ export function CommandPalette() {
           label: "Toggle focus mode",
           keywords: ["focus", "zen", "distraction", "fullscreen", "calm"],
           icon: <Focus size={15} />,
-          shortcut: "⌘.",
+          shortcut: formatShortcut("."),
           run: wrapRun("focus-mode", () => {
             const next = toggleFocusMode();
             setToast(next ? "Focus mode on" : "Focus mode off");
@@ -460,7 +474,7 @@ export function CommandPalette() {
           label: "Settings",
           keywords: ["preferences", "prefs", "options", "config"],
           icon: <Settings size={15} />,
-          shortcut: "⌘,",
+          shortcut: formatShortcut(","),
           run: wrapRun("settings", () => {
             usePrefsStore.getState().setSettingsOpen(true);
             setCommandOpen(false);
@@ -509,7 +523,7 @@ export function CommandPalette() {
           label: "Flush / save",
           keywords: ["save", "flush", "write", "disk"],
           icon: <Save size={15} />,
-          shortcut: "⌘S",
+          shortcut: formatShortcut("S"),
           run: wrapRun("save", () => {
             void flushDirty();
             setToast("Saved");
@@ -547,7 +561,9 @@ export function CommandPalette() {
         },
         {
           id: "reveal",
-          label: "Reveal in Finder",
+          label: isAppleModPlatform()
+            ? "Reveal in Finder"
+            : "Reveal in file manager",
           keywords: ["finder", "explorer", "show", "reveal", "folder"],
           icon: <ExternalLink size={15} />,
           shortcut: undefined as string | undefined,
@@ -613,7 +629,7 @@ export function CommandPalette() {
         id: "new-note",
         label: "New note",
         icon: <FilePlus size={15} />,
-        shortcut: "⌘N",
+        shortcut: formatShortcut("N"),
         run: wrapRun("new-note", () => {
           createNote(null);
           setCommandOpen(false);
@@ -624,7 +640,7 @@ export function CommandPalette() {
         id: "daily",
         label: "Daily note",
         icon: <CalendarDays size={15} />,
-        shortcut: "⌘D",
+        shortcut: formatShortcut("D"),
         run: wrapRun("daily", () => {
           openDailyNote();
           setCommandOpen(false);
@@ -648,7 +664,7 @@ export function CommandPalette() {
         id: "toggle-left",
         label: "Toggle left sidebar",
         icon: <PanelLeft size={15} />,
-        shortcut: "⌘\\",
+        shortcut: formatShortcut("\\"),
         run: wrapRun("toggle-left", () => {
           toggleLeft();
           setCommandOpen(false);
@@ -659,7 +675,7 @@ export function CommandPalette() {
         id: "toggle-right",
         label: "Toggle right panel",
         icon: <PanelRight size={15} />,
-        shortcut: "⌘⌥\\",
+        shortcut: formatShortcut("\\", { alt: true }),
         run: wrapRun("toggle-right", () => {
           toggleRight();
           setCommandOpen(false);
@@ -670,7 +686,7 @@ export function CommandPalette() {
         id: "toggle-editor",
         label: "Toggle Visual / Source",
         icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-        shortcut: "⌘E",
+        shortcut: formatShortcut("E"),
         run: wrapRun("toggle-editor", () => {
           toggleEditorMode();
           setCommandOpen(false);
@@ -681,7 +697,7 @@ export function CommandPalette() {
         id: "toggle-graph",
         label: "Toggle graph",
         icon: <Network size={15} />,
-        shortcut: "⌘G",
+        shortcut: formatShortcut("G"),
         run: wrapRun("toggle-graph", () => {
           toggleGraphFullscreen();
           setCommandOpen(false);
@@ -692,7 +708,7 @@ export function CommandPalette() {
         id: "focus-mode",
         label: "Toggle focus mode",
         icon: <Focus size={15} />,
-        shortcut: "⌘.",
+        shortcut: formatShortcut("."),
         run: wrapRun("focus-mode", () => {
           const next = toggleFocusMode();
           setToast(next ? "Focus mode on" : "Focus mode off");
@@ -704,7 +720,7 @@ export function CommandPalette() {
         id: "settings",
         label: "Settings",
         icon: <Settings size={15} />,
-        shortcut: "⌘,",
+        shortcut: formatShortcut(","),
         run: wrapRun("settings", () => {
           usePrefsStore.getState().setSettingsOpen(true);
           setCommandOpen(false);
@@ -725,7 +741,7 @@ export function CommandPalette() {
         id: "save",
         label: "Flush / save",
         icon: <Save size={15} />,
-        shortcut: "⌘S",
+        shortcut: formatShortcut("S"),
         run: wrapRun("save", () => {
           void flushDirty();
           setToast("Saved");
@@ -1198,7 +1214,7 @@ export function CommandPalette() {
           <Hint keys="esc" label="close" />
           <span className="ml-auto flex items-center gap-1.5">
             <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-              ⌘K
+              {formatShortcut("K")}
             </kbd>
             <span>anytime</span>
           </span>

@@ -21,6 +21,7 @@ import {
 } from "@/lib/markdown/serialize";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveWikilink } from "@/lib/graph/build-graph";
+import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import {
   isOnlySerializationNoise,
   normalizeMarkdown,
@@ -52,6 +53,16 @@ function openWikilinkTarget(target: string) {
     /* ignore */
   }
   const hit = resolveWikilink(target, state.nodes);
+  const activateNote = (id: string) => {
+    const noteCount = Object.values(state.nodes).filter(
+      (n) => n.kind === "note",
+    ).length;
+    // Large vaults: wikilink open → ego neighborhood (does not thrash setActiveNote scope)
+    if (shouldUseFolderGraph(noteCount)) {
+      state.enterGraphEgo?.({ returnPath: state.graphBrowsePath || "" });
+    }
+    state.setActiveNote(id);
+  };
   if (!hit) {
     state.setToast(`No note found for [[${target}]]`);
     return;
@@ -63,11 +74,11 @@ function openWikilinkTarget(target: string) {
     const child = Object.values(state.nodes)
       .filter((n) => n.parentId === hit.id && n.kind === "note")
       .sort((a, b) => a.name.localeCompare(b.name))[0];
-    if (child) state.setActiveNote(child.id);
+    if (child) activateNote(child.id);
     else state.setToast(`Opened folder “${hit.name}”`);
     return;
   }
-  state.setActiveNote(hit.id);
+  activateNote(hit.id);
 }
 
 /**

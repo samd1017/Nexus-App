@@ -21,11 +21,22 @@ export function parseWikilinkInner(inner: string): { target: string; alias: stri
   return { target: inner.trim(), alias: null };
 }
 
+/**
+ * Wave A: strip fenced + inline code so `[[Example]]` in docs/snippets
+ * does not pollute graph, orphans, broken links, or reverse maps.
+ */
+export function stripCodeForLinkScan(markdown: string): string {
+  return (markdown || "")
+    .replace(/```[\s\S]*?```/g, (full) => " ".repeat(full.length))
+    .replace(/`[^`\n]+`/g, (full) => " ".repeat(full.length));
+}
+
 export function extractWikilinks(markdown: string): ParsedWikilink[] {
   const out: ParsedWikilink[] = [];
+  const source = stripCodeForLinkScan(markdown);
   const re = new RegExp(WIKILINK_RE.source, "g");
   let m: RegExpExecArray | null;
-  while ((m = re.exec(markdown)) !== null) {
+  while ((m = re.exec(source)) !== null) {
     const raw = m[0];
     const { target, alias } = parseWikilinkInner(m[1] ?? "");
     if (!target) continue;

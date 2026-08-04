@@ -53,6 +53,13 @@ export function KeyboardShortcuts() {
           store.setCommandOpen(false);
           return;
         }
+        // Folder graph: up one level before exiting fullscreen
+        if (
+          typeof store.exitGraphFolder === "function" &&
+          store.exitGraphFolder()
+        ) {
+          return;
+        }
         if (store.settings.graphMode === "fullscreen") {
           store.setGraphMode("panel");
           return;

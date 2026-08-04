@@ -1,8 +1,8 @@
 /**
- * Platform boundary — browser (File System Access) or Tauri desktop shell.
+ * Platform boundary — browser (File System Access), Tauri desktop, or Tauri mobile.
  */
 
-export type PlatformKind = "web" | "tauri" | "unknown";
+export type PlatformKind = "web" | "tauri" | "tauri-mobile" | "unknown";
 
 export function detectPlatform(): PlatformKind {
   if (typeof window === "undefined") return "unknown";
@@ -11,11 +11,23 @@ export function detectPlatform(): PlatformKind {
     __TAURI_INTERNALS__?: unknown;
     isTauri?: boolean;
   };
-  // withGlobalTauri + Tauri 2 internals
-  if (w.__TAURI_INTERNALS__ || w.__TAURI__ || w.isTauri === true) return "tauri";
-  // Some builds expose only a protocol handler
+  const isTauri =
+    !!(w.__TAURI_INTERNALS__ || w.__TAURI__ || w.isTauri === true);
+  if (isTauri) {
+    // Wave 4: mobile shell detection (Tauri Mobile / small viewport shell)
+    try {
+      const ua = navigator.userAgent || "";
+      if (/Android|iPhone|iPad|iPod/i.test(ua)) return "tauri-mobile";
+    } catch {
+      /* ignore */
+    }
+    return "tauri";
+  }
   try {
-    if (typeof (window as unknown as { __TAURI_OS_PLUGIN_INTERNALS__?: unknown }).__TAURI_OS_PLUGIN_INTERNALS__ !== "undefined") {
+    if (
+      typeof (window as unknown as { __TAURI_OS_PLUGIN_INTERNALS__?: unknown })
+        .__TAURI_OS_PLUGIN_INTERNALS__ !== "undefined"
+    ) {
       return "tauri";
     }
   } catch {
@@ -25,7 +37,18 @@ export function detectPlatform(): PlatformKind {
 }
 
 export function isDesktopShell(): boolean {
-  return detectPlatform() === "tauri";
+  const p = detectPlatform();
+  return p === "tauri" || p === "tauri-mobile";
+}
+
+export function isMobileShell(): boolean {
+  if (detectPlatform() === "tauri-mobile") return true;
+  if (typeof window === "undefined") return false;
+  try {
+    return window.matchMedia("(max-width: 768px)").matches;
+  } catch {
+    return false;
+  }
 }
 
 /** Async confirm (preferred when opening vaults / menus) */
@@ -63,3 +86,44 @@ export const MODULE_BOUNDARIES = {
   platform: "src/lib/platform",
   desktop: "src/lib/desktop",
 } as const;
+
+/** True when UI should show Apple-style ⌘ shortcuts (Mac/iOS). */
+export function isAppleModPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const p = navigator.platform || "";
+  const ua = navigator.userAgent || "";
+  return /Mac|iPhone|iPad|iPod/i.test(p) || /Mac OS X|iPhone|iPad|iPod/i.test(ua);
+}
+
+/** Modifier symbol for display: ⌘ on Apple, Ctrl on Windows/Linux. */
+export function modSymbol(): string {
+  return isAppleModPlatform() ? "⌘" : "Ctrl";
+}
+
+/**
+ * Format a shortcut for UI.
+ * Examples: formatShortcut("K") → "⌘K" or "Ctrl+K"
+ * formatShortcut("\\") → "⌘\\" or "Ctrl+\\"
+ * formatShortcut(",", { alt: true }) → "⌘⌥," / "Ctrl+Alt+,"
+ * formatShortcut("⌫") for delete
+ */
+export function formatShortcut(
+  key: string,
+  opts?: { alt?: boolean; shift?: boolean; noMod?: boolean },
+): string {
+  if (opts?.noMod) return key;
+  const apple = isAppleModPlatform();
+  const parts: string[] = [];
+  if (apple) {
+    parts.push("⌘");
+    if (opts?.alt) parts.push("⌥");
+    if (opts?.shift) parts.push("⇧");
+    parts.push(key);
+    return parts.join("");
+  }
+  parts.push("Ctrl");
+  if (opts?.alt) parts.push("Alt");
+  if (opts?.shift) parts.push("Shift");
+  parts.push(key);
+  return parts.join("+");
+}

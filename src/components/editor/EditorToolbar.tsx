@@ -138,6 +138,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     <button
       type="button"
       title={title}
+      aria-label={title}
       disabled={disabled}
       onMouseDown={(e) => {
         e.preventDefault();

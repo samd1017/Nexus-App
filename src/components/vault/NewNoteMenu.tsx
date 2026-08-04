@@ -93,6 +93,7 @@ export function NewNoteMenu({
         type="button"
         className={cn(triggerClass, className)}
         title={title}
+        aria-label={title}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}

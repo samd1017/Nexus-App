@@ -31,6 +31,11 @@ export type EditorMode = "visual" | "source";
 
 export type GraphMode = "panel" | "fullscreen" | "hidden";
 
+/** Hierarchical graph session scope (not panel/fullscreen settings.graphMode). */
+export type GraphScopeMode = "vault" | "folder" | "ego";
+
+export type GraphNodeKind = "note" | "folder" | "aggregate";
+
 export interface VaultSettings {
   leftOpen: boolean;
   rightOpen: boolean;
@@ -85,6 +90,14 @@ export interface GraphNode {
   ghost?: boolean;
   /** Original wikilink text when ghost — used to create the note on click */
   ghostTarget?: string;
+  /** Hierarchical graph: note (default) | folder | aggregate */
+  kind?: GraphNodeKind;
+  /** Folder / aggregate sizing signal */
+  noteCount?: number;
+  /** Prefer kind === "aggregate" */
+  aggregate?: boolean;
+  /** Optional explicit val for orb size (folder graph) */
+  val?: number;
 }
 
 export interface GraphEdge {
