@@ -1,2 +1,0 @@
-- Created private GitHub repo for Nexus App: https://github.com/samd1017/nexus-app (owner: samd1017) with MIT LICENSE and basic README [2026-08-02]
-- License chosen: MIT License for the Nexus App code [2026-08-02]

@@ -1,1 +1,0 @@
-import{invoke as e}from"./core-DNPMtgb-.js";async function t(t){return e(`plugin:opener|reveal_item_in_dir`,{paths:typeof t==`string`?[t]:t})}export{t as revealItemInDir};
