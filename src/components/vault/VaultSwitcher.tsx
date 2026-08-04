@@ -30,6 +30,7 @@ export function VaultSwitcher() {
   const mode = useVaultStore((s) => s.mode);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
+  const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
@@ -79,7 +80,14 @@ export function VaultSwitcher() {
   const canReveal = Boolean(vaultId && mode === "desktop" && vaultPath);
 
   const openRecent = (id: string, rMode: string) => {
+    const r = recentVaults.find((x) => x.id === id);
     if (rMode === "demo") openDemoVault();
+    else if (
+      id === "large-test-vault-45k" ||
+      r?.id === "large-test-vault-45k" ||
+      (typeof r?.path === "string" && r.path.includes("Large Test Vault"))
+    )
+      void openLargeTestVault();
     else void reopenRecentVault(id);
     setOpen(false);
   };

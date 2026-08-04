@@ -6,6 +6,7 @@ import {
   Network,
   Radio,
   Sparkles,
+  Database,
   AlertTriangle,
   Info,
 } from "lucide-react";
@@ -24,6 +25,7 @@ export function WelcomeScreen() {
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
+  const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const connecting = useVaultStore((s) => s.connecting);
   const recentVaults = useVaultStore((s) => s.recentVaults);
@@ -40,6 +42,7 @@ export function WelcomeScreen() {
   const openTopRecent = () => {
     if (!topRecent) return;
     if (topRecent.mode === "demo") openDemoVault();
+    else if (topRecent.id === "large-test-vault-45k" || topRecent.path?.includes("Large Test Vault")) void openLargeTestVault();
     else void reopenRecentVault(topRecent.id);
   };
 
@@ -173,6 +176,18 @@ export function WelcomeScreen() {
               Explore demo
             </button>
           )}
+
+          <button
+            type="button"
+            className="ghost-btn min-h-11"
+            disabled={connecting}
+            onClick={() => void openLargeTestVault()}
+            title="Open the 45,000-note stress vault (in-browser, real app shell)"
+          >
+            <Database size={16} />
+            {connecting ? "Loading 45k…" : "Open 45k test vault"}
+          </button>
+
           <button
             type="button"
             className="ghost-btn min-h-11"
@@ -269,6 +284,7 @@ export function WelcomeScreen() {
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
                     onClick={() => {
                       if (r.mode === "demo") openDemoVault();
+                      else if (r.id === "large-test-vault-45k" || (r.path && r.path.includes("Large Test Vault"))) void openLargeTestVault();
                       else void reopenRecentVault(r.id);
                     }}
                   >

@@ -18,6 +18,7 @@ import type {
 } from "./types";
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
+import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import { preferCleanWrite } from "@/lib/markdown/serialize";
 import { flushActiveEditors } from "@/lib/editor/flush";
 import { slugifyTitle } from "@/lib/utils";
@@ -829,6 +830,100 @@ export const useVaultStore = create<VaultStore>()(
 		syncActiveBackend("demo");
 		maybeSyncDurableIndex(vaultId, "demo", nodes);
 	},
+	openLargeTestVault: async () => {
+		set({
+			connecting: true,
+			folderAccessLost: false
+		});
+		try {
+			cancelVaultModuleState();
+			fsaRoot = null;
+			desktopRoot = null;
+			setDesktopVaultRoot(null);
+			setOpenProgress({
+				phase: "walking",
+				scanned: 0,
+				totalHint: 45000,
+				message: "Loading large test vault seed…"
+			});
+			const data = await buildLargeTestVault({
+				onProgress: (loaded, total, phase) => {
+					setOpenProgress({
+						phase: phase === "notes" ? "indexing" : "walking",
+						scanned: loaded,
+						totalHint: total,
+						message:
+							phase === "notes"
+								? `Indexing large vault… ${loaded.toLocaleString()} / ${total.toLocaleString()} notes`
+								: phase === "folders"
+									? "Building folder tree…"
+									: "Loading large test vault…"
+					});
+				}
+			});
+			const vaultId = LARGE_TEST_VAULT_ID;
+			const firstNote =
+				Object.values(data.nodes).find((n) => n.kind === "note" && n.path.startsWith("00-Inbox/")) ||
+				Object.values(data.nodes).find((n) => n.kind === "note");
+			// Expand top-level folders only (not every Archive month)
+			const expanded = Object.values(data.nodes)
+				.filter((n) => n.kind === "folder" && n.parentId == null)
+				.map((n) => n.id);
+			const recents = pushRecent({
+				id: vaultId,
+				name: data.vaultName,
+				path: "Large Test Vault (in-browser 45k)",
+				lastOpened: Date.now(),
+				mode: "local"
+			});
+			// Use local mode (eager bodies) so graph/search/index match real in-memory mount
+			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""]);
+			syncActiveBackend("local");
+			maybeSyncDurableIndex(vaultId, "local", nodes);
+			set({
+				vaultId,
+				vaultName: data.vaultName,
+				vaultPath: "Large Test Vault · 45,000 notes",
+				mode: "local",
+				nodes,
+				rootIds: data.rootIds,
+				activeNoteId: firstNote?.id ?? null,
+				expandedFolders: expanded,
+				dirtyNoteIds: [],
+				lastExternalSync: null,
+				recentVaults: recents,
+				connecting: false,
+				...GRAPH_SCOPE_DEFAULTS,
+				settings: {
+					...get().settings,
+					lastNotePath: firstNote?.path ?? null,
+					editorMode: getPrefs().defaultEditorMode,
+					graphMode: "panel",
+					rightOpen: true
+				},
+				toast: `Large Test Vault ready — ${data.noteCount.toLocaleString()} notes`
+			});
+			setOpenProgress({
+				phase: "idle",
+				scanned: 0,
+				totalHint: null,
+				message: ""
+			});
+		} catch (err) {
+			console.error("[vault] openLargeTestVault failed", err);
+			const msg = err instanceof Error ? err.message : String(err);
+			set({
+				connecting: false,
+				toast: `Could not open large test vault: ${msg}`
+			});
+			setOpenProgress({
+				phase: "idle",
+				scanned: 0,
+				totalHint: null,
+				message: ""
+			});
+		}
+	},
 	openLocalVault: (name, seed) => {
 		fsaRoot = null;
 		desktopRoot = null;
@@ -1166,6 +1261,15 @@ export const useVaultStore = create<VaultStore>()(
 		set({ toast: "Reveal is available for local folders on desktop" });
 	},
 	reopenRecentVault: async (id) => {
+		const recentEarly = get().recentVaults.find((r) => r.id === id);
+		if (
+			id === LARGE_TEST_VAULT_ID ||
+			recentEarly?.id === LARGE_TEST_VAULT_ID ||
+			(recentEarly?.path && String(recentEarly.path).includes("Large Test Vault"))
+		) {
+			await get().openLargeTestVault();
+			return;
+		}
 		if (await confirmDesktopShell() || isDesktopShell()) {
 			const recent = get().recentVaults.find((r) => r.id === id);
 			const root = recent?.path || getDesktopVaultRoot();
@@ -2883,16 +2987,33 @@ export const useVaultStore = create<VaultStore>()(
 	name: STORAGE_KEY,
 	partialize: (s) => {
 		const disk = s.mode === "fsa" || s.mode === "desktop";
+		// Never write the 45k seed (or any huge mount) to localStorage — QuotaExceededError.
+		const isLargeTest = s.vaultId === LARGE_TEST_VAULT_ID;
+		const nodeCount = s.nodes ? Object.keys(s.nodes).length : 0;
+		const tooBig = isLargeTest || nodeCount > 2500;
+		if (disk || tooBig) {
+			return {
+				vaultId: null,
+				vaultName: "",
+				vaultPath: "",
+				mode: "demo",
+				nodes: {},
+				rootIds: [],
+				activeNoteId: null,
+				settings: s.settings,
+				expandedFolders: []
+			};
+		}
 		return {
-			vaultId: disk ? null : s.vaultId,
-			vaultName: disk ? "" : s.vaultName,
-			vaultPath: disk ? "" : s.vaultPath,
-			mode: disk ? "demo" : s.mode,
-			nodes: disk ? {} : s.nodes,
-			rootIds: disk ? [] : s.rootIds,
-			activeNoteId: disk ? null : s.activeNoteId,
+			vaultId: s.vaultId,
+			vaultName: s.vaultName,
+			vaultPath: s.vaultPath,
+			mode: s.mode,
+			nodes: s.nodes,
+			rootIds: s.rootIds,
+			activeNoteId: s.activeNoteId,
 			settings: s.settings,
-			expandedFolders: disk ? [] : s.expandedFolders
+			expandedFolders: s.expandedFolders
 		};
 	}
 })

@@ -157,3 +157,15 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 4. **Indexes are derived** — safe to wipe and rebuild from files.
 5. **Conflict policy** — keep local on diverge; shelf disk as `.conflict-*`; Studio resolves after the fact.
 6. **Wave C polish** — first-hour UX; does not replace real-disk stress (Wave E).
+
+---
+
+## Stress fixture: large-test-vault (45k)
+
+| Path | Purpose |
+|------|---------|
+| `fixtures/large-test-vault.zip` | Source archive (unzip for desktop **Open folder…**) |
+| `public/large-test-vault/*` | Prebuilt seed for in-app **Open 45k test vault** |
+| `src/lib/vault/large-test-vault.ts` | Loader → `openLargeTestVault()` |
+
+Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder.

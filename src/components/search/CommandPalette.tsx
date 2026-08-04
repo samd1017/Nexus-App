@@ -25,6 +25,7 @@ import {
   History,
   Focus,
   CircleHelp,
+  Database,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
@@ -204,6 +205,7 @@ export function CommandPalette() {
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
   const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
+  const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
@@ -583,6 +585,17 @@ export function CommandPalette() {
             setCommandOpen(false);
           }),
         },
+        {
+          id: "large-test-vault",
+          label: "Open 45k test vault",
+          keywords: ["large", "stress", "45k", "test", "scale", "benchmark"],
+          icon: <Database size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("large-test-vault", () => {
+            void openLargeTestVault();
+            setCommandOpen(false);
+          }),
+        },
         ...(import.meta.env.DEV
           ? [
               {
@@ -605,6 +618,7 @@ export function CommandPalette() {
       createNewVault,
       revealVaultInFinder,
       openDemoVault,
+      openLargeTestVault,
       simulateHermesWrite,
       setCommandOpen,
     ],
@@ -773,6 +787,7 @@ export function CommandPalette() {
     flushDirty,
     setToast,
     openDemoVault,
+    openLargeTestVault,
     setCommandOpen,
   ]);
 
