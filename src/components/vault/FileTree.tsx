@@ -756,12 +756,12 @@ export const FileTree = memo(function FileTree() {
       ref={parentRef}
       data-file-tree
       className={cn(
-        "titlebar-no-drag relative min-h-full px-2 pb-8 outline-none",
+        "titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-3 outline-none",
         rootDropActive &&
           "rounded-lg ring-1 ring-inset ring-[rgba(0,200,255,0.35)]",
       )}
       role="tree"
-      aria-label="Vault files"
+      aria-label="Vault notes and folders"
       tabIndex={0}
       aria-activedescendant={focusedId ? `tree-row-${focusedId}` : undefined}
       onKeyDown={handleTreeKeyDown}

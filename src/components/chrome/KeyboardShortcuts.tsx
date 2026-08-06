@@ -39,13 +39,13 @@ export function KeyboardShortcuts() {
         isDesktopShell() &&
         mod &&
         !e.altKey &&
-        !e.shiftKey &&
         (isModLetter(e, "o") ||
           isModLetter(e, "k") ||
           isModLetter(e, "n") ||
           isModLetter(e, "g") ||
           isModLetter(e, "e") ||
           isModLetter(e, "s") ||
+          (e.shiftKey && isModLetter(e, "d")) ||
           e.key === "," ||
           e.code === "Comma")
       ) {
@@ -139,8 +139,17 @@ export function KeyboardShortcuts() {
         return;
       }
 
+      // ⌘⇧D / Ctrl+Shift+D — explore demo vault (also native menu on desktop)
+      if (mod && e.shiftKey && isModLetter(e, "d") && !e.altKey) {
+        if (!isDesktopShell()) {
+          e.preventDefault();
+          store.openDemoVault();
+        }
+        return;
+      }
+
       // ⌘O open vault — ignore while another open is in flight
-      if (mod && isModLetter(e, "o")) {
+      if (mod && isModLetter(e, "o") && !e.shiftKey) {
         e.preventDefault();
         if (useVaultStore.getState().connecting) return;
         void store.openFolderAsVault();

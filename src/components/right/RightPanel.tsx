@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useMemo, useRef, useSyncExternalStore } from "react";
 import { Activity, Link2, ListTree, Network, Unlink, Hash, Plus } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
@@ -12,6 +12,7 @@ import { noteTitle } from "@/lib/vault/types";
 import { jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { GraphView } from "@/components/graph/GraphView";
 import { PulseRail } from "@/components/right/PulseRail";
+import { ErrorBoundary } from "@/components/chrome/ErrorBoundary";
 import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
@@ -48,7 +49,6 @@ export function RightPanel() {
   const focusMode = usePrefsStore((s) => s.focusMode);
   const tab = useVaultStore((s) => s.rightTab);
   const setRightTab = useVaultStore((s) => s.setRightTab);
-  const demoGraphPrimed = useRef<string | null>(null);
   const openConflictCount = useVaultStore((s) => {
     // Depend on nodes + dismissals so badge updates live
     void s.nodes;
@@ -59,13 +59,8 @@ export function RightPanel() {
   useSyncExternalStore(subscribePulse, getPulseVersion, getPulseVersion);
   const unreadPulse = getUnreadPulseCount(vaultId);
 
-  // G6: when demo vault opens, switch right panel to Graph tab
-  useEffect(() => {
-    if (mode === "demo" && vaultId && demoGraphPrimed.current !== vaultId) {
-      demoGraphPrimed.current = vaultId;
-      setRightTab("graph");
-    }
-  }, [mode, vaultId, setRightTab]);
+  // R1.1: do NOT auto-open Graph on demo — GraphView must be user-initiated
+  // until the panel is proven stable (avoids first-run crash path).
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
@@ -137,7 +132,13 @@ export function RightPanel() {
   if (graphMode === "fullscreen") {
     return (
       <div className="absolute inset-0 z-30 flex flex-col bg-[var(--bg-deepest)]">
-        <GraphView mode="fullscreen" className="h-full" />
+        <ErrorBoundary
+          variant="panel"
+          label="Graph"
+          resetKeys={[vaultId, mode, "fullscreen"]}
+        >
+          <GraphView mode="fullscreen" className="h-full" />
+        </ErrorBoundary>
       </div>
     );
   }
@@ -416,7 +417,13 @@ export function RightPanel() {
 
           {tab === "graph" ? (
             <div className="flex h-[min(420px,50vh)] min-h-[280px] flex-col">
-              <GraphView mode="panel" className="h-full min-h-[280px]" />
+              <ErrorBoundary
+                variant="panel"
+                label="Graph"
+                resetKeys={[vaultId, mode, tab, activeNoteId]}
+              >
+                <GraphView mode="panel" className="h-full min-h-[280px]" />
+              </ErrorBoundary>
             </div>
           ) : null}
 

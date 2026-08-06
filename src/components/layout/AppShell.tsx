@@ -167,6 +167,9 @@ export function AppShell() {
         if (useVaultStore.getState().connecting) return;
         void useVaultStore.getState().openFolderAsVault();
       },
+      openDemo: () => {
+        useVaultStore.getState().openDemoVault();
+      },
       closeVault: () => useVaultStore.getState().closeVault(),
       settings: () => usePrefsStore.getState().setSettingsOpen(true),
       search: () => useVaultStore.getState().setCommandOpen(true),

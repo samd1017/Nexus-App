@@ -8,6 +8,7 @@ import { getContentLinkSig } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { vaultLinkIndex } from "@/lib/vault/link-index";
+import { useGraphTick } from "@/lib/graph/graph-tick";
 import type { VaultNode } from "@/lib/vault/types";
 import {
   Maximize2,
@@ -726,21 +727,11 @@ export function GraphView({ mode, className }: Props) {
   const activeRef = useRef<string | null>(null);
   const hoverRef = useRef<string | null>(null);
   const neighborMapRef = useRef<Map<string, Set<string>>>(new Map());
-  // Narrow tick — avoid re-render on every body hydrate at 45k
-  const graphTick = useVaultStore((s) => {
-    const idx = ensureVaultIndex(s.nodes);
-    const n = idx.noteCount;
-    const large = shouldUseFolderGraph(n);
-    const scope = s.graphScopeMode ?? "vault";
-    if (large && scope !== "ego") {
-      return `f:${idx.structureGeneration}:${s.graphBrowsePath ?? ""}:${scope}:${n}`;
-    }
-    if (large) {
-      return `e:${vaultLinkIndex.generation}:${s.activeNoteId}:${n}`;
-    }
-    return `full:${idx.generation()}:${vaultLinkIndex.generation}`;
-  });
-  // Read nodes map only when graphTick forces a render
+  // Stable tick via useSyncExternalStore — NEVER ensureVaultIndex in a Zustand selector
+  // (that caused Maximum update depth / forceStoreRerender on demo open).
+  const graphTick = useGraphTick();
+  // Read nodes only on render forced by graphTick / other selectors — not a
+  // continuous subscription to the whole map (avoids body-hydrate thrash).
   const nodes = useVaultStore.getState().nodes;
   const deferredNodes = useDeferredValue(nodes);
   void graphTick;
@@ -1158,9 +1149,9 @@ export function GraphView({ mode, className }: Props) {
     const graph = new ForceGraph3D(el, {
       controlType: "orbit",
       rendererConfig: {
-        antialias: true,
+        antialias: !desktopBoost, // software GL + AA thrash feels "locked"
         alpha: true,
-        powerPreference: "high-performance",
+        powerPreference: desktopBoost ? "default" : "high-performance",
         // logarithmicDepthBuffer breaks PointsMaterial starfields
         logarithmicDepthBuffer: false,
       },
@@ -1169,6 +1160,8 @@ export function GraphView({ mode, className }: Props) {
       .showNavInfo(false)
       .enableNodeDrag(true)
       .enableNavigationControls(true)
+      .cooldownTicks(desktopBoost ? 90 : 120)
+      .warmupTicks(desktopBoost ? 20 : 40)
       .nodeId("id")
       .nodeLabel(() => "")
       .nodeVal("val")
@@ -1954,25 +1947,31 @@ export function GraphView({ mode, className }: Props) {
           >
             <Download size={14} />
           </button>
-          <button
-            type="button"
-            className="icon-btn pointer-events-auto h-10 w-10 shrink-0 border border-white/[0.06] bg-black/40 sm:h-8 sm:w-8"
-            title={
-              mode === "fullscreen" ? "Exit fullscreen graph" : "Expand graph"
-            }
-            aria-label={
-              mode === "fullscreen" ? "Exit fullscreen graph" : "Expand graph"
-            }
-            onClick={() =>
-              setGraphMode(mode === "fullscreen" ? "panel" : "fullscreen")
-            }
-          >
-            {mode === "fullscreen" ? (
+          {mode === "fullscreen" ? (
+            <button
+              type="button"
+              className="pointer-events-auto flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[var(--accent-dim)] px-3 text-[12px] font-medium text-[var(--accent)] shadow-[0_0_20px_rgba(0,200,255,0.12)] hover:brightness-110"
+              title="Exit fullscreen graph (Esc or Ctrl+G)"
+              aria-label="Exit fullscreen graph"
+              onClick={() => setGraphMode("panel")}
+            >
               <Minimize2 size={14} />
-            ) : (
+              <span>Exit graph</span>
+              <kbd className="ml-0.5 hidden rounded border border-white/10 bg-black/30 px-1 py-px text-[10px] text-[var(--text-muted)] sm:inline">
+                Esc
+              </kbd>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="icon-btn pointer-events-auto h-10 w-10 shrink-0 border border-white/[0.06] bg-black/40 sm:h-8 sm:w-8"
+              title="Expand graph"
+              aria-label="Expand graph"
+              onClick={() => setGraphMode("fullscreen")}
+            >
               <Maximize2 size={14} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1988,10 +1987,21 @@ export function GraphView({ mode, className }: Props) {
 
       {hintVisible ? (
         <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
-          <div className="text-[10px] tracking-wide text-[var(--text-muted)] opacity-50">
-            {graphModeResolved === "folder"
-              ? "Orbit · Zoom · Pan · Click folder to enter · Click note to open · Esc up"
-              : "Orbit · Zoom · Pan · Hover links · Click to open"}
+          <div className="rounded-full border border-white/[0.06] bg-black/45 px-3 py-1 text-[10px] tracking-wide text-[var(--text-muted)] backdrop-blur-sm">
+            {mode === "fullscreen"
+              ? graphModeResolved === "folder"
+                ? "Orbit · Zoom · Pan · Click folder · Esc / Exit graph"
+                : "Orbit · Zoom · Pan · Click note · Esc or Ctrl+G to exit"
+              : graphModeResolved === "folder"
+                ? "Orbit · Zoom · Pan · Click folder to enter · Click note to open · Esc up"
+                : "Orbit · Zoom · Pan · Hover links · Click to open"}
+          </div>
+        </div>
+      ) : mode === "fullscreen" ? (
+        <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
+          <div className="rounded-full border border-white/[0.06] bg-black/45 px-3 py-1 text-[10px] text-[var(--text-muted)]">
+            Esc or <span className="text-[var(--accent)]">Exit graph</span> to
+            leave fullscreen
           </div>
         </div>
       ) : null}

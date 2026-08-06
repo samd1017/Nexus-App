@@ -186,6 +186,13 @@ pub fn run() {
 
             let open_vault =
                 MenuItem::with_id(handle, "open_vault", "Open Vault…", true, Some("CmdOrCtrl+O"))?;
+            let open_demo = MenuItem::with_id(
+                handle,
+                "open_demo",
+                "Explore Demo Vault",
+                true,
+                Some("CmdOrCtrl+Shift+D"),
+            )?;
             let close_vault =
                 MenuItem::with_id(handle, "close_vault", "Close Vault", true, None::<&str>)?;
             let settings =
@@ -233,6 +240,7 @@ pub fn run() {
                 true,
                 &[
                     &open_vault,
+                    &open_demo,
                     &close_vault,
                     &PredefinedMenuItem::separator(handle)?,
                     &new_note,

@@ -669,6 +669,29 @@
     padding: 0;
   }
 
+  /* Month calendar popover (Daily section expand) */
+  .month-cal-popover {
+    transform-origin: var(--radix-popover-content-transform-origin);
+  }
+  .month-cal-cell {
+    height: 2rem;
+    min-height: 2rem;
+    width: 100%;
+  }
+  .month-cal-cell--empty {
+    pointer-events: none;
+  }
+  .month-cal-cell:focus-visible {
+    outline: 2px solid rgba(0, 200, 255, 0.55);
+    outline-offset: 1px;
+  }
+  .month-cal-cell.is-active:focus-visible {
+    outline-color: rgba(0, 200, 255, 0.75);
+  }
+  .month-calendar {
+    color: var(--text-primary);
+  }
+
   /* Graph tooltip */
   .graph-tooltip {
     pointer-events: none;

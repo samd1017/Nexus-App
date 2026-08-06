@@ -55,6 +55,19 @@ export function dailyNotePath(d: Date = new Date()): string {
   return `Journal/${formatDateISO(d)}.md`;
 }
 
+/** ISO dates (YYYY-MM-DD) that already have a Journal daily note on disk/in nodes. */
+export function collectExistingDailyIsos(
+  nodes: Record<string, { kind: string; path: string }>,
+): Set<string> {
+  const set = new Set<string>();
+  for (const n of Object.values(nodes)) {
+    if (n.kind !== "note") continue;
+    const m = /^Journal\/(\d{4}-\d{2}-\d{2})\.md$/i.exec(n.path);
+    if (m) set.add(m[1]);
+  }
+  return set;
+}
+
 export function dailyNoteTitle(d: Date = new Date()): string {
   return formatDateISO(d);
 }
