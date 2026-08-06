@@ -61,7 +61,7 @@ export function buildDemoVault(): {
 
 #nexus #demo #local-first
 
-This demo vault is a tour of everything Nexus does — open notes, follow [[wikilinks]], switch Visual ↔ Source, search with **⌘K**, and watch the **graph** light up.
+This demo vault is a tour of everything Nexus does — open notes, follow wikilink pills, switch Visual ↔ Source, search with **Ctrl/⌘K**, and watch the **graph** light up.
 
 ## Feature tour
 
@@ -69,12 +69,12 @@ This demo vault is a tour of everything Nexus does — open notes, follow [[wiki
 | --- | --- |
 | File tree | Folders on the left — Projects, Research, Systems, Journal |
 | Visual editor | Default calm writing surface with formatting toolbar |
-| Source mode | **⌘E** — same note as clean Markdown |
+| Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Wikilinks | Click pills like [[Graph View]] or [[Linking Notes]] |
 | Backlinks | Right panel → see what points here |
-| Graph | Right panel → Graph, or **⌘G** for fullscreen |
-| Search | **⌘K** — find any note instantly |
-| Settings | Gear or **⌘,** — accents, density, editor prefs |
+| Graph | Right panel → Graph, or **Ctrl/⌘G** for fullscreen |
+| Search | **Ctrl/⌘K** — find any note instantly |
+| Settings | Gear or **Ctrl/⌘,** — accents, density, editor prefs |
 | Hermes | Vault menu → **Simulate Hermes write** |
 
 ## Quick path

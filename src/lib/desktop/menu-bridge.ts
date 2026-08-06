@@ -6,6 +6,7 @@ import { confirmDesktopShell } from "@/lib/platform";
 
 type MenuHandlers = {
   openVault: () => void;
+  openDemo: () => void;
   closeVault: () => void;
   settings: () => void;
   search: () => void;
@@ -27,6 +28,9 @@ export async function bindDesktopMenu(
       switch (id) {
         case "open_vault":
           handlers.openVault();
+          break;
+        case "open_demo":
+          handlers.openDemo();
           break;
         case "close_vault":
           handlers.closeVault();

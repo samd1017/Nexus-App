@@ -57,6 +57,13 @@ export function TitleBar() {
             Unsaved{dirtyCount > 1 ? ` · ${dirtyCount}` : ""}
             <Save size={12} className="opacity-80" />
           </button>
+        ) : !focusMode && vaultId && mode !== "demo" ? (
+          <span
+            className="hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.25)] bg-[rgba(48,209,88,0.08)] px-2.5 py-0.5 text-[11px] text-[var(--success)] sm:flex"
+            title="All changes saved"
+          >
+            Saved
+          </span>
         ) : null}
         {!focusMode ? (
           !vaultId ? (

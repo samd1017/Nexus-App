@@ -43,6 +43,10 @@ export interface NexusPrefs {
   focusMode: boolean;
   /** Reduce UI motion (animations / transitions) */
   reducedMotion: boolean;
+  /** Left sidebar: Recent section expanded */
+  sidebarRecentOpen: boolean;
+  /** Left sidebar: Tags section expanded */
+  sidebarTagsOpen: boolean;
   /**
    * @deprecated Single-path scale is always on for disk vaults.
    * Kept so older localStorage prefs rehydrate without error.
@@ -89,6 +93,8 @@ export const DEFAULT_PREFS: NexusPrefs = {
   focusMode: false,
   // Seeded from OS on first load when not yet persisted
   reducedMotion: false,
+  sidebarRecentOpen: true,
+  sidebarTagsOpen: false,
 };
 
 export const NEXUS_VERSION = "0.1.0";
@@ -214,6 +220,8 @@ function snapshotPrefs(s: NexusPrefs): NexusPrefs {
     launchNoteMode: s.launchNoteMode,
     focusMode: s.focusMode,
     reducedMotion: s.reducedMotion,
+    sidebarRecentOpen: s.sidebarRecentOpen,
+    sidebarTagsOpen: s.sidebarTagsOpen,
   };
 }
 
@@ -289,6 +297,14 @@ export const usePrefsStore = create<PrefsStore>()(
           reducedMotion,
           openTodayOnLaunch,
           launchNoteMode,
+          sidebarRecentOpen:
+            p.sidebarRecentOpen != null
+              ? Boolean(p.sidebarRecentOpen)
+              : DEFAULT_PREFS.sidebarRecentOpen,
+          sidebarTagsOpen:
+            p.sidebarTagsOpen != null
+              ? Boolean(p.sidebarTagsOpen)
+              : DEFAULT_PREFS.sidebarTagsOpen,
         };
       },
       onRehydrateStorage: () => (state) => {

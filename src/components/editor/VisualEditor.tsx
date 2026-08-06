@@ -273,6 +273,8 @@ export function VisualEditor({ noteId, content }: Props) {
           heading: { levels: [1, 2, 3, 4] },
           codeBlock: { HTMLAttributes: { class: "note-code" } },
           bulletList: false,
+          // Link is registered separately — avoid duplicate extension warning
+          link: false,
         }),
         StyledBulletList,
         Placeholder.configure({
