@@ -1,9 +1,9 @@
 name: Build Desktop
 
 on:
+  workflow_dispatch:
   release:
     types: [created]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -55,7 +55,7 @@ jobs:
             2. If SmartScreen appears (“Windows protected your PC”), click **More info** → **Run anyway**.
             3. That warning is expected for unsigned Alpha builds.
 
-            Build from source instead: see [DESKTOP.md](../blob/main/DESKTOP.md).
+            Build from source instead: see DESKTOP.md in the repo.
           releaseDraft: true
           prerelease: true
           args: --target aarch64-apple-darwin
@@ -113,7 +113,7 @@ jobs:
             2. If SmartScreen appears (“Windows protected your PC”), click **More info** → **Run anyway**.
             3. That warning is expected for unsigned Alpha builds.
 
-            Build from source instead: see [DESKTOP.md](../blob/main/DESKTOP.md).
+            Build from source instead: see DESKTOP.md in the repo.
           releaseDraft: true
           prerelease: true
           args: ''
