@@ -1,6 +1,12 @@
-# Nexus
+<p align="center">
+  <img src="public/favicon.svg" alt="Nexus" width="120" height="120" />
+</p>
 
-**Local-first Markdown knowledge vault built for retrieval.**
+<h1 align="center">Nexus</h1>
+
+<p align="center">
+  <strong>Local-first Markdown knowledge vault built for retrieval.</strong>
+</p>
 
 Nexus is a notes app where the primary experience is finding the right note quickly — even in large vaults — with plain Markdown files as the only source of truth.
 
