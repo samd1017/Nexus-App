@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -32,8 +32,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event_name == 'release' && github.event.release.tag_name || 'v0.1.0-alpha' }}
-          releaseName: 'Nexus ${{ github.event_name == 'release' && github.event.release.tag_name || 'v0.1.0-alpha' }}'
+          tagName: v0.1.0-alpha
+          releaseName: Nexus v0.1.0-alpha
           releaseBody: |
             ## Alpha — early preview builds
 
@@ -52,7 +52,7 @@ jobs:
 
             **Windows**
             1. Run the `.exe` installer.
-            2. If SmartScreen appears (“Windows protected your PC”), click **More info** → **Run anyway**.
+            2. If SmartScreen appears (Windows protected your PC), click **More info** → **Run anyway**.
             3. That warning is expected for unsigned Alpha builds.
 
             Build from source instead: see DESKTOP.md in the repo.
@@ -77,7 +77,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -90,8 +90,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event_name == 'release' && github.event.release.tag_name || 'v0.1.0-alpha' }}
-          releaseName: 'Nexus ${{ github.event_name == 'release' && github.event.release.tag_name || 'v0.1.0-alpha' }}'
+          tagName: v0.1.0-alpha
+          releaseName: Nexus v0.1.0-alpha
           releaseBody: |
             ## Alpha — early preview builds
 
@@ -110,13 +110,13 @@ jobs:
 
             **Windows**
             1. Run the `.exe` installer.
-            2. If SmartScreen appears (“Windows protected your PC”), click **More info** → **Run anyway**.
+            2. If SmartScreen appears (Windows protected your PC), click **More info** → **Run anyway**.
             3. That warning is expected for unsigned Alpha builds.
 
             Build from source instead: see DESKTOP.md in the repo.
           releaseDraft: true
           prerelease: true
-          args: ''
+          args: ""
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
