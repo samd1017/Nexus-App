@@ -1,89 +1,75 @@
-<!-- Open Graph / Twitter Card meta for social previews -->
-<meta property="og:title" content="Nexus - Notes for Humans and Agents" />
-<meta property="og:description" content="Local-first Markdown knowledge vault with a visual editor, live 3D force-directed graph, and Hermes-compatible plain files." />
-<meta property="og:image" content="https://raw.githubusercontent.com/samd1017/Nexus-App/main/social-preview.svg" />
-<meta property="og:image:width" content="512" />
-<meta property="og:image:height" content="512" />
-<meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:image" content="https://raw.githubusercontent.com/samd1017/Nexus-App/main/social-preview.svg" />
+# Nexus
 
-<p align="center">
-  <img src="public/favicon.svg" alt="Nexus" width="120" height="120" />
-</p>
+**Local-first Markdown knowledge vault built for retrieval.**
 
-<h1 align="center">Nexus</h1>
+Nexus is a notes app where the primary experience is finding the right note quickly — even in large vaults — with plain Markdown files as the only source of truth.
 
-<p align="center">
-  <strong>Notes for Humans and Agents</strong><br/>
-  Local-first Markdown knowledge vault with a visual editor,<br/>
-  live 3D force-directed graph, and Hermes-compatible plain files.
-</p>
+```
+Markdown on disk  →  disposable SQLite FTS index  →  hybrid ranking (goal)
+```
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later" /></a>
-  <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2" />
-  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19" />
-  <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Web-0f0f12" alt="Platform" />
-</p>
+Writing, the 3D graph, and the visual design matter. Ranking quality and grounded retrieval matter more.
 
 ---
 
-## Design System
+## Vision
 
-**Aesthetic**: SpaceX-instrument / metallic steel panels with controlled cyan accent.
+A user types a half-remembered phrase or a natural-language question and receives the correct note(s) ranked highly, with clear provenance, quickly, even on vaults of 100k–500k notes.
 
-| Token          | Value     | Role                                      |
-|----------------|-----------|-------------------------------------------|
-| Accent         | `#00c8ff` | Primary cyan (nexus node, links, focus)   |
-| Deepest BG     | `#050507` | App background                            |
-| Primary BG     | `#0f0f12` | Panels / surfaces                         |
-| Text           | `#f2f2f7` | Primary text                              |
-| Violet         | `#7b61ff` | Secondary accent                          |
+Everything else (editor, graph, command palette) supports that core loop.
 
-**Logo**: 3D extruded metallic **N** monogram with a cyan nexus node at the center.
+---
+
+## Status (honest)
+
+**What works well today**
+- Local-first Markdown vault (plain `.md` files)
+- TipTap visual editor with full Markdown round-trip
+- Live 3D force-directed knowledge graph
+- Tauri 2 desktop shell (macOS + Windows) + web mode via File System Access API
+- Durable SQLite FTS5 index (disposable, lives outside the vault)
+- Command palette, backlinks, large-test-vault stress tooling
+
+**What is still early**
+- Hybrid ranking (lexical + semantic) is the current north star, not yet production-quality
+- Grounded “Ask your notes” with reliable citations is planned, not finished
+- Scale targets of 100k–500k notes are being pursued; real-disk proof at those sizes is still in progress
+- No public release / notarized desktop package yet
+
+This project was created by a non-professional developer directing AI tools (primarily Grok). It is intentionally open so others can inspect, use, and improve it. Contributions and hard feedback are welcome.
+
+---
+
+## Architecture overview
+
+| Layer | Role |
+|-------|------|
+| **Markdown files on disk** | Only source of truth. Hermes-compatible. No proprietary format. |
+| **DurableIndex (SQLite FTS5)** | Disposable search index. Lives outside the vault under app data. Can be wiped and rebuilt. |
+| **In-memory graph** | Backlinks, structure, 3D view. |
+| **Hybrid ranking (goal)** | Lexical (FTS5 + BM25 + title/path boosts) + semantic (local embeddings) + structural signals. |
+
+Desktop path uses Tauri `plugin-fs` + native folder watching.  
+Browser path uses the File System Access API.
+
+See `docs/SCALING.md` for the current scaling plan and DurableIndex contract.
 
 ---
 
 ## Features
 
-- **Local-first** — Notes live as plain `.md` files on disk. Zero accounts required.
-- **Visual editor** — TipTap-powered rich editing with full Markdown round-trip.
-- **Live 3D knowledge graph** — Force-directed view of notes, folders, and backlinks.
-- **Native desktop shell** — Tauri 2 (macOS + Windows) with native menus, dialogs, and file watching.
-- **Web mode** — File System Access API for browser use.
-- **Search & backlinks** — Durable SQLite FTS5 index + in-memory graph.
-- **Hermes-compatible** — Plain files, no proprietary format.
+- **Local-first** — Zero accounts. Notes are plain files you control.
+- **Visual editor** — TipTap with Markdown fidelity.
+- **3D knowledge graph** — Force-directed view of notes, folders, and links.
+- **Native desktop** — Tauri 2 (macOS + Windows).
+- **Web mode** — File System Access API.
+- **Search** — SQLite FTS5 + in-memory graph.
 - **Command palette** — Fast navigation and actions.
-
-A large test vault is included under `public/large-test-vault/` for stress-testing search, graph, and performance.
-
----
-
-## Architecture
-
-```
-Nexus/
-├── src/                 # React + TypeScript frontend
-│   ├── components/      # UI (editor, graph, vault, layout, chrome)
-│   ├── lib/             # vault adapters, search, graph, markdown
-│   └── routes/
-├── src-tauri/           # Rust native shell (Tauri 2)
-│   ├── src/             # durable_index, vault_watch, vault_scope
-│   └── icons/
-├── desktop/             # Desktop entry points
-├── public/              # favicon.svg + large-test-vault + static assets
-└── .github/workflows/   # macOS desktop build
-```
-
-- **Markdown is the source of truth**
-- Browser uses File System Access API
-- Desktop uses Tauri `plugin-fs` + OS folder dialogs + native watch
-- Search index is disposable and lives outside the vault
+- **Large test vault** — Included under `public/large-test-vault/` for stress testing.
 
 ---
 
-## Quick Start
+## Quick start
 
 ### Web (browser)
 
@@ -94,29 +80,46 @@ npm install
 npm run dev
 ```
 
+Open the URL Vite prints (usually `http://localhost:8080`).
+
 ### Desktop (Tauri)
 
-See [DESKTOP.md](DESKTOP.md) for full requirements and instructions.
+See [DESKTOP.md](DESKTOP.md) for requirements (Rust, Xcode CLT on macOS, Node 22+).
 
 ```bash
-npm run tauri:dev     # development
-npm run tauri:build   # production build
+npm install
+npm run tauri:dev      # development
+npm run tauri:build    # production build
 ```
-
-## Contributing
-
-Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-All pull requests are reviewed by the maintainer **together with Grok** before merge.
-
-All contributions must remain under the GPL-3.0-or-later license.
 
 ---
 
+## Design system
+
+SpaceX-instrument / metallic steel panels with controlled cyan accent.
+
+| Token | Value | Role |
+|-------|-------|------|
+| Accent | `#00c8ff` | Primary cyan |
+| Deepest BG | `#050507` | App background |
+| Primary BG | `#0f0f12` | Panels |
+| Text | `#f2f2f7` | Primary text |
+| Violet | `#7b61ff` | Secondary accent |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Pull requests are welcome. Keep them focused. All PRs are reviewed by the maintainer together with Grok.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for how to report issues privately and the basic security posture of the project.
+
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 or later**.
+MIT — see [LICENSE](LICENSE).
 
-See [LICENSE](LICENSE) for the full text.
-
-Anyone who improves or distributes this software is required to keep the source open.
+Copyright (c) 2026 Sam

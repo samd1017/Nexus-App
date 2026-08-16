@@ -2,6 +2,24 @@
   "name": "nexus",
   "version": "0.1.0",
   "private": true,
+  "description": "Local-first Markdown knowledge vault built for retrieval. Plain files, disposable FTS index, hybrid ranking as the product north star.",
+  "license": "MIT",
+  "author": "Sam",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samd1017/Nexus-App.git"
+  },
+  "keywords": [
+    "notes",
+    "markdown",
+    "local-first",
+    "knowledge-graph",
+    "obsidian-alternative",
+    "tauri",
+    "retrieval",
+    "fts5",
+    "pkms"
+  ],
   "sideEffects": false,
   "type": "module",
   "overrides": {
@@ -129,6 +147,5 @@
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.1.0"
-  },
-  "version": "0.1.0"
+  }
 }
