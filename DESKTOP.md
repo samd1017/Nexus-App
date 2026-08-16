@@ -1,24 +1,62 @@
-# Nexus Desktop (macOS via Tauri 2)
+# Nexus Desktop (Tauri 2)
 
-Nexus ships as a local-first web app and a **native Mac shell** powered by [Tauri 2](https://tauri.app).
+Nexus ships as a local-first web app and a **native desktop shell** powered by [Tauri 2](https://tauri.app) for **macOS** and **Windows**.
+
+## Pre-built Alpha downloads
+
+Unsigned Alpha installers are published on [Releases](https://github.com/samd1017/Nexus-App/releases) when CI finishes.
+
+**These builds are not code-signed or notarized.** That is expected for Alpha.
+
+### macOS (Apple Silicon) — unsigned
+
+1. Download the `.dmg`.
+2. Open it and drag Nexus to Applications.
+3. First launch: right-click → **Open**, or System Settings → Privacy & Security → **Open Anyway**.
+4. Gatekeeper will warn about an unidentified developer. Confirm Open.
+
+### Windows — unsigned
+
+1. Download the NSIS `.exe` installer.
+2. If SmartScreen appears (“Windows protected your PC”), click **More info** → **Run anyway**.
+
+### What would be needed for signed installs later
+
+| Platform | What’s required |
+|----------|-----------------|
+| **macOS** | Apple Developer Program account, Developer ID Application certificate, notarization via `notarytool`, stapling. Secrets in CI: signing identity + Apple ID / app-specific password or API key. |
+| **Windows** | Code-signing certificate (EV preferred for fewer SmartScreen prompts), sign the NSIS/MSI in CI. |
+
+Until those are set up, users must approve the OS warnings once.
+
+---
 
 ## What you get
 
-- Real **Nexus.app** window (overlay title bar, native menus)
+- Native window (overlay title bar on macOS, native menus)
 - **Open Vault…** uses the native folder dialog
 - Notes are plain `.md` files on disk (Hermes-compatible)
-- **OS-level folder watching** (notify) for external edits, with a slow safety poll
+- **OS-level folder watching** for external edits
 - **On-disk SQLite search index** (disposable cache under app data — not inside the vault)
 - Same UI as the browser product (editor, graph, settings, search)
 
-## Requirements (on a Mac)
+## Requirements (build from source)
+
+### macOS
 
 - macOS 11+
 - [Xcode Command Line Tools](https://developer.apple.com/xcode/): `xcode-select --install`
-- [Rust](https://rustup.rs/): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- Node **22+** (`brew install node`)
+- [Rust](https://rustup.rs/)
+- Node **22+**
 
-## Install & run
+### Windows
+
+- Windows 10/11
+- [Rust](https://rustup.rs/) (MSVC toolchain)
+- Node **22+**
+- WebView2 (usually already present on recent Windows)
+
+## Install & run from source
 
 ```bash
 git clone https://github.com/samd1017/Nexus-App.git
@@ -26,22 +64,22 @@ cd Nexus-App
 npm install
 ```
 
-### Dev (recommended while fixing UI)
+### Dev
 
 ```bash
 npm run tauri:dev
 ```
 
-This runs the **desktop SPA** (not the browser SSR stack) on port 8080 and opens the native window.
-
-### Production app
+### Production build
 
 ```bash
 npm run tauri:build
-open src-tauri/target/release/bundle/macos/Nexus.app
 ```
 
-DMG (when produced): `src-tauri/target/release/bundle/dmg/`
+Outputs (typical paths):
+
+- macOS: `src-tauri/target/release/bundle/macos/Nexus.app` and `.../dmg/*.dmg`
+- Windows: `src-tauri/target/release/bundle/nsis/*.exe`
 
 ## Architecture
 
@@ -51,7 +89,7 @@ DMG (when produced): `src-tauri/target/release/bundle/dmg/`
 | Browser FS (File System Access) | `src/lib/vault/fs-adapter.ts` |
 | Desktop FS (Tauri plugins) | `src/lib/vault/tauri-adapter.ts` |
 | On-disk DurableIndex (SQLite FTS5) | `src-tauri/src/durable_index.rs` + `src/lib/vault/native-sqlite-index.ts` |
-| OS notify watch | `src-tauri/src/vault_watch.rs` + `startDesktopWatch` |
+| OS notify watch | `src-tauri/src/vault_watch.rs` |
 | Platform detect | `src/lib/platform.ts` |
 | Desktop SPA | `desktop/` + `vite.desktop.config.ts` → `dist-desktop/` |
 | Native shell | `src-tauri/` |
@@ -66,28 +104,27 @@ Markdown remains the source of truth. The SQLite file can be deleted; Nexus rebu
 
 Browser preview (`npm run dev`) stays separate and does not require Rust.
 
+## CI builds
+
+GitHub Actions workflow: `.github/workflows/build-desktop.yml`
+
+- Triggers: new GitHub Release, or manual **Run workflow**
+- Produces macOS Apple Silicon `.dmg` and Windows NSIS `.exe`
+- Attaches assets to a **draft pre-release** (Alpha)
+
 ## Troubleshooting
 
 ### Blank window / white screen
 1. Quit the app.
 2. Run `npm run build:desktop` — must produce `dist-desktop/index.html`.
 3. Re-run `npm run tauri:dev` (not only `npm run dev`).
-4. Open WebView inspector if needed: set env `WEBKIT_DISABLE_COMPOSITING_MODE=1` only if graphics crash.
 
 ### “Permission denied” / empty vault after pick
-- Pick a folder under your Home directory first (`~/Documents`, `~/Notes`).
-- External volumes under `/Volumes` are allowed; iCloud Desktop & Documents may need re-pick after reboot (persisted-scope should remember dialog grants).
+- Prefer a folder under your home directory first.
 
 ### Search misses after external rename
-- Close and reopen the vault (triggers index rebuild), or delete the vault’s file under app data `indexes/`.
+- Close and reopen the vault, or delete the vault’s index under app data `indexes/`.
 
-### `failed to run custom build command for glib-sys` (Linux only)
-Building the **Mac** app requires a **Mac**. Linux can develop the UI but cannot produce `.app`.
-
-### Rust / Xcode errors
-```bash
-xcode-select --install
-rustup update stable
-cd src-tauri && cargo clean && cd ..
-npm run tauri:build
-```
+### Building on the wrong OS
+- A **Mac** is required to produce `.app` / `.dmg`.
+- **Windows** is required to produce the NSIS installer locally (CI uses `windows-latest`).

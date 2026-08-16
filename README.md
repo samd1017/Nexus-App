@@ -18,6 +18,29 @@ Writing, the 3D graph, and the visual design matter. Ranking quality and grounde
 
 ---
 
+## Download Alpha (desktop)
+
+Pre-built **Alpha** installers for **macOS (Apple Silicon)** and **Windows** are published on the [Releases](https://github.com/samd1017/Nexus-App/releases) page when a build finishes.
+
+These builds are **unsigned** (not notarized / not code-signed). That is expected for Alpha.
+
+### macOS (unsigned)
+
+1. Download the `.dmg` from the latest Alpha release.
+2. Open it and drag **Nexus** into Applications.
+3. First launch: **right-click** the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
+4. macOS Gatekeeper will warn because the developer is unidentified. Confirm Open.
+
+### Windows (unsigned)
+
+1. Download the `.exe` installer from the latest Alpha release.
+2. Run it. If **SmartScreen** appears (“Windows protected your PC”), click **More info** → **Run anyway**.
+3. That warning is normal for unsigned Alpha builds.
+
+Prefer building from source? See [DESKTOP.md](DESKTOP.md).
+
+---
+
 ## Vision
 
 A user types a half-remembered phrase or a natural-language question and receives the correct note(s) ranked highly, with clear provenance, quickly, even on vaults of 100k–500k notes.
@@ -40,7 +63,7 @@ Everything else (editor, graph, command palette) supports that core loop.
 - Hybrid ranking (lexical + semantic) is the current north star, not yet production-quality
 - Grounded “Ask your notes” with reliable citations is planned, not finished
 - Scale targets of 100k–500k notes are being pursued; real-disk proof at those sizes is still in progress
-- No public release / notarized desktop package yet
+- Desktop Alpha builds are unsigned (no Apple notarization / no Windows code signing yet)
 
 This project was created by a non-professional developer directing AI tools (primarily Grok). It is intentionally open so others can inspect, use, and improve it. Contributions and hard feedback are welcome.
 
