@@ -25,7 +25,7 @@ jobs:
           targets: aarch64-apple-darwin
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build Tauri (macOS Apple Silicon)
         uses: tauri-apps/tauri-action@v0
@@ -83,7 +83,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build Tauri (Windows NSIS)
         uses: tauri-apps/tauri-action@v0
