@@ -930,6 +930,43 @@
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
   }
+
+  /* Soft Visual ↔ Source / note switch */
+  .editor-surface-enter {
+    animation: editorSurfaceIn var(--duration-base) var(--motion-ease) both;
+  }
+  @keyframes editorSurfaceIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .first-run-coach {
+    animation: coachRise 320ms var(--motion-ease) both;
+  }
+  @keyframes coachRise {
+    from { opacity: 0; transform: translateY(16px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* Empty paragraph placeholder cue */
+  .note-editor .ProseMirror p.is-empty::before,
+  .note-editor .ProseMirror h1.is-empty::before,
+  .note-editor .ProseMirror h2.is-empty::before,
+  .note-editor .ProseMirror h3.is-empty::before {
+    color: var(--text-muted);
+    opacity: 0.55;
+    pointer-events: none;
+    float: left;
+    height: 0;
+  }
+
+  .note-editor .ProseMirror ::selection {
+    background: rgba(0, 200, 255, 0.28);
+  }
+
+  .note-editor .ProseMirror {
+    caret-color: var(--accent);
+  }
   .status-dot {
     width: 6px;
     height: 6px;

@@ -1,4 +1,5 @@
-import { Focus, Settings, Save } from "lucide-react";
+import { Focus, Settings, Save, Keyboard } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { formatRelativeTime } from "@/lib/utils";
 import { NexusWordmark } from "@/components/brand/NexusLogo";
@@ -14,17 +15,46 @@ export function TitleBar() {
   const vaultId = useVaultStore((s) => s.vaultId);
   const dirtyCount = useVaultStore((s) => s.dirtyNoteIds.length);
   const flushDirty = useVaultStore((s) => s.flushDirty);
+  const lastSavedAt = useVaultStore((s) => s.lastSavedAt as number | null);
   const setSettingsOpen = usePrefsStore((s) => s.setSettingsOpen);
   const focusMode = usePrefsStore((s) => s.focusMode);
-  // Traffic-light spacer only on macOS overlay titlebar (not Win/Linux Tauri)
+  const [saving, setSaving] = useState(false);
+  const [flashSaved, setFlashSaved] = useState(false);
+  const prevDirty = useRef(dirtyCount);
   const macOverlay = isDesktopShell() && isMacOS();
+
+  useEffect(() => {
+    if (prevDirty.current > 0 && dirtyCount === 0) {
+      setFlashSaved(true);
+      const t = window.setTimeout(() => setFlashSaved(false), 2200);
+      prevDirty.current = dirtyCount;
+      return () => window.clearTimeout(t);
+    }
+    prevDirty.current = dirtyCount;
+  }, [dirtyCount]);
+
+  useEffect(() => {
+    if (!lastSavedAt) return;
+    setFlashSaved(true);
+    const t = window.setTimeout(() => setFlashSaved(false), 2200);
+    return () => window.clearTimeout(t);
+  }, [lastSavedAt]);
+
+  const onSave = async () => {
+    if (saving || dirtyCount === 0) return;
+    setSaving(true);
+    try {
+      await flushDirty();
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <header
       className="titlebar-drag relative z-40 flex h-11 shrink-0 select-none items-center border-b border-[var(--border)] bg-[rgba(8,8,10,0.94)] px-3 backdrop-blur-xl"
       data-tauri-drag-region
     >
-      {/* Wave P: spacer only for macOS traffic lights under Overlay titlebar */}
       <div
         className={macOverlay ? "w-[72px] shrink-0" : "w-3 shrink-0 sm:w-4"}
         aria-hidden
@@ -37,30 +67,41 @@ export function TitleBar() {
           {vaultName && !focusMode ? (
             <>
               <span className="text-[var(--text-muted)]">·</span>
-              <span className="text-[12.5px] text-[var(--text-secondary)]">{vaultName}</span>
+              <span className="text-[12.5px] text-[var(--text-secondary)]">
+                {vaultName}
+              </span>
             </>
           ) : null}
         </div>
       </div>
 
       <div className="titlebar-no-drag ml-auto flex items-center gap-2">
-        {/* Wave A: dirty / unsaved affordance */}
-        {!focusMode && vaultId && dirtyCount > 0 ? (
+        {!focusMode && vaultId && (dirtyCount > 0 || saving) ? (
           <button
             type="button"
             className="flex items-center gap-1.5 rounded-full border border-[rgba(255,159,10,0.4)] bg-[rgba(255,159,10,0.12)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--warning)]"
-            title="Unsaved changes — click to save"
+            title={`Unsaved changes — click to save (${formatShortcut("S")})`}
             aria-label={`Save ${dirtyCount} unsaved note${dirtyCount === 1 ? "" : "s"}`}
-            onClick={() => void flushDirty()}
+            disabled={saving}
+            onClick={() => void onSave()}
           >
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--warning)]" />
-            Unsaved{dirtyCount > 1 ? ` · ${dirtyCount}` : ""}
+            {saving
+              ? "Saving…"
+              : `Unsaved${dirtyCount > 1 ? ` · ${dirtyCount}` : ""}`}
             <Save size={12} className="opacity-80" />
           </button>
         ) : !focusMode && vaultId && mode !== "demo" ? (
           <span
             className="hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.25)] bg-[rgba(48,209,88,0.08)] px-2.5 py-0.5 text-[11px] text-[var(--success)] sm:flex"
             title="All changes saved"
+          >
+            {flashSaved ? "Saved" : "Saved"}
+          </span>
+        ) : !focusMode && vaultId && mode === "demo" && flashSaved ? (
+          <span
+            className="hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.25)] bg-[rgba(48,209,88,0.08)] px-2.5 py-0.5 text-[11px] text-[var(--success)] sm:flex"
+            title="Saved in this demo session"
           >
             Saved
           </span>
@@ -105,6 +146,19 @@ export function TitleBar() {
             onClick={() => setFocusMode(!focusMode)}
           >
             <Focus size={15} />
+          </button>
+        ) : null}
+        {!focusMode ? (
+          <button
+            type="button"
+            className="icon-btn h-8 w-8"
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+            onClick={() =>
+              window.dispatchEvent(new Event("nexus:open-shortcuts"))
+            }
+          >
+            <Keyboard size={15} />
           </button>
         ) : null}
         {!focusMode ? (

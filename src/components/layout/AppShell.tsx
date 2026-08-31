@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { TitleBar } from "@/components/chrome/TitleBar";
 import { KeyboardShortcuts } from "@/components/chrome/KeyboardShortcuts";
 import { Toast } from "@/components/chrome/Toast";
+import { FirstRunCoach } from "@/components/chrome/FirstRunCoach";
+import { ShortcutsSheet } from "@/components/chrome/ShortcutsSheet";
 import { DeleteConfirmHost } from "@/components/chrome/DeleteConfirmHost";
 import { ConflictStudioHost } from "@/components/conflict/ConflictStudioHost";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
@@ -33,6 +35,23 @@ import { bindWindowState } from "@/lib/desktop/window-state";
 import { cn } from "@/lib/utils";
 
 function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
+  // Auto-dismiss ready flash so the banner doesn't stick forever
+  useEffect(() => {
+    if (progress.phase !== "ready") return;
+    const t = window.setTimeout(() => {
+      const cur = getOpenProgress();
+      if (cur.phase === "ready") {
+        setOpenProgress({
+          phase: "idle",
+          scanned: 0,
+          totalHint: null,
+          message: "",
+        });
+      }
+    }, 1400);
+    return () => window.clearTimeout(t);
+  }, [progress.phase, progress.scanned, progress.message]);
+
   if (
     progress.phase !== "walking" &&
     progress.phase !== "indexing" &&
@@ -41,8 +60,8 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
   ) {
     return null;
   }
-  // Brief ready flash then hide via phase returning idle (caller sets idle)
-  if (progress.phase === "ready" && !progress.message) return null;
+
+  const isReady = progress.phase === "ready";
   const isError = progress.phase === "error";
   const hasTotalHint =
     progress.totalHint != null && progress.totalHint > 0;
@@ -69,26 +88,40 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
         "flex shrink-0 flex-col border-b px-3 py-1.5 text-[12px]",
         isError
           ? "border-[rgba(255,69,58,0.3)] bg-[rgba(255,69,58,0.08)] text-[var(--danger)]"
-          : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] text-[var(--text-secondary)]",
+          : isReady
+            ? "border-[rgba(48,209,88,0.28)] bg-[rgba(48,209,88,0.08)] text-[var(--success)]"
+            : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] text-[var(--text-secondary)]",
       )}
       data-open-progress={progress.phase}
       role={valueNow != null ? "progressbar" : "status"}
       aria-valuenow={valueNow}
       aria-valuemin={valueNow != null ? 0 : undefined}
       aria-valuemax={valueNow != null ? 100 : undefined}
-      aria-busy={!isError && progress.phase !== "ready" ? true : undefined}
+      aria-busy={!isError && !isReady ? true : undefined}
     >
       <div className="flex items-center gap-2">
         {!isError ? (
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
+          <span
+            className={cn(
+              "inline-block h-1.5 w-1.5 rounded-full",
+              isReady
+                ? "bg-[var(--success)]"
+                : "animate-pulse bg-[var(--accent)]",
+            )}
+          />
         ) : null}
         <span className="min-w-0 flex-1">
-          {progress.message || (isError ? "Open failed" : "Opening vault…")}
+          {progress.message ||
+            (isError ? "Open failed" : isReady ? "Ready" : "Opening vault…")}
         </span>
         {progress.scanned > 0 ? (
-          <span className="text-[var(--text-muted)]">
+          <span className={isReady ? "text-[var(--success)]/80" : "text-[var(--text-muted)]"}>
             · {progress.scanned.toLocaleString()} items
-            {ratio != null ? ` · ${Math.round(ratio * 100)}%` : ""}
+            {ratio != null
+              ? ` · ${isReady ? 100 : Math.round(ratio * 100)}%`
+              : isReady
+                ? " · 100%"
+                : ""}
           </span>
         ) : null}
         {isError ? (
@@ -283,6 +316,7 @@ export function AppShell() {
         <SettingsPanel />
         <DeleteConfirmHost />
         <ConflictStudioHost />
+        <ShortcutsSheet />
         <KeyboardShortcuts />
       </div>
     );
@@ -309,6 +343,8 @@ export function AppShell() {
       <SettingsPanel />
       <DeleteConfirmHost />
       <ConflictStudioHost />
+      <FirstRunCoach />
+      <ShortcutsSheet />
       <KeyboardShortcuts />
     </div>
   );

@@ -227,6 +227,7 @@ function CommandPaletteOpen() {
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const [query, setQuery] = useState("");
   const [recentTick, setRecentTick] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -236,6 +237,12 @@ function CommandPaletteOpen() {
       } else {
         setQuery("");
       }
+      // Ensure keystrokes land in the palette without an extra click
+      const t = window.setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 0);
+      return () => window.clearTimeout(t);
     } else {
       setQuery("");
     }
@@ -879,6 +886,7 @@ function CommandPaletteOpen() {
         <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]">
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
+            ref={inputRef}
             value={query}
             onValueChange={setQuery}
             placeholder="Search notes, path: folder: #tags, is:orphan, or > commands…"

@@ -689,6 +689,7 @@ export const useVaultStore = create<VaultStore>()(
 	expandedFolders: [],
 	lastExternalSync: null,
 	dirtyNoteIds: [],
+	lastSavedAt: null as number | null,
 	recentVaults: [],
 	commandOpen: false,
 	toast: null,
@@ -880,9 +881,12 @@ export const useVaultStore = create<VaultStore>()(
 			expandedFolders: expanded,
 			...GRAPH_SCOPE_DEFAULTS,
 			dirtyNoteIds: [],
+			lastSavedAt: null,
 			lastExternalSync: null,
 			recentVaults: recents,
 			connecting: false,
+			// Demo promises graph in the right rail on first open
+			rightTab: "graph",
 			settings: {
 				...get().settings,
 				lastNotePath: welcome?.path ?? null,
@@ -998,11 +1002,19 @@ export const useVaultStore = create<VaultStore>()(
 				toast: `Large Test Vault ready — ${data.noteCount.toLocaleString()} notes`
 			});
 			setOpenProgress({
-				phase: "idle",
-				scanned: 0,
-				totalHint: null,
-				message: ""
+				phase: "ready",
+				scanned: data.noteCount,
+				totalHint: data.noteCount,
+				message: "Ready"
 			});
+			window.setTimeout(() => {
+				setOpenProgress({
+					phase: "idle",
+					scanned: 0,
+					totalHint: null,
+					message: ""
+				});
+			}, 1400);
 		} catch (err) {
 			if (gen !== vaultGen) return;
 			console.error("[vault] openLargeTestVault failed", err);
@@ -1697,7 +1709,30 @@ export const useVaultStore = create<VaultStore>()(
 				const live = useVaultStore.getState().nodes[noteId];
 				if (!live || live.kind !== "note") return;
 				await persistNoteIfFsa(live.path, contentSnap);
+				// Autosave landed on disk — clear dirty for this note so the UI says Saved
+				const st = useVaultStore.getState();
+				const cur = st.nodes[noteId];
+				if (cur?.kind === "note" && cur.content === contentSnap) {
+					useVaultStore.setState({
+						dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
+						lastSavedAt: Date.now(),
+					});
+				}
 			});
+		} else if (!opts?.external && !isDiskVault(get().mode)) {
+			// Demo / in-memory: treat settled edits as saved after a short calm period
+			const noteId = id;
+			const contentSnap = next;
+			window.setTimeout(() => {
+				const st = useVaultStore.getState();
+				const cur = st.nodes[noteId];
+				if (cur?.kind === "note" && cur.content === contentSnap && st.dirtyNoteIds.includes(noteId)) {
+					useVaultStore.setState({
+						dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
+						lastSavedAt: Date.now(),
+					});
+				}
+			}, 450);
 		}
 	},
 	renameNode: (id, newName) => {
@@ -2884,7 +2919,7 @@ export const useVaultStore = create<VaultStore>()(
 				const p = get().nodes[id]?.path;
 				if (p) shelvedConflicts.delete(p);
 			}
-			set({ dirtyNoteIds: [] });
+			set({ dirtyNoteIds: [], lastSavedAt: Date.now() });
 			get().setToast(disk ? "Saved to disk" : "Saved");
 			get().trimBodyCache();
 		});
@@ -3261,10 +3296,11 @@ export function getNoteDisplayTitle(node: VaultNode | null | undefined) {
 	if (!node) return "";
 	return noteTitle(node);
 }
+/** Parent folder path only — note title is shown separately in the editor chrome. */
 export function getBreadcrumbs(node: VaultNode | null | undefined, nodes: Record<string, VaultNode>) {
 	if (!node) return [];
-	const parts = [];
-	let cur = node;
+	const parts: string[] = [];
+	let cur = node.parentId ? nodes[node.parentId] : undefined;
 	while (cur) {
 		parts.unshift(cur.kind === "note" ? noteTitle(cur) : cur.name);
 		cur = cur.parentId ? nodes[cur.parentId] : undefined;

@@ -278,7 +278,13 @@ export function VisualEditor({ noteId, content }: Props) {
         }),
         StyledBulletList,
         Placeholder.configure({
-          placeholder: "Start writing… Type [[ to link notes.",
+          placeholder: ({ node }) => {
+            if (node.type.name === "heading") return "Heading";
+            return "Start writing… Type [[ to link a note.";
+          },
+          emptyNodeClass: "is-empty",
+          showOnlyWhenEditable: true,
+          showOnlyCurrent: true,
         }),
         TaskList.configure({
           HTMLAttributes: { "data-type": "taskList" },
