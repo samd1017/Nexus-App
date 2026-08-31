@@ -378,6 +378,28 @@ export class VaultStructuralIndex {
     return this.childrenByParent.get(parentKey(parentId)) ?? [];
   }
 
+  /**
+   * Depth-first walk of folder descendants via adjacency — O(subtree), not O(vault).
+   * Used by rename/move path rekeys so 45k vaults don't scan every node.
+   */
+  forEachDescendantId(
+    folderId: string,
+    visit: (id: string) => void,
+  ): void {
+    const stack = [...this.getChildIds(folderId)];
+    while (stack.length) {
+      const id = stack.pop()!;
+      visit(id);
+      const kids = this.childrenByParent.get(parentKey(id));
+      if (kids?.length) stack.push(...kids);
+    }
+  }
+
+  /** O(1) path occupancy check after sync. */
+  hasPath(path: string): boolean {
+    return this.pathToId.has(path);
+  }
+
   getChildren(
     nodes: Record<string, VaultNode>,
     parentId: string | null,

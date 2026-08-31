@@ -298,25 +298,6 @@ export function WelcomeScreen() {
               </button>
             )}
 
-            {import.meta.env.DEV ? (
-              <button
-                type="button"
-                className="ghost-btn min-h-11"
-                disabled={busy}
-                onClick={() => run("large", () => void openLargeTestVault())}
-                title="Open the 45,000-note stress vault (in-browser, real app shell)"
-              >
-                {pending === "large" && busy ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Database size={16} />
-                )}
-                {pending === "large" && busy
-                  ? "Loading 45k…"
-                  : "Open 45k test vault"}
-              </button>
-            ) : null}
-
             <button
               type="button"
               className="ghost-btn min-h-11"
@@ -410,6 +391,36 @@ export function WelcomeScreen() {
             Privacy: notes stay on your device. Nexus does not upload vault
             contents or require an account for core editing.
           </p>
+
+          {import.meta.env.DEV ? (
+            <div className="mt-8 rounded-[14px] border border-dashed border-[rgba(0,200,255,0.22)] bg-[rgba(15,15,18,0.55)] p-4">
+              <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
+                <Database size={15} className="text-[var(--accent)]" />
+                Developer · scale QA
+              </div>
+              <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+                In-browser 45,000-note vault for stress testing. Not shown in
+                production builds — also available from the command palette
+                (Ctrl+K → “45k”).
+              </p>
+              <button
+                type="button"
+                className="ghost-btn mt-3 min-h-9"
+                disabled={busy}
+                onClick={() => run("large", () => void openLargeTestVault())}
+                title="Open the 45,000-note stress vault (in-browser, real app shell)"
+              >
+                {pending === "large" && busy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Database size={14} />
+                )}
+                {pending === "large" && busy
+                  ? "Loading 45k…"
+                  : "Open 45k test vault"}
+              </button>
+            </div>
+          ) : null}
 
           <div className="mt-8 rounded-[14px] border border-[var(--border)] bg-[rgba(15,15,18,0.65)] p-4">
             <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">

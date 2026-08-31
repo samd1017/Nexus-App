@@ -6,7 +6,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import { resolveGraphData, type GraphViewMode } from "@/lib/graph/build-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
-import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
 import { vaultLinkIndex } from "@/lib/vault/link-index";
 import { useGraphTick } from "@/lib/graph/graph-tick";
 import type { VaultNode } from "@/lib/vault/types";
@@ -1247,9 +1247,8 @@ export function GraphView({ mode, className }: Props) {
         if (typeof window !== "undefined" && window.innerWidth >= 1200) {
           st.setRightOpen(true);
         }
-        const noteCount = Object.values(st.nodes).filter(
-          (x) => x.kind === "note",
-        ).length;
+        ensureVaultIndex(st.nodes);
+        const noteCount = vaultIndex.noteCount;
         if (shouldUseFolderGraph(noteCount)) {
           st.enterGraphEgo?.({ returnPath: st.graphBrowsePath || "" });
         }
@@ -1458,7 +1457,22 @@ export function GraphView({ mode, className }: Props) {
     }
 
     const hideHint = () => setHintVisible(false);
+    const clearPointerHover = () => {
+      // Orbit / trackpad pointercancel otherwise leaves stale hover chrome
+      hoverRef.current = null;
+      hoverAppliedRef.current = null;
+      setHoverName(null);
+      setHoverTip(null);
+      el.style.cursor = "grab";
+      try {
+        const g = graphRef.current;
+        if (g) applyEdgeStyles(g);
+      } catch {
+        /* ok */
+      }
+    };
     el.addEventListener("pointerdown", hideHint, { once: true });
+    el.addEventListener("pointercancel", clearPointerHover);
     graphRef.current = graph;
 
     const ro = new ResizeObserver(() => {
@@ -1493,6 +1507,7 @@ export function GraphView({ mode, className }: Props) {
       hoverAppliedRef.current = null;
       nodeObjMapRef.current.clear();
       el.removeEventListener("pointerdown", hideHint);
+      el.removeEventListener("pointercancel", clearPointerHover);
       ro.disconnect();
       try {
         if (envMap) {

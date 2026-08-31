@@ -1588,7 +1588,16 @@ export const useVaultStore = create<VaultStore>()(
 		if (id === get().activeNoteId) return;
 		const note = id ? get().nodes[id] : null;
 		const pathExpand = expandPathToNote(get().nodes, id);
-		const expanded = new Set([...get().expandedFolders, ...pathExpand]);
+		const curExpanded = get().expandedFolders;
+		// Only rebuild expandedFolders when ancestors aren't already open —
+		// avoids FileTree flatten + virtualizer thrash on every note click @45k.
+		let needsExpand = false;
+		for (const fid of pathExpand) {
+			if (!curExpanded.includes(fid)) {
+				needsExpand = true;
+				break;
+			}
+		}
 		let recentNoteVisits = get().recentNoteVisits;
 		if (typeof id === "string" && note?.kind === "note") {
 			const vaultId = get().vaultId;
@@ -1603,7 +1612,9 @@ export const useVaultStore = create<VaultStore>()(
 		}
 		set({
 			activeNoteId: id,
-			expandedFolders: Array.from(expanded),
+			...(needsExpand
+				? { expandedFolders: Array.from(new Set([...curExpanded, ...pathExpand])) }
+				: {}),
 			recentNoteVisits,
 			settings: {
 				...get().settings,
@@ -1772,12 +1783,13 @@ export const useVaultStore = create<VaultStore>()(
 		const parent = parentPath(node.path);
 		let newPath = parent ? pathJoin(parent, name) : name;
 		if (newPath === node.path && name === node.name) return;
-		if (Object.values(get().nodes).find((n) => n.id !== id && n.path === newPath)) {
+		const idx = ensureVaultIndex(get().nodes);
+		const conflictId = idx.getIdByPath(get().nodes, newPath);
+		if (conflictId && conflictId !== id) {
 			const stem = name.replace(/\.md$/i, "");
 			const ext = node.kind === "note" ? ".md" : "";
 			let i = 1;
-			const paths = new Set(Object.values(get().nodes).map((n) => n.path));
-			while (paths.has(parent ? pathJoin(parent, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
+			while (idx.hasPath(parent ? pathJoin(parent, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
 			name = `${stem} ${i}${ext}`;
 			newPath = parent ? pathJoin(parent, name) : name;
 			get().setToast(`Name in use — saved as ${name.replace(/\.md$/i, "")}`);
@@ -1795,18 +1807,25 @@ export const useVaultStore = create<VaultStore>()(
 			mtime: Date.now(),
 			...node.kind === "note" ? { content } : {}
 		};
+		const dirtyIds = [id];
 		if (node.kind === "folder") {
-			const oldPrefix = node.path + "/";
-			for (const n of Object.values(nodes)) if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
-				...n,
-				path: newPath + n.path.slice(node.path.length),
-				mtime: Date.now()
-			};
+			// O(subtree) via adjacency — not Object.values over 45k
+			idx.forEachDescendantId(id, (cid) => {
+				const n = nodes[cid];
+				if (!n) return;
+				nodes[cid] = {
+					...n,
+					path: newPath + n.path.slice(oldPath.length),
+					mtime: Date.now()
+				};
+				dirtyIds.push(cid);
+			});
 			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
 		} else if (node.kind === "note" && hasBodyArchive()) {
 			rekeyBodyArchive(oldPath, newPath);
 			if (typeof content === "string") setBodyInArchive(newPath, content);
 		}
+		try { ensureVaultIndex(get().nodes).markDirty(dirtyIds); } catch {}
 		set({ nodes });
 		// Keep durable FTS path/title in sync after rename
 		{
@@ -1815,8 +1834,10 @@ export const useVaultStore = create<VaultStore>()(
 				removeDurableNote(id);
 				upsertDurableNoteFromNode(n);
 			} else if (n?.kind === "folder") {
-				for (const child of Object.values(nodes)) {
-					if (child.kind === "note" && (child.path === newPath || child.path.startsWith(newPath + "/"))) {
+				for (const cid of dirtyIds) {
+					if (cid === id) continue;
+					const child = nodes[cid];
+					if (child?.kind === "note") {
 						removeDurableNote(child.id);
 						upsertDurableNoteFromNode(child);
 					}
@@ -2297,18 +2318,25 @@ export const useVaultStore = create<VaultStore>()(
 		if (newParentId && parent?.kind !== "folder") return;
 		let destName = node.name;
 		let newPath = parent ? pathJoin(parent.path, destName) : destName;
-		const occupied = new Set(Object.values(get().nodes).filter((n) => n.id !== id).map((n) => n.path));
-		if (occupied.has(newPath)) {
+		const idx = ensureVaultIndex(get().nodes);
+		const conflictId = idx.getIdByPath(get().nodes, newPath);
+		if (conflictId && conflictId !== id) {
 			const isNote = node.kind === "note";
 			const stem = isNote ? destName.replace(/\.md$/i, "") : destName;
 			const ext = isNote ? ".md" : "";
 			let i = 1;
-			while (occupied.has(parent ? pathJoin(parent.path, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
+			while (idx.hasPath(parent ? pathJoin(parent.path, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
 			destName = `${stem} ${i}${ext}`;
 			newPath = parent ? pathJoin(parent.path, destName) : destName;
 		}
 		const oldPath = node.path;
 		const nodes = { ...get().nodes };
+		const dirtyIds = [id];
+		// Collect subtree ids before reparent (adjacency still valid)
+		const descendantIds: string[] = [];
+		if (node.kind === "folder") {
+			idx.forEachDescendantId(id, (cid) => descendantIds.push(cid));
+		}
 		nodes[id] = {
 			...node,
 			name: destName,
@@ -2317,14 +2345,15 @@ export const useVaultStore = create<VaultStore>()(
 			mtime: Date.now()
 		};
 		if (node.kind === "folder") {
-			const oldPrefix = oldPath + "/";
-			for (const n of Object.values(nodes)) {
-				if (n.id === id) continue;
-				if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
+			for (const cid of descendantIds) {
+				const n = nodes[cid];
+				if (!n) continue;
+				nodes[cid] = {
 					...n,
 					path: newPath + n.path.slice(oldPath.length),
 					mtime: Date.now()
 				};
+				dirtyIds.push(cid);
 			}
 			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
 		} else if (node.kind === "note" && hasBodyArchive()) {
@@ -2338,8 +2367,10 @@ export const useVaultStore = create<VaultStore>()(
 				removeDurableNote(id);
 				upsertDurableNoteFromNode(n);
 			} else if (n?.kind === "folder") {
-				for (const child of Object.values(nodes)) {
-					if (child.kind === "note" && (child.path === newPath || child.path.startsWith(newPath + "/"))) {
+				for (const cid of dirtyIds) {
+					if (cid === id) continue;
+					const child = nodes[cid];
+					if (child?.kind === "note") {
 						removeDurableNote(child.id);
 						upsertDurableNoteFromNode(child);
 					}
@@ -2350,6 +2381,7 @@ export const useVaultStore = create<VaultStore>()(
 		if (newParentId == null) rootIds = [...rootIds, id];
 		const expanded = new Set(get().expandedFolders);
 		if (newParentId) expanded.add(newParentId);
+		try { ensureVaultIndex(get().nodes).markDirty(dirtyIds); } catch {}
 		set({
 			nodes,
 			rootIds,

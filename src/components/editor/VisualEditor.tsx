@@ -461,9 +461,21 @@ export function VisualEditor({ noteId, content }: Props) {
   // Keep suggest handleKeyDown closure fresh — rebind via editor prop is static;
   // use DOM keyup on the editor root for Mac reliability
   useEffect(() => {
-    if (!editor) return;
-    const dom = editor.view.dom;
-    const onKeyUp = () => refreshSuggest(editor);
+    if (!editor || editor.isDestroyed) return;
+    let dom: HTMLElement;
+    try {
+      dom = editor.view.dom;
+    } catch {
+      return;
+    }
+    const onKeyUp = () => {
+      if (editor.isDestroyed) return;
+      try {
+        refreshSuggest(editor);
+      } catch {
+        /* view not available during teardown */
+      }
+    };
     dom.addEventListener("keyup", onKeyUp);
     return () => dom.removeEventListener("keyup", onKeyUp);
   }, [editor, refreshSuggest]);

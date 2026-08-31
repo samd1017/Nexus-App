@@ -198,12 +198,14 @@ async function runLargeStress(page, errors) {
   await page.reload({ waitUntil: "networkidle", timeout: 60000 });
   await page.waitForTimeout(800);
 
-  // Prefer Welcome CTA; fall back to command palette (also DEV-gated)
+  // Prefer Welcome below-fold DEV CTA; fall back to command palette (also DEV-gated)
   let openedVia = "welcome";
   const btn = page.getByRole("button", { name: /Open 45k test vault/i });
   const tOpen = now();
   if (await btn.count()) {
-    await btn.click({ timeout: 15000 });
+    // Button lives below the fold after welcome declutter — scroll into view
+    await btn.first().scrollIntoViewIfNeeded().catch(() => {});
+    await btn.first().click({ timeout: 15000 });
   } else {
     openedVia = "palette";
     const input = await openPalette(page);
@@ -261,10 +263,12 @@ async function runLargeStress(page, errors) {
 
   await page.screenshot({ path: `${SHOT_DIR}/large-after-open.png`, fullPage: false });
 
-  // Expand a few folders + open a note
+  // Expand a few folders + open a note via tree rows (data-testid)
   const tTree = now();
   for (const name of ["00-Inbox", "01-Projects", "02-Areas"]) {
-    const row = page.getByText(name, { exact: true }).first();
+    const row = page.locator(`[data-file-tree] [data-node-kind="folder"]`, {
+      hasText: name,
+    }).first();
     if (await row.count()) {
       try {
         await row.click({ timeout: 2000 });
@@ -272,18 +276,36 @@ async function runLargeStress(page, errors) {
       } catch {}
     }
   }
-  // Try open first visible .md-looking row
-  const mdish = page.locator("text=/\\.md$/").first();
-  if (await mdish.count()) {
+  // Prefer stable tree note rows over ambiguous text=/\.md$/
+  const noteRow = page.locator('[data-file-tree] [data-testid="tree-note-row"]').first();
+  if (await noteRow.count()) {
     try {
-      await mdish.click({ timeout: 3000 });
+      await noteRow.scrollIntoViewIfNeeded();
+      await noteRow.click({ timeout: 3000 });
       await page.waitForTimeout(1500);
-      result.steps.openedNoteFromTree = true;
+      const active = await page.evaluate(() => {
+        const fn = window.__NEXUS_STRESS__;
+        const p = typeof fn === "function" ? fn() : null;
+        return p?.activeNoteId || null;
+      });
+      result.steps.openedNoteFromTree = !!active;
+      result.steps.treeActiveNoteId = active;
     } catch {
       result.steps.openedNoteFromTree = false;
     }
   } else {
-    result.steps.openedNoteFromTree = false;
+    const mdish = page.locator("text=/\\.md$/").first();
+    if (await mdish.count()) {
+      try {
+        await mdish.click({ timeout: 3000 });
+        await page.waitForTimeout(1500);
+        result.steps.openedNoteFromTree = true;
+      } catch {
+        result.steps.openedNoteFromTree = false;
+      }
+    } else {
+      result.steps.openedNoteFromTree = false;
+    }
   }
   result.steps.treeMs = Math.round(now() - tTree);
 

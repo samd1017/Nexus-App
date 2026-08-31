@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { Settings, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -15,7 +15,7 @@ import {
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { useVaultStore } from "@/lib/vault/store";
-import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
 import type { BodyCacheStats } from "@/lib/vault/body-cache";
 import type { VaultMode } from "@/lib/vault/types";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
@@ -70,9 +70,14 @@ export function SettingsPanel() {
   const vaultPath = useVaultStore((s) => s.vaultPath);
   const mode = useVaultStore((s) => s.mode);
   const vaultId = useVaultStore((s) => s.vaultId);
-  // O(1) after index sync — avoids Object.values filter on every settings open
-  const noteCount = useVaultStore(
-    (s) => ensureVaultIndex(s.nodes).noteCount,
+  // Read published index count outside a mutating Zustand selector
+  const noteCount = useSyncExternalStore(
+    (onStoreChange) => useVaultStore.subscribe(onStoreChange),
+    () => {
+      ensureVaultIndex(useVaultStore.getState().nodes);
+      return vaultIndex.noteCount;
+    },
+    () => 0,
   );
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
