@@ -8,6 +8,7 @@ import type { VaultNode } from "./types";
 import type { VaultScan } from "./fs-adapter";
 import * as fsa from "./fs-adapter";
 import * as desk from "./tauri-adapter";
+import { getBodyFromArchive, hasBodyArchive, setBodyInArchive } from "./body-archive";
 
 export type BackendKind = "fsa" | "desktop" | "memory" | "sandbox";
 
@@ -137,8 +138,24 @@ export class MemoryBackend implements VaultBackend {
     return this.getScan();
   }
 
-  async writeNote(_path: string, _content: string): Promise<void> {
-    /* in-memory only */
+  /**
+   * Demo: bodies live on the in-memory nodes.
+   * Large-test local: meta-only store + module body archive — read archive first.
+   */
+  async readNote(path: string): Promise<string> {
+    if (hasBodyArchive()) {
+      const archived = getBodyFromArchive(path);
+      if (archived !== undefined) return archived;
+    }
+    const n = Object.values(this.getScan().nodes).find((x) => x.path === path);
+    if (n?.kind === "note" && n.content !== undefined) return n.content;
+    throw new Error(`Note not loaded: ${path}`);
+  }
+
+  async writeNote(path: string, content: string): Promise<void> {
+    // Keep archive in sync when present (large-test lazy mounts)
+    if (hasBodyArchive()) setBodyInArchive(path, content);
+    /* primary write path is still the zustand store */
   }
 }
 
