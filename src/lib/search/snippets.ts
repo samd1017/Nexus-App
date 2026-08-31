@@ -2,9 +2,23 @@
  * Scale-safe search snippets.
  * Prefer loaded note body → durable FTS body → path. Never return empty
  * for ranked hits when any source text exists (unloaded large-vault rows).
+ *
+ * Kept free of TipTap/turndown so DurableIndex benches can bundle cleanly.
  */
 
-import { previewSnippet } from "@/lib/markdown/serialize";
+/** Light plain-text preview (no TipTap deps). */
+export function lightPreview(md: string, max = 120): string {
+  const plain = md
+    .replace(/^#+\s+/gm, "")
+    .replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_~>#-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (plain.length <= max) return plain;
+  return plain.slice(0, max - 1) + "…";
+}
 
 /** Contextual excerpt around the first query match. */
 export function extractMatchSnippet(
@@ -16,7 +30,7 @@ export function extractMatchSnippet(
   const plain = content.replace(/\s+/g, " ").trim();
   if (!plain) return "";
   const q = query.trim();
-  if (!q) return previewSnippet(plain, max);
+  if (!q) return lightPreview(plain, max);
   const lower = plain.toLowerCase();
   const needle = q.toLowerCase();
   let i = lower.indexOf(needle);
@@ -27,7 +41,7 @@ export function extractMatchSnippet(
       .find((t) => t.length >= 2);
     if (token) i = lower.indexOf(token);
   }
-  if (i < 0) return previewSnippet(plain, max);
+  if (i < 0) return lightPreview(plain, max);
   const from = Math.max(0, i - radius);
   const to = Math.min(plain.length, i + Math.max(needle.length, 2) + radius);
   let s = plain.slice(from, to).trim();
@@ -70,13 +84,13 @@ export function snippetForSearchHit(opts: {
   if (opts.matchType === "content" && body) {
     return (
       extractMatchSnippet(body, opts.query ?? "", 50, 120) ||
-      previewSnippet(body, 120) ||
+      lightPreview(body, 120) ||
       path
     );
   }
 
   if (body) {
-    const preview = previewSnippet(body, 90);
+    const preview = lightPreview(body, 90);
     if (preview) return preview;
   }
 

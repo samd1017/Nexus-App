@@ -1,0 +1,286 @@
+- main [ref=f14e2]:
+  - generic [ref=f14e3]:
+    - link "Skip to content" [ref=f14e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - generic [ref=f14e5]:
+      - generic:
+        - generic:
+          - generic:
+            - img "Nexus"
+            - generic "Nexus": Nexus Nexus
+          - generic: ·
+          - generic: Large Test Vault
+      - generic [ref=f14e6]:
+        - generic "Large test vault — in this browser session only (not a disk folder)" [ref=f14e101]: Test · in memory
+        - button "Enter focus mode" [ref=f14e102] [cursor=pointer]
+        - button "Keyboard shortcuts" [ref=f14e8] [cursor=pointer]
+        - button "Open settings" [ref=f14e11] [cursor=pointer]
+    - main [ref=f14e15]:
+      - complementary [ref=f14e114]:
+        - button "Large Test Vault Test vault · in memory" [ref=f14e116] [cursor=pointer]:
+          - generic [ref=f14e120]:
+            - generic [ref=f14e121]: Large Test Vault
+            - generic [ref=f14e122]: Test vault · in memory
+        - generic [ref=f14e125]:
+          - button "Search" [ref=f14e126] [cursor=pointer]:
+            - generic [ref=f14e131]: Ctrl+K
+          - button "New note" [ref=f14e133] [cursor=pointer]
+          - button "Daily note" [ref=f14e137] [cursor=pointer]
+          - button "New folder" [ref=f14e140] [cursor=pointer]
+        - generic [ref=f14e143]:
+          - button "Daily" [ref=f14e145] [cursor=pointer]
+          - group "Week days" [ref=f14e151]:
+            - button "M 31" [ref=f14e152] [cursor=pointer]:
+              - generic [ref=f14e153]: M
+              - generic [ref=f14e154]: "31"
+            - button "T 1" [ref=f14e155] [cursor=pointer]:
+              - generic [ref=f14e156]: T
+              - generic [ref=f14e157]: "1"
+            - button "W 2" [ref=f14e158] [cursor=pointer]:
+              - generic [ref=f14e159]: W
+              - generic [ref=f14e160]: "2"
+            - button "T 3" [ref=f14e161] [cursor=pointer]:
+              - generic [ref=f14e162]: T
+              - generic [ref=f14e163]: "3"
+            - button "F 4" [ref=f14e164] [cursor=pointer]:
+              - generic [ref=f14e165]: F
+              - generic [ref=f14e166]: "4"
+            - button "S 5" [ref=f14e167] [cursor=pointer]:
+              - generic [ref=f14e168]: S
+              - generic [ref=f14e169]: "5"
+            - button "S 6" [ref=f14e170] [cursor=pointer]:
+              - generic [ref=f14e171]: S
+              - generic [ref=f14e172]: "6"
+          - generic [ref=f14e173]:
+            - button "Today" [ref=f14e174] [cursor=pointer]
+            - button "Yesterday" [ref=f14e175] [cursor=pointer]
+        - generic [ref=f14e176]:
+          - generic [ref=f14e177]: Files
+          - button "Collapse sidebar" [ref=f14e178] [cursor=pointer]
+        - tree "Vault notes and folders" [ref=f14e183]:
+          - generic [ref=f14e184]:
+            - treeitem "00-Inbox Actions for 00-Inbox" [expanded] [ref=f14e186]:
+              - generic [ref=f14e192]: 00-Inbox
+              - button "Actions for 00-Inbox" [ref=f14e194] [cursor=pointer]
+            - treeitem "Sub-00 Actions for Sub-00" [ref=f14e200]:
+              - generic [ref=f14e206]: Sub-00
+              - button "Actions for Sub-00" [ref=f14e208] [cursor=pointer]
+            - treeitem "Brief-41569-wka Actions for Brief-41569-wka" [selected] [ref=f14e214]:
+              - generic [ref=f14e218]: Brief-41569-wka
+              - button "Actions for Brief-41569-wka" [ref=f14e220] [cursor=pointer]
+            - treeitem "Brief-41936-jrg Actions for Brief-41936-jrg" [ref=f14e226]:
+              - generic [ref=f14e230]: Brief-41936-jrg
+              - button "Actions for Brief-41936-jrg" [ref=f14e232] [cursor=pointer]
+            - treeitem "Brief-43882-mdg Actions for Brief-43882-mdg" [ref=f14e238]:
+              - generic [ref=f14e242]: Brief-43882-mdg
+              - button "Actions for Brief-43882-mdg" [ref=f14e244] [cursor=pointer]
+            - treeitem "Concept-14473-dep Actions for Concept-14473-dep" [ref=f14e250]:
+              - generic [ref=f14e254]: Concept-14473-dep
+              - button "Actions for Concept-14473-dep" [ref=f14e256] [cursor=pointer]
+            - treeitem "Concept-15332-ycl Actions for Concept-15332-ycl" [ref=f14e262]:
+              - generic [ref=f14e266]: Concept-15332-ycl
+              - button "Actions for Concept-15332-ycl" [ref=f14e268] [cursor=pointer]
+            - treeitem "Concept-17737-zst Actions for Concept-17737-zst" [ref=f14e274]:
+              - generic [ref=f14e278]: Concept-17737-zst
+              - button "Actions for Concept-17737-zst" [ref=f14e280] [cursor=pointer]
+            - treeitem "Concept-29771-cwz Actions for Concept-29771-cwz" [ref=f14e286]:
+              - generic [ref=f14e290]: Concept-29771-cwz
+              - button "Actions for Concept-29771-cwz" [ref=f14e292] [cursor=pointer]
+            - treeitem "Draft-10962-jjj Actions for Draft-10962-jjj" [ref=f14e298]:
+              - generic [ref=f14e302]: Draft-10962-jjj
+              - button "Actions for Draft-10962-jjj" [ref=f14e304] [cursor=pointer]
+            - treeitem "Draft-30589-jse Actions for Draft-30589-jse" [ref=f14e310]:
+              - generic [ref=f14e314]: Draft-30589-jse
+              - button "Actions for Draft-30589-jse" [ref=f14e316] [cursor=pointer]
+            - treeitem "Draft-42971-chv Actions for Draft-42971-chv" [ref=f14e322]:
+              - generic [ref=f14e326]: Draft-42971-chv
+              - button "Actions for Draft-42971-chv" [ref=f14e328] [cursor=pointer]
+            - treeitem "Draft-43221-hue Actions for Draft-43221-hue" [ref=f14e334]:
+              - generic [ref=f14e338]: Draft-43221-hue
+              - button "Actions for Draft-43221-hue" [ref=f14e340] [cursor=pointer]
+            - treeitem "Idea-02563-nzt Actions for Idea-02563-nzt" [ref=f14e346]:
+              - generic [ref=f14e350]: Idea-02563-nzt
+              - button "Actions for Idea-02563-nzt" [ref=f14e352] [cursor=pointer]
+            - treeitem "Idea-04101-joc Actions for Idea-04101-joc" [ref=f14e358]:
+              - generic [ref=f14e362]: Idea-04101-joc
+              - button "Actions for Idea-04101-joc" [ref=f14e364] [cursor=pointer]
+            - treeitem "Idea-05228-auy Actions for Idea-05228-auy" [ref=f14e370]:
+              - generic [ref=f14e374]: Idea-05228-auy
+              - button "Actions for Idea-05228-auy" [ref=f14e376] [cursor=pointer]
+            - treeitem "Idea-21066-dyz Actions for Idea-21066-dyz" [ref=f14e382]:
+              - generic [ref=f14e386]: Idea-21066-dyz
+              - button "Actions for Idea-21066-dyz" [ref=f14e388] [cursor=pointer]
+            - treeitem "Idea-42449-szq Actions for Idea-42449-szq" [ref=f14e394]:
+              - generic [ref=f14e398]: Idea-42449-szq
+              - button "Actions for Idea-42449-szq" [ref=f14e400] [cursor=pointer]
+            - treeitem "Log-03517-feg Actions for Log-03517-feg" [ref=f14e406]:
+              - generic [ref=f14e410]: Log-03517-feg
+              - button "Actions for Log-03517-feg" [ref=f14e412] [cursor=pointer]
+            - treeitem "Log-07174-dgp Actions for Log-07174-dgp" [ref=f14e418]:
+              - generic [ref=f14e422]: Log-07174-dgp
+              - button "Actions for Log-07174-dgp" [ref=f14e424] [cursor=pointer]
+            - treeitem "Log-17597-kdq Actions for Log-17597-kdq" [ref=f14e430]:
+              - generic [ref=f14e434]: Log-17597-kdq
+              - button "Actions for Log-17597-kdq" [ref=f14e436] [cursor=pointer]
+            - treeitem "Log-23791-bct Actions for Log-23791-bct" [ref=f14e626]:
+              - generic [ref=f14e630]: Log-23791-bct
+              - button "Actions for Log-23791-bct" [ref=f14e632] [cursor=pointer]
+        - generic [ref=f14e441]:
+          - generic [ref=f14e442]:
+            - button "Recent" [expanded] [ref=f14e443] [cursor=pointer]
+            - list [ref=f14e447]:
+              - listitem [ref=f14e448]:
+                - button "Update-42416-ozw" [ref=f14e449] [cursor=pointer]
+              - listitem [ref=f14e454]:
+                - button "Update-35774-ywb" [ref=f14e455] [cursor=pointer]
+              - listitem [ref=f14e460]:
+                - button "Task-38999-awc" [ref=f14e461] [cursor=pointer]
+              - listitem [ref=f14e466]:
+                - button "Task-24778-zur" [ref=f14e467] [cursor=pointer]
+              - listitem [ref=f14e472]:
+                - button "Task-22602-xuc" [ref=f14e473] [cursor=pointer]
+          - button "Tags · 2" [ref=f14e479] [cursor=pointer]
+        - separator "Resize left sidebar" [ref=f14e483]
+      - generic [ref=f14e484]:
+        - generic [ref=f14e485]:
+          - generic [ref=f14e486]:
+            - generic "00-Inbox" [ref=f14e487]
+            - textbox "Note title" [ref=f14e490]:
+              - /placeholder: Untitled
+              - text: Brief-41569-wka
+          - generic [ref=f14e491]:
+            - generic [ref=f14e492]: 47s ago
+            - button "Visual" [pressed] [ref=f14e493] [cursor=pointer]
+            - button "Source" [ref=f14e498] [cursor=pointer]
+            - button "Graph" [ref=f14e504] [cursor=pointer]
+            - button "Toggle right panel" [expanded] [ref=f14e511] [cursor=pointer]
+        - generic [ref=f14e516]:
+          - generic [ref=f14e518]:
+            - button "Bold" [ref=f14e519] [cursor=pointer]
+            - button "Italic" [ref=f14e522] [cursor=pointer]
+            - button "Heading 1" [ref=f14e526] [cursor=pointer]
+            - button "Heading 2" [ref=f14e529] [cursor=pointer]
+            - button "Heading 3" [ref=f14e532] [cursor=pointer]
+            - button "Bullet list" [ref=f14e537] [cursor=pointer]
+            - button "Ordered list" [ref=f14e539] [cursor=pointer]
+            - button "Task list" [ref=f14e543] [cursor=pointer]
+            - button "Link" [ref=f14e548] [cursor=pointer]
+            - button "Insert image from file" [ref=f14e552] [cursor=pointer]
+            - button "Insert table" [ref=f14e557] [cursor=pointer]
+            - button "More formatting" [ref=f14e561] [cursor=pointer]
+          - generic [ref=f14e569]:
+            - code [ref=f14e571]: "title: \"Brief-41569-wka\" tags: [\"health\", \"todo\"] status: reference type: meeting created: 2021-06-20 updated: 2021-07-27"
+            - paragraph [ref=f14e572]: Additional sentences help vary note size for full-text search testing.
+            - heading "Brief-41569-wka" [level=2] [ref=f14e573]
+            - paragraph [ref=f14e574]: Generated for large-vault performance testing.
+      - complementary [ref=f14e575]:
+        - separator "Resize right panel" [ref=f14e576]
+        - generic [ref=f14e577]:
+          - button "Backlinks" [ref=f14e578] [cursor=pointer]
+          - button "Outline" [ref=f14e583] [cursor=pointer]
+          - button "Graph" [ref=f14e588] [cursor=pointer]
+          - button "Pulse" [ref=f14e595] [cursor=pointer]
+          - button "Collapse panel" [ref=f14e599] [cursor=pointer]: ×
+        - generic [ref=f14e601]:
+          - generic [ref=f14e602]:
+            - generic [ref=f14e603]: Linked mentions
+            - generic [ref=f14e604]:
+              - paragraph [ref=f14e609]: No backlinks yet
+              - paragraph [ref=f14e610]: Other notes that [[mention this]] will appear here.
+          - generic [ref=f14e611]:
+            - generic [ref=f14e612]: Broken links
+            - paragraph [ref=f14e616]: All [[wikilinks]] resolve.
+          - generic [ref=f14e617]:
+            - generic [ref=f14e618]: Tags
+            - generic [ref=f14e622]:
+              - button "#health" [ref=f14e623] [cursor=pointer]
+              - button "#todo" [ref=f14e624] [cursor=pointer]
+    - dialog "Command palette" [ref=f14e637]:
+      - generic [ref=f14e638]:
+        - generic [ref=f14e639]: Command palette
+        - generic [ref=f14e640]:
+          - combobox "Command palette" [expanded] [active] [ref=f14e644]
+          - generic [ref=f14e645]: esc
+        - generic [ref=f14e646]: "Tips: path: #tag is:orphan · > for commands"
+        - listbox "Suggestions" [ref=f14e647]:
+          - generic [ref=f14e648]:
+            - generic [ref=f14e649]: Recent commands
+            - group "Recent commands" [ref=f14e650]:
+              - option "New note Ctrl+N" [selected] [ref=f14e651] [cursor=pointer]:
+                - generic [ref=f14e657]: New note
+                - generic [ref=f14e658]: Ctrl+N
+            - generic [ref=f14e659]: Recent notes
+            - group "Recent notes" [ref=f14e660]:
+              - 'option "Update-42416-ozw 08-Meetings/Update-42416-ozw.md · title: \"Update42416ozw\" tags: [\"note\", \"health\", \"review\"] status: archived type: resourc… Title" [ref=f14e661] [cursor=pointer]':
+                - generic [ref=f14e665]:
+                  - generic [ref=f14e666]: Update-42416-ozw
+                  - generic [ref=f14e667]: "08-Meetings/Update-42416-ozw.md · title: \"Update42416ozw\" tags: [\"note\", \"health\", \"review\"] status: archived type: resourc…"
+                - generic [ref=f14e668]: Title
+              - 'option "Update-35774-ywb 08-Meetings/Update-35774-ywb.md · title: \"Update35774ywb\" tags: [\"idea\"] status: waiting type: person created: 20230615 upd… Title" [ref=f14e669] [cursor=pointer]':
+                - generic [ref=f14e673]:
+                  - generic [ref=f14e674]: Update-35774-ywb
+                  - generic [ref=f14e675]: "08-Meetings/Update-35774-ywb.md · title: \"Update35774ywb\" tags: [\"idea\"] status: waiting type: person created: 20230615 upd…"
+                - generic [ref=f14e676]: Title
+              - 'option "Task-38999-awc 08-Meetings/Task-38999-awc.md · title: \"Task38999awc\" tags: [\"archive\", \"research\"] status: done type: daily created: 202… Title" [ref=f14e677] [cursor=pointer]':
+                - generic [ref=f14e681]:
+                  - generic [ref=f14e682]: Task-38999-awc
+                  - generic [ref=f14e683]: "08-Meetings/Task-38999-awc.md · title: \"Task38999awc\" tags: [\"archive\", \"research\"] status: done type: daily created: 202…"
+                - generic [ref=f14e684]: Title
+              - 'option "Task-24778-zur 08-Meetings/Task-24778-zur.md · title: \"Task24778zur\" tags: [\"reference\"] status: active type: person created: 20240103 u… Title" [ref=f14e685] [cursor=pointer]':
+                - generic [ref=f14e689]:
+                  - generic [ref=f14e690]: Task-24778-zur
+                  - generic [ref=f14e691]: "08-Meetings/Task-24778-zur.md · title: \"Task24778zur\" tags: [\"reference\"] status: active type: person created: 20240103 u…"
+                - generic [ref=f14e692]: Title
+              - 'option "Task-22602-xuc 08-Meetings/Task-22602-xuc.md · title: \"Task22602xuc\" tags: [\"learning\", \"important\"] status: archived type: project crea… Title" [ref=f14e693] [cursor=pointer]':
+                - generic [ref=f14e697]:
+                  - generic [ref=f14e698]: Task-22602-xuc
+                  - generic [ref=f14e699]: "08-Meetings/Task-22602-xuc.md · title: \"Task22602xuc\" tags: [\"learning\", \"important\"] status: archived type: project crea…"
+                - generic [ref=f14e700]: Title
+              - 'option "Task-19053-krh 08-Meetings/Task-19053-krh.md · title: \"Task19053krh\" tags: [\"health\", \"archive\", \"meeting\", \"note\"] status: waiting type… Title" [ref=f14e701] [cursor=pointer]':
+                - generic [ref=f14e705]:
+                  - generic [ref=f14e706]: Task-19053-krh
+                  - generic [ref=f14e707]: "08-Meetings/Task-19053-krh.md · title: \"Task19053krh\" tags: [\"health\", \"archive\", \"meeting\", \"note\"] status: waiting type…"
+                - generic [ref=f14e708]: Title
+              - 'option "Task-08662-ilt 08-Meetings/Task-08662-ilt.md · title: \"Task08662ilt\" tags: [\"meeting\"] status: active type: daily created: 20200619 upda… Title" [ref=f14e709] [cursor=pointer]':
+                - generic [ref=f14e713]:
+                  - generic [ref=f14e714]: Task-08662-ilt
+                  - generic [ref=f14e715]: "08-Meetings/Task-08662-ilt.md · title: \"Task08662ilt\" tags: [\"meeting\"] status: active type: daily created: 20200619 upda…"
+                - generic [ref=f14e716]: Title
+              - 'option "Task-04694-jdu 08-Meetings/Task-04694-jdu.md · title: \"Task04694jdu\" tags: [\"planning\", \"work\", \"review\", \"important\"] status: waiting t… Title" [ref=f14e717] [cursor=pointer]':
+                - generic [ref=f14e721]:
+                  - generic [ref=f14e722]: Task-04694-jdu
+                  - generic [ref=f14e723]: "08-Meetings/Task-04694-jdu.md · title: \"Task04694jdu\" tags: [\"planning\", \"work\", \"review\", \"important\"] status: waiting t…"
+                - generic [ref=f14e724]: Title
+              - 'option "Summary-41004-spv 08-Meetings/Summary-41004-spv.md · title: \"Summary41004spv\" tags: [\"reference\", \"research\", \"meeting\", \"todo\"] status: archi… Title" [ref=f14e725] [cursor=pointer]':
+                - generic [ref=f14e729]:
+                  - generic [ref=f14e730]: Summary-41004-spv
+                  - generic [ref=f14e731]: "08-Meetings/Summary-41004-spv.md · title: \"Summary41004spv\" tags: [\"reference\", \"research\", \"meeting\", \"todo\"] status: archi…"
+                - generic [ref=f14e732]: Title
+              - 'option "Summary-22018-jgi 08-Meetings/Summary-22018-jgi.md · title: \"Summary22018jgi\" tags: [\"learning\", \"archive\", \"health\", \"todo\"] status: referenc… Title" [ref=f14e733] [cursor=pointer]':
+                - generic [ref=f14e737]:
+                  - generic [ref=f14e738]: Summary-22018-jgi
+                  - generic [ref=f14e739]: "08-Meetings/Summary-22018-jgi.md · title: \"Summary22018jgi\" tags: [\"learning\", \"archive\", \"health\", \"todo\"] status: referenc…"
+                - generic [ref=f14e740]: Title
+            - generic [ref=f14e741]: Commands
+            - group "Commands" [ref=f14e742]:
+              - option "New note Ctrl+N" [ref=f14e743] [cursor=pointer]:
+                - generic [ref=f14e748]: New note
+                - generic [ref=f14e749]: Ctrl+N
+              - option "Daily note Ctrl+D" [ref=f14e750] [cursor=pointer]:
+                - generic [ref=f14e754]: Daily note
+                - generic [ref=f14e755]: Ctrl+D
+              - option "New meeting" [ref=f14e756] [cursor=pointer]
+              - option "New idea" [ref=f14e764] [cursor=pointer]
+        - generic [ref=f14e769]:
+          - generic [ref=f14e770]:
+            - generic [ref=f14e771]: ↑↓
+            - generic [ref=f14e772]: navigate
+          - generic [ref=f14e773]:
+            - generic [ref=f14e774]: ↵
+            - generic [ref=f14e775]: open
+          - generic [ref=f14e776]:
+            - generic [ref=f14e777]: esc
+            - generic [ref=f14e778]: close
+          - generic [ref=f14e779]:
+            - generic [ref=f14e780]: Ctrl+K
+            - generic [ref=f14e781]: anytime

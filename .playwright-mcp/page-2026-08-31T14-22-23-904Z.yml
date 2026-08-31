@@ -1,0 +1,164 @@
+- main [ref=f12e2]:
+  - generic [ref=f12e3]:
+    - link "Skip to content" [ref=f12e4] [cursor=pointer]:
+      - /url: "#main-content"
+    - generic [ref=f12e5]:
+      - generic:
+        - generic:
+          - generic:
+            - img "Nexus"
+            - generic "Nexus": Nexus Nexus
+          - generic: ·
+          - generic: Demo Vault
+      - generic [ref=f12e6]:
+        - generic "Demo vault — changes stay in this browser session only" [ref=f12e7]: Demo · in memory
+        - button "Enter focus mode" [ref=f12e8] [cursor=pointer]
+        - button "Keyboard shortcuts" [ref=f12e15] [cursor=pointer]
+        - button "Open settings" [ref=f12e18] [cursor=pointer]
+    - main [ref=f12e22]:
+      - complementary [ref=f12e23]:
+        - generic [ref=f12e24]:
+          - button "Demo Vault Demo · in memory" [active] [ref=f12e25] [cursor=pointer]:
+            - generic [ref=f12e29]:
+              - generic [ref=f12e30]: Demo Vault
+              - generic [ref=f12e31]: Demo · in memory
+          - generic [ref=f12e393]:
+            - generic [ref=f12e394]: Open Recent
+            - button "Demo Vault Demo Vault (in-browser)" [ref=f12e395] [cursor=pointer]:
+              - generic [ref=f12e399]:
+                - generic [ref=f12e400]: Demo Vault
+                - generic [ref=f12e401]: Demo Vault (in-browser)
+            - button "Open…" [ref=f12e403] [cursor=pointer]
+            - button "New Vault…" [ref=f12e407] [cursor=pointer]
+            - button "Close" [ref=f12e412] [cursor=pointer]
+            - button "More" [ref=f12e418] [cursor=pointer]
+        - generic [ref=f12e34]:
+          - button "Search" [ref=f12e35] [cursor=pointer]:
+            - generic [ref=f12e40]: Ctrl+K
+          - button "New note" [ref=f12e42] [cursor=pointer]
+          - button "Daily note" [ref=f12e46] [cursor=pointer]
+          - button "New folder" [ref=f12e49] [cursor=pointer]
+        - generic [ref=f12e52]:
+          - button "Daily" [ref=f12e54] [cursor=pointer]
+          - group "Week days" [ref=f12e60]:
+            - button "M 31" [ref=f12e61] [cursor=pointer]:
+              - generic [ref=f12e62]: M
+              - generic [ref=f12e63]: "31"
+            - button "T 1" [ref=f12e65] [cursor=pointer]:
+              - generic [ref=f12e66]: T
+              - generic [ref=f12e67]: "1"
+            - button "W 2" [ref=f12e68] [cursor=pointer]:
+              - generic [ref=f12e69]: W
+              - generic [ref=f12e70]: "2"
+            - button "T 3" [ref=f12e71] [cursor=pointer]:
+              - generic [ref=f12e72]: T
+              - generic [ref=f12e73]: "3"
+            - button "F 4" [ref=f12e74] [cursor=pointer]:
+              - generic [ref=f12e75]: F
+              - generic [ref=f12e76]: "4"
+            - button "S 5" [ref=f12e77] [cursor=pointer]:
+              - generic [ref=f12e78]: S
+              - generic [ref=f12e79]: "5"
+            - button "S 6" [ref=f12e80] [cursor=pointer]:
+              - generic [ref=f12e81]: S
+              - generic [ref=f12e82]: "6"
+          - generic [ref=f12e83]:
+            - button "Today" [ref=f12e84] [cursor=pointer]
+            - button "Yesterday" [ref=f12e85] [cursor=pointer]
+        - generic [ref=f12e86]:
+          - generic [ref=f12e87]: Files
+          - button "Collapse sidebar" [ref=f12e88] [cursor=pointer]
+        - tree "Vault notes and folders" [ref=f12e93]:
+          - generic [ref=f12e94]:
+            - treeitem "Journal Actions for Journal" [expanded] [ref=f12e96]:
+              - generic [ref=f12e102]: Journal
+              - button "Actions for Journal" [ref=f12e104] [cursor=pointer]
+            - treeitem "2026-08-31 Actions for 2026-08-31" [selected] [ref=f12e110]:
+              - generic [ref=f12e114]: 2026-08-31
+              - button "Actions for 2026-08-31" [ref=f12e116] [cursor=pointer]
+            - treeitem "First Light Actions for First Light" [ref=f12e122]:
+              - generic [ref=f12e126]: First Light
+              - button "Actions for First Light" [ref=f12e128] [cursor=pointer]
+            - treeitem "Projects Actions for Projects" [expanded] [ref=f12e134]:
+              - generic [ref=f12e140]: Projects
+              - button "Actions for Projects" [ref=f12e142] [cursor=pointer]
+            - treeitem "Linking Notes Actions for Linking Notes" [ref=f12e148]:
+              - generic [ref=f12e152]: Linking Notes
+              - button "Actions for Linking Notes" [ref=f12e154] [cursor=pointer]
+            - treeitem "Local-first Vault Actions for Local-first Vault" [ref=f12e160]:
+              - generic [ref=f12e164]: Local-first Vault
+              - button "Actions for Local-first Vault" [ref=f12e166] [cursor=pointer]
+            - treeitem "Research Actions for Research" [expanded] [ref=f12e172]:
+              - generic [ref=f12e178]: Research
+              - button "Actions for Research" [ref=f12e180] [cursor=pointer]
+            - treeitem "Design Language Actions for Design Language" [ref=f12e186]:
+              - generic [ref=f12e190]: Design Language
+              - button "Actions for Design Language" [ref=f12e192] [cursor=pointer]
+            - treeitem "Graph View Actions for Graph View" [ref=f12e198]:
+              - generic [ref=f12e202]: Graph View
+              - button "Actions for Graph View" [ref=f12e204] [cursor=pointer]
+            - treeitem "Visual & Source Actions for Visual & Source" [ref=f12e210]:
+              - generic [ref=f12e214]: Visual & Source
+              - button "Actions for Visual & Source" [ref=f12e216] [cursor=pointer]
+            - treeitem "Systems Actions for Systems" [expanded] [ref=f12e222]:
+              - generic [ref=f12e228]: Systems
+              - button "Actions for Systems" [ref=f12e230] [cursor=pointer]
+            - treeitem "Hermes Compatibility Actions for Hermes Compatibility" [ref=f12e236]:
+              - generic [ref=f12e240]: Hermes Compatibility
+              - button "Actions for Hermes Compatibility" [ref=f12e242] [cursor=pointer]
+            - treeitem "Settings & Shortcuts Actions for Settings & Shortcuts" [ref=f12e248]:
+              - generic [ref=f12e252]: Settings & Shortcuts
+              - button "Actions for Settings & Shortcuts" [ref=f12e254] [cursor=pointer]
+            - treeitem "Welcome Actions for Welcome" [ref=f12e260]:
+              - generic [ref=f12e264]: Welcome
+              - button "Actions for Welcome" [ref=f12e266] [cursor=pointer]
+        - generic [ref=f12e271]:
+          - generic [ref=f12e272]:
+            - button "Recent" [expanded] [ref=f12e273] [cursor=pointer]
+            - list [ref=f12e277]:
+              - listitem [ref=f12e278]:
+                - button "2026-08-31" [ref=f12e279] [cursor=pointer]
+              - listitem [ref=f12e284]:
+                - button "Welcome" [ref=f12e285] [cursor=pointer]
+              - listitem [ref=f12e290]:
+                - button "Local-first Vault" [ref=f12e291] [cursor=pointer]
+              - listitem [ref=f12e296]:
+                - button "Linking Notes" [ref=f12e297] [cursor=pointer]
+              - listitem [ref=f12e302]:
+                - button "Graph View" [ref=f12e303] [cursor=pointer]
+          - button "Tags · 8" [ref=f12e309] [cursor=pointer]
+        - separator "Resize left sidebar" [ref=f12e313]
+      - generic [ref=f12e314]:
+        - generic [ref=f12e315]:
+          - generic [ref=f12e316]:
+            - generic "Journal" [ref=f12e317]
+            - textbox "Note title" [ref=f12e320]:
+              - /placeholder: Untitled
+              - text: 2026-08-31
+          - generic [ref=f12e321]:
+            - generic [ref=f12e322]: 5m ago
+            - button "Visual" [ref=f12e323] [cursor=pointer]
+            - button "Source" [pressed] [ref=f12e328] [cursor=pointer]
+            - button "Graph" [ref=f12e334] [cursor=pointer]
+            - button "Toggle right panel" [expanded] [ref=f12e341] [cursor=pointer]
+        - textbox "Markdown source" [ref=f12e348]: "# Monday, August 31, 2026 *2026-08-31* ## Focus - ## Notes ## Later -"
+      - complementary [ref=f12e349]:
+        - separator "Resize right panel" [ref=f12e350]
+        - generic [ref=f12e351]:
+          - button "Backlinks" [ref=f12e352] [cursor=pointer]
+          - button "Outline" [ref=f12e356] [cursor=pointer]
+          - button "Graph" [ref=f12e360] [cursor=pointer]
+          - button "Pulse" [ref=f12e366] [cursor=pointer]
+          - button "Collapse panel" [ref=f12e369] [cursor=pointer]: ×
+        - generic [ref=f12e371]:
+          - generic [ref=f12e372]:
+            - generic [ref=f12e373]: Linked mentions
+            - generic [ref=f12e374]:
+              - paragraph [ref=f12e379]: No backlinks yet
+              - paragraph [ref=f12e380]: Other notes that [[mention this]] will appear here.
+          - generic [ref=f12e381]:
+            - generic [ref=f12e382]: Broken links
+            - paragraph [ref=f12e386]: All [[wikilinks]] resolve.
+          - generic [ref=f12e387]:
+            - generic [ref=f12e388]: Tags
+            - paragraph [ref=f12e392]: "No #tags in this note."

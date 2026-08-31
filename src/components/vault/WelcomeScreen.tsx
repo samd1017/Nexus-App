@@ -141,9 +141,9 @@ export function WelcomeScreen() {
         }}
       />
 
-      <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col px-6">
+      <div className="relative z-10 mx-auto flex min-h-full w-full max-w-2xl flex-col px-6">
         {/* First viewport: brand + headline + one line + CTAs only */}
-        <section className="flex min-h-[100dvh] flex-col justify-center py-12 sm:py-16">
+        <section className="flex min-h-full flex-col justify-center py-12 sm:py-16">
           <div
             className="welcome-hero-brand flex flex-col items-start gap-4"
             style={{
