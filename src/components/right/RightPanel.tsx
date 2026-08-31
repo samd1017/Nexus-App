@@ -246,7 +246,12 @@ export function RightPanel() {
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          className={cn(
+            "min-h-0 flex-1",
+            tab === "graph" ? "flex flex-col overflow-hidden" : "overflow-y-auto",
+          )}
+        >
           {tab === "backlinks" ? (
             <div className="flex flex-col gap-5 p-3">
               <section>
@@ -416,7 +421,7 @@ export function RightPanel() {
           ) : null}
 
           {tab === "graph" ? (
-            <div className="flex h-[min(420px,50vh)] min-h-[280px] flex-col">
+            <div className="flex min-h-0 flex-1 flex-col">
               <ErrorBoundary
                 variant="panel"
                 label="Graph"

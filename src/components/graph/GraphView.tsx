@@ -19,10 +19,13 @@ import {
   Globe2,
   Ghost,
   Link2,
+  Scan,
+  FilePlus2,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePrefsStore, type PhysicsIntensity } from "@/lib/prefs/preferences";
-import { isDesktopShell } from "@/lib/platform";
+import { isDesktopShell, formatShortcut } from "@/lib/platform";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 interface Props {
@@ -346,7 +349,11 @@ function makeLabel(
     material: THREE.SpriteMaterial;
   };
 
-  label.fontFace = "Arial";
+  label.fontFace =
+    typeof document !== "undefined"
+      ? getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
+        "system-ui, sans-serif"
+      : "system-ui, sans-serif";
   label.fontWeight = active || hover ? "bold" : "normal";
   label.fontSize = 120;
   label.color = active
@@ -744,7 +751,17 @@ export function GraphView({ mode, className }: Props) {
   const physicsIntensity = usePrefsStore((s) => s.physicsIntensity);
   const accentPreset = usePrefsStore((s) => s.accentPreset);
   const accentCustom = usePrefsStore((s) => s.accentCustom);
+  const reducedMotion = usePrefsStore((s) => s.reducedMotion);
+  const createNote = useVaultStore((s) => s.createNote);
+  const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const [hoverName, setHoverName] = useState<string | null>(null);
+  const [hoverTip, setHoverTip] = useState<{
+    name: string;
+    path: string;
+    degree: number;
+    kind: string;
+    preview: string;
+  } | null>(null);
   const [hintVisible, setHintVisible] = useState(true);
   const [neighborhood, setNeighborhood] = useState<NeighborhoodMode>("all");
   const [showGhosts, setShowGhosts] = useState(true);
@@ -1028,7 +1045,12 @@ export function GraphView({ mode, className }: Props) {
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
     const phys = physicsParams(physicsIntensity);
-    const particleCount = graphParticles ? (mode === "panel" ? 1 : 3) : 0;
+    const particleCount =
+      graphParticles && !usePrefsStore.getState().reducedMotion
+        ? mode === "panel"
+          ? 1
+          : 3
+        : 0;
 
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
@@ -1240,6 +1262,17 @@ export function GraphView({ mode, className }: Props) {
         if (nextId === hoverRef.current) return;
         hoverRef.current = nextId;
         setHoverName(node?.name ?? null);
+        if (node) {
+          setHoverTip({
+            name: node.name,
+            path: node.path || "",
+            degree: node.degree ?? 0,
+            kind: node.kind || (node.ghost ? "missing" : "note"),
+            preview: (node.preview || "").slice(0, 120),
+          });
+        } else {
+          setHoverTip(null);
+        }
         el.style.cursor = node ? "pointer" : "grab";
 
         // W5: throttle hover visuals to 50ms; mutate materials + link colors only
@@ -1419,7 +1452,10 @@ export function GraphView({ mode, className }: Props) {
       }
       raf = requestAnimationFrame(drift);
     };
-    raf = requestAnimationFrame(drift);
+    // Honor reduced motion — skip sky drift animation
+    if (!usePrefsStore.getState().reducedMotion) {
+      raf = requestAnimationFrame(drift);
+    }
 
     const hideHint = () => setHintVisible(false);
     el.addEventListener("pointerdown", hideHint, { once: true });
@@ -1435,13 +1471,14 @@ export function GraphView({ mode, className }: Props) {
     graph.width(width).height(height);
     graph.graphData(displayData);
 
+    const fitMs = usePrefsStore.getState().reducedMotion ? 0 : 650;
     const zoomTimer = window.setTimeout(() => {
       try {
-        graph.zoomToFit(650, mode === "fullscreen" ? 70 : 48);
+        graph.zoomToFit(fitMs, mode === "fullscreen" ? 70 : 48);
       } catch {
         /* ok */
       }
-    }, 900);
+    }, usePrefsStore.getState().reducedMotion ? 80 : 900);
 
     return () => {
       cancelled = true;
@@ -1610,7 +1647,12 @@ export function GraphView({ mode, className }: Props) {
     if (!graphRef.current) return;
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
-    const particleCount = graphParticles ? (mode === "panel" ? 1 : 3) : 0;
+    const particleCount =
+      graphParticles && !usePrefsStore.getState().reducedMotion
+        ? mode === "panel"
+          ? 1
+          : 3
+        : 0;
 
     const focusId = () => hoverRef.current || activeNoteId;
     const dimStrength = () => {
@@ -1722,7 +1764,7 @@ export function GraphView({ mode, className }: Props) {
   return (
     <div
       className={cn(
-        "graph-host relative flex min-h-0 flex-col overflow-hidden bg-[#03050a]",
+        "graph-host relative flex min-h-0 flex-col overflow-hidden bg-[var(--graph-void,#03050a)]",
         className,
       )}
       role="region"
@@ -1738,7 +1780,7 @@ export function GraphView({ mode, className }: Props) {
         className="pointer-events-none absolute inset-0"
         style={{
           background: `
-            radial-gradient(ellipse 90% 75% at 50% 40%, #0e1622 0%, #0a1018 40%, #05080e 68%, #03050a 100%)
+            radial-gradient(ellipse 90% 75% at 50% 40%, color-mix(in srgb, var(--accent) 6%, #0e1622) 0%, #0a1018 40%, #05080e 68%, var(--graph-void, #03050a) 100%)
           `,
         }}
       />
@@ -1880,11 +1922,11 @@ export function GraphView({ mode, className }: Props) {
             </div>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded-full border border-white/[0.08] bg-black/45 p-1 shadow-[0_8px_28px_rgba(0,0,0,0.35)] backdrop-blur-md">
           {graphModeResolved === "ego" ? (
             <button
               type="button"
-              className="icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40 text-[var(--accent)]"
+              className="icon-btn h-8 w-8 text-[var(--accent)]"
               title="Vault folder map"
               aria-label="Vault folder map"
               onClick={() => {
@@ -1899,48 +1941,67 @@ export function GraphView({ mode, className }: Props) {
             <button
               type="button"
               className={cn(
-                "icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40",
-                !showGhosts && "border-[var(--accent)]/40 text-[var(--accent)]",
+                "icon-btn h-8 w-8",
+                showGhosts ? "is-active" : "opacity-70",
               )}
               title={showGhosts ? "Hide missing (ghost) nodes" : "Show missing (ghost) nodes"}
               aria-label={showGhosts ? "Hide missing (ghost) nodes" : "Show missing (ghost) nodes"}
+              aria-pressed={showGhosts}
               onClick={() => setShowGhosts((v) => !v)}
             >
-              <Ghost size={14} className={cn(!showGhosts && "opacity-50")} />
+              <Ghost size={14} />
             </button>
           ) : null}
           {graphModeResolved !== "folder" ? (
-          <button
-            type="button"
-            className={cn(
-              "icon-btn pointer-events-auto h-8 w-8 shrink-0 border border-white/[0.06] bg-black/40",
-              neighborhood === "1hop" &&
-                "border-[var(--accent)]/40 text-[var(--accent)]",
-            )}
-            title={
-              neighborhood === "1hop"
-                ? "Show full graph"
-                : "Neighborhood: soft 1-hop (dim outsiders)"
-            }
-            aria-label={
-              neighborhood === "1hop"
-                ? "Show full graph"
-                : "Neighborhood: soft 1-hop (dim outsiders)"
-            }
-            onClick={() =>
-              setNeighborhood((m) => (m === "all" ? "1hop" : "all"))
-            }
-          >
-            {neighborhood === "1hop" ? (
-              <Focus size={14} />
-            ) : (
-              <Globe2 size={14} />
-            )}
-          </button>
+            <button
+              type="button"
+              className={cn(
+                "icon-btn h-8 w-8",
+                neighborhood === "1hop" && "is-active",
+              )}
+              title={
+                neighborhood === "1hop"
+                  ? "Show full graph"
+                  : "Neighborhood: soft 1-hop (dim outsiders)"
+              }
+              aria-label={
+                neighborhood === "1hop"
+                  ? "Show full graph"
+                  : "Neighborhood: soft 1-hop (dim outsiders)"
+              }
+              aria-pressed={neighborhood === "1hop"}
+              onClick={() =>
+                setNeighborhood((m) => (m === "all" ? "1hop" : "all"))
+              }
+            >
+              {neighborhood === "1hop" ? (
+                <Focus size={14} />
+              ) : (
+                <Globe2 size={14} />
+              )}
+            </button>
           ) : null}
           <button
             type="button"
-            className="icon-btn pointer-events-auto h-10 w-10 shrink-0 border border-white/[0.06] bg-black/40 sm:h-8 sm:w-8"
+            className="icon-btn h-8 w-8"
+            title="Fit graph in view"
+            aria-label="Fit graph in view"
+            onClick={() => {
+              try {
+                graphRef.current?.zoomToFit(
+                  reducedMotion ? 0 : 420,
+                  mode === "fullscreen" ? 70 : 48,
+                );
+              } catch {
+                /* ok */
+              }
+            }}
+          >
+            <Scan size={14} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn h-8 w-8"
             title="Export graph PNG"
             aria-label="Export graph PNG"
             onClick={exportPng}
@@ -1950,13 +2011,13 @@ export function GraphView({ mode, className }: Props) {
           {mode === "fullscreen" ? (
             <button
               type="button"
-              className="pointer-events-auto flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[var(--accent-dim)] px-3 text-[12px] font-medium text-[var(--accent)] shadow-[0_0_20px_rgba(0,200,255,0.12)] hover:brightness-110"
+              className="ml-0.5 flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[var(--accent-dim)] px-2.5 text-[12px] font-medium text-[var(--accent)] shadow-[0_0_20px_rgba(0,200,255,0.12)] hover:brightness-110"
               title="Exit fullscreen graph (Esc or Ctrl+G)"
               aria-label="Exit fullscreen graph"
               onClick={() => setGraphMode("panel")}
             >
               <Minimize2 size={14} />
-              <span>Exit graph</span>
+              <span className="hidden sm:inline">Exit</span>
               <kbd className="ml-0.5 hidden rounded border border-white/10 bg-black/30 px-1 py-px text-[10px] text-[var(--text-muted)] sm:inline">
                 Esc
               </kbd>
@@ -1964,7 +2025,7 @@ export function GraphView({ mode, className }: Props) {
           ) : (
             <button
               type="button"
-              className="icon-btn pointer-events-auto h-10 w-10 shrink-0 border border-white/[0.06] bg-black/40 sm:h-8 sm:w-8"
+              className="icon-btn h-8 w-8"
               title="Expand graph"
               aria-label="Expand graph"
               onClick={() => setGraphMode("fullscreen")}
@@ -1987,27 +2048,61 @@ export function GraphView({ mode, className }: Props) {
 
       {hintVisible ? (
         <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-white/[0.06] bg-black/45 px-3 py-1 text-[10px] tracking-wide text-[var(--text-muted)] backdrop-blur-sm">
+          <div className="rounded-full border border-white/[0.08] bg-black/50 px-3 py-1.5 text-[10px] tracking-wide text-[var(--text-muted)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md">
             {mode === "fullscreen"
               ? graphModeResolved === "folder"
-                ? "Orbit · Zoom · Pan · Click folder · Esc / Exit graph"
-                : "Orbit · Zoom · Pan · Click note · Esc or Ctrl+G to exit"
+                ? "Orbit · Zoom · Pan · Click folder · Esc / Exit"
+                : `Orbit · Zoom · Pan · Click note · Esc or ${formatShortcut("G")}`
               : graphModeResolved === "folder"
-                ? "Orbit · Zoom · Pan · Click folder to enter · Click note to open · Esc up"
-                : "Orbit · Zoom · Pan · Hover links · Click to open"}
+                ? "Orbit · Zoom · Pan · Click folder · Click note · Esc up"
+                : "Orbit · Zoom · Pan · Hover for details · Click to open"}
           </div>
         </div>
       ) : mode === "fullscreen" ? (
         <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-white/[0.06] bg-black/45 px-3 py-1 text-[10px] text-[var(--text-muted)]">
-            Esc or <span className="text-[var(--accent)]">Exit graph</span> to
-            leave fullscreen
+          <div className="rounded-full border border-white/[0.08] bg-black/50 px-3 py-1.5 text-[10px] text-[var(--text-muted)] backdrop-blur-md">
+            Esc or <span className="text-[var(--accent)]">Exit</span> to leave
+            fullscreen
           </div>
         </div>
       ) : null}
 
+      {hoverTip && displayData.nodes.length > 0 ? (
+        <div
+          className="graph-tooltip pointer-events-none absolute bottom-12 left-1/2 z-20 w-[min(260px,70vw)] -translate-x-1/2"
+          role="tooltip"
+        >
+          <div className="text-[12px] font-semibold tracking-wide text-[var(--text-primary)]">
+            {hoverTip.name}
+          </div>
+          {hoverTip.path ? (
+            <div className="mt-0.5 truncate text-[10.5px] text-[var(--text-muted)]">
+              {hoverTip.path}
+            </div>
+          ) : null}
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-secondary)]">
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-px capitalize">
+              {hoverTip.kind}
+            </span>
+            {hoverTip.kind === "note" || hoverTip.kind === "missing" ? (
+              <span>
+                {hoverTip.degree} link{hoverTip.degree === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </div>
+          {hoverTip.preview ? (
+            <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-[var(--text-muted)]">
+              {hoverTip.preview}
+            </p>
+          ) : null}
+          <p className="mt-2 text-[10px] text-[var(--accent)]/80">
+            Click to open
+          </p>
+        </div>
+      ) : null}
+
       {displayData.nodes.length === 0 ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6">
+        <div className="absolute inset-0 z-10 flex items-center justify-center px-6">
           <EmptyState
             icon={<Network size={16} />}
             title={
@@ -2034,8 +2129,66 @@ export function GraphView({ mode, className }: Props) {
                     ? "Create a note to begin."
                     : "Add [[wikilinks]] between notes to map structure."
             }
-            className="max-w-[280px] border-[var(--border)] bg-[var(--glass-bg)] backdrop-blur-md"
-          />
+            className="pointer-events-auto max-w-[300px] border-[var(--border)] bg-[var(--glass-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-md"
+          >
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {vaultNoteCount === 0 ||
+              (graphModeResolved === "folder" &&
+                !(stats.levelPath || graphBrowsePath)) ? (
+                <button
+                  type="button"
+                  className="primary-btn min-h-8 px-3 text-[12px]"
+                  onClick={() => createNote(null, "Untitled")}
+                >
+                  <FilePlus2 size={13} />
+                  New note
+                </button>
+              ) : null}
+              {graphModeResolved === "ego" && activeNoteId ? (
+                <button
+                  type="button"
+                  className="ghost-btn min-h-8 px-3 text-[12px]"
+                  onClick={() => resetGraphBrowse?.()}
+                >
+                  <Globe2 size={13} />
+                  Vault map
+                </button>
+              ) : null}
+              {graphModeResolved === "ego" && !activeNoteId ? (
+                <button
+                  type="button"
+                  className="primary-btn min-h-8 px-3 text-[12px]"
+                  onClick={() => setCommandOpen(true)}
+                >
+                  <Search size={13} />
+                  Find a note
+                </button>
+              ) : null}
+              {graphModeResolved !== "ego" &&
+              graphModeResolved !== "folder" &&
+              vaultNoteCount > 0 ? (
+                <button
+                  type="button"
+                  className="ghost-btn min-h-8 px-3 text-[12px]"
+                  onClick={() => setCommandOpen(true)}
+                >
+                  <Search size={13} />
+                  Search notes
+                </button>
+              ) : null}
+              {graphModeResolved === "folder" &&
+              (stats.levelPath || graphBrowsePath) ? (
+                <button
+                  type="button"
+                  className="ghost-btn min-h-8 px-3 text-[12px]"
+                  onClick={() => resetGraphBrowse?.()}
+                >
+                  <Globe2 size={13} />
+                  Back to vault
+                </button>
+              ) : null}
+            </div>
+          </EmptyState>
         </div>
       ) : null}
     </div>

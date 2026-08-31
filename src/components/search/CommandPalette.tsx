@@ -859,7 +859,9 @@ function CommandPaletteOpen() {
       : q
         ? isTagBrowse
           ? `Tagged #${tagPartial}`
-          : "Notes"
+          : hits.length > 0
+            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""}`
+            : "Notes"
         : "Recent";
 
   return (

@@ -108,7 +108,13 @@ export function EditorSaveChip() {
         role="status"
       >
         {flashSaved ? <Check size={11} /> : null}
-        {flashSaved ? "Saved" : mode === "demo" ? "In memory" : "Saved"}
+        {flashSaved
+          ? mode === "demo"
+            ? "Saved in session"
+            : "Saved"
+          : mode === "demo"
+            ? "In memory"
+            : "Saved"}
       </span>
     );
   }
