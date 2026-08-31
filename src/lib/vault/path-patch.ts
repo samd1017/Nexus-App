@@ -121,17 +121,30 @@ export function pruneEmptyFolders(
   candidateFolderPaths: Iterable<string>,
 ): boolean {
   let touched = false;
-  const sorted = [...candidateFolderPaths].sort(
+  const candidates = [...candidateFolderPaths];
+  if (candidates.length === 0) return false;
+
+  // One pass child counts — avoid O(folders × notes) scans at 25k+
+  const childCount = new Map<string, number>();
+  for (const n of Object.values(nodes)) {
+    if (!n.parentId) continue;
+    childCount.set(n.parentId, (childCount.get(n.parentId) ?? 0) + 1);
+  }
+
+  const sorted = candidates.sort(
     (a, b) => b.split("/").length - a.split("/").length,
   );
   for (const folderPath of sorted) {
     if (!folderPath) continue;
     const id = pathToId.get(folderPath);
     if (!id || !nodes[id] || nodes[id].kind !== "folder") continue;
-    const hasChild = Object.values(nodes).some((n) => n.parentId === id);
-    if (hasChild) continue;
+    if ((childCount.get(id) ?? 0) > 0) continue;
+    const parentId = nodes[id].parentId;
     delete nodes[id];
     pathToId.delete(folderPath);
+    if (parentId) {
+      childCount.set(parentId, Math.max(0, (childCount.get(parentId) ?? 1) - 1));
+    }
     touched = true;
   }
   return touched;
@@ -235,13 +248,14 @@ export function applyNoteOpsToScan(
     ? recomputeRootIds(nodes)
     : prev.rootIds.filter((id) => nodes[id]);
 
-  // If filter dropped roots (deleted root notes), recompute
+  // Only recompute when structure changed or filtered roots emptied
   const finalRoots =
-    rootIds.length === 0 && Object.keys(nodes).length > 0
-      ? recomputeRootIds(nodes)
-      : structureTouched
+    structureTouched ||
+    (rootIds.length === 0 && Object.keys(nodes).length > 0)
+      ? structureTouched
         ? rootIds
-        : recomputeRootIds(nodes);
+        : recomputeRootIds(nodes)
+      : rootIds;
 
   return {
     scan: { nodes, rootIds: finalRoots, signatures },

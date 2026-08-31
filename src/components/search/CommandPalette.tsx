@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
+import type { SearchHit } from "@/lib/vault/types";
 import { recentNoteIdsForVault } from "@/lib/vault/visit-history";
 import {
   recentCommandIds,
@@ -48,8 +49,8 @@ import {
   takePendingCommandQuery,
   setPendingCommandQuery,
 } from "@/lib/vault/session-recents";
-import { previewSnippet } from "@/lib/markdown/serialize";
-import type { SearchHit } from "@/lib/vault/types";
+import { getDurableIndex } from "@/lib/vault/durable-index";
+import { snippetForSearchHit } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
 
@@ -141,6 +142,7 @@ function allNotesAsHits(
   nodes: Record<string, import("@/lib/vault/types").VaultNode>,
   limit = 40,
 ): SearchHit[] {
+  const durable = getDurableIndex();
   return Object.values(nodes)
     .filter((n) => n.kind === "note")
     .sort((a, b) => b.mtime - a.mtime)
@@ -149,7 +151,15 @@ function allNotesAsHits(
       noteId: n.id,
       path: n.path,
       title: noteTitle(n),
-      snippet: previewSnippet(n.content ?? "", 90),
+      snippet: snippetForSearchHit({
+        path: n.path,
+        content: n.content,
+        durableBody:
+          n.content === undefined
+            ? durable?.getNoteMeta?.(n.id)?.bodySnippet
+            : undefined,
+        matchType: "title",
+      }),
       score: 1,
       matchType: "title" as const,
     }));
@@ -161,9 +171,20 @@ function topNotesByVisitMtime(
   limit: number,
   vaultId?: string | null,
 ): SearchHit[] {
+  const durable = getDurableIndex();
   const visits = recentNoteIdsForVault(vaultId, nodes, limit);
   const seen = new Set<string>();
   const out: SearchHit[] = [];
+  const snip = (n: import("@/lib/vault/types").VaultNode) =>
+    snippetForSearchHit({
+      path: n.path,
+      content: n.content,
+      durableBody:
+        n.content === undefined
+          ? durable?.getNoteMeta?.(n.id)?.bodySnippet
+          : undefined,
+      matchType: "title",
+    });
   for (const id of visits) {
     const n = nodes[id];
     if (!n || n.kind !== "note") continue;
@@ -172,7 +193,7 @@ function topNotesByVisitMtime(
       noteId: n.id,
       path: n.path,
       title: noteTitle(n),
-      snippet: previewSnippet(n.content ?? "", 90),
+      snippet: snip(n),
       score: 1,
       matchType: "title",
     });
@@ -186,7 +207,7 @@ function topNotesByVisitMtime(
       noteId: n.id,
       path: n.path,
       title: noteTitle(n),
-      snippet: previewSnippet(n.content ?? "", 90),
+      snippet: snip(n),
       score: 1,
       matchType: "title",
     });

@@ -8,6 +8,8 @@
 import type { SearchHit, VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { getDurableIndex } from "@/lib/vault/durable-index";
+import { snippetForSearchHit } from "@/lib/search/snippets";
 
 const BODY_CAP = 4000;
 
@@ -153,7 +155,14 @@ export function indexedSearch(
           noteId: d.id,
           path: d.path,
           title: d.title,
-          snippet: "",
+          snippet: snippetForSearchHit({
+            path: d.path,
+            content: d.body || undefined,
+            durableBody: !d.body
+              ? getDurableIndex()?.getNoteMeta?.(d.id)?.bodySnippet
+              : undefined,
+            matchType: "title",
+          }),
           score: 1,
           matchType: "title" as const,
         }));
@@ -188,7 +197,14 @@ export function indexedSearch(
         noteId: d.id,
         path: d.path,
         title: d.title,
-        snippet: "",
+        snippet: snippetForSearchHit({
+          path: d.path,
+          content: d.body || undefined,
+          durableBody: !d.body
+            ? getDurableIndex()?.getNoteMeta?.(d.id)?.bodySnippet
+            : undefined,
+          matchType: "title",
+        }),
         score: 1,
         matchType: "title" as const,
       }));
@@ -239,6 +255,7 @@ export function indexedSearch(
   }
 
   const hits: SearchHit[] = [];
+  const durable = getDurableIndex();
   for (const id of candidateIds) {
     const d = docs.get(id);
     if (!d) continue;
@@ -265,13 +282,31 @@ export function indexedSearch(
     }
     const bodyHit = d.body && d.body.toLowerCase().includes(qLower);
     if (bodyHit && score < 80) matchType = "content";
-    const snippet =
-      matchType === "content" || bodyHit ? d.body.slice(0, 120) : d.path;
+    const durableBody = !d.body
+      ? durable?.getNoteMeta?.(id)?.bodySnippet
+      : undefined;
+    // Body token hits with unloaded store body still count as content
+    if (
+      !d.body &&
+      durableBody &&
+      matchType === "title" &&
+      score < 60 &&
+      durableBody.toLowerCase().includes(qLower)
+    ) {
+      matchType = "content";
+      score += 10;
+    }
     hits.push({
       noteId: d.id,
       path: d.path,
       title: d.title,
-      snippet,
+      snippet: snippetForSearchHit({
+        path: d.path,
+        query: q,
+        matchType,
+        content: d.body || undefined,
+        durableBody,
+      }),
       score,
       matchType,
     });

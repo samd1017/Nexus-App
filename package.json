@@ -45,9 +45,10 @@
     "test:fixture-integrity": "node scripts/verify-large-test-vault.mjs",
     "test:partialize": "node scripts/test-partialize-policy.mjs",
     "smoke": "node scripts/browser-smoke.mjs http://127.0.0.1:8080/ /workspace/screenshots/app-builder-preview.png",
-    "qa:gate": "npm run typecheck && npm run bench:indexes && npm run bench:scale && npm run test:wave-c && npm run test:folder-graph && npm run test:fixture-integrity && npm run test:partialize && npm run test:body-archive",
+    "qa:gate": "npm run typecheck && npm run bench:indexes && npm run bench:scale && npm run test:wave-c && npm run test:folder-graph && npm run test:fixture-integrity && npm run test:partialize && npm run test:body-archive && npm run test:snippets",
     "test:folder-graph": "node src/lib/vault/__tests__/folder-graph.contract.mjs",
-    "test:body-archive": "node scripts/test-body-archive-lifecycle.mjs"
+    "test:body-archive": "node scripts/test-body-archive-lifecycle.mjs",
+    "test:snippets": "node scripts/test-search-snippets.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.0",
