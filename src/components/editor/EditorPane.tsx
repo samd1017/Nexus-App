@@ -19,6 +19,7 @@ import { VisualEditor } from "./VisualEditor";
 import { SourceEditor } from "./SourceEditor";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import { NoteTitleInput } from "./NoteTitleInput";
+import { EditorSaveChip } from "./EditorSaveChip";
 import { NexusMark, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
@@ -33,7 +34,8 @@ export function EditorPane() {
   const rightOpen = useVaultStore((s) => s.settings.rightOpen);
   const leftOpen = useVaultStore((s) => s.settings.leftOpen);
   const mode = useVaultStore((s) => s.mode);
-  const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
+  const setGraphMode = useVaultStore((s) => s.setGraphMode);
+  const rightTab = useVaultStore((s) => s.rightTab);
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
   const setLeftOpen = useVaultStore((s) => s.setLeftOpen);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
@@ -140,7 +142,11 @@ export function EditorPane() {
             aria-hidden
           />
           <p className="text-[14px] text-[var(--text-secondary)]">
-            Couldn't load this note from disk
+            {mode === "fsa" || mode === "desktop" || (mode as string) === "sandbox"
+              ? "Couldn't load this note from disk"
+              : mode === "demo"
+                ? "Couldn't restore this demo note"
+                : "Couldn't restore this note"}
           </p>
           <p className="mt-1 text-[12px] text-[var(--text-muted)]">{note.path}</p>
           <button
@@ -185,20 +191,22 @@ export function EditorPane() {
     >
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 md:px-4">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
-            {crumbs.map((c, i) => (
-              <span key={i} className="flex items-center gap-1.5">
-                {i > 0 ? <span className="opacity-40">/</span> : null}
-                <span
-                  className={cn(
-                    i === crumbs.length - 1 && "text-[var(--text-secondary)]",
-                  )}
-                >
-                  {c}
+          {/* Parent path only — note title lives in NoteTitleInput (avoids Untitled / Untitled) */}
+          {crumbs.length > 0 ? (
+            <div
+              className="flex items-center gap-1.5 truncate text-[11px] text-[var(--text-muted)]"
+              title={crumbs.join(" / ")}
+            >
+              {crumbs.map((c, i) => (
+                <span key={`${c}-${i}`} className="flex min-w-0 items-center gap-1.5">
+                  {i > 0 ? <span className="shrink-0 opacity-40">/</span> : null}
+                  <span className="truncate">{c}</span>
                 </span>
-              </span>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-[var(--text-muted)]">Vault root</div>
+          )}
           <NoteTitleInput noteId={note.id} />
         </div>
 
@@ -215,7 +223,10 @@ export function EditorPane() {
             </button>
           ) : (
             <>
-              <span className="mr-2 hidden text-[11px] text-[var(--text-muted)] sm:inline">
+              <div className="mr-1.5 hidden sm:block">
+                <EditorSaveChip />
+              </div>
+              <span className="mr-2 hidden text-[11px] text-[var(--text-muted)] lg:inline">
                 {mode === "fsa" || mode === "desktop" || (mode as string) === "sandbox"
                   ? "on disk · "
                   : ""}
@@ -226,6 +237,7 @@ export function EditorPane() {
                 className={cn("chip-btn", editorMode === "visual" && "is-active")}
                 onClick={() => setEditorMode("visual")}
                 title="Visual mode"
+                aria-pressed={editorMode === "visual"}
               >
                 <Eye size={13} />
                 <span className="hidden sm:inline">Visual</span>
@@ -235,15 +247,31 @@ export function EditorPane() {
                 className={cn("chip-btn", editorMode === "source" && "is-active")}
                 onClick={() => setEditorMode("source")}
                 title={`Source mode (${formatShortcut("E")})`}
+                aria-pressed={editorMode === "source"}
               >
                 <Code2 size={13} />
                 <span className="hidden sm:inline">Source</span>
               </button>
               <button
                 type="button"
-                className={cn("chip-btn", graphMode === "fullscreen" && "is-active")}
-                onClick={toggleGraphFullscreen}
-                title={`Graph (${formatShortcut("G")})`}
+                className={cn(
+                  "chip-btn",
+                  (graphMode === "fullscreen" ||
+                    (graphMode === "panel" && rightOpen && rightTab === "graph")) &&
+                    "is-active",
+                )}
+                onClick={() => {
+                  const onPanel =
+                    graphMode === "panel" && rightOpen && rightTab === "graph";
+                  if (graphMode === "fullscreen") setGraphMode("panel");
+                  else if (onPanel) setGraphMode("fullscreen");
+                  else setGraphMode("panel");
+                }}
+                title={`Graph (${formatShortcut("G")}) — again for fullscreen`}
+                aria-pressed={
+                  graphMode === "fullscreen" ||
+                  (graphMode === "panel" && rightOpen && rightTab === "graph")
+                }
               >
                 <Network size={13} />
                 <span className="hidden sm:inline">Graph</span>
@@ -283,7 +311,10 @@ export function EditorPane() {
 
       <ConflictBanner />
 
-      <div key={editorKey} className="flex min-h-0 flex-1 flex-col">
+      <div
+        key={editorKey}
+        className="editor-surface-enter flex min-h-0 flex-1 flex-col"
+      >
         {editorMode === "visual" ? (
           <VisualEditor noteId={note.id} content={body} />
         ) : (

@@ -261,6 +261,10 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     return this.mirror.listNoteMeta();
   }
 
+  getNoteMeta(id: string): DurableNoteMeta | undefined {
+    return this.mirror.getNoteMeta(id);
+  }
+
   searchFts(query: string, limit = 40): SearchHit[] {
     return this.mirror.searchFts(query, limit);
   }

@@ -317,7 +317,7 @@ export function LeftSidebar() {
         {/* 4. Notes/Folders — primary scroll region */}
         <div className="sidebar-section-label mt-2 flex shrink-0 items-center justify-between px-4 pb-1">
           <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
-            Notes/Folders
+            Files
           </span>
           <button
             type="button"

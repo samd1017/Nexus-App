@@ -106,6 +106,7 @@ import {
   archiveBodiesFromNodes,
   clearBodyArchive,
   hasBodyArchive,
+  bodyArchiveSize,
   rekeyBodyArchive,
   rekeyBodyArchivePrefix,
   removeBodyFromArchive,
@@ -239,6 +240,8 @@ let pendingDiskOps = [];
 let diskFlushTimer = null;
 let externalSnapTimer = null;
 let pendingExternal = null;
+/** Demo/in-memory autosave calm timers — keyed by note id */
+const demoSaveTimers = new Map();
 /** path → fingerprint of external body already shelved as .conflict-* */
 let shelvedConflicts = new Map();
 let stageBuf = null;
@@ -689,6 +692,7 @@ export const useVaultStore = create<VaultStore>()(
 	expandedFolders: [],
 	lastExternalSync: null,
 	dirtyNoteIds: [],
+	lastSavedAt: null as number | null,
 	recentVaults: [],
 	commandOpen: false,
 	toast: null,
@@ -880,9 +884,12 @@ export const useVaultStore = create<VaultStore>()(
 			expandedFolders: expanded,
 			...GRAPH_SCOPE_DEFAULTS,
 			dirtyNoteIds: [],
+			lastSavedAt: null,
 			lastExternalSync: null,
 			recentVaults: recents,
 			connecting: false,
+			// Keep rightTab at default (backlinks). Do NOT auto-open Graph —
+			// GraphView must be user-initiated (see RightPanel R1.1).
 			settings: {
 				...get().settings,
 				lastNotePath: welcome?.path ?? null,
@@ -998,11 +1005,19 @@ export const useVaultStore = create<VaultStore>()(
 				toast: `Large Test Vault ready — ${data.noteCount.toLocaleString()} notes`
 			});
 			setOpenProgress({
-				phase: "idle",
-				scanned: 0,
-				totalHint: null,
-				message: ""
+				phase: "ready",
+				scanned: data.noteCount,
+				totalHint: data.noteCount,
+				message: "Ready"
 			});
+			window.setTimeout(() => {
+				setOpenProgress({
+					phase: "idle",
+					scanned: 0,
+					totalHint: null,
+					message: ""
+				});
+			}, 1400);
 		} catch (err) {
 			if (gen !== vaultGen) return;
 			console.error("[vault] openLargeTestVault failed", err);
@@ -1573,7 +1588,16 @@ export const useVaultStore = create<VaultStore>()(
 		if (id === get().activeNoteId) return;
 		const note = id ? get().nodes[id] : null;
 		const pathExpand = expandPathToNote(get().nodes, id);
-		const expanded = new Set([...get().expandedFolders, ...pathExpand]);
+		const curExpanded = get().expandedFolders;
+		// Only rebuild expandedFolders when ancestors aren't already open —
+		// avoids FileTree flatten + virtualizer thrash on every note click @45k.
+		let needsExpand = false;
+		for (const fid of pathExpand) {
+			if (!curExpanded.includes(fid)) {
+				needsExpand = true;
+				break;
+			}
+		}
 		let recentNoteVisits = get().recentNoteVisits;
 		if (typeof id === "string" && note?.kind === "note") {
 			const vaultId = get().vaultId;
@@ -1588,7 +1612,9 @@ export const useVaultStore = create<VaultStore>()(
 		}
 		set({
 			activeNoteId: id,
-			expandedFolders: Array.from(expanded),
+			...(needsExpand
+				? { expandedFolders: Array.from(new Set([...curExpanded, ...pathExpand])) }
+				: {}),
 			recentNoteVisits,
 			settings: {
 				...get().settings,
@@ -1630,10 +1656,15 @@ export const useVaultStore = create<VaultStore>()(
 			editorMode: mode
 		} });
 	},
-	setGraphMode: (mode) => set({ settings: {
-		...get().settings,
-		graphMode: mode
-	} }),
+	setGraphMode: (mode) => set({
+		settings: {
+			...get().settings,
+			graphMode: mode,
+			// Keep graph visible in the right rail when leaving fullscreen
+			...(mode === "panel" ? { rightOpen: true } : {})
+		},
+		...(mode === "panel" ? { rightTab: "graph" as const } : {})
+	}),
 	toggleEditorMode: () => {
 		flushActiveEditors();
 		const cur = get().settings.editorMode;
@@ -1652,11 +1683,15 @@ export const useVaultStore = create<VaultStore>()(
 	} }),
 	toggleGraphFullscreen: () => {
 		const cur = get().settings.graphMode;
-		set({ settings: {
-			...get().settings,
-			graphMode: cur === "fullscreen" ? "panel" : "fullscreen",
-			rightOpen: true
-		} });
+		const next = cur === "fullscreen" ? "panel" : "fullscreen";
+		set({
+			settings: {
+				...get().settings,
+				graphMode: next,
+				rightOpen: true
+			},
+			rightTab: "graph"
+		});
 	},
 	updateNoteContent: (id, content, opts) => {
 		flushStageNow(set);
@@ -1697,7 +1732,40 @@ export const useVaultStore = create<VaultStore>()(
 				const live = useVaultStore.getState().nodes[noteId];
 				if (!live || live.kind !== "note") return;
 				await persistNoteIfFsa(live.path, contentSnap);
+				// Autosave landed on disk — clear dirty for this note so the UI says Saved
+				const st = useVaultStore.getState();
+				const cur = st.nodes[noteId];
+				if (cur?.kind === "note" && cur.content === contentSnap) {
+					useVaultStore.setState({
+						dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
+						lastSavedAt: Date.now(),
+					});
+				}
 			});
+		} else if (!opts?.external && !isDiskVault(get().mode)) {
+			// Demo / in-memory: treat settled edits as saved after a short calm period
+			const noteId = id;
+			const contentSnap = next;
+			const prevTimer = demoSaveTimers.get(noteId);
+			if (prevTimer) clearTimeout(prevTimer);
+			demoSaveTimers.set(
+				noteId,
+				window.setTimeout(() => {
+					demoSaveTimers.delete(noteId);
+					const st = useVaultStore.getState();
+					const cur = st.nodes[noteId];
+					if (
+						cur?.kind === "note" &&
+						cur.content === contentSnap &&
+						st.dirtyNoteIds.includes(noteId)
+					) {
+						useVaultStore.setState({
+							dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
+							lastSavedAt: Date.now(),
+						});
+					}
+				}, 450),
+			);
 		}
 	},
 	renameNode: (id, newName) => {
@@ -1715,12 +1783,13 @@ export const useVaultStore = create<VaultStore>()(
 		const parent = parentPath(node.path);
 		let newPath = parent ? pathJoin(parent, name) : name;
 		if (newPath === node.path && name === node.name) return;
-		if (Object.values(get().nodes).find((n) => n.id !== id && n.path === newPath)) {
+		const idx = ensureVaultIndex(get().nodes);
+		const conflictId = idx.getIdByPath(get().nodes, newPath);
+		if (conflictId && conflictId !== id) {
 			const stem = name.replace(/\.md$/i, "");
 			const ext = node.kind === "note" ? ".md" : "";
 			let i = 1;
-			const paths = new Set(Object.values(get().nodes).map((n) => n.path));
-			while (paths.has(parent ? pathJoin(parent, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
+			while (idx.hasPath(parent ? pathJoin(parent, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
 			name = `${stem} ${i}${ext}`;
 			newPath = parent ? pathJoin(parent, name) : name;
 			get().setToast(`Name in use — saved as ${name.replace(/\.md$/i, "")}`);
@@ -1738,18 +1807,25 @@ export const useVaultStore = create<VaultStore>()(
 			mtime: Date.now(),
 			...node.kind === "note" ? { content } : {}
 		};
+		const dirtyIds = [id];
 		if (node.kind === "folder") {
-			const oldPrefix = node.path + "/";
-			for (const n of Object.values(nodes)) if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
-				...n,
-				path: newPath + n.path.slice(node.path.length),
-				mtime: Date.now()
-			};
+			// O(subtree) via adjacency — not Object.values over 45k
+			idx.forEachDescendantId(id, (cid) => {
+				const n = nodes[cid];
+				if (!n) return;
+				nodes[cid] = {
+					...n,
+					path: newPath + n.path.slice(oldPath.length),
+					mtime: Date.now()
+				};
+				dirtyIds.push(cid);
+			});
 			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
 		} else if (node.kind === "note" && hasBodyArchive()) {
 			rekeyBodyArchive(oldPath, newPath);
 			if (typeof content === "string") setBodyInArchive(newPath, content);
 		}
+		try { ensureVaultIndex(get().nodes).markDirty(dirtyIds); } catch {}
 		set({ nodes });
 		// Keep durable FTS path/title in sync after rename
 		{
@@ -1758,8 +1834,10 @@ export const useVaultStore = create<VaultStore>()(
 				removeDurableNote(id);
 				upsertDurableNoteFromNode(n);
 			} else if (n?.kind === "folder") {
-				for (const child of Object.values(nodes)) {
-					if (child.kind === "note" && (child.path === newPath || child.path.startsWith(newPath + "/"))) {
+				for (const cid of dirtyIds) {
+					if (cid === id) continue;
+					const child = nodes[cid];
+					if (child?.kind === "note") {
 						removeDurableNote(child.id);
 						upsertDurableNoteFromNode(child);
 					}
@@ -1781,6 +1859,11 @@ export const useVaultStore = create<VaultStore>()(
 		}
 	},
 	createNote: (parentId, title = "Untitled", opts) => {
+		// Mid-open mutations race the mount set() and can leave a 1-note shell
+		if (get().connecting) {
+			get().setToast("Vault is still opening…");
+			return null;
+		}
 		const activate = opts?.activate !== false;
 		const stage = beginStage(get);
 		const parent = parentId ? stage.nodes[parentId] : null;
@@ -1853,6 +1936,7 @@ export const useVaultStore = create<VaultStore>()(
 		return id;
 	},
 	createFolder: (parentId, name = "New Folder", opts) => {
+		if (get().connecting) return null;
 		const expand = opts?.expand !== false;
 		const stage = beginStage(get);
 		const parent = parentId ? stage.nodes[parentId] : null;
@@ -2234,18 +2318,25 @@ export const useVaultStore = create<VaultStore>()(
 		if (newParentId && parent?.kind !== "folder") return;
 		let destName = node.name;
 		let newPath = parent ? pathJoin(parent.path, destName) : destName;
-		const occupied = new Set(Object.values(get().nodes).filter((n) => n.id !== id).map((n) => n.path));
-		if (occupied.has(newPath)) {
+		const idx = ensureVaultIndex(get().nodes);
+		const conflictId = idx.getIdByPath(get().nodes, newPath);
+		if (conflictId && conflictId !== id) {
 			const isNote = node.kind === "note";
 			const stem = isNote ? destName.replace(/\.md$/i, "") : destName;
 			const ext = isNote ? ".md" : "";
 			let i = 1;
-			while (occupied.has(parent ? pathJoin(parent.path, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
+			while (idx.hasPath(parent ? pathJoin(parent.path, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
 			destName = `${stem} ${i}${ext}`;
 			newPath = parent ? pathJoin(parent.path, destName) : destName;
 		}
 		const oldPath = node.path;
 		const nodes = { ...get().nodes };
+		const dirtyIds = [id];
+		// Collect subtree ids before reparent (adjacency still valid)
+		const descendantIds: string[] = [];
+		if (node.kind === "folder") {
+			idx.forEachDescendantId(id, (cid) => descendantIds.push(cid));
+		}
 		nodes[id] = {
 			...node,
 			name: destName,
@@ -2254,14 +2345,15 @@ export const useVaultStore = create<VaultStore>()(
 			mtime: Date.now()
 		};
 		if (node.kind === "folder") {
-			const oldPrefix = oldPath + "/";
-			for (const n of Object.values(nodes)) {
-				if (n.id === id) continue;
-				if (n.path.startsWith(oldPrefix)) nodes[n.id] = {
+			for (const cid of descendantIds) {
+				const n = nodes[cid];
+				if (!n) continue;
+				nodes[cid] = {
 					...n,
 					path: newPath + n.path.slice(oldPath.length),
 					mtime: Date.now()
 				};
+				dirtyIds.push(cid);
 			}
 			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
 		} else if (node.kind === "note" && hasBodyArchive()) {
@@ -2275,8 +2367,10 @@ export const useVaultStore = create<VaultStore>()(
 				removeDurableNote(id);
 				upsertDurableNoteFromNode(n);
 			} else if (n?.kind === "folder") {
-				for (const child of Object.values(nodes)) {
-					if (child.kind === "note" && (child.path === newPath || child.path.startsWith(newPath + "/"))) {
+				for (const cid of dirtyIds) {
+					if (cid === id) continue;
+					const child = nodes[cid];
+					if (child?.kind === "note") {
 						removeDurableNote(child.id);
 						upsertDurableNoteFromNode(child);
 					}
@@ -2287,6 +2381,7 @@ export const useVaultStore = create<VaultStore>()(
 		if (newParentId == null) rootIds = [...rootIds, id];
 		const expanded = new Set(get().expandedFolders);
 		if (newParentId) expanded.add(newParentId);
+		try { ensureVaultIndex(get().nodes).markDirty(dirtyIds); } catch {}
 		set({
 			nodes,
 			rootIds,
@@ -2884,7 +2979,7 @@ export const useVaultStore = create<VaultStore>()(
 				const p = get().nodes[id]?.path;
 				if (p) shelvedConflicts.delete(p);
 			}
-			set({ dirtyNoteIds: [] });
+			set({ dirtyNoteIds: [], lastSavedAt: Date.now() });
 			get().setToast(disk ? "Saved to disk" : "Saved");
 			get().trimBodyCache();
 		});
@@ -3257,14 +3352,47 @@ export const useVaultStore = create<VaultStore>()(
 	}
 })
 ) as unknown as import("zustand").UseBoundStore<import("zustand").StoreApi<VaultStore>>;
+
+/** DEV-only probe for Playwright / stress harnesses — not shipped to production. */
+if (import.meta.env.DEV && typeof window !== "undefined") {
+	(window as unknown as { __NEXUS_STRESS__?: () => Record<string, unknown> }).__NEXUS_STRESS__ = () => {
+		const s = useVaultStore.getState();
+		let notes = 0;
+		let folders = 0;
+		let bodiesLoaded = 0;
+		for (const n of Object.values(s.nodes)) {
+			if (n.kind === "note") {
+				notes++;
+				if (n.content !== undefined) bodiesLoaded++;
+			} else if (n.kind === "folder") folders++;
+		}
+		return {
+			vaultId: s.vaultId,
+			vaultName: s.vaultName,
+			mode: s.mode,
+			connecting: s.connecting,
+			notes,
+			folders,
+			bodiesLoaded,
+			dirty: s.dirtyNoteIds.length,
+			activeNoteId: s.activeNoteId,
+			hasBodyArchive: hasBodyArchive(),
+			bodyArchiveSize: bodyArchiveSize(),
+			graphMode: s.settings?.graphMode ?? null,
+			rightTab: s.settings?.rightTab ?? null,
+		};
+	};
+}
+
 export function getNoteDisplayTitle(node: VaultNode | null | undefined) {
 	if (!node) return "";
 	return noteTitle(node);
 }
+/** Parent folder path only — note title is shown separately in the editor chrome. */
 export function getBreadcrumbs(node: VaultNode | null | undefined, nodes: Record<string, VaultNode>) {
 	if (!node) return [];
-	const parts = [];
-	let cur = node;
+	const parts: string[] = [];
+	let cur = node.parentId ? nodes[node.parentId] : undefined;
 	while (cur) {
 		parts.unshift(cur.kind === "note" ? noteTitle(cur) : cur.name);
 		cur = cur.parentId ? nodes[cur.parentId] : undefined;

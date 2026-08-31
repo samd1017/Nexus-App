@@ -1,5 +1,5 @@
 import { useMemo, useRef, useSyncExternalStore } from "react";
-import { Activity, Link2, ListTree, Network, Unlink, Hash, Plus } from "lucide-react";
+import { Activity, Link2, ListTree, Network, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
 import { getBrokenLinksForNote } from "@/lib/vault/broken-links";
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { isContentLoaded } from "@/lib/vault/content";
 import {
   getUnreadPulseCount,
   subscribePulse,
@@ -67,6 +68,7 @@ export function RightPanel() {
   const setTab = (id: RightTab) => setRightTab(id);
 
   const note = activeNoteId ? nodes[activeNoteId] : null;
+  const bodyReady = !note || note.kind !== "note" || isContentLoaded(note);
 
   const backlinks = useMemo(() => {
     if (!note || note.kind !== "note") return [];
@@ -246,7 +248,12 @@ export function RightPanel() {
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          className={cn(
+            "min-h-0 flex-1",
+            tab === "graph" ? "flex flex-col overflow-hidden" : "overflow-y-auto",
+          )}
+        >
           {tab === "backlinks" ? (
             <div className="flex flex-col gap-5 p-3">
               <section>
@@ -361,7 +368,12 @@ export function RightPanel() {
                   <Hash size={11} className="opacity-70" />
                   Tags
                 </div>
-                {tags.length === 0 ? (
+                {!bodyReady ? (
+                  <p className="flex items-center gap-2 px-1 text-[11.5px] text-[var(--text-muted)]">
+                    <Loader2 size={12} className="animate-spin text-[var(--accent)]" />
+                    Loading note…
+                  </p>
+                ) : tags.length === 0 ? (
                   <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
                     No #tags in this note.
                   </p>
@@ -389,7 +401,12 @@ export function RightPanel() {
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Outline
               </div>
-              {outline.length === 0 ? (
+              {!bodyReady ? (
+                <p className="flex items-center gap-2 px-1 text-[11.5px] text-[var(--text-muted)]">
+                  <Loader2 size={12} className="animate-spin text-[var(--accent)]" />
+                  Loading note…
+                </p>
+              ) : outline.length === 0 ? (
                 <EmptyState
                   compact
                   title="No headings"
@@ -416,7 +433,7 @@ export function RightPanel() {
           ) : null}
 
           {tab === "graph" ? (
-            <div className="flex h-[min(420px,50vh)] min-h-[280px] flex-col">
+            <div className="flex min-h-0 flex-1 flex-col">
               <ErrorBoundary
                 variant="panel"
                 label="Graph"

@@ -80,13 +80,13 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 ## Quick path
 
 1. Open [[Local-first Vault]] for how storage works  
-2. Open [[Graph View]] and click a node to jump notes  
+2. Click a [[wikilink]] pill, or press **Ctrl/⌘G** for the graph  
 3. Edit this page, switch to **Source**, then back — content stays in sync  
 4. Press **⌘K** and type \`hermes\`
 
-## See the graph first
+## See the graph
 
-The right panel is already on **Graph** — orbit, zoom, and click a node. Press **⌘G** for fullscreen, or use the download icon to export a PNG.
+Open the right panel → **Graph**, or press **Ctrl/⌘G** for fullscreen. Orbit, zoom, and click a node. Use the download icon to export a PNG.
 
 ## What stays true
 

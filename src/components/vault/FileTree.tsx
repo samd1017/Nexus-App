@@ -23,6 +23,7 @@ import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { useTreeStructureTick } from "@/lib/vault/tree-tick";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 
@@ -50,6 +51,9 @@ type DragSession = {
 };
 
 type FlatRow = { id: string; depth: number; kind: "folder" | "note" };
+
+/** Slightly above accidental jitter so clicks open reliably at 45k. */
+const DRAG_THRESHOLD_PX = 10;
 
 function displayName(node: VaultNode): string {
   return node.kind === "note" ? noteTitle(node) : node.name;
@@ -214,10 +218,11 @@ const TreeRow = memo(function TreeRow({
     setNameDraft(displayName(node));
   };
 
-  const openNote = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (renaming || dragId) return;
+  const openNote = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    if (renaming) return;
+    // Prefer sessionRef over React dragId (state lags a frame)
     if ((window as unknown as { __nexusSuppressTreeClick?: boolean }).__nexusSuppressTreeClick) {
       return;
     }
@@ -246,6 +251,7 @@ const TreeRow = memo(function TreeRow({
       tabIndex={-1}
       data-node-id={node.id}
       data-node-kind={node.kind}
+      data-testid={node.kind === "note" ? "tree-note-row" : "tree-folder-row"}
       onPointerDown={(e) => {
         if (renaming) return;
         if (e.button !== 0) return;
@@ -256,6 +262,8 @@ const TreeRow = memo(function TreeRow({
       }}
       onClick={(e) => {
         onFocusRow?.(node.id);
+        // Primary open path is pointerup (see FileTree endDrag). Click is
+        // fallback for keyboard / synthetic activation when no drag session.
         openNote(e);
       }}
       onDoubleClick={(e) => {
@@ -390,13 +398,8 @@ function MenuBtn({
 export const FileTree = memo(function FileTree() {
   const rootIds = useVaultStore((s) => s.rootIds);
   const expandedFolders = useVaultStore((s) => s.expandedFolders);
-  // Structure generation only — not full nodes map for flatten invalidation
-  const structureGen = useVaultStore((s) => {
-    ensureVaultIndex(s.nodes);
-    return ensureVaultIndex(s.nodes).structureGeneration;
-  });
-  // O(1) after index sync — avoid Object.keys(s.nodes).length on every store tick
-  const nodeCount = useVaultStore((s) => ensureVaultIndex(s.nodes).nodeCount);
+  // Stable tick — never ensureVaultIndex inside a Zustand selector
+  const structureTick = useTreeStructureTick();
   const createNote = useVaultStore((s) => s.createNote);
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createFolder = useVaultStore((s) => s.createFolder);
@@ -424,9 +427,9 @@ export const FileTree = memo(function FileTree() {
   const flatRows = useMemo(() => {
     const nodes = useVaultStore.getState().nodes;
     return flattenVisible(rootIds, nodes, expandedFolders);
-    // structureGen + expanded + rootIds drive rebuild
+    // structureTick encodes structureGen + nodeCount + rootIds
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rootIds, expandedFolders, structureGen, nodeCount]);
+  }, [rootIds, expandedFolders, structureTick]);
 
   // Stabilize callbacks that would otherwise churn when flatRows identity changes
   const flatRowsRef = useRef(flatRows);
@@ -572,7 +575,7 @@ export const FileTree = memo(function FileTree() {
       const dy = e.clientY - s.startY;
       const nodes = useVaultStore.getState().nodes;
       if (!s.active) {
-        if (Math.hypot(dx, dy) < 6) return;
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
         s.active = true;
         setDragId(s.id);
         const n = nodes[s.id];
@@ -649,12 +652,27 @@ export const FileTree = memo(function FileTree() {
       setGhostLabel(null);
       dropTargetRef.current = null;
 
-      if (!wasActive) return;
-
+      // Always suppress the synthetic click that follows pointerup so we
+      // don't double-toggle folders. Open happens here for non-drags.
       (window as unknown as { __nexusSuppressTreeClick?: boolean }).__nexusSuppressTreeClick = true;
       window.setTimeout(() => {
         (window as unknown as { __nexusSuppressTreeClick?: boolean }).__nexusSuppressTreeClick = false;
-      }, 80);
+      }, 100);
+
+      if (!wasActive) {
+        // Click (not drag): open note / toggle folder on pointerup —
+        // more reliable than click under virtualization + micro-jitter.
+        const nodes = useVaultStore.getState().nodes;
+        const node = nodes[s.id];
+        if (!node) return;
+        if (node.kind === "folder") {
+          useVaultStore.getState().toggleFolder(s.id);
+        } else if (node.kind === "note") {
+          useVaultStore.getState().setActiveNote(s.id);
+        }
+        return;
+      }
+
       e.preventDefault();
 
       if (!target) return;

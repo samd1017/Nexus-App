@@ -13,6 +13,7 @@
 import type { SearchHit, VaultNode } from "./types";
 import { noteTitle } from "./types";
 import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
+import { snippetForSearchHit } from "@/lib/search/snippets";
 import {
   DURABLE_INDEX_SCHEMA_VERSION as CONTRACT_SCHEMA_VERSION,
   DURABLE_INDEX_SQL as CONTRACT_SQL,
@@ -60,6 +61,8 @@ export interface DurableIndex {
   upsertNote(meta: DurableNoteMeta): void;
   removeNote(id: string): void;
   listNoteMeta(): DurableNoteMeta[];
+  /** O(1) meta lookup — used for unloaded-body search snippets */
+  getNoteMeta(id: string): DurableNoteMeta | undefined;
   searchFts(query: string, limit?: number): SearchHit[];
   stats(): {
     notes: number;
@@ -242,6 +245,10 @@ class MemoryDurableIndex implements DurableIndex {
     return [...this.notes.values()];
   }
 
+  getNoteMeta(id: string): DurableNoteMeta | undefined {
+    return this.notes.get(id);
+  }
+
   /**
    * Wave B open/watch path: patch index without wipe.
    * Removes notes gone from tree; upserts changed meta; preserves bodies when unloaded.
@@ -303,7 +310,11 @@ class MemoryDurableIndex implements DurableIndex {
           noteId: n.id,
           path: n.path,
           title: n.title ?? n.name.replace(/\.md$/i, ""),
-          snippet: "",
+          snippet: snippetForSearchHit({
+            path: n.path,
+            durableBody: n.bodySnippet,
+            matchType: "title",
+          }),
           score: 1,
           matchType: "title" as const,
         }));
@@ -373,7 +384,12 @@ class MemoryDurableIndex implements DurableIndex {
         noteId: n.id,
         path: n.path,
         title,
-        snippet: matchType === "content" ? body.slice(0, 120) : n.path,
+        snippet: snippetForSearchHit({
+          path: n.path,
+          query: q,
+          matchType,
+          durableBody: body || undefined,
+        }),
         score,
         matchType,
       });

@@ -4,7 +4,7 @@
 
 If you discover a security issue in Nexus, please report it privately.
 
-**Preferred method:** Open a private security advisory on this GitHub repository, or email the maintainer directly if an advisory is not practical.
+**Preferred method:** Open a private security advisory on this GitHub repository.
 
 Please include:
 - A clear description of the issue

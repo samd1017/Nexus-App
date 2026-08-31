@@ -6,16 +6,18 @@ function toastVariant(message: string): "neutral" | "success" | "error" | "warni
   const m = message.toLowerCase();
   if (
     m.includes("could not") ||
+    m.includes("couldn't") ||
     m.includes("failed") ||
     m.includes("error") ||
-    m.includes("conflict")
+    m.includes("conflict") ||
+    m.includes("permission")
   ) {
     return "error";
   }
   if (m.includes("saved") || m.includes("created") || m.includes("restored")) {
     return "success";
   }
-  if (m.includes("updated from disk") || m.includes("external")) {
+  if (m.includes("updated from disk") || m.includes("external") || m.includes("still opening")) {
     return "warning";
   }
   return "neutral";

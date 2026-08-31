@@ -2,7 +2,7 @@
 
 Thank you for considering a contribution.
 
-This project was started by a non-professional developer directing AI tools. The goal is a focused, retrieval-first local knowledge system that other developers can respect and improve. Clear, kind, practical contributions are valued.
+Nexus aims to be a focused, retrieval-first local knowledge system. Clear, practical contributions are valued.
 
 ## License
 
@@ -53,13 +53,14 @@ Visual checks: the preferred path is the web version with Playwright + screensho
 - Keep changes focused and reviewable.
 - Prefer clear, readable code. Run `npm run format` and `npm run lint` before opening a PR.
 - Do not introduce accounts, required cloud services, or proprietary note formats for core functionality.
+- Do not commit secrets, `.env` files, credentials, or personal vault data.
 
 ## Pull requests
 
 1. Fork and create a branch from `main`.
 2. Make focused changes.
 3. Open a PR against `main` with a short description of *why* the change exists.
-4. The maintainer reviews together with Grok. Feedback will be left on the PR.
+4. Maintainers review on the PR.
 
 Large unrelated changes are harder to review and may be asked to be split.
 

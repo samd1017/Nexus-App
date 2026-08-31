@@ -1,10 +1,11 @@
 import Fuse from "fuse.js";
 import type { SearchHit, VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
-import { previewSnippet } from "@/lib/markdown/serialize";
 import { notesForTag } from "@/lib/vault/tags";
 import { getOrphanNotes } from "@/lib/vault/broken-links";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { getDurableIndex } from "@/lib/vault/durable-index";
+import { snippetForSearchHit } from "@/lib/search/snippets";
 
 /** Cap Fuse content docs — full-body Bitap does not scale past ~1–2k notes. */
 const FUSE_CONTENT_CAP = 1200;
@@ -135,6 +136,7 @@ export function searchVault(
   if (!q) {
     // Prefer recent-by-mtime without sorting all notes when N is huge:
     // still O(n log n) but only on metadata; Phase 4 uses a recency heap/index.
+    const durable = getDurableIndex();
     return Object.values(nodes)
       .filter((n) => n.kind === "note")
       .sort((a, b) => b.mtime - a.mtime)
@@ -143,7 +145,15 @@ export function searchVault(
         noteId: n.id,
         path: n.path,
         title: noteTitle(n),
-        snippet: previewSnippet(n.content ?? "", 90),
+        snippet: snippetForSearchHit({
+          path: n.path,
+          content: n.content,
+          durableBody:
+            n.content === undefined
+              ? durable?.getNoteMeta?.(n.id)?.bodySnippet
+              : undefined,
+          matchType: "title",
+        }),
         score: 1,
         matchType: "title" as const,
       }));
@@ -181,18 +191,29 @@ export function searchVault(
   // Exact / prefix title boosts via title index (metadata only)
   const exact: SearchHit[] = [];
   const prefix: SearchHit[] = [];
+  const durable = getDurableIndex();
   const titleHits = idx.suggest(nodes, q, Math.max(limit * 4, 40));
   for (const h of titleHits) {
     if (h.kind !== "note") continue;
     const n = nodes[h.id];
     if (!n || n.kind !== "note") continue;
     const t = h.title.toLowerCase();
+    const snip = snippetForSearchHit({
+      path: n.path,
+      content: n.content,
+      durableBody:
+        n.content === undefined
+          ? durable?.getNoteMeta?.(n.id)?.bodySnippet
+          : undefined,
+      matchType: "title",
+      query: q,
+    });
     if (t === lower) {
       exact.push({
         noteId: n.id,
         path: n.path,
         title: h.title,
-        snippet: previewSnippet(n.content ?? "", 100),
+        snippet: snip,
         score: 100,
         matchType: "title",
       });
@@ -201,7 +222,7 @@ export function searchVault(
         noteId: n.id,
         path: n.path,
         title: h.title,
-        snippet: previewSnippet(n.content ?? "", 100),
+        snippet: snip,
         score: 80 + Math.min(10, n.mtime / 1e13),
         matchType: "title",
       });
@@ -216,18 +237,27 @@ export function searchVault(
     const pathHit = r.item.path.toLowerCase().includes(lower);
     // Recency nudge (max ~0.05)
     const recency = Math.min(0.05, (r.item.mtime / Date.now()) * 0.05);
-    // Prefer full body for snippet if still in store (eager mode)
-    const full = nodes[r.item.id]?.content ?? r.item.content;
-    const snippet = titleHit
-      ? previewSnippet(full, 100)
-      : extractSnippet(full, q);
+    const node = nodes[r.item.id];
+    const loaded = node?.content;
+    const durableBody =
+      loaded === undefined
+        ? durable?.getNoteMeta?.(r.item.id)?.bodySnippet
+        : undefined;
+    const matchType = (titleHit ? "title" : "content") as "title" | "content";
+    const snippet = snippetForSearchHit({
+      path: r.item.path,
+      query: q,
+      matchType,
+      content: loaded ?? (r.item.content || undefined),
+      durableBody,
+    });
     return {
       noteId: r.item.id,
       path: r.item.path,
       title: r.item.title,
       snippet,
       score: score + recency + (titleHit ? 0.15 : 0) + (pathHit ? 0.08 : 0),
-      matchType: (titleHit ? "title" : "content") as "title" | "content",
+      matchType,
     };
   });
 
@@ -240,18 +270,6 @@ export function searchVault(
     if (out.length >= limit) break;
   }
   return out;
-}
-
-function extractSnippet(content: string, query: string, radius = 50): string {
-  const lower = content.toLowerCase();
-  const i = lower.indexOf(query.toLowerCase());
-  if (i < 0) return previewSnippet(content, 100);
-  const from = Math.max(0, i - radius);
-  const to = Math.min(content.length, i + query.length + radius);
-  let s = content.slice(from, to).replace(/\s+/g, " ").trim();
-  if (from > 0) s = "…" + s;
-  if (to < content.length) s = s + "…";
-  return s;
 }
 
 export function invalidateSearchCache(): void {

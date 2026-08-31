@@ -11,6 +11,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
+import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import {
   formatShortcut,
   isAppleModPlatform,
@@ -74,8 +75,10 @@ export function VaultSwitcher() {
       : mode === "fsa"
         ? "Local folder · live watch"
         : mode === "demo" && vaultId
-          ? "Demo vault"
-          : "Plain Markdown folder";
+          ? "Demo · in memory"
+          : isLargeMemoryVault(vaultId)
+            ? "Test vault · in memory"
+            : "Plain Markdown folder";
 
   const canReveal = Boolean(vaultId && mode === "desktop" && vaultPath);
 

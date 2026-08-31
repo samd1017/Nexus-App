@@ -81,6 +81,10 @@ export function KeyboardShortcuts() {
 
       // Escape closes overlays / exits focus
       if (e.key === "Escape") {
+        if (document.documentElement.dataset.nexusShortcuts === "1") {
+          // ShortcutsSheet owns this Esc
+          return;
+        }
         if (prefs.settingsOpen) {
           prefs.setSettingsOpen(false);
           return;
@@ -177,11 +181,22 @@ export function KeyboardShortcuts() {
         return;
       }
 
-      // ⌘G graph
+      // ⌘G graph — open side panel first; second press expands fullscreen
       if (mod && isModLetter(e, "g")) {
         if (overlayOpen || prefs.focusMode) return;
         e.preventDefault();
-        store.toggleGraphFullscreen();
+        const cur = store.settings.graphMode;
+        const onGraphPanel =
+          cur === "panel" &&
+          store.settings.rightOpen &&
+          store.rightTab === "graph";
+        if (cur === "fullscreen") {
+          store.setGraphMode("panel");
+        } else if (onGraphPanel) {
+          store.setGraphMode("fullscreen");
+        } else {
+          store.setGraphMode("panel");
+        }
         return;
       }
 
@@ -239,8 +254,8 @@ export function KeyboardShortcuts() {
       }
     };
 
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, []);
 
   return null;

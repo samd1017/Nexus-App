@@ -121,17 +121,30 @@ export function pruneEmptyFolders(
   candidateFolderPaths: Iterable<string>,
 ): boolean {
   let touched = false;
-  const sorted = [...candidateFolderPaths].sort(
+  const candidates = [...candidateFolderPaths];
+  if (candidates.length === 0) return false;
+
+  // One pass child counts — avoid O(folders × notes) scans at 25k+
+  const childCount = new Map<string, number>();
+  for (const n of Object.values(nodes)) {
+    if (!n.parentId) continue;
+    childCount.set(n.parentId, (childCount.get(n.parentId) ?? 0) + 1);
+  }
+
+  const sorted = candidates.sort(
     (a, b) => b.split("/").length - a.split("/").length,
   );
   for (const folderPath of sorted) {
     if (!folderPath) continue;
     const id = pathToId.get(folderPath);
     if (!id || !nodes[id] || nodes[id].kind !== "folder") continue;
-    const hasChild = Object.values(nodes).some((n) => n.parentId === id);
-    if (hasChild) continue;
+    if ((childCount.get(id) ?? 0) > 0) continue;
+    const parentId = nodes[id].parentId;
     delete nodes[id];
     pathToId.delete(folderPath);
+    if (parentId) {
+      childCount.set(parentId, Math.max(0, (childCount.get(parentId) ?? 1) - 1));
+    }
     touched = true;
   }
   return touched;
@@ -146,9 +159,28 @@ export function applyNoteOpsToScan(
   ops: NotePathOp[],
   idOf: (path: string) => string,
 ): { scan: VaultScanLike; changedPaths: string[] } {
-  const nodes: Record<string, VaultNode> = { ...prev.nodes };
-  const signatures: Record<string, string> = { ...prev.signatures };
-  const pathToId = buildPathToId(nodes);
+  if (ops.length === 0) {
+    return { scan: prev, changedPaths: [] };
+  }
+  // Copy-on-write: only clone maps we mutate (avoids double O(n) when ops are
+  // sparse no-ops that all `continue` early — common on noisy watch batches).
+  let nodes: Record<string, VaultNode> = prev.nodes;
+  let nodesCopied = false;
+  let signatures: Record<string, string> = prev.signatures;
+  let signaturesCopied = false;
+  const touchNodes = () => {
+    if (!nodesCopied) {
+      nodes = { ...prev.nodes };
+      nodesCopied = true;
+    }
+  };
+  const touchSigs = () => {
+    if (!signaturesCopied) {
+      signatures = { ...prev.signatures };
+      signaturesCopied = true;
+    }
+  };
+  const pathToId = buildPathToId(prev.nodes);
   const changedPaths: string[] = [];
   const dirtyParents = new Set<string>();
   let structureTouched = false;
@@ -159,11 +191,13 @@ export function applyNoteOpsToScan(
 
     if (op.op === "delete") {
       if (signatures[path] !== undefined) {
+        touchSigs();
         delete signatures[path];
         changedPaths.push(path);
       }
       const id = pathToId.get(path) ?? idOf(path);
       if (nodes[id]) {
+        touchNodes();
         delete nodes[id];
         pathToId.delete(path);
         structureTouched = true;
@@ -176,28 +210,35 @@ export function applyNoteOpsToScan(
       continue;
     }
 
-    // upsert
+    // upsert — check no-op before mutating maps
+    const id = idOf(path);
+    const prevNode = nodes[id];
     const parentPath = parentOfPath(path);
+
+    // Skip no-op when sig unchanged and node exists (and parent already present)
+    if (
+      prevNode &&
+      signatures[path] === op.sig &&
+      prev.signatures[path] === op.sig &&
+      (!parentPath || pathToId.has(parentPath))
+    ) {
+      continue;
+    }
+
     if (parentPath) {
+      touchNodes();
       if (ensureFolderChain(nodes, pathToId, parentPath, idOf)) {
         structureTouched = true;
       }
     }
 
-    const id = idOf(path);
-    const prevNode = nodes[id];
     const name = path.split("/").pop()!;
-    const parentId = parentPath ? pathToId.get(parentPath) ?? idOf(parentPath) : null;
+    const resolvedParentId = parentPath
+      ? pathToId.get(parentPath) ?? idOf(parentPath)
+      : null;
 
-    // Skip no-op when sig unchanged and node exists
-    if (
-      prevNode &&
-      signatures[path] === op.sig &&
-      prev.signatures[path] === op.sig
-    ) {
-      continue;
-    }
-
+    touchSigs();
+    touchNodes();
     signatures[path] = op.sig;
     changedPaths.push(path);
 
@@ -216,32 +257,40 @@ export function applyNoteOpsToScan(
       path,
       name,
       kind: "note",
-      parentId,
+      parentId: resolvedParentId,
       mtime: op.mtime,
       ...(content !== undefined ? { content } : {}),
     };
     pathToId.set(path, id);
 
-    if (!prevNode || prevNode.parentId !== parentId) {
+    if (!prevNode || prevNode.parentId !== resolvedParentId) {
       structureTouched = true;
     }
   }
 
-  if (pruneEmptyFolders(nodes, pathToId, dirtyParents)) {
-    structureTouched = true;
+  if (dirtyParents.size > 0) {
+    touchNodes();
+    if (pruneEmptyFolders(nodes, pathToId, dirtyParents)) {
+      structureTouched = true;
+    }
+  }
+
+  if (!nodesCopied && !signaturesCopied) {
+    return { scan: prev, changedPaths: [] };
   }
 
   const rootIds = structureTouched
     ? recomputeRootIds(nodes)
     : prev.rootIds.filter((id) => nodes[id]);
 
-  // If filter dropped roots (deleted root notes), recompute
+  // Only recompute when structure changed or filtered roots emptied
   const finalRoots =
-    rootIds.length === 0 && Object.keys(nodes).length > 0
-      ? recomputeRootIds(nodes)
-      : structureTouched
+    structureTouched ||
+    (rootIds.length === 0 && Object.keys(nodes).length > 0)
+      ? structureTouched
         ? rootIds
-        : recomputeRootIds(nodes);
+        : recomputeRootIds(nodes)
+      : rootIds;
 
   return {
     scan: { nodes, rootIds: finalRoots, signatures },

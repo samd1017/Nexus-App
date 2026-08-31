@@ -8,13 +8,27 @@
   <strong>Local-first Markdown knowledge vault built for retrieval.</strong>
 </p>
 
-Nexus is a notes app where the primary experience is finding the right note quickly — even in large vaults — with plain Markdown files as the only source of truth.
+<p align="center">
+  Plain <code>.md</code> files on disk · disposable SQLite FTS index · hybrid ranking as the product north star
+</p>
+
+Nexus is a notes app where the primary experience is finding the right note quickly — even in large vaults — with plain Markdown as the only source of truth.
 
 ```
 Markdown on disk  →  disposable SQLite FTS index  →  hybrid ranking (goal)
 ```
 
-Writing, the 3D graph, and the visual design matter. Ranking quality and grounded retrieval matter more.
+Writing, the 3D graph, and visual design matter. Ranking quality and grounded retrieval matter more.
+
+---
+
+## Why Nexus
+
+- **Local-first by design** — no accounts for core editing; vault contents stay on your device
+- **Retrieval-first** — DurableIndex FTS (memory or SQLite) scaled for large vaults, with lazy bodies
+- **Plain files** — Hermes-compatible Markdown; no proprietary format
+- **Desktop + web** — Tauri 2 (macOS / Windows) and File System Access API in Chromium browsers
+- **Agent-friendly** — live on-disk sync when other tools write into the vault folder
 
 ---
 
@@ -58,6 +72,7 @@ Everything else (editor, graph, command palette) supports that core loop.
 - Tauri 2 desktop shell (macOS + Windows) + web mode via File System Access API
 - Durable SQLite FTS5 index (disposable, lives outside the vault)
 - Command palette, backlinks, large-test-vault stress tooling
+- Lazy body loading + durable FTS snippets for large in-memory / disk vaults
 
 **What is still early**
 - Hybrid ranking (lexical + semantic) is the current north star, not yet production-quality
@@ -65,7 +80,7 @@ Everything else (editor, graph, command palette) supports that core loop.
 - Scale targets of 100k–500k notes are being pursued; real-disk proof at those sizes is still in progress
 - Desktop Alpha builds are unsigned (no Apple notarization / no Windows code signing yet)
 
-This project was created by a non-professional developer directing AI tools (primarily Grok). It is intentionally open so others can inspect, use, and improve it. Contributions and hard feedback are welcome.
+Contributions and hard feedback are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -81,7 +96,8 @@ This project was created by a non-professional developer directing AI tools (pri
 Desktop path uses Tauri `plugin-fs` + native folder watching.  
 Browser path uses the File System Access API.
 
-See `docs/SCALING.md` for the current scaling plan and DurableIndex contract.
+See [`docs/SCALING.md`](docs/SCALING.md) for the scaling plan and DurableIndex contract.  
+See [`docs/PUBLIC-BETA.md`](docs/PUBLIC-BETA.md) for release-readiness notes.
 
 ---
 
@@ -92,13 +108,18 @@ See `docs/SCALING.md` for the current scaling plan and DurableIndex contract.
 - **3D knowledge graph** — Force-directed view of notes, folders, and links.
 - **Native desktop** — Tauri 2 (macOS + Windows).
 - **Web mode** — File System Access API.
-- **Search** — SQLite FTS5 + in-memory graph.
+- **Search** — SQLite FTS5 + in-memory durable index; snippets from FTS when bodies are unloaded.
 - **Command palette** — Fast navigation and actions.
 - **Large test vault** — Included under `public/large-test-vault/` for stress testing.
 
 ---
 
 ## Quick start
+
+### Prerequisites
+
+- Node.js **22+**
+- npm 10+
 
 ### Web (browser)
 
@@ -121,6 +142,24 @@ npm run tauri:dev      # development
 npm run tauri:build    # production build
 ```
 
+### Quality checks
+
+```bash
+npm run typecheck
+npm run qa:gate
+```
+
+---
+
+## Security posture
+
+- Core editing requires **no account** and **no cloud upload** of vault contents
+- The search index is **disposable** and lives outside the vault
+- Desktop shell uses Tauri with a narrowed filesystem scope
+- Report vulnerabilities privately — see [SECURITY.md](SECURITY.md)
+
+Never commit `.env`, tokens, private keys, or vault contents into the repository.
+
 ---
 
 ## Design system
@@ -139,13 +178,7 @@ SpaceX-instrument / metallic steel panels with controlled cyan accent.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-Pull requests are welcome. Keep them focused. All PRs are reviewed by the maintainer together with Grok.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for how to report issues privately and the basic security posture of the project.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests should be focused and reviewable.
 
 ## License
 

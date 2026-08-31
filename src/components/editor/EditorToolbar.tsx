@@ -115,12 +115,17 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         .run();
       // Ensure data-vault-src lands on the DOM node for serialization
       requestAnimationFrame(() => {
-        const imgs = editor.view.dom.querySelectorAll("img");
-        const last = imgs[imgs.length - 1] as HTMLImageElement | undefined;
-        if (last && imported.vaultPath && !imported.vaultPath.startsWith("data:")) {
-          last.setAttribute("data-vault-src", imported.vaultPath);
-          last.setAttribute("src", imported.previewUrl);
-          last.setAttribute("alt", imported.alt);
+        if (editor.isDestroyed) return;
+        try {
+          const imgs = editor.view.dom.querySelectorAll("img");
+          const last = imgs[imgs.length - 1] as HTMLImageElement | undefined;
+          if (last && imported.vaultPath && !imported.vaultPath.startsWith("data:")) {
+            last.setAttribute("data-vault-src", imported.vaultPath);
+            last.setAttribute("src", imported.previewUrl);
+            last.setAttribute("alt", imported.alt);
+          }
+        } catch {
+          /* TipTap view not available */
         }
       });
     } finally {

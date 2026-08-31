@@ -19,6 +19,9 @@ fixtures/
 public/large-test-vault/
 artifacts/
 screenshots/
+.playwright-mcp/
+/*.png
+/*.webp
 
 # Internal / agent
 .grok/

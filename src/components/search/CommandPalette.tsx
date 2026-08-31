@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
+import type { SearchHit } from "@/lib/vault/types";
 import { recentNoteIdsForVault } from "@/lib/vault/visit-history";
 import {
   recentCommandIds,
@@ -48,8 +49,8 @@ import {
   takePendingCommandQuery,
   setPendingCommandQuery,
 } from "@/lib/vault/session-recents";
-import { previewSnippet } from "@/lib/markdown/serialize";
-import type { SearchHit } from "@/lib/vault/types";
+import { getDurableIndex } from "@/lib/vault/durable-index";
+import { snippetForSearchHit } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
 
@@ -141,6 +142,7 @@ function allNotesAsHits(
   nodes: Record<string, import("@/lib/vault/types").VaultNode>,
   limit = 40,
 ): SearchHit[] {
+  const durable = getDurableIndex();
   return Object.values(nodes)
     .filter((n) => n.kind === "note")
     .sort((a, b) => b.mtime - a.mtime)
@@ -149,7 +151,15 @@ function allNotesAsHits(
       noteId: n.id,
       path: n.path,
       title: noteTitle(n),
-      snippet: previewSnippet(n.content ?? "", 90),
+      snippet: snippetForSearchHit({
+        path: n.path,
+        content: n.content,
+        durableBody:
+          n.content === undefined
+            ? durable?.getNoteMeta?.(n.id)?.bodySnippet
+            : undefined,
+        matchType: "title",
+      }),
       score: 1,
       matchType: "title" as const,
     }));
@@ -161,9 +171,20 @@ function topNotesByVisitMtime(
   limit: number,
   vaultId?: string | null,
 ): SearchHit[] {
+  const durable = getDurableIndex();
   const visits = recentNoteIdsForVault(vaultId, nodes, limit);
   const seen = new Set<string>();
   const out: SearchHit[] = [];
+  const snip = (n: import("@/lib/vault/types").VaultNode) =>
+    snippetForSearchHit({
+      path: n.path,
+      content: n.content,
+      durableBody:
+        n.content === undefined
+          ? durable?.getNoteMeta?.(n.id)?.bodySnippet
+          : undefined,
+      matchType: "title",
+    });
   for (const id of visits) {
     const n = nodes[id];
     if (!n || n.kind !== "note") continue;
@@ -172,7 +193,7 @@ function topNotesByVisitMtime(
       noteId: n.id,
       path: n.path,
       title: noteTitle(n),
-      snippet: previewSnippet(n.content ?? "", 90),
+      snippet: snip(n),
       score: 1,
       matchType: "title",
     });
@@ -186,7 +207,7 @@ function topNotesByVisitMtime(
       noteId: n.id,
       path: n.path,
       title: noteTitle(n),
-      snippet: previewSnippet(n.content ?? "", 90),
+      snippet: snip(n),
       score: 1,
       matchType: "title",
     });
@@ -215,7 +236,6 @@ function CommandPaletteOpen() {
   const toggleLeft = useVaultStore((s) => s.toggleLeft);
   const toggleRight = useVaultStore((s) => s.toggleRight);
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
-  const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
@@ -227,6 +247,7 @@ function CommandPaletteOpen() {
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const [query, setQuery] = useState("");
   const [recentTick, setRecentTick] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -236,6 +257,12 @@ function CommandPaletteOpen() {
       } else {
         setQuery("");
       }
+      // Ensure keystrokes land in the palette without an extra click
+      const t = window.setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 0);
+      return () => window.clearTimeout(t);
     } else {
       setQuery("");
     }
@@ -452,12 +479,18 @@ function CommandPaletteOpen() {
         },
         {
           id: "toggle-graph",
-          label: "Toggle graph",
+          label: "Open graph",
           keywords: ["graph", "fullscreen", "network", "orbit"],
           icon: <Network size={15} />,
           shortcut: formatShortcut("G"),
           run: wrapRun("toggle-graph", () => {
-            toggleGraphFullscreen();
+            const st = useVaultStore.getState();
+            const cur = st.settings.graphMode;
+            const onPanel =
+              cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
+            if (cur === "fullscreen") st.setGraphMode("panel");
+            else if (onPanel) st.setGraphMode("fullscreen");
+            else st.setGraphMode("panel");
             setCommandOpen(false);
           }),
         },
@@ -501,9 +534,9 @@ function CommandPaletteOpen() {
           label: "Help & shortcuts",
           keywords: ["help", "shortcuts", "keyboard", "docs", "reference"],
           icon: <CircleHelp size={15} />,
-          shortcut: undefined as string | undefined,
+          shortcut: "?" as string | undefined,
           run: wrapRun("help", () => {
-            usePrefsStore.getState().setSettingsOpen(true);
+            window.dispatchEvent(new Event("nexus:open-shortcuts"));
             setCommandOpen(false);
           }),
         },
@@ -514,7 +547,6 @@ function CommandPaletteOpen() {
       toggleLeft,
       toggleRight,
       toggleEditorMode,
-      toggleGraphFullscreen,
       setCommandOpen,
       setToast,
     ],
@@ -536,13 +568,12 @@ function CommandPaletteOpen() {
         },
         {
           id: "save",
-          label: "Flush / save",
+          label: "Save now",
           keywords: ["save", "flush", "write", "disk"],
           icon: <Save size={15} />,
           shortcut: formatShortcut("S"),
           run: wrapRun("save", () => {
             void flushDirty();
-            setToast("Saved");
             setCommandOpen(false);
           }),
         },
@@ -723,11 +754,17 @@ function CommandPaletteOpen() {
       },
       {
         id: "toggle-graph",
-        label: "Toggle graph",
+        label: "Open graph",
         icon: <Network size={15} />,
         shortcut: formatShortcut("G"),
         run: wrapRun("toggle-graph", () => {
-          toggleGraphFullscreen();
+          const st = useVaultStore.getState();
+          const cur = st.settings.graphMode;
+          const onPanel =
+            cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
+          if (cur === "fullscreen") st.setGraphMode("panel");
+          else if (onPanel) st.setGraphMode("fullscreen");
+          else st.setGraphMode("panel");
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),
@@ -796,7 +833,6 @@ function CommandPaletteOpen() {
     toggleLeft,
     toggleRight,
     toggleEditorMode,
-    toggleGraphFullscreen,
     editorMode,
     flushDirty,
     setToast,
@@ -852,7 +888,9 @@ function CommandPaletteOpen() {
       : q
         ? isTagBrowse
           ? `Tagged #${tagPartial}`
-          : "Notes"
+          : hits.length > 0
+            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""}`
+            : "Notes"
         : "Recent";
 
   return (
@@ -879,9 +917,10 @@ function CommandPaletteOpen() {
         <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]">
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
+            ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="Search notes, path: folder: #tags, is:orphan, or > commands…"
+            placeholder="Search notes…"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
           />
@@ -897,6 +936,14 @@ function CommandPaletteOpen() {
             esc
           </kbd>
         </div>
+        {!query.trim() ? (
+          <div className="border-b border-[var(--border)] px-4 py-1.5 text-[11px] text-[var(--text-muted)]">
+            Tips: <span className="font-mono text-[var(--text-secondary)]">path:</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">is:orphan</span> ·{" "}
+            <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
+          </div>
+        ) : null}
 
         <Command.List className="max-h-[min(480px,50dvh)] overflow-y-auto overscroll-contain p-2 pb-[max(8px,env(safe-area-inset-bottom))] sm:max-h-[min(480px,56vh)]">
           <Command.Empty className="px-3 py-8 text-center">
@@ -1030,8 +1077,14 @@ function CommandPaletteOpen() {
                       {h.snippet ? ` · ${h.snippet}` : ""}
                     </div>
                   </div>
-                  <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                    {h.matchType}
+                  <span className="ml-auto shrink-0 text-[10px] tracking-wide text-[var(--text-muted)]">
+                    {({
+                      title: "Title",
+                      content: "Content",
+                      path: "Path",
+                      tag: "Tag",
+                    } as Record<string, string>)[String(h.matchType)] ??
+                      String(h.matchType)}
                   </span>
                 </Command.Item>
               ))}
