@@ -19,6 +19,13 @@ function now() {
   return performance.now();
 }
 
+async function vaultProbe(page) {
+  return page.evaluate(() => {
+    const fn = window.__NEXUS_STRESS__;
+    return typeof fn === "function" ? fn() : null;
+  });
+}
+
 async function clearVault(page) {
   await page.evaluate(() => {
     try {
@@ -67,10 +74,15 @@ async function runDemoStress(page, errors) {
   await page.reload({ waitUntil: "networkidle", timeout: 60000 });
   await page.waitForTimeout(800);
 
-  const openBtn = page.getByRole("button", { name: /Try the demo vault|Open demo/i }).first();
+  const openBtn = page.getByRole("button", { name: /Explore demo|explore the demo/i }).first();
   const tOpen = now();
-  await openBtn.click({ timeout: 10000 });
-  await page.waitForTimeout(2500);
+  await openBtn.click({ timeout: 15000 });
+  // Wait until welcome CTAs leave / vault chrome appears
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(400);
+    const text = await page.evaluate(() => document.body.innerText || "");
+    if (!/Explore demo/i.test(text) || /Demo|in memory|Saved in session/i.test(text)) break;
+  }
   result.steps.openMs = Math.round(now() - tOpen);
 
   // Click a note in the tree if present
@@ -162,11 +174,13 @@ async function runDemoStress(page, errors) {
 
   await page.screenshot({ path: `${SHOT_DIR}/demo-after-stress.png`, fullPage: false });
   result.runtime = await collectRuntime(page);
+  result.probe = await vaultProbe(page);
   result.totalMs = Math.round(now() - t0);
   result.pageErrors = errors.splice(0);
   if (result.pageErrors.some((e) => /Maximum update depth|is not a function|QuotaExceeded/i.test(e))) {
     result.ok = false;
   }
+  if (result.probe && result.probe.notes < 5) result.ok = false;
   return result;
 }
 
@@ -184,30 +198,66 @@ async function runLargeStress(page, errors) {
   await page.reload({ waitUntil: "networkidle", timeout: 60000 });
   await page.waitForTimeout(800);
 
+  // Prefer Welcome CTA; fall back to command palette (also DEV-gated)
+  let openedVia = "welcome";
   const btn = page.getByRole("button", { name: /Open 45k test vault/i });
   const tOpen = now();
-  await btn.click({ timeout: 10000 });
+  if (await btn.count()) {
+    await btn.click({ timeout: 15000 });
+  } else {
+    openedVia = "palette";
+    const input = await openPalette(page);
+    await input.fill("45k");
+    await page.waitForTimeout(400);
+    const item = page.getByText(/Open 45k test vault/i).first();
+    if (!(await item.count())) {
+      const buttons = await page.evaluate(() =>
+        [...document.querySelectorAll("button")].map((b) =>
+          (b.textContent || "").trim().replace(/\s+/g, " ")
+        )
+      );
+      throw new Error(`45k entry not found. buttons=${JSON.stringify(buttons.slice(0, 20))}`);
+    }
+    await item.click({ timeout: 10000 });
+  }
+  result.steps.openedVia = openedVia;
 
-  // Wait until loading finishes or timeout
+  // Wait until loading finishes with a real 45k mount (not mid-open chrome)
   let ready = false;
-  for (let i = 0; i < 90; i++) {
+  let sawLoading = false;
+  for (let i = 0; i < 120; i++) {
     await page.waitForTimeout(1000);
-    const text = await page.evaluate(() => document.body.innerText || "");
-    if (/Large Test Vault ready|45,?000/i.test(text) && !/Loading 45k|Indexing large|Loading notes/i.test(text)) {
-      // Prefer ready toast / stable UI
-      if (!/Loading 45k|Loading notes…/i.test(text)) {
+    const snap = await page.evaluate(() => {
+      const text = document.body.innerText || "";
+      return {
+        loading: /Loading 45k|Loading notes|Building folder|Building indexes|Indexing large/i.test(text),
+        readyToast: /Large Test Vault ready/i.test(text),
+        has45k: /45,?000/.test(text),
+        failed: /Could not open large test vault/i.test(text),
+      };
+    });
+    if (snap.loading) sawLoading = true;
+    if (snap.failed) {
+      result.steps.openFailed = true;
+      break;
+    }
+    if (snap.has45k || snap.readyToast) {
+      // Confirm store actually mounted ~45k (toast alone is not enough)
+      const probe = await vaultProbe(page);
+      result.steps.openProbe = probe;
+      if (probe && probe.notes >= 40000) {
+        ready = true;
+        break;
+      }
+      if (snap.has45k && probe && probe.notes >= 40000) {
         ready = true;
         break;
       }
     }
-    // Also accept editor/tree appearing with vault name
-    if (/Large Test Vault/i.test(text) && !/Loading 45k|Loading notes…|Building folder/i.test(text)) {
-      ready = true;
-      break;
-    }
   }
   result.steps.openMs = Math.round(now() - tOpen);
   result.steps.openReady = ready;
+  result.steps.sawLoading = sawLoading;
 
   await page.screenshot({ path: `${SHOT_DIR}/large-after-open.png`, fullPage: false });
 
@@ -312,24 +362,38 @@ async function runLargeStress(page, errors) {
   result.steps.switchNotesMs = Math.round(now() - tSwitch);
   result.steps.switchNotesCount = count;
 
+  // Assert vault still reports ~45k after interactions (store probe, not toast text)
+  const postProbe = await vaultProbe(page);
+  result.steps.postProbe = postProbe;
+  result.steps.postHas45k = !!(postProbe && postProbe.notes >= 40000);
   result.runtime = await collectRuntime(page);
   result.totalMs = Math.round(now() - t0);
   result.pageErrors = errors.splice(0);
-  if (!ready) result.ok = false;
+  if (!ready || !result.steps.postHas45k) result.ok = false;
   if (result.pageErrors.some((e) => /Maximum update depth|is not a function|QuotaExceeded|out of memory/i.test(e))) {
     result.ok = false;
   }
   return result;
 }
 
-async function main() {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+async function withFreshPage(browser, fn) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.clearCookies();
+  const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${String(e)}`));
   page.on("console", (msg) => {
     if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
   });
+  try {
+    return await fn(page, errors);
+  } finally {
+    await context.close();
+  }
+}
+
+async function main() {
+  const browser = await chromium.launch({ headless: true });
 
   const report = {
     startedAt: new Date().toISOString(),
@@ -338,10 +402,26 @@ async function main() {
   };
 
   console.log("=== UI stress: demo ===");
-  report.suites.push(await runDemoStress(page, errors));
+  try {
+    report.suites.push(await withFreshPage(browser, runDemoStress));
+  } catch (e) {
+    report.suites.push({
+      size: "demo (~10 notes)",
+      ok: false,
+      fatal: String(e).slice(0, 400),
+    });
+  }
 
   console.log("=== UI stress: 45k ===");
-  report.suites.push(await runLargeStress(page, errors));
+  try {
+    report.suites.push(await withFreshPage(browser, runLargeStress));
+  } catch (e) {
+    report.suites.push({
+      size: "large-test-vault (45k)",
+      ok: false,
+      fatal: String(e).slice(0, 400),
+    });
+  }
 
   report.finishedAt = new Date().toISOString();
   report.pass = report.suites.every((s) => s.ok);

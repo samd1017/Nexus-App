@@ -106,6 +106,7 @@ import {
   archiveBodiesFromNodes,
   clearBodyArchive,
   hasBodyArchive,
+  bodyArchiveSize,
   rekeyBodyArchive,
   rekeyBodyArchivePrefix,
   removeBodyFromArchive,
@@ -1837,6 +1838,8 @@ export const useVaultStore = create<VaultStore>()(
 		}
 	},
 	createNote: (parentId, title = "Untitled", opts) => {
+		// Mid-open mutations race the mount set() and can leave a 1-note shell
+		if (get().connecting) return null;
 		const activate = opts?.activate !== false;
 		const stage = beginStage(get);
 		const parent = parentId ? stage.nodes[parentId] : null;
@@ -1909,6 +1912,7 @@ export const useVaultStore = create<VaultStore>()(
 		return id;
 	},
 	createFolder: (parentId, name = "New Folder", opts) => {
+		if (get().connecting) return null;
 		const expand = opts?.expand !== false;
 		const stage = beginStage(get);
 		const parent = parentId ? stage.nodes[parentId] : null;
@@ -3313,6 +3317,38 @@ export const useVaultStore = create<VaultStore>()(
 	}
 })
 ) as unknown as import("zustand").UseBoundStore<import("zustand").StoreApi<VaultStore>>;
+
+/** DEV-only probe for Playwright / stress harnesses — not shipped to production. */
+if (import.meta.env.DEV && typeof window !== "undefined") {
+	(window as unknown as { __NEXUS_STRESS__?: () => Record<string, unknown> }).__NEXUS_STRESS__ = () => {
+		const s = useVaultStore.getState();
+		let notes = 0;
+		let folders = 0;
+		let bodiesLoaded = 0;
+		for (const n of Object.values(s.nodes)) {
+			if (n.kind === "note") {
+				notes++;
+				if (n.content !== undefined) bodiesLoaded++;
+			} else if (n.kind === "folder") folders++;
+		}
+		return {
+			vaultId: s.vaultId,
+			vaultName: s.vaultName,
+			mode: s.mode,
+			connecting: s.connecting,
+			notes,
+			folders,
+			bodiesLoaded,
+			dirty: s.dirtyNoteIds.length,
+			activeNoteId: s.activeNoteId,
+			hasBodyArchive: hasBodyArchive(),
+			bodyArchiveSize: bodyArchiveSize(),
+			graphMode: s.settings?.graphMode ?? null,
+			rightTab: s.settings?.rightTab ?? null,
+		};
+	};
+}
+
 export function getNoteDisplayTitle(node: VaultNode | null | undefined) {
 	if (!node) return "";
 	return noteTitle(node);
