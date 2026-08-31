@@ -83,17 +83,32 @@ export function shouldUseFolderGraph(noteCount: number): boolean {
   return noteCount >= min;
 }
 
+import { LARGE_TEST_VAULT_ID } from "./large-test-vault";
+
 /**
- * Disk vaults always lazy-load bodies. Demo + local stay eager
- * (in-memory / persist contract — not a size-based mode).
+ * In-browser 45k seed uses mode "local" but must behave like a disk vault:
+ * meta-only store + body archive + durable FTS. Demo/other local stay eager.
  */
-export function shouldLazyBodies(mode: string): boolean {
+export function isLargeMemoryVault(vaultId: string | null | undefined): boolean {
+  return vaultId === LARGE_TEST_VAULT_ID;
+}
+
+/**
+ * Disk vaults always lazy-load bodies. Demo + ordinary local stay eager.
+ * Large-test local (vaultId) is the exception — bodies live in the archive.
+ */
+export function shouldLazyBodies(mode: string, vaultId?: string | null): boolean {
   const f = getScaleFlags();
   if (!f.lazyBodies) return false;
+  if (isLargeMemoryVault(vaultId)) return true;
   return mode === "fsa" || mode === "desktop" || mode === "sandbox";
 }
 
-/** Whether durable index should sync for this vault mode. */
-export function shouldUseDurableIndex(mode: string): boolean {
+/**
+ * Durable FTS for disk modes. Large-test local also opts in so search stays
+ * scale-safe without flipping the whole "local" persist contract.
+ */
+export function shouldUseDurableIndex(mode: string, vaultId?: string | null): boolean {
+  if (isLargeMemoryVault(vaultId)) return true;
   return mode === "fsa" || mode === "desktop" || mode === "sandbox";
 }
