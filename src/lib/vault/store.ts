@@ -1644,10 +1644,15 @@ export const useVaultStore = create<VaultStore>()(
 			editorMode: mode
 		} });
 	},
-	setGraphMode: (mode) => set({ settings: {
-		...get().settings,
-		graphMode: mode
-	} }),
+	setGraphMode: (mode) => set({
+		settings: {
+			...get().settings,
+			graphMode: mode,
+			// Keep graph visible in the right rail when leaving fullscreen
+			...(mode === "panel" ? { rightOpen: true } : {})
+		},
+		...(mode === "panel" ? { rightTab: "graph" as const } : {})
+	}),
 	toggleEditorMode: () => {
 		flushActiveEditors();
 		const cur = get().settings.editorMode;
@@ -1666,11 +1671,15 @@ export const useVaultStore = create<VaultStore>()(
 	} }),
 	toggleGraphFullscreen: () => {
 		const cur = get().settings.graphMode;
-		set({ settings: {
-			...get().settings,
-			graphMode: cur === "fullscreen" ? "panel" : "fullscreen",
-			rightOpen: true
-		} });
+		const next = cur === "fullscreen" ? "panel" : "fullscreen";
+		set({
+			settings: {
+				...get().settings,
+				graphMode: next,
+				rightOpen: true
+			},
+			rightTab: "graph"
+		});
 	},
 	updateNoteContent: (id, content, opts) => {
 		flushStageNow(set);
