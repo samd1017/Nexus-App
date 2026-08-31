@@ -2,11 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, Save } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { formatShortcut } from "@/lib/platform";
-import { cn } from "@/lib/utils";
 
 /**
- * Editor-local save affordance: dirty → click to save, Saving…, Saved flash.
- * Complements the title bar chip with clearer in-context feedback.
+ * Editor-local save affordance: dirty → click to save, Saving…, brief Saved flash.
+ * Idle calm state lives in the title bar only (one chip, no duplicates).
  */
 export function EditorSaveChip() {
   const mode = useVaultStore((s) => s.mode);
@@ -24,7 +23,7 @@ export function EditorSaveChip() {
   useEffect(() => {
     if (prevDirty.current > 0 && dirtyCount === 0) {
       setFlashSaved(true);
-      const t = window.setTimeout(() => setFlashSaved(false), 2200);
+      const t = window.setTimeout(() => setFlashSaved(false), 1800);
       prevDirty.current = dirtyCount;
       return () => window.clearTimeout(t);
     }
@@ -34,11 +33,10 @@ export function EditorSaveChip() {
   useEffect(() => {
     if (!lastSavedAt) return;
     setFlashSaved(true);
-    const t = window.setTimeout(() => setFlashSaved(false), 2200);
+    const t = window.setTimeout(() => setFlashSaved(false), 1800);
     return () => window.clearTimeout(t);
   }, [lastSavedAt]);
 
-  // Reset flash when switching notes
   useEffect(() => {
     setFlashSaved(false);
   }, [activeNoteId]);
@@ -66,12 +64,6 @@ export function EditorSaveChip() {
   }
 
   if (isActiveDirty || dirtyCount > 0) {
-    const label =
-      dirtyCount > 1
-        ? `Unsaved · ${dirtyCount}`
-        : mode === "demo"
-          ? "Unsaved"
-          : "Unsaved";
     return (
       <button
         type="button"
@@ -85,36 +77,26 @@ export function EditorSaveChip() {
         onClick={() => void onSave()}
       >
         <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--warning)]" />
-        {label}
+        {dirtyCount > 1 ? `Unsaved · ${dirtyCount}` : "Unsaved"}
         <Save size={11} className="opacity-80" />
       </button>
     );
   }
 
-  if (flashSaved || mode === "demo" || mode === "fsa" || mode === "desktop" || mode === "local") {
+  // Brief confirmation only — idle "Saved" / "In memory" is title-bar SSOT
+  if (flashSaved) {
     return (
       <span
-        className={cn(
-          "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] transition-opacity",
-          flashSaved
-            ? "border-[rgba(48,209,88,0.35)] bg-[rgba(48,209,88,0.1)] text-[var(--success)]"
-            : "border-transparent text-[var(--text-muted)]",
-        )}
+        className="inline-flex items-center gap-1 rounded-full border border-[rgba(48,209,88,0.35)] bg-[rgba(48,209,88,0.1)] px-2.5 py-0.5 text-[11px] text-[var(--success)]"
         title={
           mode === "demo"
             ? "Demo changes stay in this browser session"
-            : `All changes saved · ${formatShortcut("S")}`
+            : `Saved · ${formatShortcut("S")}`
         }
         role="status"
       >
-        {flashSaved ? <Check size={11} /> : null}
-        {flashSaved
-          ? mode === "demo"
-            ? "Saved in session"
-            : "Saved"
-          : mode === "demo"
-            ? "In memory"
-            : "Saved"}
+        <Check size={11} />
+        {mode === "demo" ? "Saved in session" : "Saved"}
       </span>
     );
   }

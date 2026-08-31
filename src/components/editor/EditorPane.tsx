@@ -34,7 +34,8 @@ export function EditorPane() {
   const rightOpen = useVaultStore((s) => s.settings.rightOpen);
   const leftOpen = useVaultStore((s) => s.settings.leftOpen);
   const mode = useVaultStore((s) => s.mode);
-  const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
+  const setGraphMode = useVaultStore((s) => s.setGraphMode);
+  const rightTab = useVaultStore((s) => s.rightTab);
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
   const setLeftOpen = useVaultStore((s) => s.setLeftOpen);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
@@ -141,7 +142,11 @@ export function EditorPane() {
             aria-hidden
           />
           <p className="text-[14px] text-[var(--text-secondary)]">
-            Couldn't load this note from disk
+            {mode === "fsa" || mode === "desktop" || (mode as string) === "sandbox"
+              ? "Couldn't load this note from disk"
+              : mode === "demo"
+                ? "Couldn't restore this demo note"
+                : "Couldn't restore this note"}
           </p>
           <p className="mt-1 text-[12px] text-[var(--text-muted)]">{note.path}</p>
           <button
@@ -249,10 +254,24 @@ export function EditorPane() {
               </button>
               <button
                 type="button"
-                className={cn("chip-btn", graphMode === "fullscreen" && "is-active")}
-                onClick={toggleGraphFullscreen}
-                title={`Graph (${formatShortcut("G")})`}
-                aria-pressed={graphMode === "fullscreen"}
+                className={cn(
+                  "chip-btn",
+                  (graphMode === "fullscreen" ||
+                    (graphMode === "panel" && rightOpen && rightTab === "graph")) &&
+                    "is-active",
+                )}
+                onClick={() => {
+                  const onPanel =
+                    graphMode === "panel" && rightOpen && rightTab === "graph";
+                  if (graphMode === "fullscreen") setGraphMode("panel");
+                  else if (onPanel) setGraphMode("fullscreen");
+                  else setGraphMode("panel");
+                }}
+                title={`Graph (${formatShortcut("G")}) — again for fullscreen`}
+                aria-pressed={
+                  graphMode === "fullscreen" ||
+                  (graphMode === "panel" && rightOpen && rightTab === "graph")
+                }
               >
                 <Network size={13} />
                 <span className="hidden sm:inline">Graph</span>

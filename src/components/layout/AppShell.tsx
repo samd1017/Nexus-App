@@ -212,7 +212,15 @@ export function AppShell() {
       newNote: () => {
         useVaultStore.getState().createNote(null, "Untitled");
       },
-      toggleGraph: () => useVaultStore.getState().toggleGraphFullscreen(),
+      toggleGraph: () => {
+        const st = useVaultStore.getState();
+        const cur = st.settings.graphMode;
+        const onPanel =
+          cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
+        if (cur === "fullscreen") st.setGraphMode("panel");
+        else if (onPanel) st.setGraphMode("fullscreen");
+        else st.setGraphMode("panel");
+      },
       toggleSource: () => useVaultStore.getState().toggleEditorMode(),
     }).then((fn) => {
       un = fn;
@@ -220,18 +228,21 @@ export function AppShell() {
     return () => un?.();
   }, []);
 
-  // Responsive panels: close overlays on vault open and when shrinking below tablet.
+  // Responsive panels: only auto-close when crossing below tablet width,
+  // not on every vault open (keeps first-run chrome discoverable).
   useEffect(() => {
     if (!vaultId) return;
-    const apply = () => {
-      if (window.innerWidth < 900) {
+    let wasNarrow = window.innerWidth < 900;
+    const onResize = () => {
+      const narrow = window.innerWidth < 900;
+      if (narrow && !wasNarrow) {
         setLeftOpen(false);
         setRightOpen(false);
       }
+      wasNarrow = narrow;
     };
-    apply();
-    window.addEventListener("resize", apply);
-    return () => window.removeEventListener("resize", apply);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vaultId]);
 

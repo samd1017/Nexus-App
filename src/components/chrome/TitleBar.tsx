@@ -1,6 +1,7 @@
 import { Focus, Settings, Save, Keyboard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
+import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import { NexusWordmark } from "@/components/brand/NexusLogo";
 import { usePrefsStore } from "@/lib/prefs/preferences";
@@ -113,7 +114,18 @@ export function TitleBar() {
               : "Watching folder — notes on disk"
           }
         >
-          {flashSaved ? "Saved" : mode === "desktop" ? "On disk" : "On disk"}
+          {flashSaved ? "Saved" : "On disk"}
+        </span>
+      );
+    }
+    // In-browser large test vault — never imply "on disk"
+    if (isLargeMemoryVault(vaultId)) {
+      return (
+        <span
+          className="hidden items-center gap-1 rounded-full border border-[rgba(255,159,10,0.28)] bg-[rgba(255,159,10,0.08)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--warning)] sm:flex"
+          title="Large test vault — in this browser session only (not a disk folder)"
+        >
+          {flashSaved ? "Saved in session" : "Test · in memory"}
         </span>
       );
     }

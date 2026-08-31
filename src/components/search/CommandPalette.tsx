@@ -215,7 +215,6 @@ function CommandPaletteOpen() {
   const toggleLeft = useVaultStore((s) => s.toggleLeft);
   const toggleRight = useVaultStore((s) => s.toggleRight);
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
-  const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
@@ -459,12 +458,18 @@ function CommandPaletteOpen() {
         },
         {
           id: "toggle-graph",
-          label: "Toggle graph",
+          label: "Open graph",
           keywords: ["graph", "fullscreen", "network", "orbit"],
           icon: <Network size={15} />,
           shortcut: formatShortcut("G"),
           run: wrapRun("toggle-graph", () => {
-            toggleGraphFullscreen();
+            const st = useVaultStore.getState();
+            const cur = st.settings.graphMode;
+            const onPanel =
+              cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
+            if (cur === "fullscreen") st.setGraphMode("panel");
+            else if (onPanel) st.setGraphMode("fullscreen");
+            else st.setGraphMode("panel");
             setCommandOpen(false);
           }),
         },
@@ -508,9 +513,9 @@ function CommandPaletteOpen() {
           label: "Help & shortcuts",
           keywords: ["help", "shortcuts", "keyboard", "docs", "reference"],
           icon: <CircleHelp size={15} />,
-          shortcut: undefined as string | undefined,
+          shortcut: "?" as string | undefined,
           run: wrapRun("help", () => {
-            usePrefsStore.getState().setSettingsOpen(true);
+            window.dispatchEvent(new Event("nexus:open-shortcuts"));
             setCommandOpen(false);
           }),
         },
@@ -521,7 +526,6 @@ function CommandPaletteOpen() {
       toggleLeft,
       toggleRight,
       toggleEditorMode,
-      toggleGraphFullscreen,
       setCommandOpen,
       setToast,
     ],
@@ -543,13 +547,12 @@ function CommandPaletteOpen() {
         },
         {
           id: "save",
-          label: "Flush / save",
+          label: "Save now",
           keywords: ["save", "flush", "write", "disk"],
           icon: <Save size={15} />,
           shortcut: formatShortcut("S"),
           run: wrapRun("save", () => {
             void flushDirty();
-            setToast("Saved");
             setCommandOpen(false);
           }),
         },
@@ -730,11 +733,17 @@ function CommandPaletteOpen() {
       },
       {
         id: "toggle-graph",
-        label: "Toggle graph",
+        label: "Open graph",
         icon: <Network size={15} />,
         shortcut: formatShortcut("G"),
         run: wrapRun("toggle-graph", () => {
-          toggleGraphFullscreen();
+          const st = useVaultStore.getState();
+          const cur = st.settings.graphMode;
+          const onPanel =
+            cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
+          if (cur === "fullscreen") st.setGraphMode("panel");
+          else if (onPanel) st.setGraphMode("fullscreen");
+          else st.setGraphMode("panel");
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),
@@ -803,7 +812,6 @@ function CommandPaletteOpen() {
     toggleLeft,
     toggleRight,
     toggleEditorMode,
-    toggleGraphFullscreen,
     editorMode,
     flushDirty,
     setToast,
@@ -891,7 +899,7 @@ function CommandPaletteOpen() {
             ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="Search notes, path: folder: #tags, is:orphan, or > commands…"
+            placeholder="Search notes…"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
           />
@@ -907,6 +915,14 @@ function CommandPaletteOpen() {
             esc
           </kbd>
         </div>
+        {!query.trim() ? (
+          <div className="border-b border-[var(--border)] px-4 py-1.5 text-[11px] text-[var(--text-muted)]">
+            Tips: <span className="font-mono text-[var(--text-secondary)]">path:</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">is:orphan</span> ·{" "}
+            <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
+          </div>
+        ) : null}
 
         <Command.List className="max-h-[min(480px,50dvh)] overflow-y-auto overscroll-contain p-2 pb-[max(8px,env(safe-area-inset-bottom))] sm:max-h-[min(480px,56vh)]">
           <Command.Empty className="px-3 py-8 text-center">
@@ -1040,8 +1056,14 @@ function CommandPaletteOpen() {
                       {h.snippet ? ` · ${h.snippet}` : ""}
                     </div>
                   </div>
-                  <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                    {h.matchType}
+                  <span className="ml-auto shrink-0 text-[10px] tracking-wide text-[var(--text-muted)]">
+                    {({
+                      title: "Title",
+                      content: "Content",
+                      path: "Path",
+                      tag: "Tag",
+                    } as Record<string, string>)[String(h.matchType)] ??
+                      String(h.matchType)}
                   </span>
                 </Command.Item>
               ))}

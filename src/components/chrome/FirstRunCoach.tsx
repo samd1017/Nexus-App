@@ -14,8 +14,11 @@ import { formatShortcut } from "@/lib/platform";
 export function FirstRunCoach() {
   const vaultId = useVaultStore((s) => s.vaultId);
   const mode = useVaultStore((s) => s.mode);
+  const graphMode = useVaultStore((s) => s.settings.graphMode);
+  const commandOpen = useVaultStore((s) => s.commandOpen);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
-  const toggleGraphFullscreen = useVaultStore((s) => s.toggleGraphFullscreen);
+  const setGraphMode = useVaultStore((s) => s.setGraphMode);
+  const setToast = useVaultStore((s) => s.setToast);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -27,12 +30,12 @@ export function FirstRunCoach() {
       setVisible(false);
       return;
     }
-    // Let the vault UI settle, then coach
     const t = window.setTimeout(() => setVisible(true), 700);
     return () => window.clearTimeout(t);
   }, [vaultId]);
 
-  if (!visible || !vaultId) return null;
+  // Don't cover fullscreen graph or the command palette
+  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen) return null;
 
   const dismiss = () => {
     markFirstRunCoachDone();
@@ -50,16 +53,20 @@ export function FirstRunCoach() {
     },
     {
       icon: Link2,
-      label: "Follow a wikilink",
+      label: "Type a wikilink",
       hint: "[[note]]",
-      action: null as (() => void) | null,
+      action: () => {
+        setToast("In the editor, type [[ to link another note");
+        dismiss();
+      },
     },
     {
       icon: Network,
       label: "Open the graph",
       hint: formatShortcut("G"),
       action: () => {
-        toggleGraphFullscreen();
+        setGraphMode("panel");
+        dismiss();
       },
     },
   ];
@@ -70,9 +77,7 @@ export function FirstRunCoach() {
       role="dialog"
       aria-label="Quick tour"
     >
-      <div
-        className="pointer-events-auto first-run-coach glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] border border-[rgba(0,200,255,0.22)] shadow-[0_20px_60px_rgba(0,0,0,0.55),0_0_40px_rgba(0,200,255,0.08)]"
-      >
+      <div className="pointer-events-auto first-run-coach glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] border border-[rgba(0,200,255,0.22)] shadow-[0_20px_60px_rgba(0,0,0,0.55),0_0_40px_rgba(0,200,255,0.08)]">
         <div className="flex items-start gap-3 border-b border-[var(--border)] px-4 py-3">
           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[rgba(0,200,255,0.12)] text-[var(--accent)]">
             <Sparkles size={16} />
@@ -101,10 +106,9 @@ export function FirstRunCoach() {
             <button
               key={label}
               type="button"
-              className="flex items-center gap-2.5 rounded-[12px] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04] disabled:cursor-default"
-              disabled={!action}
+              className="flex items-center gap-2.5 rounded-[12px] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]"
               onClick={() => {
-                action?.();
+                action();
               }}
             >
               <Icon size={15} className="shrink-0 text-[var(--accent)]" />
@@ -121,7 +125,11 @@ export function FirstRunCoach() {
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] px-4 py-2.5">
           <span className="text-[11px] text-[var(--text-muted)]">
-            Press <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1 font-mono text-[10px]">?</kbd> for all shortcuts
+            Press{" "}
+            <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1 font-mono text-[10px]">
+              ?
+            </kbd>{" "}
+            for all shortcuts
           </span>
           <button
             type="button"

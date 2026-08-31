@@ -240,17 +240,21 @@ export function WelcomeScreen() {
                 )}
                 {pending === "recent" && busy
                   ? "Opening…"
-                  : `Open ${topRecent.name}`}
+                  : topRecent.mode === "demo"
+                    ? "Continue demo"
+                    : `Open ${topRecent.name}`}
               </button>
-              <button
-                type="button"
-                className="ghost-btn min-h-11"
-                disabled={busy}
-                onClick={() => run("demo", () => openDemoVault())}
-              >
-                <Sparkles size={16} />
-                Explore demo
-              </button>
+              {topRecent.mode !== "demo" ? (
+                <button
+                  type="button"
+                  className="ghost-btn min-h-11"
+                  disabled={busy}
+                  onClick={() => run("demo", () => openDemoVault())}
+                >
+                  <Sparkles size={16} />
+                  Explore demo
+                </button>
+              ) : null}
             </>
           ) : (
             <button

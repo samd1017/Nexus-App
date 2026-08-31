@@ -1839,7 +1839,10 @@ export const useVaultStore = create<VaultStore>()(
 	},
 	createNote: (parentId, title = "Untitled", opts) => {
 		// Mid-open mutations race the mount set() and can leave a 1-note shell
-		if (get().connecting) return null;
+		if (get().connecting) {
+			get().setToast("Vault is still opening…");
+			return null;
+		}
 		const activate = opts?.activate !== false;
 		const stage = beginStage(get);
 		const parent = parentId ? stage.nodes[parentId] : null;

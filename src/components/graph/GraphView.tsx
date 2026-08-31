@@ -1795,38 +1795,44 @@ export function GraphView({ mode, className }: Props) {
             <span className="truncate text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
               {graphModeResolved === "folder" ? (
                 <>
-                  {badgeFolderCount} folders
+                  <span className="text-[var(--accent)] opacity-90">Folder map</span>
                   <span className="mx-1.5 opacity-50">·</span>
-                  {badgeNoteCount} notes
+                  {badgeFolderCount} folder{badgeFolderCount === 1 ? "" : "s"}
                   <span className="mx-1.5 opacity-50">·</span>
-                  <span className="text-[var(--accent)] opacity-80">
+                  {badgeNoteCount} note{badgeNoteCount === 1 ? "" : "s"}
+                  <span className="mx-1.5 opacity-50">·</span>
+                  <span className="opacity-80">
                     {stats.levelPath
                       ? `in ${stats.levelPath.split("/").pop()}`
-                      : "whole vault"}
+                      : "this level"}
                   </span>
                   {stats.capped ? (
                     <>
                       <span className="mx-1.5 opacity-50">·</span>
-                      <span className="opacity-70">
-                        Showing{" "}
-                        {stats.shownNoteCount + stats.shownFolderCount} of{" "}
-                        {stats.childFolderCount + stats.childNoteCount}
+                      <span className="opacity-70" title="Large levels are capped for performance">
+                        capped view
                       </span>
                     </>
                   ) : null}
                 </>
               ) : graphModeResolved === "ego" || isPartialVaultGraph ? (
                 <>
-                  {realNoteCount} of {vaultNoteCount} notes
+                  <span className="text-[var(--accent)] opacity-90">Near active</span>
                   <span className="mx-1.5 opacity-50">·</span>
-                  {realLinkCount} links
+                  {realNoteCount} note{realNoteCount === 1 ? "" : "s"}
                   <span className="mx-1.5 opacity-50">·</span>
-                  <span
-                    className="text-[var(--accent)] opacity-80"
-                    title="Showing links near the active note (large vault)"
-                  >
-                    near active
-                  </span>
+                  {realLinkCount} link{realLinkCount === 1 ? "" : "s"}
+                  {vaultNoteCount > realNoteCount ? (
+                    <>
+                      <span className="mx-1.5 opacity-50">·</span>
+                      <span
+                        className="opacity-70"
+                        title={`${vaultNoteCount.toLocaleString()} notes in vault — showing links near the active note`}
+                      >
+                        of {vaultNoteCount.toLocaleString()} in vault
+                      </span>
+                    </>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -1900,16 +1906,16 @@ export function GraphView({ mode, className }: Props) {
                   <button
                     type="button"
                     className={cn(
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide",
+                      "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium tracking-wide",
                       activeNoteMissingFromFolderMap
-                        ? "border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20"
-                        : "border-[var(--border)] bg-white/[0.03] text-[var(--text-secondary)] hover:bg-white/[0.06] hover:text-[var(--text-primary)]",
+                        ? "border-[var(--accent)]/40 bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25"
+                        : "border-[rgba(0,200,255,0.35)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)] hover:bg-[rgba(0,200,255,0.2)]",
                     )}
                     title="Show wikilink neighborhood for the active note"
                     aria-label="Show links near active note"
                     onClick={handleShowLinks}
                   >
-                    <Link2 size={10} className="shrink-0 opacity-80" />
+                    <Link2 size={11} className="shrink-0 opacity-90" />
                     Show links
                   </button>
                 </>
@@ -1918,7 +1924,8 @@ export function GraphView({ mode, className }: Props) {
           ) : null}
           {realNoteCount > LOD_CAP && graphModeResolved !== "folder" ? (
             <div className="pointer-events-none px-1 text-[10px] tracking-wide text-[var(--text-muted)] opacity-70">
-              Showing {shownNoteCount} of {realNoteCount} notes
+              Drawing {shownNoteCount.toLocaleString()} of{" "}
+              {realNoteCount.toLocaleString()} linked notes
             </div>
           ) : null}
         </div>
@@ -2108,7 +2115,9 @@ export function GraphView({ mode, className }: Props) {
             title={
               graphModeResolved === "folder"
                 ? !(stats.levelPath || graphBrowsePath)
-                  ? "Empty vault"
+                  ? vaultNoteCount > 0
+                    ? "Folder map ready"
+                    : "Empty vault"
                   : "Empty folder"
                 : graphModeResolved === "ego"
                   ? "No neighborhood"
@@ -2119,7 +2128,9 @@ export function GraphView({ mode, className }: Props) {
             description={
               graphModeResolved === "folder"
                 ? !(stats.levelPath || graphBrowsePath)
-                  ? "Add folders or notes to map structure."
+                  ? vaultNoteCount > 0
+                    ? "Open a folder orb to drill in, or show links near your active note."
+                    : "Add folders or notes to map structure."
                   : "This level has no notes or subfolders yet."
                 : graphModeResolved === "ego"
                   ? activeNoteId
@@ -2134,7 +2145,8 @@ export function GraphView({ mode, className }: Props) {
             <div className="flex flex-wrap items-center justify-center gap-2">
               {vaultNoteCount === 0 ||
               (graphModeResolved === "folder" &&
-                !(stats.levelPath || graphBrowsePath)) ? (
+                !(stats.levelPath || graphBrowsePath) &&
+                vaultNoteCount === 0) ? (
                 <button
                   type="button"
                   className="primary-btn min-h-8 px-3 text-[12px]"
@@ -2142,6 +2154,18 @@ export function GraphView({ mode, className }: Props) {
                 >
                   <FilePlus2 size={13} />
                   New note
+                </button>
+              ) : null}
+              {graphModeResolved === "folder" &&
+              activeNoteId &&
+              vaultNoteCount > 0 ? (
+                <button
+                  type="button"
+                  className="primary-btn min-h-8 px-3 text-[12px]"
+                  onClick={handleShowLinks}
+                >
+                  <Link2 size={13} />
+                  Show links
                 </button>
               ) : null}
               {graphModeResolved === "ego" && activeNoteId ? (

@@ -18,7 +18,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
     title: "Navigate",
     rows: [
       { keys: formatShortcut("K"), action: "Search / command palette" },
-      { keys: formatShortcut("G"), action: "Toggle graph fullscreen" },
+      { keys: formatShortcut("G"), action: "Open graph (again for fullscreen)" },
       { keys: formatShortcut("E"), action: "Toggle Visual ↔ Source" },
       { keys: historyChord(), action: "Back / forward in note history" },
     ],
@@ -56,6 +56,13 @@ function isTypingTarget(el: EventTarget | null): boolean {
 /** Global shortcuts cheat sheet. Toggle with `?` when not typing in an editor. */
 export function ShortcutsSheet() {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.dataset.nexusShortcuts = open ? "1" : "0";
+    return () => {
+      document.documentElement.dataset.nexusShortcuts = "0";
+    };
+  }, [open]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
