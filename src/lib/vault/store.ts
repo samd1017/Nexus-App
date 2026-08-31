@@ -239,6 +239,8 @@ let pendingDiskOps = [];
 let diskFlushTimer = null;
 let externalSnapTimer = null;
 let pendingExternal = null;
+/** Demo/in-memory autosave calm timers — keyed by note id */
+const demoSaveTimers = new Map();
 /** path → fingerprint of external body already shelved as .conflict-* */
 let shelvedConflicts = new Map();
 let stageBuf = null;
@@ -885,8 +887,8 @@ export const useVaultStore = create<VaultStore>()(
 			lastExternalSync: null,
 			recentVaults: recents,
 			connecting: false,
-			// Demo promises graph in the right rail on first open
-			rightTab: "graph",
+			// Keep rightTab at default (backlinks). Do NOT auto-open Graph —
+			// GraphView must be user-initiated (see RightPanel R1.1).
 			settings: {
 				...get().settings,
 				lastNotePath: welcome?.path ?? null,
@@ -1723,16 +1725,26 @@ export const useVaultStore = create<VaultStore>()(
 			// Demo / in-memory: treat settled edits as saved after a short calm period
 			const noteId = id;
 			const contentSnap = next;
-			window.setTimeout(() => {
-				const st = useVaultStore.getState();
-				const cur = st.nodes[noteId];
-				if (cur?.kind === "note" && cur.content === contentSnap && st.dirtyNoteIds.includes(noteId)) {
-					useVaultStore.setState({
-						dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
-						lastSavedAt: Date.now(),
-					});
-				}
-			}, 450);
+			const prevTimer = demoSaveTimers.get(noteId);
+			if (prevTimer) clearTimeout(prevTimer);
+			demoSaveTimers.set(
+				noteId,
+				window.setTimeout(() => {
+					demoSaveTimers.delete(noteId);
+					const st = useVaultStore.getState();
+					const cur = st.nodes[noteId];
+					if (
+						cur?.kind === "note" &&
+						cur.content === contentSnap &&
+						st.dirtyNoteIds.includes(noteId)
+					) {
+						useVaultStore.setState({
+							dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
+							lastSavedAt: Date.now(),
+						});
+					}
+				}, 450),
+			);
 		}
 	},
 	renameNode: (id, newName) => {
