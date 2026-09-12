@@ -34,6 +34,7 @@ export function VaultSwitcher() {
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
+  const createMemoryVault = useVaultStore((s) => s.createMemoryVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const closeVault = useVaultStore((s) => s.closeVault);
@@ -97,12 +98,13 @@ export function VaultSwitcher() {
     setOpen(false);
   };
 
-  const submitCreate = () => {
+  const submitCreate = (onDisk = false) => {
     if (connecting) return;
     const name = createName.trim() || "Nexus Vault";
     setCreateOpen(false);
     setOpen(false);
-    void createNewVault(name);
+    if (onDisk) void createNewVault(name);
+    else createMemoryVault(name);
   };
 
   return (
@@ -312,9 +314,8 @@ export function VaultSwitcher() {
               New Vault
             </h3>
             <p className="mt-1 text-[12.5px] text-[var(--text-muted)]">
-              Creates a folder of plain Markdown files
-              {desktop ? ", then opens it" : " inside a parent folder you pick"}
-              .
+              Opens immediately in this browser. Use On disk to create a
+              folder of plain Markdown you can share with agents.
             </p>
             <label className="mt-4 block text-[12px] font-medium text-[var(--text-secondary)]">
               Name
@@ -325,7 +326,7 @@ export function VaultSwitcher() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    submitCreate();
+                    submitCreate(false);
                   }
                   if (e.key === "Escape") setCreateOpen(false);
                 }}
@@ -343,11 +344,19 @@ export function VaultSwitcher() {
               </button>
               <button
                 type="button"
+                className="ghost-btn"
+                disabled={connecting}
+                onClick={() => submitCreate(true)}
+              >
+                On disk…
+              </button>
+              <button
+                type="button"
                 className="primary-btn"
                 disabled={connecting}
-                onClick={submitCreate}
+                onClick={() => submitCreate(false)}
               >
-                Create…
+                Create
               </button>
             </div>
           </div>

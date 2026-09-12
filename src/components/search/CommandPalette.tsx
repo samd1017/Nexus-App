@@ -209,7 +209,7 @@ function CommandPaletteOpen() {
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
-  const createNewVault = useVaultStore((s) => s.createNewVault);
+  const createMemoryVault = useVaultStore((s) => s.createMemoryVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
   const flushDirty = useVaultStore((s) => s.flushDirty);
   const setToast = useVaultStore((s) => s.setToast);
@@ -598,7 +598,7 @@ function CommandPaletteOpen() {
           icon: <FolderPlus size={15} />,
           shortcut: undefined as string | undefined,
           run: wrapRun("new-vault", () => {
-            void createNewVault("Nexus Vault");
+            createMemoryVault("Nexus Vault");
             setCommandOpen(false);
           }),
         },
@@ -663,7 +663,7 @@ function CommandPaletteOpen() {
     [
       actionQuery,
       openFolderAsVault,
-      createNewVault,
+      createMemoryVault,
       revealVaultInFinder,
       openDemoVault,
       openLargeTestVault,

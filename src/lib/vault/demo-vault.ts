@@ -611,6 +611,35 @@ Felt immediate. Calm center, powerful edges. Settings accents made it mine in on
   };
 }
 
+/** Empty first-hour vault — Welcome note only, no demo tour. */
+export function buildBlankVault(vaultName = "Nexus Vault"): {
+  nodes: Record<string, VaultNode>;
+  rootIds: string[];
+  vaultName: string;
+} {
+  const nodes: Record<string, VaultNode> = {};
+  const welcome = note(
+    "Welcome.md",
+    "Welcome.md",
+    null,
+    `# Welcome
+
+This is your vault. Notes are ordinary Markdown in a folder — you, git, and agents share the same files.
+
+## First moves
+
+- Type \`[[\` to link a note
+- **⌘K** to search or \`ask:\` a question
+- **⌘2** to open a second note beside this one
+- Vault menu → **Simulate agent write** to see Pulse
+
+— Nexus · Notes for Humans and Agents
+`,
+  );
+  nodes[welcome.id] = welcome;
+  return { nodes, rootIds: [welcome.id], vaultName };
+}
+
 export const HERMES_SAMPLE_NOTE = {
   path: pathJoin("Systems", "Hermes Pulse.md"),
   name: "Hermes Pulse.md",

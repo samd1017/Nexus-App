@@ -14,7 +14,7 @@ import type {
   VaultSettings,
 } from "./types";
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
-import { buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
+import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import { preferCleanWrite } from "@/lib/markdown/serialize";
 import { flushActiveEditors } from "@/lib/editor/flush";
@@ -234,6 +234,7 @@ export type VaultStore = {
   openLargeTestVault: () => Promise<void>;
   openLocalVault: (name: string, seed?: LocalVaultSeed) => void;
   openFolderAsVault: () => Promise<void>;
+  createMemoryVault: (name?: string) => void;
   createNewVault: (name?: string) => Promise<void>;
   revealVaultInFinder: () => Promise<void>;
   reopenRecentVault: (id: string) => Promise<void>;
@@ -1406,6 +1407,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				toast: e instanceof Error ? e.message : "Failed to open folder"
 			});
 		}
+	},
+	createMemoryVault: (name) => {
+		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
+		get().openLocalVault(vaultName, buildBlankVault(vaultName));
+		get().setToast(
+			`${vaultName} is open in this browser. Open a folder anytime to put it on disk.`,
+		);
 	},
 	createNewVault: async (name) => {
 		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";

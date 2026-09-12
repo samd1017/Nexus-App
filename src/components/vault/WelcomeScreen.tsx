@@ -46,6 +46,7 @@ const PENDING_LABEL: Record<Exclude<PendingAction, null>, string> = {
 export function WelcomeScreen() {
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
+  const createMemoryVault = useVaultStore((s) => s.createMemoryVault);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
@@ -107,18 +108,22 @@ export function WelcomeScreen() {
     });
   };
 
-  const onCreateVault = () => {
+  const onCreateVault = (onDisk: boolean) => {
     if (connecting) return;
-    if (!fsaOk) {
+    const name = createName.trim() || "Nexus Vault";
+    if (onDisk && !fsaOk && !desktop) {
       setToast(
-        desktop
-          ? "Could not create vault"
-          : "Creating a vault needs Chrome or Edge — or the desktop app. Try Explore demo first.",
+        "Folder create needs Chrome or Edge — created in this browser instead.",
       );
+      run("create", () => {
+        createMemoryVault(name);
+        setShowCreate(false);
+      });
       return;
     }
     run("create", () => {
-      void createNewVault(createName.trim() || "Nexus Vault");
+      if (onDisk) void createNewVault(name);
+      else createMemoryVault(name);
       setShowCreate(false);
     });
   };
@@ -327,19 +332,18 @@ export function WelcomeScreen() {
             <button
               type="button"
               className="ghost-btn min-h-11 w-full justify-center sm:w-auto"
-              disabled={busy || !fsaOk}
+              disabled={busy}
               onClick={() => {
-                if (!fsaOk || busy) return;
+                if (busy) return;
                 setShowCreate((v) => !v);
               }}
-              title={!fsaOk ? "Not available in this browser" : undefined}
             >
               <FolderPlus size={16} />
               New vault
             </button>
           </div>
 
-          {showCreate && fsaOk ? (
+          {showCreate ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
               <input
                 className="min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
@@ -352,14 +356,24 @@ export function WelcomeScreen() {
               <button
                 type="button"
                 className="primary-btn min-h-9"
-                disabled={busy || !fsaOk}
-                onClick={onCreateVault}
+                disabled={busy}
+                onClick={() => onCreateVault(false)}
               >
                 {pending === "create" && busy ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : null}
                 Create
               </button>
+              {fsaOk || desktop ? (
+                <button
+                  type="button"
+                  className="ghost-btn min-h-9"
+                  disabled={busy}
+                  onClick={() => onCreateVault(true)}
+                >
+                  On disk…
+                </button>
+              ) : null}
             </div>
           ) : null}
         </section>
