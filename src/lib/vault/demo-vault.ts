@@ -293,7 +293,7 @@ See also [[Visual & Source]] and [[Welcome]].
 
 #writing #mermaid #math
 
-**Mermaid** turns a fenced code block into a diagram. **Math** is LaTeX between \`$\u2026$\` (inline) or \`$$\u2026$$\` (block). Both stay plain Markdown on disk — edit in Visual (double-click) or Source.
+**Mermaid** turns a fenced code block into a diagram. **Math** is LaTeX between \`$…$\` (inline) or \`$$…$$\` (block). Both stay plain Markdown on disk — edit in Visual (double-click) or Source.
 
 ## Flow
 
