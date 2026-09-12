@@ -81,14 +81,14 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Diagrams | Open [[Diagrams & Math]] — mermaid charts and $math$ |
 | Canvas | Open [[Welcome board]] — cards on a spatial board |
 | Theme | Sun/moon in the title bar — Dark, Light, or System |
-| Settings | Gear or **Ctrl/⌘,** — theme, sync, remappable hotkeys |
+| Settings | Gear or **Ctrl/⌘,** — theme and remappable hotkeys |
 | Hermes | Vault menu → **Simulate Hermes write** |
 
 ## Quick path
 
 1. Open [[Callouts]] to see note / tip / warning / danger blocks  
 2. Open [[Diagrams & Math]] for mermaid + formulas, or [[Welcome board]] for a canvas  
-3. Open [[Local-first Vault]] for how storage and folder sync work  
+3. Open [[Local-first Vault]] for how storage works  
 4. Edit this page, switch to **Source**, then back — content stays in sync  
 5. Press **⌘K** and type \`hermes\`
 
@@ -262,7 +262,7 @@ Open **Settings (⌘,)** and switch Cyan → Violet → Emerald. The whole UI up
 
 #writing #callouts
 
-Obsidian-style callouts are ordinary Markdown. They look rich in Visual and stay portable in Source.
+Callouts are ordinary Markdown. They look rich in Visual and stay portable in Source.
 
 > [!NOTE]
 > Local-first notes. Same files on disk for you, git, and agents.
