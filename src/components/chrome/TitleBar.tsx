@@ -1,5 +1,6 @@
-import { Focus, Settings, Save, Keyboard } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Focus, Settings, Save, Keyboard } from "lucide-react";
+import { ThemeToggle } from "@/components/chrome/ThemeToggle";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import { formatRelativeTime, cn } from "@/lib/utils";
@@ -7,6 +8,13 @@ import { NexusWordmark } from "@/components/brand/NexusLogo";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isDesktopShell, isMacOS } from "@/lib/platform";
+import {
+  getNavHistorySnapshot,
+  goBackLive,
+  goForwardLive,
+  subscribeNavHistory,
+  withHistoryNav,
+} from "@/lib/vault/nav-history";
 
 /** Window chrome: branding + one clear status chip. Native traffic lights live in the OS bar. */
 export function TitleBar() {
@@ -23,6 +31,19 @@ export function TitleBar() {
   const [flashSaved, setFlashSaved] = useState(false);
   const prevDirty = useRef(dirtyCount);
   const macOverlay = isDesktopShell() && isMacOS();
+  const nav = useSyncExternalStore(
+    subscribeNavHistory,
+    getNavHistorySnapshot,
+    getNavHistorySnapshot,
+  );
+
+  const jumpHistory = (dir: "back" | "forward") => {
+    const nodes = useVaultStore.getState().nodes;
+    const isLive = (id: string) => nodes[id]?.kind === "note";
+    const id =
+      dir === "back" ? goBackLive(isLive) : goForwardLive(isLive);
+    if (id) withHistoryNav(() => useVaultStore.getState().setActiveNote(id));
+  };
 
   useEffect(() => {
     if (prevDirty.current > 0 && dirtyCount === 0) {
@@ -83,14 +104,14 @@ export function TitleBar() {
       return (
         <span
           className={cn(
-            "hidden items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium sm:flex",
+            "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium sm:px-2.5 sm:text-[11px]",
             flashSaved
               ? "border-[rgba(48,209,88,0.3)] bg-[rgba(48,209,88,0.1)] text-[var(--success)]"
               : "border-[rgba(255,159,10,0.28)] bg-[rgba(255,159,10,0.08)] text-[var(--warning)]",
           )}
           title="Demo vault — changes stay in this browser session only"
         >
-          {flashSaved ? "Saved in session" : "Demo · in memory"}
+          {flashSaved ? "Saved" : "Demo"}
         </span>
       );
     }
@@ -138,7 +159,7 @@ export function TitleBar() {
 
   return (
     <header
-      className="titlebar-drag relative z-40 flex h-11 shrink-0 select-none items-center border-b border-[var(--border)] bg-[rgba(8,8,10,0.94)] px-3 backdrop-blur-xl"
+      className="titlebar-drag relative z-40 flex h-11 shrink-0 select-none items-center border-b border-[var(--border)] bg-[var(--titlebar-bg)] px-3 backdrop-blur-xl"
       data-tauri-drag-region
     >
       <div
@@ -147,13 +168,19 @@ export function TitleBar() {
         data-tauri-drag-region
       />
 
-      <div className="pointer-events-none absolute inset-0 hidden items-center justify-center sm:flex">
-        <div className="flex items-center gap-2">
-          <NexusWordmark size="sm" className="text-[var(--text-primary)]" />
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="flex max-w-[48%] items-center gap-2 truncate px-1 sm:max-w-none">
+          <NexusWordmark
+            size="sm"
+            className="text-[var(--text-primary)] max-[420px]:hidden"
+          />
+          <span className="text-[13px] font-medium tracking-tight text-[var(--text-primary)] min-[421px]:hidden">
+            Nexus
+          </span>
           {vaultName && !focusMode ? (
             <>
-              <span className="text-[var(--text-muted)]">·</span>
-              <span className="text-[12.5px] text-[var(--text-secondary)]">
+              <span className="hidden text-[var(--text-muted)] sm:inline">·</span>
+              <span className="hidden truncate text-[12.5px] text-[var(--text-secondary)] sm:inline">
                 {vaultName}
               </span>
             </>
@@ -162,6 +189,30 @@ export function TitleBar() {
       </div>
 
       <div className="titlebar-no-drag ml-auto flex items-center gap-2">
+        {vaultId && !focusMode ? (
+          <div className="mr-0.5 hidden items-center sm:flex">
+            <button
+              type="button"
+              className="icon-btn h-8 w-8"
+              title={`Back (${formatShortcut("[")})`}
+              aria-label="Back in note history"
+              disabled={!nav.canBack}
+              onClick={() => jumpHistory("back")}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn h-8 w-8"
+              title={`Forward (${formatShortcut("]")})`}
+              aria-label="Forward in note history"
+              disabled={!nav.canForward}
+              onClick={() => jumpHistory("forward")}
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        ) : null}
         {statusChip}
         {vaultId ? (
           <button
@@ -192,6 +243,7 @@ export function TitleBar() {
             <Keyboard size={15} />
           </button>
         ) : null}
+        {!focusMode ? <ThemeToggle /> : null}
         {!focusMode ? (
           <button
             type="button"

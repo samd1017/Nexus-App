@@ -1,24 +1,42 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { Settings, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Settings, X, Cloud } from "lucide-react";
+import { cn, formatRelativeTime } from "@/lib/utils";
 import {
   ACCENT_PRESETS,
   NEXUS_VERSION,
-  getShortcuts,
   isValidHex,
   resolveAccentHex,
   usePrefsStore,
   type AccentPreset,
   type Density,
   type PhysicsIntensity,
+  type ThemeMode,
 } from "@/lib/prefs/preferences";
+import {
+  HOTKEY_LABELS,
+  conflictingHotkeyId,
+  eventToChord,
+  listShortcutRows,
+  type HotkeyId,
+} from "@/lib/prefs/hotkeys";
+import {
+  CLOUD_SYNC_HINT,
+  providerLabel,
+  providerSyncHint,
+  type CloudProvider,
+} from "@/lib/cloud/oauth";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { useVaultStore } from "@/lib/vault/store";
+import { rebuildDurableIndexFromNodes } from "@/lib/vault/durable-index";
+import {
+  invalidateIndexedSearch,
+  rebuildIndexedSearch,
+} from "@/lib/search/indexed-search";
 import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
 import type { BodyCacheStats } from "@/lib/vault/body-cache";
 import type { VaultMode } from "@/lib/vault/types";
-import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
+import { formatShortcut, isAppleModPlatform, canOpenLocalVaultFolder } from "@/lib/platform";
 
 function MemoryBudgetStatus({
   open,
@@ -70,6 +88,18 @@ export function SettingsPanel() {
   const vaultPath = useVaultStore((s) => s.vaultPath);
   const mode = useVaultStore((s) => s.mode);
   const vaultId = useVaultStore((s) => s.vaultId);
+  const lastExternalSync = useVaultStore((s) => s.lastExternalSync);
+  const cloudSession = useVaultStore((s) => s.cloudSession);
+  const connectCloud = useVaultStore((s) => s.connectCloud);
+  const disconnectCloud = useVaultStore((s) => s.disconnectCloud);
+  const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+  const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
+  const getConflictItems = useVaultStore((s) => s.getConflictItems);
+  const conflictCount = useSyncExternalStore(
+    (onStoreChange) => useVaultStore.subscribe(onStoreChange),
+    () => getConflictItems?.()?.length ?? 0,
+    () => 0,
+  );
   // Read published index count outside a mutating Zustand selector
   const noteCount = useSyncExternalStore(
     (onStoreChange) => useVaultStore.subscribe(onStoreChange),
@@ -81,6 +111,7 @@ export function SettingsPanel() {
   );
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
+  const [recordingHotkey, setRecordingHotkey] = useState<HotkeyId | null>(null);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -135,6 +166,33 @@ export function SettingsPanel() {
       prev?.focus?.({ preventScroll: true });
     };
   }, [open, setOpen]);
+
+  useEffect(() => {
+    document.documentElement.dataset.nexusHotkeyCapture = recordingHotkey
+      ? "1"
+      : "0";
+    if (!recordingHotkey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setRecordingHotkey(null);
+        return;
+      }
+      const chord = eventToChord(e);
+      if (!chord) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const next = { ...prefs.hotkeyOverrides, [recordingHotkey]: chord };
+      updatePrefs({ hotkeyOverrides: next });
+      setRecordingHotkey(null);
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onKey, { capture: true });
+      document.documentElement.dataset.nexusHotkeyCapture = "0";
+    };
+  }, [recordingHotkey, prefs.hotkeyOverrides, updatePrefs]);
 
   if (!open) return null;
 
@@ -260,6 +318,18 @@ export function SettingsPanel() {
               />
             </div>
 
+            <Label className="mt-5">Theme</Label>
+            <Segmented
+              className="mt-2"
+              value={prefs.theme ?? "dark"}
+              options={[
+                { value: "dark", label: "Dark" },
+                { value: "light", label: "Light" },
+                { value: "system", label: "System" },
+              ]}
+              onChange={(v) => updatePrefs({ theme: v as ThemeMode })}
+            />
+
             <Label className="mt-5">Interface density</Label>
             <Segmented
               className="mt-2"
@@ -305,10 +375,11 @@ export function SettingsPanel() {
               options={[
                 { value: "visual", label: "Visual" },
                 { value: "source", label: "Source" },
+                { value: "split", label: "Split" },
               ]}
               onChange={(v) =>
                 updatePrefs({
-                  defaultEditorMode: v as "visual" | "source",
+                  defaultEditorMode: v as "visual" | "source" | "split",
                 })
               }
             />
@@ -335,7 +406,7 @@ export function SettingsPanel() {
             <ToggleRow
               className="mt-4"
               label="Spell check"
-              description="Browser spellcheck in Source mode"
+              description="Underline misspellings in Visual and Source"
               checked={prefs.spellCheck}
               onChange={(v) => updatePrefs({ spellCheck: v })}
             />
@@ -413,6 +484,56 @@ export function SettingsPanel() {
               </p>
               <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} />
             </div>
+            <div className="mt-4">
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                Daily notes folder
+              </div>
+              <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
+                New daily pages are created here (one top-level folder)
+              </p>
+              <input
+                type="text"
+                className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                value={prefs.dailyFolder}
+                spellCheck={false}
+                aria-label="Daily notes folder"
+                onChange={(e) => updatePrefs({ dailyFolder: e.target.value })}
+                onBlur={(e) => {
+                  if (!e.target.value.trim()) {
+                    updatePrefs({ dailyFolder: "Journal" });
+                  }
+                }}
+              />
+            </div>
+            <div className="mt-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                    Rebuild search index
+                  </div>
+                  <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
+                    Refresh titles and snippets if search looks stale
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-btn shrink-0 text-[12px]"
+                  onClick={() => {
+                    const st = useVaultStore.getState();
+                    invalidateIndexedSearch();
+                    rebuildIndexedSearch(st.nodes);
+                    rebuildDurableIndexFromNodes(
+                      st.vaultId,
+                      st.nodes,
+                      Boolean(st.vaultId),
+                    );
+                    st.setToast("Search index rebuilt");
+                  }}
+                >
+                  Rebuild
+                </button>
+              </div>
+            </div>
             <div className="mt-3">
 
               <div className="flex items-start justify-between gap-3">
@@ -444,20 +565,152 @@ export function SettingsPanel() {
             </div>
           </Section>
 
+          {/* Sync */}
+          <Section title="Sync">
+            <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+              {CLOUD_SYNC_HINT}
+            </p>
+            <div className="mt-3 rounded-[12px] border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-2.5">
+              <div className="flex items-center gap-2 text-[12.5px] font-medium text-[var(--text-primary)]">
+                <Cloud size={14} className="text-[var(--accent)]" />
+                {!vaultId
+                  ? "No vault open"
+                  : mode === "demo"
+                    ? "Demo · this browser only"
+                    : mode === "fsa" || mode === "desktop"
+                      ? "Watching folder"
+                      : "In-memory vault"}
+              </div>
+              <p className="mt-1 text-[12px] leading-snug text-[var(--text-muted)]">
+                {vaultId && (mode === "fsa" || mode === "desktop")
+                  ? lastExternalSync
+                    ? `Last disk change ${formatRelativeTime(lastExternalSync)}`
+                    : "Live watcher on — Dropbox/Drive/iCloud writes appear here."
+                  : "Open a synced folder to turn on built-in disk sync."}
+              </p>
+              {conflictCount > 0 ? (
+                <button
+                  type="button"
+                  className="mt-2 text-[12px] font-medium text-[var(--warning)] hover:underline"
+                  onClick={() => openConflictStudio?.()}
+                >
+                  {conflictCount} open conflict{conflictCount === 1 ? "" : "s"} — review
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {(
+                [
+                  "dropbox",
+                  "google",
+                  "onedrive",
+                  "icloud",
+                  "syncthing",
+                ] as CloudProvider[]
+              ).map((p) => {
+                const active = cloudSession?.provider === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    title={providerSyncHint(p)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[11.5px] transition",
+                      active
+                        ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--text-primary)]"
+                        : "border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]",
+                    )}
+                    onClick={() => void connectCloud(p)}
+                  >
+                    {providerLabel(p)}
+                  </button>
+                );
+              })}
+            </div>
+            {cloudSession ? (
+              <p className="mt-2 text-[12px] text-[var(--text-muted)]">
+                Preferred: {cloudSession.label}.{" "}
+                <button
+                  type="button"
+                  className="text-[var(--accent)] hover:underline"
+                  onClick={() => disconnectCloud()}
+                >
+                  Clear
+                </button>
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className="ghost-btn mt-3 min-h-9 w-full justify-center"
+              disabled={!canOpenLocalVaultFolder()}
+              onClick={() => void openFolderAsVault()}
+            >
+              Open a synced folder…
+            </button>
+          </Section>
+
           {/* Keyboard */}
           <Section title="Keyboard">
-            <ul className="space-y-1.5">
-              {getShortcuts().map((s) => (
-                <li
-                  key={s.keys}
-                  className="flex items-center justify-between gap-3 rounded-lg px-1 py-1.5 text-[13px]"
-                >
-                  <span className="text-[var(--text-secondary)]">{s.action}</span>
-                  <kbd className="shrink-0 rounded-md border border-[var(--border)] bg-white/[0.04] px-2 py-0.5 font-mono text-[11px] text-[var(--text-primary)]">
-                    {s.keys}
-                  </kbd>
-                </li>
-              ))}
+            <p className="mb-2 text-[12px] leading-snug text-[var(--text-muted)]">
+              Click a chord to remap. Esc cancels. Desktop app menus keep factory
+              shortcuts.
+            </p>
+            <ul className="space-y-1">
+              {listShortcutRows(prefs.hotkeyOverrides).map((s) => {
+                const clash = prefs.hotkeyOverrides?.[s.id]
+                  ? conflictingHotkeyId(
+                      s.id,
+                      prefs.hotkeyOverrides[s.id]!,
+                      prefs.hotkeyOverrides,
+                    )
+                  : null;
+                return (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 rounded-lg px-1 py-1 text-[13px]"
+                  >
+                    <span className="min-w-0 text-[var(--text-secondary)]">
+                      {s.action}
+                      {clash ? (
+                        <span className="ml-1 text-[11px] text-[var(--warning)]">
+                          also {HOTKEY_LABELS[clash]}
+                        </span>
+                      ) : null}
+                    </span>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {s.remapped ? (
+                        <button
+                          type="button"
+                          className="text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)]"
+                          onClick={() => {
+                            const next = { ...prefs.hotkeyOverrides };
+                            delete next[s.id];
+                            updatePrefs({ hotkeyOverrides: next });
+                          }}
+                        >
+                          Reset
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={cn(
+                          "rounded-md border px-2 py-0.5 font-mono text-[11px]",
+                          recordingHotkey === s.id
+                            ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]"
+                            : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-primary)]",
+                        )}
+                        onClick={() =>
+                          setRecordingHotkey((cur) =>
+                            cur === s.id ? null : s.id,
+                          )
+                        }
+                      >
+                        {recordingHotkey === s.id ? "Press keys…" : s.keys}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </Section>
 
@@ -474,7 +727,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Daily notes & templates"
-                body={`${formatShortcut("D")} opens today's Journal page. Create Meeting, Idea, or Project notes from the command palette or file tree context menu.`}
+                body={`${formatShortcut("D")} opens today's daily page. Create Meeting, Idea, or Project notes from the command palette or file tree context menu.`}
               />
               <HelpItem
                 title="Graph"
@@ -482,7 +735,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Cloud"
-                body="Nexus does not host accounts. Use Dropbox / Drive / OneDrive desktop sync, then Open… that synced folder as your vault."
+                body="Built-in sync watches your vault folder. Put it in Dropbox, Drive, OneDrive, iCloud, or Syncthing — no Nexus account. Conflicts open in Conflict Studio."
               />
               <HelpItem
                 title="Hermes & agents"

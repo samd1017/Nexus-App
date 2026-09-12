@@ -365,12 +365,19 @@ class MemoryDurableIndex implements DurableIndex {
       if (!n) continue;
       const title = n.title ?? n.name.replace(/\.md$/i, "");
       const titleL = title.toLowerCase();
+      const pathL = n.path.toLowerCase();
+      const base = pathL.split("/").pop()?.replace(/\.md$/i, "") ?? "";
+      const titleWords = titleL
+        .split(/[^a-z0-9_\u00c0-\u024f]+/i)
+        .filter(Boolean);
       let score = 0;
       let matchType: "title" | "content" = "title";
-      if (titleL === q) score = 120;
-      else if (titleL.startsWith(q)) score = 100;
-      else if (titleL.includes(q)) score = 80;
-      else if (n.path.toLowerCase().includes(q)) score = 60;
+      if (titleL === q) score = 200;
+      else if (titleL.startsWith(q)) score = 170;
+      else if (titleWords.some((w) => w.startsWith(q))) score = 150;
+      else if (titleL.includes(q)) score = 130;
+      else if (base === q || base.startsWith(q)) score = 110;
+      else if (pathL.includes(q)) score = 80;
       else {
         score = 40;
         matchType = "content";

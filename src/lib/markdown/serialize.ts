@@ -19,6 +19,17 @@ import {
   type BulletStyle,
 } from "./bullet-styles";
 import { sanitizeNoteHtml } from "./sanitize-html";
+import {
+  CALLOUT_LABELS,
+  normalizeCalloutKind,
+  promoteCalloutBlockquotes,
+} from "@/lib/editor/callout";
+import {
+  holdMathTokens,
+  promoteMermaidBlocks,
+  promoteQueryBlocks,
+  restoreMathTokens,
+} from "@/lib/editor/special-blocks";
 
 marked.setOptions({
   gfm: true,
@@ -42,6 +53,88 @@ turndown.addRule("frontmatter", {
     const code = (node as HTMLElement).querySelector("code");
     const yaml = code?.textContent ?? (node as HTMLElement).textContent ?? "";
     return `---\n${yaml.replace(/\n+$/, "")}\n---\n\n`;
+  },
+});
+
+turndown.addRule("highlight", {
+  filter: (node) =>
+    node.nodeName === "MARK" ||
+    (node as HTMLElement).classList?.contains("nexus-highlight"),
+  replacement: (content) => `==${content}==`,
+});
+
+turndown.addRule("mermaid", {
+  filter: (node) =>
+    node.nodeName === "DIV" &&
+    (node as HTMLElement).getAttribute("data-type") === "mermaid",
+  replacement: (_content, node) => {
+    const src = (node as HTMLElement).getAttribute("data-source") || "";
+    return `\n\`\`\`mermaid\n${src.replace(/\n+$/, "")}\n\`\`\`\n\n`;
+  },
+});
+
+turndown.addRule("embed", {
+  filter: (node) =>
+    node.nodeName === "DIV" &&
+    (node as HTMLElement).getAttribute("data-type") === "embed",
+  replacement: (_content, node) => {
+    const target = (node as HTMLElement).getAttribute("data-embed-target") || "";
+    return `\n\n![[${target}]]\n\n`;
+  },
+});
+
+turndown.addRule("queryBlock", {
+  filter: (node) =>
+    node.nodeName === "DIV" &&
+    (node as HTMLElement).getAttribute("data-type") === "query",
+  replacement: (_content, node) => {
+    const q = (node as HTMLElement).getAttribute("data-query") || "";
+    return `\n\`\`\`query\n${q.replace(/\n+$/, "")}\n\`\`\`\n\n`;
+  },
+});
+
+turndown.addRule("mathBlock", {
+  filter: (node) =>
+    node.nodeName === "DIV" &&
+    (node as HTMLElement).getAttribute("data-type") === "math-block",
+  replacement: (_content, node) => {
+    const tex = (node as HTMLElement).getAttribute("data-tex") || "";
+    return `\n$$\n${tex}\n$$\n\n`;
+  },
+});
+
+turndown.addRule("mathInline", {
+  filter: (node) =>
+    node.nodeName === "SPAN" &&
+    (node as HTMLElement).getAttribute("data-type") === "math-inline",
+  replacement: (_content, node) => {
+    const tex = (node as HTMLElement).getAttribute("data-tex") || "";
+    return `$${tex}$`;
+  },
+});
+
+turndown.addRule("callout", {
+  filter: (node) =>
+    node.nodeName === "DIV" &&
+    (node as HTMLElement).getAttribute("data-type") === "callout",
+  replacement: (content, node) => {
+    const el = node as HTMLElement;
+    const kind = normalizeCalloutKind(el.getAttribute("data-callout") || "note");
+    const title =
+      el.getAttribute("data-callout-title") ||
+      (el.getAttribute("data-callout-label") !== CALLOUT_LABELS[kind]
+        ? el.getAttribute("data-callout-label")
+        : "") ||
+      "";
+    const body = content.replace(/^\n+/, "").replace(/\n+$/, "");
+    const header = title
+      ? `> [!${kind.toUpperCase()}] ${title}`
+      : `> [!${kind.toUpperCase()}]`;
+    const quoted = body
+      .split("\n")
+      .map((line) => (line.length ? `> ${line}` : ">"))
+      .join("\n");
+    return `\n\n${header}\n${quoted}\n\n`;
   },
 });
 
@@ -285,8 +378,10 @@ function normalizeTaskListsForTipTap(html: string): string {
       clone.querySelectorAll('input[type="checkbox"]').forEach((n) => n.remove());
       let inner = clone.innerHTML.trim();
       // marked often leaves leading space text nodes
-      if (!inner.startsWith("<")) {
-        inner = `<p>${inner || "<br>"}</p>`;
+      if (!inner || inner === "<br>" || inner === "<br/>") {
+        inner = "<p></p>";
+      } else if (!inner.startsWith("<")) {
+        inner = `<p>${inner}</p>`;
       } else if (!/^<(p|div|h[1-6]|ul|ol|pre|blockquote)\b/i.test(inner)) {
         inner = `<p>${inner}</p>`;
       }
@@ -331,15 +426,38 @@ export function markdownToHtml(md: string): string {
       return `%%CODE${i}%%`;
     });
 
+  const embeds: string[] = [];
+  const withEmbedsHeld = withCodeHeld.replace(
+    /!\[\[([^\]]+)\]\]/g,
+    (_full, inner: string) => {
+      const i = embeds.length;
+      const pipe = inner.indexOf("|");
+      embeds.push((pipe >= 0 ? inner.slice(0, pipe) : inner).trim());
+      return `%%EMBED${i}%%`;
+    },
+  );
+
   const placeholders: string[] = [];
-  const protectedMd = withCodeHeld.replace(/\[\[([^\]]+)\]\]/g, (full) => {
+  const protectedMd = withEmbedsHeld.replace(/\[\[([^\]]+)\]\]/g, (full) => {
     const i = placeholders.length;
     placeholders.push(full);
     return `%%WIKI${i}%%`;
   });
 
   // Restore code tokens before marked so fences parse correctly
-  const forMarked = protectedMd.replace(/%%CODE(\d+)%%/g, (_, n) => {
+  const highlightHold: string[] = [];
+  const withHighlights = protectedMd.replace(
+    /==([^=\n]{1,400})==/g,
+    (_full, inner: string) => {
+      const i = highlightHold.length;
+      highlightHold.push(inner);
+      return `%%HL${i}%%`;
+    },
+  );
+
+  const { md: withMathHeld, hold: mathHold } = holdMathTokens(withHighlights);
+
+  const forMarked = withMathHeld.replace(/%%CODE(\d+)%%/g, (_, n) => {
     return codeHold[Number(n)] ?? "";
   });
 
@@ -348,6 +466,11 @@ export function markdownToHtml(md: string): string {
   // (sanitize allows input[type=checkbox] + label for TipTap task lists).
   html = normalizeTaskListsForTipTap(html);
   html = sanitizeNoteHtml(html);
+
+  html = html.replace(/%%HL(\d+)%%/g, (_, n) => {
+    const inner = highlightHold[Number(n)] ?? "";
+    return `<mark class="nexus-highlight">${escapeHtml(inner)}</mark>`;
+  });
 
   html = html.replace(/%%WIKI(\d+)%%/g, (_, n) => {
     const full = placeholders[Number(n)] ?? "";
@@ -358,7 +481,22 @@ export function markdownToHtml(md: string): string {
     return `<span data-wikilink="${escapeAttr(target)}" data-alias="${escapeAttr(alias)}" class="wikilink-pill">${escapeHtml(alias)}</span>`;
   });
 
+  const embedHtml = (target: string) =>
+    `<div data-type="embed" data-embed-target="${escapeAttr(target)}" class="nexus-embed"></div>`;
+  html = html.replace(/<p>\s*%%EMBED(\d+)%%\s*<\/p>/g, (_full, n: string) => {
+    const target = embeds[Number(n)] ?? "";
+    return embedHtml(target);
+  });
+  html = html.replace(/%%EMBED(\d+)%%/g, (_full, n: string) => {
+    const target = embeds[Number(n)] ?? "";
+    return embedHtml(target);
+  });
+
   html = annotateBulletListsFromMarkdown(body, html);
+  html = promoteMermaidBlocks(html);
+  html = promoteQueryBlocks(html);
+  html = restoreMathTokens(html, mathHold);
+  html = promoteCalloutBlockquotes(html);
   // Second pass after we inject wikilink HTML (keep allowlisted data-* only)
   html = sanitizeNoteHtml(html);
 
@@ -384,10 +522,75 @@ export function htmlToMarkdown(html: string): string {
   return md.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
+function flattenSpecialEditorBlocks(root: HTMLElement): void {
+  const doc = root.ownerDocument;
+  root.querySelectorAll("[data-type='mermaid'], .nexus-mermaid").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.parentElement?.closest("[data-type='mermaid'], .nexus-mermaid")) return;
+    const src =
+      el.getAttribute("data-source") ||
+      el.querySelector("[data-source]")?.getAttribute("data-source") ||
+      "";
+    const next = doc.createElement("div");
+    next.setAttribute("data-type", "mermaid");
+    next.setAttribute("data-source", src);
+    el.replaceWith(next);
+  });
+  root.querySelectorAll("[data-type='math-block'], .nexus-math-block").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.parentElement?.closest("[data-type='math-block'], .nexus-math-block")) return;
+    const tex =
+      el.getAttribute("data-tex") ||
+      el.querySelector("[data-tex]")?.getAttribute("data-tex") ||
+      "";
+    const next = doc.createElement("div");
+    next.setAttribute("data-type", "math-block");
+    next.setAttribute("data-tex", tex);
+    el.replaceWith(next);
+  });
+  root.querySelectorAll("[data-type='math-inline'], .nexus-math-inline").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.parentElement?.closest("[data-type='math-inline'], .nexus-math-inline")) return;
+    const tex =
+      el.getAttribute("data-tex") ||
+      el.querySelector("[data-tex]")?.getAttribute("data-tex") ||
+      "";
+    const next = doc.createElement("span");
+    next.setAttribute("data-type", "math-inline");
+    next.setAttribute("data-tex", tex);
+    el.replaceWith(next);
+  });
+  root.querySelectorAll("[data-type='embed'], .nexus-embed").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.parentElement?.closest("[data-type='embed'], .nexus-embed")) return;
+    const target =
+      el.getAttribute("data-embed-target") ||
+      el.querySelector("[data-embed-target]")?.getAttribute("data-embed-target") ||
+      "";
+    const next = doc.createElement("div");
+    next.setAttribute("data-type", "embed");
+    next.setAttribute("data-embed-target", target);
+    el.replaceWith(next);
+  });
+  root.querySelectorAll("[data-type='query'], .nexus-query").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.parentElement?.closest("[data-type='query'], .nexus-query")) return;
+    const query =
+      el.getAttribute("data-query") ||
+      el.querySelector("[data-query]")?.getAttribute("data-query") ||
+      "";
+    const next = doc.createElement("div");
+    next.setAttribute("data-type", "query");
+    next.setAttribute("data-query", query);
+    el.replaceWith(next);
+  });
+}
+
 /** Serialize live editor root element → Markdown */
 export function htmlDocToMarkdown(root: HTMLElement): string {
   // Prefer walking a clone so we don't mutate the live editor
   const clone = root.cloneNode(true) as HTMLElement;
+  flattenSpecialEditorBlocks(clone);
   clone
     .querySelectorAll(".ProseMirror-trailingBreak, .ProseMirror-separator")
     .forEach((n) => n.remove());

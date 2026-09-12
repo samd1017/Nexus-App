@@ -78,10 +78,12 @@ import {
 import {
   buildDailyNoteContent,
   buildTemplateContent,
+  dailyFolder,
   dailyNotePath,
   dailyNoteTitle,
   formatDateISO,
   getTemplate,
+  upgradeSparseDailySkeleton,
   type NoteTemplateId,
 } from "./templates";
 import { loadNoteVisits, pushNoteVisit } from "./note-visits";
@@ -586,7 +588,8 @@ function makeId(path, mode) {
 /** Wave 6: expand only ancestors of active note (+ top-level Journal) — not every folder */
 function smartExpandedFolders(nodes, activeId) {
 	const out = new Set();
-	for (const n of Object.values(nodes)) if (n.kind === "folder" && n.path === "Journal" && n.parentId == null) out.add(n.id);
+	const journal = dailyFolder();
+	for (const n of Object.values(nodes)) if (n.kind === "folder" && n.path === journal && n.parentId == null) out.add(n.id);
 	let cur = activeId ? nodes[activeId] : null;
 	while (cur?.parentId) {
 		out.add(cur.parentId);
@@ -1668,9 +1671,11 @@ export const useVaultStore = create<VaultStore>()(
 	toggleEditorMode: () => {
 		flushActiveEditors();
 		const cur = get().settings.editorMode;
+		const next =
+			cur === "visual" ? "source" : cur === "source" ? "split" : "visual";
 		set({ settings: {
 			...get().settings,
-			editorMode: cur === "visual" ? "source" : "visual"
+			editorMode: next
 		} });
 	},
 	toggleLeft: () => set({ settings: {
@@ -2021,11 +2026,19 @@ export const useVaultStore = create<VaultStore>()(
 		const isToday = target.getFullYear() === today.getFullYear() && target.getMonth() === today.getMonth() && target.getDate() === today.getDate();
 		if (existing) {
 			get().setActiveNote(existing.id);
+			const body = existing.content !== undefined
+				? existing.content
+				: await get().ensureNoteBody(existing.id);
+			if (typeof body === "string") {
+				const next = upgradeSparseDailySkeleton(body);
+				if (next !== body) get().updateNoteContent(existing.id, next, { source: true });
+			}
 			if (!silent) get().setToast(isToday ? "Opened today's daily note" : `Opened daily note ${formatDateISO(target)}`);
 			return existing.id;
 		}
-		let journalId = Object.values(get().nodes).find((n) => n.kind === "folder" && n.path === "Journal")?.id ?? null;
-		if (!journalId) journalId = get().createFolder(null, "Journal", { expand: true });
+		const folderName = dailyFolder();
+		let journalId = Object.values(get().nodes).find((n) => n.kind === "folder" && n.path === folderName)?.id ?? null;
+		if (!journalId) journalId = get().createFolder(null, folderName, { expand: true });
 		let yesterdayMarkdown = null;
 		if (isToday) {
 			const y = new Date(target);
@@ -3390,11 +3403,22 @@ export function getNoteDisplayTitle(node: VaultNode | null | undefined) {
 }
 /** Parent folder path only — note title is shown separately in the editor chrome. */
 export function getBreadcrumbs(node: VaultNode | null | undefined, nodes: Record<string, VaultNode>) {
+	return getBreadcrumbTrail(node, nodes).map((c) => c.name);
+}
+
+export function getBreadcrumbTrail(
+	node: VaultNode | null | undefined,
+	nodes: Record<string, VaultNode>,
+): { id: string; name: string; kind: "note" | "folder" }[] {
 	if (!node) return [];
-	const parts: string[] = [];
+	const parts: { id: string; name: string; kind: "note" | "folder" }[] = [];
 	let cur = node.parentId ? nodes[node.parentId] : undefined;
 	while (cur) {
-		parts.unshift(cur.kind === "note" ? noteTitle(cur) : cur.name);
+		parts.unshift({
+			id: cur.id,
+			name: cur.kind === "note" ? noteTitle(cur) : cur.name,
+			kind: cur.kind,
+		});
 		cur = cur.parentId ? nodes[cur.parentId] : undefined;
 	}
 	return parts;

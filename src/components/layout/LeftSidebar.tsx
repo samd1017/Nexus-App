@@ -27,6 +27,7 @@ import {
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { formatShortcut } from "@/lib/platform";
 import { openCommandPalette } from "@/components/search/CommandPalette";
+import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_LEFT_WIDTH = 260;
@@ -105,15 +106,15 @@ export function LeftSidebar() {
         byVisit.push(n);
         seen.add(id);
       }
-      if (byVisit.length >= 5) break;
+      if (byVisit.length >= 3) break;
     }
-    if (byVisit.length >= 5) return byVisit;
+    if (byVisit.length >= 3) return byVisit;
     const byMtime = Object.values(nodes)
       .filter((n) => n.kind === "note" && !seen.has(n.id))
       .sort((a, b) => b.mtime - a.mtime);
     for (const n of byMtime) {
       byVisit.push(n);
-      if (byVisit.length >= 5) break;
+      if (byVisit.length >= 3) break;
     }
     return byVisit;
   }, [recentNoteVisits]);
@@ -245,11 +246,35 @@ export function LeftSidebar() {
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className={cn(
+                  "daily-chip !h-6 !px-1.5 text-[10px]",
+                  isTodayActive && "is-active",
+                )}
+                onClick={() => openDailyNote()}
+                title={`Open today's daily note · ${todayIso}`}
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "daily-chip !h-6 !px-1.5 text-[10px]",
+                  isYesterdayActive && "is-active",
+                )}
+                onClick={() => openDailyNoteForDate(yesterday)}
+                title={`Open yesterday's daily note · ${yesterdayIso}`}
+              >
+                Yesterday
+              </button>
+            </div>
           </div>
 
           {/* Week strip: Mon–Sun day chips */}
           <div
-            className="mb-1.5 flex items-center justify-between gap-0.5"
+            className="mb-1 flex items-center justify-between gap-0.5"
             role="group"
             aria-label="Week days"
           >
@@ -267,7 +292,7 @@ export function LeftSidebar() {
                   onClick={() => openDailyNoteForDate(d)}
                   title={`${WEEKDAY_SHORT[i]} ${iso}${isToday ? " · Today" : isYesterday ? " · Yesterday" : ""}${hasNote ? " · note" : ""}`}
                   className={cn(
-                    "daily-chip daily-chip--day relative flex h-8 w-8 flex-col items-center justify-center rounded-lg border text-[11px] font-medium leading-none transition-colors",
+                    "daily-chip daily-chip--day relative flex h-7 w-7 flex-col items-center justify-center rounded-md border text-[10.5px] font-medium leading-none transition-colors",
                     isActive
                       ? "is-active"
                       : isToday
@@ -294,24 +319,6 @@ export function LeftSidebar() {
               );
             })}
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              className={cn("daily-chip", isTodayActive && "is-active")}
-              onClick={() => openDailyNote()}
-              title={`Open today's daily note · ${todayIso}`}
-            >
-              Today
-            </button>
-            <button
-              type="button"
-              className={cn("daily-chip", isYesterdayActive && "is-active")}
-              onClick={() => openDailyNoteForDate(yesterday)}
-              title={`Open yesterday's daily note · ${yesterdayIso}`}
-            >
-              Yesterday
-            </button>
-          </div>
         </div>
 
         {/* 4. Notes/Folders — primary scroll region */}
@@ -335,10 +342,10 @@ export function LeftSidebar() {
         </div>
 
         {/* Footer stack: always visible below tree (not clipped by tree scroll) */}
-        <div className="flex shrink-0 flex-col border-t border-[var(--border)] bg-[var(--panel-solid)]">
-        {/* 5. Recent — collapsible */}
+        <div className="flex max-h-[28%] shrink-0 flex-col overflow-y-auto border-t border-[var(--border)] bg-[var(--panel-solid)]">
+        {/* 5. Recent — collapsible, compact */}
         {recentNotes.length > 0 ? (
-          <div className="shrink-0 px-3 pt-1.5 pb-1">
+          <div className="shrink-0 px-3 pt-1 pb-0.5">
             <button
               type="button"
               className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,200,255,0.45)]"
@@ -378,9 +385,12 @@ export function LeftSidebar() {
                   <li key={n.id}>
                     <button
                       type="button"
-                      onClick={() => setActiveNote(n.id)}
+                      onClick={() => {
+                        setActiveNote(n.id);
+                        closeDrawersIfNarrow();
+                      }}
                       className={cn(
-                        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]",
+                        "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[12px] transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--text-primary)]",
                         activeNoteId === n.id
                           ? "bg-white/[0.05] text-[var(--text-primary)]"
                           : "text-[var(--text-secondary)]",
@@ -441,7 +451,10 @@ export function LeftSidebar() {
                       type="button"
                       onClick={() => {
                         const hits = notesForTag(nodes, t.tag);
-                        if (hits[0]) setActiveNote(hits[0].id);
+                        if (hits[0]) {
+                          setActiveNote(hits[0].id);
+                          if (hits.length === 1) closeDrawersIfNarrow();
+                        }
                         if (hits.length > 1) {
                           setToast(
                             `#${t.tag} · ${hits.length} note${hits.length === 1 ? "" : "s"}`,

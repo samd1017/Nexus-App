@@ -246,10 +246,20 @@ export function indexedSearch(
         if (candidateIds.size === 0) break;
       }
     }
-    // Title substring boost when few candidates
-    if (candidateIds.size < limit) {
+    // Title / path fallback when AND is empty or thin (short / fuzzy titles)
+    if (candidateIds.size < Math.max(limit, 8)) {
+      const first = qTokens[0] ?? qLower;
       for (const d of docs.values()) {
-        if (d.title.toLowerCase().includes(qLower)) candidateIds.add(d.id);
+        const titleL = d.title.toLowerCase();
+        const pathL = d.path.toLowerCase();
+        if (
+          titleL.includes(qLower) ||
+          titleL.includes(first) ||
+          pathL.includes(qLower) ||
+          pathL.includes(first)
+        ) {
+          candidateIds.add(d.id);
+        }
       }
     }
   }
@@ -261,12 +271,17 @@ export function indexedSearch(
     if (!d) continue;
     const titleL = d.title.toLowerCase();
     const pathL = d.path.toLowerCase();
+    const base =
+      pathL.split("/").pop()?.replace(/\.md$/i, "") ?? "";
+    const titleWords = titleL.split(/[^a-z0-9_\u00c0-\u024f]+/i).filter(Boolean);
     let score = 0;
     let matchType: "title" | "content" = "title";
-    if (titleL === qLower) score = 120;
-    else if (titleL.startsWith(qLower)) score = 100;
-    else if (titleL.includes(qLower)) score = 80;
-    else if (pathL.includes(qLower)) score = 60;
+    if (titleL === qLower) score = 200;
+    else if (titleL.startsWith(qLower)) score = 170;
+    else if (titleWords.some((w) => w.startsWith(qLower))) score = 150;
+    else if (titleL.includes(qLower)) score = 130;
+    else if (base === qLower || base.startsWith(qLower)) score = 110;
+    else if (pathL.includes(qLower)) score = 80;
     else {
       let overlap = 0;
       for (const t of qTokens) {

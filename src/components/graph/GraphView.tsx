@@ -18,14 +18,22 @@ import {
   Focus,
   Globe2,
   Ghost,
+  Hash,
   Link2,
   Scan,
   FilePlus2,
   Search,
+  Filter,
 } from "lucide-react";
+import { collectVaultTags } from "@/lib/vault/tags";
 import { cn } from "@/lib/utils";
 import { usePrefsStore, type PhysicsIntensity } from "@/lib/prefs/preferences";
 import { isDesktopShell, formatShortcut } from "@/lib/platform";
+import {
+  closeDrawersIfNarrow,
+  exitGraphForViewport,
+  isPhoneViewport,
+} from "@/lib/layout/viewport";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 interface Props {
@@ -41,6 +49,7 @@ type GNode = {
   path: string;
   degree: number;
   folder: string;
+  tag?: string;
   ghost?: boolean;
   ghostTarget?: string;
   kind?: "note" | "folder" | "aggregate";
@@ -52,7 +61,42 @@ type GNode = {
   __threeObj?: THREE.Object3D;
 };
 
-type NeighborhoodMode = "all" | "1hop";
+type NeighborhoodMode = "all" | "1hop" | "2hop" | "3hop";
+
+function hopCount(mode: NeighborhoodMode): 1 | 2 | 3 {
+  if (mode === "2hop") return 2;
+  if (mode === "3hop") return 3;
+  return 1;
+}
+
+function cycleNeighborhood(mode: NeighborhoodMode): NeighborhoodMode {
+  if (mode === "all") return "1hop";
+  if (mode === "1hop") return "2hop";
+  if (mode === "2hop") return "3hop";
+  return "all";
+}
+
+function hopKeepSet(
+  center: string,
+  hops: number,
+  neighborMap: Map<string, Set<string>>,
+): Set<string> {
+  const keep = new Set<string>([center]);
+  let frontier = [center];
+  for (let h = 0; h < hops; h++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const n of neighborMap.get(id) ?? []) {
+        if (!keep.has(n)) {
+          keep.add(n);
+          next.push(n);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return keep;
+}
 
 const LOD_SEGMENT_THRESHOLD = 250;
 const LOD_CAP = 400;
@@ -85,6 +129,10 @@ function physicsParams(intensity: PhysicsIntensity) {
 
 
 /** G3: stronger folder hue separation via distinct HSL palette slots */
+function tagTintColor(tag: string, desktopBoost: boolean): THREE.Color {
+  return folderTintColor(`tag:${tag || "__none__"}`, desktopBoost);
+}
+
 function folderTintColor(folder: string, desktopBoost: boolean): THREE.Color {
   let h = 2166136261;
   const key = folder || "__root__";
@@ -405,6 +453,7 @@ function createOrb(
   showLabel: boolean,
   desktopBoost: boolean,
   lowDetail = false,
+  colorBy: "folder" | "tag" = "folder",
 ): THREE.Object3D {
   const group = new THREE.Group();
   const isGhost = !!node.ghost;
@@ -441,7 +490,10 @@ function createOrb(
     Math.pow(Math.max(1, node.val), 0.55) * (full ? 1.75 : 1.4) * rank +
     (isActive || isHover ? 0.5 : 0);
 
-  let bodyColor = folderTintColor(node.folder, desktopBoost);
+  let bodyColor =
+    colorBy === "tag" && node.tag
+      ? tagTintColor(node.tag, desktopBoost)
+      : folderTintColor(node.folder, desktopBoost);
   if (node.ghost) {
     bodyColor = new THREE.Color(desktopBoost ? 0x2a323c : 0x222830);
   } else if (isAggregate) {
@@ -677,19 +729,22 @@ function forceFolderCluster(strength = 0.055) {
 function softNeighborhood(
   data: { nodes: GNode[]; links: GLink[] },
   mode: NeighborhoodMode,
+  isolate: boolean,
   activeNoteId: string | null,
   neighborMap: Map<string, Set<string>>,
 ): { nodes: GNode[]; links: GLink[]; hopKeep: Set<string> | null } {
-  if (mode !== "1hop" || !activeNoteId) {
+  if (mode === "all" || !activeNoteId) {
     return { nodes: data.nodes, links: data.links, hopKeep: null };
   }
-  const neigh = neighborMap.get(activeNoteId);
-  const keep = new Set<string>([activeNoteId, ...(neigh ?? [])]);
+  const keep = hopKeepSet(activeNoteId, hopCount(mode), neighborMap);
   const links = data.links.filter((l) => {
     const [s, t] = linkIds(l);
     return keep.has(s) && keep.has(t);
   });
-  return { nodes: data.nodes, links, hopKeep: keep };
+  const nodes = isolate
+    ? data.nodes.filter((n) => keep.has(n.id))
+    : data.nodes;
+  return { nodes, links, hopKeep: keep };
 }
 
 /** G5 LOD: max 400 highest-degree notes + active + neighbors */
@@ -764,9 +819,13 @@ export function GraphView({ mode, className }: Props) {
   } | null>(null);
   const [hintVisible, setHintVisible] = useState(true);
   const [neighborhood, setNeighborhood] = useState<NeighborhoodMode>("all");
+  const [isolateHops, setIsolateHops] = useState(false);
+  const [graphQuery, setGraphQuery] = useState("");
+  const [colorBy, setColorBy] = useState<"folder" | "tag">("folder");
   const [showGhosts, setShowGhosts] = useState(true);
   const hopKeepRef = useRef<Set<string> | null>(null);
   const neighborhoodRef = useRef<NeighborhoodMode>("all");
+  const colorByRef = useRef<"folder" | "tag">("folder");
   const lowDetailRef = useRef(false);
   /** W5: nodeId → last Object3D from paintOrb (for hover material mutation) */
   const nodeObjMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
@@ -785,6 +844,7 @@ export function GraphView({ mode, className }: Props) {
 
   activeRef.current = activeNoteId;
   neighborhoodRef.current = neighborhood;
+  colorByRef.current = colorBy;
   const desktopBoost = isDesktopShell();
 
   const vaultNoteCount = useMemo(() => {
@@ -845,6 +905,12 @@ export function GraphView({ mode, className }: Props) {
   const graphModeResolved: GraphViewMode = resolved.mode;
 
   const data = useMemo(() => {
+    const tagByNote = new Map<string, string>();
+    for (const t of collectVaultTags(deferredNodes as Record<string, VaultNode>)) {
+      for (const id of t.noteIds) {
+        if (!tagByNote.has(id)) tagByNote.set(id, t.tag);
+      }
+    }
     return {
       nodes: resolved.nodes.map((n) => ({
         id: n.id,
@@ -859,6 +925,7 @@ export function GraphView({ mode, className }: Props) {
         path: n.path,
         degree: n.degree,
         folder: n.folder ?? "",
+        tag: tagByNote.get(n.id) || "",
         ghost: n.ghost,
         ghostTarget: n.ghostTarget,
         kind: n.kind,
@@ -870,7 +937,7 @@ export function GraphView({ mode, className }: Props) {
         target: e.target,
       })) as GLink[],
     };
-  }, [resolved]);
+  }, [resolved, deferredNodes]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);
@@ -942,12 +1009,34 @@ export function GraphView({ mode, className }: Props) {
     const soft = softNeighborhood(
       { nodes: lod.nodes, links: lod.links },
       neighborhood,
+      isolateHops,
       activeNoteId,
       neighborMapRef.current,
     );
     hopKeepRef.current = soft.hopKeep;
-    return { nodes: soft.nodes, links: soft.links };
-  }, [data, neighborhood, activeNoteId, showGhosts, graphModeResolved]);
+    let nodes = soft.nodes;
+    let links = soft.links;
+    const q = graphQuery.trim().toLowerCase();
+    if (q) {
+      const keep = new Set(
+        nodes
+          .filter(
+            (n) =>
+              n.name.toLowerCase().includes(q) ||
+              n.path.toLowerCase().includes(q) ||
+              (n.tag && n.tag.includes(q)),
+          )
+          .map((n) => n.id),
+      );
+      if (activeNoteId) keep.add(activeNoteId);
+      nodes = nodes.filter((n) => keep.has(n.id));
+      links = links.filter((l) => {
+        const [s, t] = linkIds(l);
+        return keep.has(s) && keep.has(t);
+      });
+    }
+    return { nodes, links };
+  }, [data, neighborhood, isolateHops, graphQuery, activeNoteId, showGhosts, graphModeResolved]);
 
   const shownNoteCount = useMemo(
     () => displayData.nodes.filter((n) => !n.ghost).length,
@@ -1055,14 +1144,14 @@ export function GraphView({ mode, className }: Props) {
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
       if (hoverRef.current) return 1;
-      if (neighborhoodRef.current === "1hop" && activeRef.current) return 0.9;
+      if (neighborhoodRef.current !== "all" && activeRef.current) return 0.9;
       if (activeRef.current) return 0.35;
       return 0;
     };
 
     const neighborSet = (id: string | null): Set<string> | null => {
       if (!id) return null;
-      if (neighborhoodRef.current === "1hop" && hopKeepRef.current) {
+      if (neighborhoodRef.current !== "all" && hopKeepRef.current) {
         return hopKeepRef.current;
       }
       return neighborMapRef.current.get(id) ?? new Set();
@@ -1076,7 +1165,7 @@ export function GraphView({ mode, className }: Props) {
       if (hoverRef.current) return false;
       if (n.ghost) return false;
       if (
-        neighborhoodRef.current === "1hop" &&
+        neighborhoodRef.current !== "all" &&
         hopKeepRef.current &&
         !hopKeepRef.current.has(n.id)
       ) {
@@ -1099,6 +1188,7 @@ export function GraphView({ mode, className }: Props) {
         shouldShowLabel(n),
         desktopBoost,
         lowDetailRef.current,
+        colorByRef.current,
       );
       nodeObjMapRef.current.set(n.id, obj);
       return obj;
@@ -1242,10 +1332,15 @@ export function GraphView({ mode, className }: Props) {
           st.createNote(null, title);
           return;
         }
-        st.setGraphMode("panel");
-        st.setLeftOpen(true);
-        if (typeof window !== "undefined" && window.innerWidth >= 1200) {
-          st.setRightOpen(true);
+        if (isPhoneViewport()) {
+          exitGraphForViewport();
+          closeDrawersIfNarrow();
+        } else {
+          st.setGraphMode("panel");
+          st.setLeftOpen(true);
+          if (typeof window !== "undefined" && window.innerWidth >= 1200) {
+            st.setRightOpen(true);
+          }
         }
         ensureVaultIndex(st.nodes);
         const noteCount = vaultIndex.noteCount;
@@ -1429,10 +1524,10 @@ export function GraphView({ mode, className }: Props) {
       } | null;
       if (controls) {
         controls.enableDamping = true;
-        controls.dampingFactor = 0.07;
-        controls.rotateSpeed = 0.55;
-        controls.zoomSpeed = 0.9;
-        controls.panSpeed = 0.5;
+        controls.dampingFactor = 0.085;
+        controls.rotateSpeed = 0.52;
+        controls.zoomSpeed = 0.35;
+        controls.panSpeed = 0.48;
         controls.minDistance = 10;
         controls.maxDistance = 900;
       }
@@ -1473,6 +1568,58 @@ export function GraphView({ mode, className }: Props) {
     };
     el.addEventListener("pointerdown", hideHint, { once: true });
     el.addEventListener("pointercancel", clearPointerHover);
+
+    // Light zoom inertia — wheel adds a little coast, then decays.
+    let zoomVel = 0;
+    let zoomRaf = 0;
+    const reducedZoom = usePrefsStore.getState().reducedMotion;
+    const applyZoomStep = (impulse: number) => {
+      try {
+        const cam = graph.camera() as THREE.PerspectiveCamera;
+        const ctl = graph.controls() as {
+          target?: THREE.Vector3;
+          update?: () => void;
+        } | null;
+        const target = ctl?.target;
+        if (!cam || !target) return;
+        const offset = cam.position.clone().sub(target);
+        const dist = offset.length();
+        if (dist < 0.001) return;
+        const next = Math.min(900, Math.max(12, dist * (1 + impulse)));
+        offset.setLength(next);
+        cam.position.copy(target).add(offset);
+        ctl?.update?.();
+      } catch {
+        /* ok */
+      }
+    };
+    const tickZoom = () => {
+      zoomRaf = 0;
+      if (Math.abs(zoomVel) < 0.00035) {
+        zoomVel = 0;
+        return;
+      }
+      applyZoomStep(zoomVel);
+      zoomVel *= 0.82;
+      zoomRaf = requestAnimationFrame(tickZoom);
+    };
+    const onWheelZoom = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const raw = e.deltaY;
+      const unit = e.deltaMode === 1 ? raw * 16 : raw;
+      const scale = e.ctrlKey ? 0.00032 : 0.00062;
+      const impulse = Math.max(-0.09, Math.min(0.09, unit * scale));
+      if (reducedZoom) {
+        applyZoomStep(impulse);
+        return;
+      }
+      zoomVel += impulse;
+      zoomVel = Math.max(-0.18, Math.min(0.18, zoomVel));
+      if (!zoomRaf) zoomRaf = requestAnimationFrame(tickZoom);
+    };
+    el.addEventListener("wheel", onWheelZoom, { passive: false, capture: true });
+
     graphRef.current = graph;
 
     const ro = new ResizeObserver(() => {
@@ -1508,6 +1655,8 @@ export function GraphView({ mode, className }: Props) {
       nodeObjMapRef.current.clear();
       el.removeEventListener("pointerdown", hideHint);
       el.removeEventListener("pointercancel", clearPointerHover);
+      el.removeEventListener("wheel", onWheelZoom, true);
+      if (zoomRaf) cancelAnimationFrame(zoomRaf);
       ro.disconnect();
       try {
         if (envMap) {
@@ -1672,14 +1821,14 @@ export function GraphView({ mode, className }: Props) {
     const focusId = () => hoverRef.current || activeNoteId;
     const dimStrength = () => {
       if (hoverRef.current) return 1;
-      if (neighborhood === "1hop" && activeNoteId) return 0.9;
+      if (neighborhood !== "all" && activeNoteId) return 0.9;
       if (activeNoteId) return 0.35;
       return 0;
     };
 
     const neighborSet = (id: string | null): Set<string> | null => {
       if (!id) return null;
-      if (neighborhood === "1hop" && hopKeepRef.current) {
+      if (neighborhood !== "all" && hopKeepRef.current) {
         return hopKeepRef.current;
       }
       return neighborMapRef.current.get(id) ?? new Set();
@@ -1693,7 +1842,7 @@ export function GraphView({ mode, className }: Props) {
       if (hoverRef.current) return false;
       if (n.ghost) return false;
       if (
-        neighborhood === "1hop" &&
+        neighborhood !== "all" &&
         hopKeepRef.current &&
         !hopKeepRef.current.has(n.id)
       ) {
@@ -1716,6 +1865,7 @@ export function GraphView({ mode, className }: Props) {
         shouldShowLabel(n),
         desktopBoost,
         lowDetailRef.current,
+        colorBy,
       );
       nodeObjMapRef.current.set(n.id, obj);
       return obj;
@@ -1774,7 +1924,7 @@ export function GraphView({ mode, className }: Props) {
       .linkWidth((link) => edgeStyle(link as GLink).width)
       .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles)
       .refresh();
-  }, [activeNoteId, mode, accentPreset, accentCustom, graphParticles, desktopBoost, neighborhood, showGhosts]);
+  }, [activeNoteId, mode, accentPreset, accentCustom, graphParticles, desktopBoost, neighborhood, isolateHops, colorBy, showGhosts]);
 
   return (
     <div
@@ -1871,10 +2021,12 @@ export function GraphView({ mode, className }: Props) {
                   ) : null}
                 </>
               )}
-              {neighborhood === "1hop" && graphModeResolved !== "folder" ? (
+              {neighborhood !== "all" && graphModeResolved !== "folder" ? (
                 <>
                   <span className="mx-1.5 opacity-50">·</span>
-                  <span className="text-[var(--accent)] opacity-80">1-hop</span>
+                  <span className="text-[var(--accent)] opacity-80">
+                    {hopCount(neighborhood)}-hop{isolateHops ? " isolate" : ""}
+                  </span>
                 </>
               ) : null}
               {hoverName ? (
@@ -1975,33 +2127,52 @@ export function GraphView({ mode, className }: Props) {
             </button>
           ) : null}
           {graphModeResolved !== "folder" ? (
-            <button
-              type="button"
-              className={cn(
-                "icon-btn h-8 w-8",
-                neighborhood === "1hop" && "is-active",
-              )}
-              title={
-                neighborhood === "1hop"
-                  ? "Show full graph"
-                  : "Neighborhood: soft 1-hop (dim outsiders)"
-              }
-              aria-label={
-                neighborhood === "1hop"
-                  ? "Show full graph"
-                  : "Neighborhood: soft 1-hop (dim outsiders)"
-              }
-              aria-pressed={neighborhood === "1hop"}
-              onClick={() =>
-                setNeighborhood((m) => (m === "all" ? "1hop" : "all"))
-              }
-            >
-              {neighborhood === "1hop" ? (
-                <Focus size={14} />
-              ) : (
-                <Globe2 size={14} />
-              )}
-            </button>
+            <>
+              <label className="relative mr-0.5 hidden items-center md:flex">
+                <Search size={12} className="pointer-events-none absolute left-2 text-[var(--text-muted)]" />
+                <input
+                  value={graphQuery}
+                  onChange={(e) => setGraphQuery(e.target.value)}
+                  placeholder="Filter"
+                  className="h-8 w-[7.5rem] rounded-full border border-white/[0.08] bg-black/30 pl-6 pr-2 text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+                  aria-label="Filter graph notes"
+                />
+              </label>
+              <button
+                type="button"
+                className={cn("icon-btn h-8 w-8", neighborhood !== "all" && "is-active")}
+                title={
+                  neighborhood === "all"
+                    ? "Neighborhood: 1-hop (dim outsiders)"
+                    : `Neighborhood: ${hopCount(neighborhood)}-hop — click to cycle`
+                }
+                aria-label="Cycle hop depth"
+                aria-pressed={neighborhood !== "all"}
+                onClick={() => setNeighborhood(cycleNeighborhood)}
+              >
+                {neighborhood === "all" ? <Globe2 size={14} /> : <Focus size={14} />}
+              </button>
+              {neighborhood !== "all" ? (
+                <button
+                  type="button"
+                  className={cn("icon-btn h-8 w-8", isolateHops && "is-active")}
+                  title={isolateHops ? "Dim outsiders" : "Isolate neighborhood"}
+                  aria-pressed={isolateHops}
+                  onClick={() => setIsolateHops((v) => !v)}
+                >
+                  <Filter size={14} />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={cn("icon-btn h-8 w-8", colorBy === "tag" && "is-active")}
+                title={colorBy === "tag" ? "Color by folder" : "Color by tag"}
+                aria-pressed={colorBy === "tag"}
+                onClick={() => setColorBy((v) => (v === "tag" ? "folder" : "tag"))}
+              >
+                <Hash size={14} />
+              </button>
+            </>
           ) : null}
           <button
             type="button"
@@ -2036,7 +2207,7 @@ export function GraphView({ mode, className }: Props) {
               className="ml-0.5 flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[var(--accent-dim)] px-2.5 text-[12px] font-medium text-[var(--accent)] shadow-[0_0_20px_rgba(0,200,255,0.12)] hover:brightness-110"
               title="Exit fullscreen graph (Esc or Ctrl+G)"
               aria-label="Exit fullscreen graph"
-              onClick={() => setGraphMode("panel")}
+              onClick={() => exitGraphForViewport()}
             >
               <Minimize2 size={14} />
               <span className="hidden sm:inline">Exit</span>
@@ -2073,11 +2244,19 @@ export function GraphView({ mode, className }: Props) {
           <div className="rounded-full border border-white/[0.08] bg-black/50 px-3 py-1.5 text-[10px] tracking-wide text-[var(--text-muted)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md">
             {mode === "fullscreen"
               ? graphModeResolved === "folder"
-                ? "Orbit · Zoom · Pan · Click folder · Esc / Exit"
-                : `Orbit · Zoom · Pan · Click note · Esc or ${formatShortcut("G")}`
+                ? isPhoneViewport()
+                  ? "Pinch · Pan · Tap folder · Exit"
+                  : "Orbit · Zoom · Pan · Click folder · Esc / Exit"
+                : isPhoneViewport()
+                  ? "Pinch · Pan · Tap a note"
+                  : `Orbit · Zoom · Pan · Click note · Esc or ${formatShortcut("G")}`
               : graphModeResolved === "folder"
-                ? "Orbit · Zoom · Pan · Click folder · Click note · Esc up"
-                : "Orbit · Zoom · Pan · Hover for details · Click to open"}
+                ? isPhoneViewport()
+                  ? "Pinch · Pan · Tap folder or note"
+                  : "Orbit · Zoom · Pan · Click folder · Click note · Esc up"
+                : isPhoneViewport()
+                  ? "Pinch · Pan · Tap to open"
+                  : "Orbit · Zoom · Pan · Hover for details · Click to open"}
           </div>
         </div>
       ) : mode === "fullscreen" ? (

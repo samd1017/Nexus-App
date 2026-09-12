@@ -9,7 +9,13 @@ import {
   goForwardLive,
   withHistoryNav,
 } from "@/lib/vault/nav-history";
+import { openFindInNote, closeFindInNote } from "@/components/editor/FindInNoteBar";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
+import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
+import {
+  matchHotkey,
+  type HotkeyId,
+} from "@/lib/prefs/hotkeys";
 
 /** True if key matches letter (layout-safe: prefer e.code). */
 function isModLetter(e: KeyboardEvent, letter: string): boolean {
@@ -18,71 +24,141 @@ function isModLetter(e: KeyboardEvent, letter: string): boolean {
   return e.key.toLowerCase() === letter.toLowerCase();
 }
 
+function isFactoryDesktopChord(e: KeyboardEvent): boolean {
+  const mod = isAppleModPlatform() ? e.metaKey : e.metaKey || e.ctrlKey;
+  if (!mod || e.altKey) return false;
+  return (
+    isModLetter(e, "o") ||
+    isModLetter(e, "k") ||
+    isModLetter(e, "n") ||
+    isModLetter(e, "g") ||
+    isModLetter(e, "e") ||
+    isModLetter(e, "s") ||
+    (e.shiftKey && isModLetter(e, "d")) ||
+    e.key === "," ||
+    e.code === "Comma"
+  );
+}
+
+function runHotkey(id: HotkeyId): boolean {
+  const store = useVaultStore.getState();
+  const prefs = usePrefsStore.getState();
+  const hasVault = Boolean(store.vaultId);
+  const overlayOpen = store.commandOpen || prefs.settingsOpen;
+
+  switch (id) {
+    case "settings":
+      prefs.toggleSettings();
+      return true;
+    case "focusMode": {
+      const next = toggleFocusMode();
+      store.setToast(next ? "Focus mode on" : "Focus mode off");
+      return true;
+    }
+    case "search":
+      store.setCommandOpen(!store.commandOpen);
+      return true;
+    case "find": {
+      if (!hasVault || !store.activeNoteId || overlayOpen) return false;
+      const sel = window.getSelection()?.toString()?.trim() ?? "";
+      openFindInNote(sel);
+      return true;
+    }
+    case "replace": {
+      if (!hasVault || !store.activeNoteId || overlayOpen) return false;
+      const sel = window.getSelection()?.toString()?.trim() ?? "";
+      openFindInNote(sel, { replace: true });
+      return true;
+    }
+    case "back": {
+      if (!canGoBack()) return true;
+      const isLive = (nid: string) => store.nodes[nid]?.kind === "note";
+      const nid = goBackLive(isLive);
+      if (nid) withHistoryNav(() => store.setActiveNote(nid));
+      return true;
+    }
+    case "forward": {
+      if (!canGoForward()) return true;
+      const isLive = (nid: string) => store.nodes[nid]?.kind === "note";
+      const nid = goForwardLive(isLive);
+      if (nid) withHistoryNav(() => store.setActiveNote(nid));
+      return true;
+    }
+    case "demo":
+      if (!isDesktopShell()) store.openDemoVault();
+      return true;
+    case "openVault":
+      if (useVaultStore.getState().connecting) return true;
+      void store.openFolderAsVault();
+      return true;
+    case "toggleEditor":
+      if (!hasVault || overlayOpen) return false;
+      store.toggleEditorMode();
+      return true;
+    case "leftSidebar":
+      if (!hasVault || overlayOpen || prefs.focusMode) return false;
+      store.toggleLeft();
+      return true;
+    case "rightPanel":
+      if (!hasVault || overlayOpen || prefs.focusMode) return false;
+      store.toggleRight();
+      return true;
+    case "graph":
+      if (!hasVault || overlayOpen || prefs.focusMode) return false;
+      toggleGraphForViewport();
+      return true;
+    case "newNote":
+      if (!hasVault || overlayOpen) return false;
+      store.createNote(null);
+      return true;
+    case "daily":
+      if (!hasVault || overlayOpen) return false;
+      store.openDailyNote();
+      return true;
+    case "save":
+      if (!hasVault || overlayOpen) return false;
+      void store.flushDirty();
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** Global macOS-style keyboard shortcuts */
 export function KeyboardShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Hold-repeat floods notes; IME composition should not fire chords
       if (e.repeat || e.isComposing || e.defaultPrevented) return;
+      if (document.documentElement.dataset.nexusHotkeyCapture === "1") return;
 
-      // On Apple, primary mod is ⌘ only (Ctrl+letter is often Emacs-style)
-      const mod = isAppleModPlatform()
-        ? e.metaKey
-        : e.metaKey || e.ctrlKey;
       const store = useVaultStore.getState();
       const prefs = usePrefsStore.getState();
-      const hasVault = Boolean(store.vaultId);
-      const overlayOpen = store.commandOpen || prefs.settingsOpen;
 
-      // Desktop SSOT: native menu accelerators + menu-bridge own these chords.
+      // Desktop SSOT: native menu accelerators own factory chords unless remapped.
+      const remapped = prefs.hotkeyOverrides ?? {};
+      const matched = matchHotkey(e, remapped);
       if (
         isDesktopShell() &&
-        mod &&
-        !e.altKey &&
-        (isModLetter(e, "o") ||
-          isModLetter(e, "k") ||
-          isModLetter(e, "n") ||
-          isModLetter(e, "g") ||
-          isModLetter(e, "e") ||
-          isModLetter(e, "s") ||
-          (e.shiftKey && isModLetter(e, "d")) ||
-          e.key === "," ||
-          e.code === "Comma")
+        isFactoryDesktopChord(e) &&
+        (!matched || !remapped[matched])
       ) {
         return;
       }
 
-      // ⌘, settings
-      if (mod && (e.key === "," || e.code === "Comma")) {
-        e.preventDefault();
-        prefs.toggleSettings();
-        return;
-      }
-
-      // ⌘. or ⌘⇧F — focus / zen mode
-      if (
-        mod &&
-        (e.key === "." ||
-          e.code === "Period" ||
-          (e.shiftKey && isModLetter(e, "f")))
-      ) {
-        e.preventDefault();
-        const next = toggleFocusMode();
-        store.setToast(next ? "Focus mode on" : "Focus mode off");
-        return;
-      }
-
-      // ⌘K search
-      if (mod && isModLetter(e, "k")) {
-        e.preventDefault();
-        store.setCommandOpen(!store.commandOpen);
+      if (matched) {
+        const ok = runHotkey(matched);
+        if (ok) e.preventDefault();
         return;
       }
 
       // Escape closes overlays / exits focus
       if (e.key === "Escape") {
         if (document.documentElement.dataset.nexusShortcuts === "1") {
-          // ShortcutsSheet owns this Esc
+          return;
+        }
+        if (document.querySelector("[data-find-open='1']")) {
+          closeFindInNote();
           return;
         }
         if (prefs.settingsOpen) {
@@ -93,7 +169,6 @@ export function KeyboardShortcuts() {
           store.setCommandOpen(false);
           return;
         }
-        // Folder graph: up one level before exiting fullscreen
         if (
           typeof store.exitGraphFolder === "function" &&
           store.exitGraphFolder()
@@ -101,7 +176,7 @@ export function KeyboardShortcuts() {
           return;
         }
         if (store.settings.graphMode === "fullscreen") {
-          store.setGraphMode("panel");
+          exitGraphForViewport();
           return;
         }
         if (prefs.focusMode) {
@@ -111,129 +186,15 @@ export function KeyboardShortcuts() {
         }
       }
 
-      // ⌘[ note history back / ⌘] forward — skip dead ids
-      if (
-        mod &&
-        (e.key === "[" || e.code === "BracketLeft") &&
-        !e.shiftKey &&
-        !e.altKey
-      ) {
-        e.preventDefault();
-        if (!canGoBack()) return;
-        const isLive = (id: string) => store.nodes[id]?.kind === "note";
-        const id = goBackLive(isLive);
-        if (id) {
-          withHistoryNav(() => store.setActiveNote(id));
-        }
-        return;
-      }
-      if (
-        mod &&
-        (e.key === "]" || e.code === "BracketRight") &&
-        !e.shiftKey &&
-        !e.altKey
-      ) {
-        e.preventDefault();
-        if (!canGoForward()) return;
-        const isLive = (id: string) => store.nodes[id]?.kind === "note";
-        const id = goForwardLive(isLive);
-        if (id) {
-          withHistoryNav(() => store.setActiveNote(id));
-        }
-        return;
-      }
-
-      // ⌘⇧D / Ctrl+Shift+D — explore demo vault (also native menu on desktop)
-      if (mod && e.shiftKey && isModLetter(e, "d") && !e.altKey) {
-        if (!isDesktopShell()) {
-          e.preventDefault();
-          store.openDemoVault();
-        }
-        return;
-      }
-
-      // ⌘O open vault — ignore while another open is in flight
-      if (mod && isModLetter(e, "o") && !e.shiftKey) {
-        e.preventDefault();
-        if (useVaultStore.getState().connecting) return;
-        void store.openFolderAsVault();
-        return;
-      }
-
-      // Vault-scoped actions below — no-op without vault or while overlays open
-      if (!hasVault) return;
-
-      // ⌘E editor mode
-      if (mod && isModLetter(e, "e")) {
-        if (overlayOpen) return;
-        e.preventDefault();
-        store.toggleEditorMode();
-        return;
-      }
-
-      // ⌘\ left sidebar / ⌘⌥\ right — ignore while focused (true zen)
-      // Note: Visual/Source is ⌘E only (menu + keyboard aligned)
-      if (mod && (e.key === "\\" || e.code === "Backslash")) {
-        if (overlayOpen || prefs.focusMode) return;
-        e.preventDefault();
-        if (e.altKey) store.toggleRight();
-        else store.toggleLeft();
-        return;
-      }
-
-      // ⌘G graph — open side panel first; second press expands fullscreen
-      if (mod && isModLetter(e, "g")) {
-        if (overlayOpen || prefs.focusMode) return;
-        e.preventDefault();
-        const cur = store.settings.graphMode;
-        const onGraphPanel =
-          cur === "panel" &&
-          store.settings.rightOpen &&
-          store.rightTab === "graph";
-        if (cur === "fullscreen") {
-          store.setGraphMode("panel");
-        } else if (onGraphPanel) {
-          store.setGraphMode("fullscreen");
-        } else {
-          store.setGraphMode("panel");
-        }
-        return;
-      }
-
-      // ⌘N new note
-      if (mod && isModLetter(e, "n")) {
-        if (overlayOpen) return;
-        e.preventDefault();
-        store.createNote(null);
-        return;
-      }
-
-      // ⌘D today's daily note
-      if (mod && isModLetter(e, "d")) {
-        if (overlayOpen) return;
-        e.preventDefault();
-        store.openDailyNote();
-        return;
-      }
-
-      // ⌘S flush dirty (auto-save already on)
-      if (mod && isModLetter(e, "s")) {
-        if (overlayOpen) return;
-        e.preventDefault();
-        void store.flushDirty();
-        return;
-      }
-
       // Delete active note (not while typing)
-      // Mac: ⌘⌫ only; other platforms: Delete or Ctrl+Backspace
+      const mod = isAppleModPlatform()
+        ? e.metaKey
+        : e.metaKey || e.ctrlKey;
       const isDeleteChord =
         e.key === "Delete" ||
         (e.key === "Backspace" &&
           (isAppleModPlatform() ? e.metaKey : mod));
       if (isDeleteChord) {
-        if (isAppleModPlatform() && e.key === "Delete" && !mod) {
-          // Bare forward-delete is rare on Mac laptops — still allow if not editable
-        }
         const t = e.target as HTMLElement | null;
         const tag = t?.tagName?.toLowerCase();
         const editable =
@@ -246,7 +207,6 @@ export function KeyboardShortcuts() {
           return;
         const id = store.activeNoteId;
         if (!id) return;
-        // On Apple require ⌘ for Backspace; bare Delete still ok
         if (isAppleModPlatform() && e.key === "Backspace" && !e.metaKey)
           return;
         e.preventDefault();

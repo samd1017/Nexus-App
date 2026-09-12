@@ -27,7 +27,14 @@ import {
   Rows3,
   Columns3,
   Heading,
+  Heading4,
+  Highlighter,
+  Info,
   MoreHorizontal,
+  Sigma,
+  Workflow,
+  FileText,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -37,6 +44,8 @@ import {
 } from "@/lib/markdown/bullet-styles";
 import { InsertFieldDialog } from "./InsertFieldDialog";
 import { importImageFromPicker } from "@/lib/vault/image-import";
+import { insertImportedImage } from "@/lib/editor/paste-import";
+import { CALLOUT_KINDS, CALLOUT_LABELS, type CalloutKind } from "@/lib/editor/callout";
 
 type DialogKind = null | "link";
 
@@ -72,7 +81,11 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     editor.isActive({ textAlign: "center" }) ||
     editor.isActive({ textAlign: "right" }) ||
     editor.isActive("codeBlock") ||
-    editor.isActive("blockquote");
+    editor.isActive("blockquote") ||
+    editor.isActive("callout") ||
+    editor.isActive("heading", { level: 4 }) ||
+    editor.isActive("heading", { level: 5 }) ||
+    editor.isActive("heading", { level: 6 });
 
   const openLinkDialog = () => {
     const prev = (editor.getAttributes("link").href as string | undefined) || "";
@@ -101,33 +114,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     try {
       const imported = await importImageFromPicker();
       if (!imported) return;
-      editor
-        .chain()
-        .focus()
-        .setImage({
-          src: imported.previewUrl,
-          alt: imported.alt,
-          // @ts-expect-error vaultSrc is a custom attr on VaultImage
-          vaultSrc: imported.vaultPath.startsWith("data:")
-            ? null
-            : imported.vaultPath,
-        })
-        .run();
-      // Ensure data-vault-src lands on the DOM node for serialization
-      requestAnimationFrame(() => {
-        if (editor.isDestroyed) return;
-        try {
-          const imgs = editor.view.dom.querySelectorAll("img");
-          const last = imgs[imgs.length - 1] as HTMLImageElement | undefined;
-          if (last && imported.vaultPath && !imported.vaultPath.startsWith("data:")) {
-            last.setAttribute("data-vault-src", imported.vaultPath);
-            last.setAttribute("src", imported.previewUrl);
-            last.setAttribute("alt", imported.alt);
-          }
-        } catch {
-          /* TipTap view not available */
-        }
-      });
+      insertImportedImage(editor, imported);
     } finally {
       setImportingImage(false);
     }
@@ -139,6 +126,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
     icon: React.ReactNode,
     title: string,
     disabled?: boolean,
+    hideOnPhone?: boolean,
   ) => (
     <button
       type="button"
@@ -151,6 +139,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       }}
       className={cn(
         "icon-btn h-7 w-7",
+        hideOnPhone && "hidden md:inline-flex",
         active && "is-active",
         disabled && "pointer-events-none opacity-35",
       )}
@@ -189,7 +178,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
   return (
     <>
       <div className="flex flex-col gap-0 border-b border-[var(--border)]">
-        <div className="flex flex-nowrap items-center gap-0.5 overflow-x-auto px-3 py-1.5">
+        <div className="editor-toolbar-scroll flex flex-nowrap items-center gap-0.5 overflow-x-auto px-2 py-1.5 sm:px-3">
           {btn(
             editor.isActive("bold"),
             () => editor.chain().focus().toggleBold().run(),
@@ -202,12 +191,20 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             <Italic size={14} />,
             "Italic",
           )}
+          {btn(
+            editor.isActive("highlight"),
+            () => editor.chain().focus().toggleHighlight().run(),
+            <Highlighter size={14} />,
+            "Highlight",
+          )}
           <Sep />
           {btn(
             editor.isActive("heading", { level: 1 }),
             () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
             <Heading1 size={14} />,
             "Heading 1",
+            false,
+            true,
           )}
           {btn(
             editor.isActive("heading", { level: 2 }),
@@ -220,6 +217,8 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
             <Heading3 size={14} />,
             "Heading 3",
+            false,
+            true,
           )}
           <Sep />
           {btn(
@@ -233,6 +232,8 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             () => editor.chain().focus().toggleOrderedList().run(),
             <ListOrdered size={14} />,
             "Ordered list",
+            false,
+            true,
           )}
           {btn(
             editor.isActive("taskList"),
@@ -253,6 +254,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             <ImageIcon size={14} />,
             importingImage ? "Importing image…" : "Insert image from file",
             importingImage,
+            true,
           )}
           {btn(
             inTable,
@@ -266,6 +268,8 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             },
             <TableIcon size={14} />,
             inTable ? "Table selected" : "Insert table",
+            false,
+            true,
           )}
           <Sep />
           <Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
@@ -288,7 +292,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                 side="bottom"
                 align="end"
                 sideOffset={6}
-                className="z-[80] w-[200px] rounded-[12px] border border-[var(--border)] bg-[rgba(18,18,22,0.97)] p-1.5 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl"
+                className="z-[80] w-[220px] rounded-[12px] border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-elevated)] backdrop-blur-xl"
                 onOpenAutoFocus={(e) => e.preventDefault()}
               >
                 <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
@@ -312,6 +316,49 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                   <AlignRight size={14} />,
                   "Align right",
                 )}
+                <div className="my-1 h-px bg-[var(--border)] md:hidden" />
+                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)] md:hidden">
+                  Insert
+                </div>
+                <div className="md:hidden">
+                  {moreItem(
+                    editor.isActive("heading", { level: 1 }),
+                    () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
+                    <Heading1 size={14} />,
+                    "Heading 1",
+                  )}
+                  {moreItem(
+                    editor.isActive("heading", { level: 3 }),
+                    () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
+                    <Heading3 size={14} />,
+                    "Heading 3",
+                  )}
+                  {moreItem(
+                    editor.isActive("orderedList"),
+                    () => editor.chain().focus().toggleOrderedList().run(),
+                    <ListOrdered size={14} />,
+                    "Numbered list",
+                  )}
+                  {moreItem(
+                    false,
+                    () => void pickAndInsertImage(),
+                    <ImageIcon size={14} />,
+                    "Image",
+                  )}
+                  {moreItem(
+                    inTable,
+                    () => {
+                      if (inTable) return;
+                      editor
+                        .chain()
+                        .focus()
+                        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                        .run();
+                    },
+                    <TableIcon size={14} />,
+                    "Table",
+                  )}
+                </div>
                 <div className="my-1 h-px bg-[var(--border)]" />
                 <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                   Blocks
@@ -321,6 +368,96 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                   () => editor.chain().focus().toggleCodeBlock().run(),
                   <Code2 size={14} />,
                   "Code block",
+                )}
+                {moreItem(
+                  editor.isActive("mermaid"),
+                  () =>
+                    editor
+                      .chain()
+                      .focus()
+                      .insertContent({
+                        type: "mermaid",
+                        attrs: {
+                          source: "flowchart LR\n  A[Start] --> B[Next]",
+                        },
+                      })
+                      .run(),
+                  <Workflow size={14} />,
+                  "Mermaid diagram",
+                )}
+                {moreItem(
+                  editor.isActive("embed"),
+                  () =>
+                    editor
+                      .chain()
+                      .focus()
+                      .insertContent({
+                        type: "embed",
+                        attrs: { target: "Welcome" },
+                      })
+                      .run(),
+                  <FileText size={14} />,
+                  "Embed note",
+                )}
+                {moreItem(
+                  editor.isActive("queryBlock"),
+                  () =>
+                    editor
+                      .chain()
+                      .focus()
+                      .insertContent({
+                        type: "queryBlock",
+                        attrs: { query: "folder:Research" },
+                      })
+                      .run(),
+                  <Search size={14} />,
+                  "Live query",
+                )}
+                {moreItem(
+                  editor.isActive("mathBlock"),
+                  () =>
+                    editor
+                      .chain()
+                      .focus()
+                      .insertContent({
+                        type: "mathBlock",
+                        attrs: { tex: "E = mc^2" },
+                      })
+                      .run(),
+                  <Sigma size={14} />,
+                  "Math block",
+                )}
+                {moreItem(
+                  editor.isActive("mathInline"),
+                  () =>
+                    editor
+                      .chain()
+                      .focus()
+                      .insertContent({
+                        type: "mathInline",
+                        attrs: { tex: "x^2" },
+                      })
+                      .run(),
+                  <Sigma size={12} />,
+                  "Inline math",
+                )}
+                {moreItem(
+                  editor.isActive("heading", { level: 4 }),
+                  () => editor.chain().focus().toggleHeading({ level: 4 }).run(),
+                  <Heading4 size={14} />,
+                  "Heading 4",
+                )}
+                {moreItem(
+                  editor.isActive("heading", { level: 5 }),
+                  () => editor.chain().focus().toggleHeading({ level: 5 }).run(),
+                  <Heading size={14} />,
+                  "Heading 5",
+                )}
+                {moreItem(
+                  editor.isActive("heading", { level: 6 }),
+                  () => editor.chain().focus().toggleHeading({ level: 6 }).run(),
+                  <Heading size={12} />,
+                  "Heading 6",
                 )}
                 {moreItem(
                   editor.isActive("blockquote"),
@@ -334,14 +471,36 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                   <Minus size={14} />,
                   "Divider",
                 )}
+                <div className="my-1 h-px bg-[var(--border)]" />
+                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                  Callout
+                </div>
+                {CALLOUT_KINDS.map((kind) =>
+                  moreItem(
+                    editor.isActive("callout") &&
+                      editor.getAttributes("callout").kind === kind,
+                    () => {
+                      if (
+                        editor.isActive("callout") &&
+                        editor.getAttributes("callout").kind === kind
+                      ) {
+                        editor.chain().focus().unsetCallout().run();
+                      } else {
+                        editor.chain().focus().setCallout(kind as CalloutKind).run();
+                      }
+                    },
+                    <Info size={14} />,
+                    CALLOUT_LABELS[kind],
+                  ),
+                )}
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>
         </div>
 
         {inBullet ? (
-          <div className="flex flex-wrap items-center gap-1 border-t border-[var(--border)] bg-[rgba(123,97,255,0.05)] px-3 py-1.5">
-            <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--accent-violet)]">
+          <div className="editor-toolbar-scroll flex flex-nowrap items-center gap-1 overflow-x-auto border-t border-[var(--border)] bg-[rgba(123,97,255,0.05)] px-2 py-1 sm:px-3 sm:py-1.5">
+            <span className="mr-1 hidden text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--accent-violet)] sm:inline">
               Bullets
             </span>
             {BULLET_STYLES.map((b) => (
@@ -354,7 +513,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                   editor.chain().focus().setBulletStyle(b.id).run();
                 }}
                 className={cn(
-                  "inline-flex h-7 min-w-7 items-center justify-center gap-1 rounded-md border px-2 text-[12px] transition-colors",
+                  "inline-flex h-8 min-w-8 shrink-0 items-center justify-center gap-1 rounded-md border px-2 text-[12px] transition-colors sm:h-7 sm:min-w-7",
                   currentBullet === b.id
                     ? "border-[rgba(0,200,255,0.45)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)]"
                     : "border-transparent bg-white/[0.03] text-[var(--text-secondary)] hover:border-[var(--border)] hover:text-[var(--text-primary)]",

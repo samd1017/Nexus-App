@@ -29,36 +29,39 @@ export function jumpToOutlineHeading(text: string, level: number): boolean {
   ) as HTMLTextAreaElement | null;
   if (ta) {
     const lines = ta.value.split("\n");
-    let pos = 0;
-    const prefix = "#".repeat(Math.min(6, Math.max(1, level))) + " ";
-    for (const line of lines) {
-      const m = /^(#{1,6})\s+(.+)$/.exec(line);
-      if (m && m[2].trim().toLowerCase() === needle) {
-        ta.focus();
-        ta.setSelectionRange(pos, pos + line.length);
-        // Approximate scroll
-        const ratio = pos / Math.max(1, ta.value.length);
-        ta.scrollTop = ratio * ta.scrollHeight - ta.clientHeight / 3;
-        return true;
+    const wantLevel = Math.min(6, Math.max(1, level));
+    const tryJump = (matchLine: (m: RegExpExecArray, line: string) => boolean) => {
+      let pos = 0;
+      for (const line of lines) {
+        const m = /^(#{1,6})\s+(.+)$/.exec(line);
+        if (m && matchLine(m, line)) {
+          ta.focus();
+          ta.setSelectionRange(pos, pos + line.length);
+          const before = ta.value.slice(0, pos);
+          const lineCount = before.split("\n").length;
+          const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
+          ta.scrollTop = Math.max(0, (lineCount - 3) * lineHeight);
+          return true;
+        }
+        pos += line.length + 1;
       }
-      // Also match any level with same text
-      if (m && m[2].trim().toLowerCase() === needle) {
-        void prefix;
-      }
-      pos += line.length + 1;
+      return false;
+    };
+    if (
+      tryJump(
+        (m) =>
+          m[1].length === wantLevel && m[2].trim().toLowerCase() === needle,
+      )
+    ) {
+      return true;
     }
-    // Fallback: any heading text match
-    pos = 0;
-    for (const line of lines) {
-      const m = /^(#{1,6})\s+(.+)$/.exec(line);
-      if (m && m[2].trim().toLowerCase() === needle) {
-        ta.focus();
-        ta.setSelectionRange(pos, pos + line.length);
-        const ratio = pos / Math.max(1, ta.value.length);
-        ta.scrollTop = ratio * ta.scrollHeight - ta.clientHeight / 3;
-        return true;
-      }
-      pos += line.length + 1;
+    if (
+      tryJump((m) => {
+        const t = m[2].trim().toLowerCase();
+        return t === needle || t.startsWith(needle);
+      })
+    ) {
+      return true;
     }
   }
 

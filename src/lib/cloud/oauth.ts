@@ -6,7 +6,12 @@
  * Notes stay plain .md on disk; Hermes and the app share the same files.
  */
 
-export type CloudProvider = "dropbox" | "google" | "onedrive";
+export type CloudProvider =
+  | "dropbox"
+  | "google"
+  | "onedrive"
+  | "icloud"
+  | "syncthing";
 
 export interface CloudSession {
   provider: CloudProvider;
@@ -21,6 +26,8 @@ const PREF_KEY = "nexus-cloud-pref-v2";
 export function providerLabel(p: CloudProvider): string {
   if (p === "dropbox") return "Dropbox";
   if (p === "google") return "Google Drive";
+  if (p === "icloud") return "iCloud Drive";
+  if (p === "syncthing") return "Syncthing";
   return "OneDrive";
 }
 
@@ -31,11 +38,17 @@ export function providerSyncHint(p: CloudProvider): string {
   if (p === "google") {
     return "Open the Google Drive for desktop stream/mirror folder as the vault.";
   }
+  if (p === "icloud") {
+    return "Open the iCloud Drive folder (or a vault inside it) after desktop sync is on.";
+  }
+  if (p === "syncthing") {
+    return "Point Syncthing at this vault folder on each machine. Nexus watches disk live.";
+  }
   return "Open your OneDrive folder as the vault after Files On-Demand sync.";
 }
 
 export const CLOUD_SYNC_HINT =
-  "Best path: enable Dropbox / Drive / OneDrive desktop sync, then Open folder as vault. Zero accounts in Nexus. Notes stay ordinary Markdown.";
+  "Built-in sync is your folder plus a live disk watcher. Put the vault in Dropbox, Drive, OneDrive, iCloud, or Syncthing — Nexus stays in lockstep, including conflicts. Zero Nexus accounts. Notes stay ordinary Markdown.";
 
 export function loadCloudSession(): CloudSession | null {
   try {
