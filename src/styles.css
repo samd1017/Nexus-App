@@ -1135,6 +1135,8 @@
 
   /* Soft Visual ↔ Source / note switch */
   .editor-surface-enter {
+    container-type: inline-size;
+    container-name: nexus-editor;
     animation: editorSurfaceIn var(--duration-base) var(--motion-ease) both;
   }
   @keyframes editorSurfaceIn {
@@ -1490,13 +1492,10 @@
   outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 2px;
 }
-.nexus-mermaid-svg {
-  min-height: 72px;
-}
 .nexus-mermaid-svg svg {
   display: block;
-  width: max(100%, 360px);
-  max-width: none;
+  width: 100%;
+  max-width: 100%;
   height: auto;
 }
 .nexus-mermaid-edit,
@@ -1832,6 +1831,15 @@
 }
 .nexus-split-pane + .nexus-split-pane {
   border-left: 1px solid var(--border);
+}
+@container nexus-editor (max-width: 840px) {
+  .nexus-split {
+    flex-direction: column;
+  }
+  .nexus-split-pane + .nexus-split-pane {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
 }
 .nexus-workspace {
   display: flex;
