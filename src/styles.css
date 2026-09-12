@@ -396,7 +396,7 @@
   }
 
   .note-editor ul:not([data-type="taskList"])[data-bullet="dash"] > li::before {
-    content: "\u2013";
+    content: "–";
     position: absolute;
     left: -1.05rem;
     color: var(--text-secondary);
@@ -451,7 +451,7 @@
   }
 
   .note-editor li[data-type="taskItem"] p.is-empty::before {
-    content: "Add an item\u2026";
+    content: "Add an item…";
     color: var(--text-muted);
     opacity: 0.5;
     pointer-events: none;
@@ -504,7 +504,7 @@
     color: var(--callout-accent, var(--accent));
   }
   .nexus-callout[data-callout-title]:not([data-callout-title=""])::before {
-    content: attr(data-callout-label) " \u00b7 " attr(data-callout-title);
+    content: attr(data-callout-label) " · " attr(data-callout-title);
     text-transform: none;
     letter-spacing: 0;
     font-size: 12.5px;
@@ -1857,3 +1857,4 @@
   background: rgba(12, 12, 15, 0.97);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }
+
