@@ -49,6 +49,7 @@ import {
 } from "@/lib/vault/templates";
 import { cn } from "@/lib/utils";
 import { resolveWikilink } from "@/lib/graph/build-graph";
+import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import {
   isOnlySerializationNoise,
@@ -91,7 +92,7 @@ function lostSpecialMarkdown(prev: string, next: string): boolean {
   return false;
 }
 
-function openWikilinkTarget(target: string) {
+function openWikilinkTarget(target: string, event?: Event) {
   const state = useVaultStore.getState();
   // Persist current editor first so graph/backlinks update immediately
   try {
@@ -99,16 +100,32 @@ function openWikilinkTarget(target: string) {
   } catch {
     /* ignore */
   }
-  const hit = resolveWikilink(target, state.nodes);
+  const parts = parseWikilinkInner(target);
+  const ev = event as MouseEvent | undefined;
+  const pane =
+    ev && (ev.altKey || (ev.metaKey && ev.shiftKey))
+      ? ("secondary" as const)
+      : ("primary" as const);
+  const jump = {
+    heading: parts.heading,
+    blockId: parts.blockId,
+    pane,
+  };
+  const resolveTarget = parts.noteTarget || parts.target;
+  const hit = resolveTarget
+    ? resolveWikilink(resolveTarget, state.nodes)
+    : state.activeNoteId
+      ? state.nodes[state.activeNoteId]
+      : null;
   const activateNote = (id: string) => {
     const noteCount = Object.values(state.nodes).filter(
       (n) => n.kind === "note",
     ).length;
     // Large vaults: wikilink open → ego neighborhood (does not thrash setActiveNote scope)
-    if (shouldUseFolderGraph(noteCount)) {
+    if (shouldUseFolderGraph(noteCount) && pane !== "secondary") {
       state.enterGraphEgo?.({ returnPath: state.graphBrowsePath || "" });
     }
-    state.setActiveNote(id);
+    state.setActiveNote(id, jump);
   };
   if (!hit) {
     state.setToast(`No note found for [[${target}]]`);
@@ -443,7 +460,7 @@ export function VisualEditor({ noteId, content }: Props) {
         TableHeader,
         TableCell,
         Wikilink.configure({
-          onOpen: (target) => openWikilinkTarget(target),
+          onOpen: (target, event) => openWikilinkTarget(target, event),
         }),
         HighlightMark,
         Callout,

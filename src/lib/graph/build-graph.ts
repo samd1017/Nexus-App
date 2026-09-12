@@ -5,8 +5,11 @@ import type {
   VaultNode,
 } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
-import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
-import { normalizeLinkTarget } from "@/lib/markdown/wikilinks";
+import {
+  extractWikilinkTargets,
+  normalizeLinkTarget,
+  parseWikilinkInner,
+} from "@/lib/markdown/wikilinks";
 import { previewSnippet } from "@/lib/markdown/serialize";
 import { vaultLinkIndex } from "@/lib/vault/link-index";
 import {
@@ -546,7 +549,8 @@ export function resolveWikilink(
   nodes: Record<string, VaultNode>,
   index?: Map<string, string>,
 ): VaultNode | null {
-  const norm = normalizeLinkTarget(target);
+  const parts = parseWikilinkInner(target);
+  const norm = normalizeLinkTarget(parts.noteTarget || parts.target);
   if (!norm) return null;
 
   const idx = index ?? buildWikilinkIndex(nodes);

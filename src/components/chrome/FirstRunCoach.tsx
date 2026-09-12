@@ -45,7 +45,7 @@ export function FirstRunCoach() {
   const steps = [
     {
       icon: Search,
-      label: "Search anything",
+      label: "Search or ask",
       hint: formatShortcut("K"),
       action: () => {
         setCommandOpen(true);
@@ -53,16 +53,16 @@ export function FirstRunCoach() {
     },
     {
       icon: Link2,
-      label: "Type a wikilink",
-      hint: "[[note]]",
+      label: "Follow a heading link",
+      hint: "[[Note#Heading]]",
       action: () => {
-        setToast("In the editor, type [[ to link another note");
+        setToast("Click [[Note#Heading]] — or Alt-click to open beside");
         dismiss();
       },
     },
     {
       icon: Network,
-      label: "Open the graph",
+      label: "Graph + Pulse",
       hint: formatShortcut("G"),
       action: () => {
         toggleGraphForViewport();
@@ -84,12 +84,12 @@ export function FirstRunCoach() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[13.5px] font-semibold text-[var(--text-primary)]">
-              {mode === "demo" ? "You’re in the demo vault" : "You’re in — three moves"}
+              {mode === "demo" ? "Demo vault — same instrument as disk" : "Three moves. Then it sticks."}
             </div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-secondary)]">
               {mode === "demo"
-                ? "Nothing here is written to disk. Try search, links, and the graph — then open your own folder anytime."
-                : "Search fast, link notes with [[brackets]], and see the graph. Press ? anytime for shortcuts."}
+                ? "Search, heading links, dual pane, and Pulse. Simulate an agent write from the vault menu when you want the Grok loop."
+                : "Search or ask: your notes. Link [[Note#Heading]]. Watch Pulse when agents write the same folder."}
             </p>
           </div>
           <button

@@ -44,6 +44,8 @@ export interface VaultSettings {
   editorMode: EditorMode;
   graphMode: GraphMode;
   lastNotePath: string | null;
+  /** Dual-note workspace (two notes, not source+preview) */
+  workspaceSplit: boolean;
 }
 
 export interface VaultStateSnapshot {
@@ -120,6 +122,7 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   editorMode: "visual",
   graphMode: "panel",
   lastNotePath: null,
+  workspaceSplit: false,
 };
 
 export function noteTitle(node: VaultNode): string {

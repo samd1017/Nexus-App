@@ -2,7 +2,7 @@ import { Mark, mergeAttributes, InputRule } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 
 export interface WikilinkOptions {
-  onOpen?: (target: string) => void;
+  onOpen?: (target: string, event?: Event) => void;
   HTMLAttributes: Record<string, unknown>;
 }
 
@@ -106,7 +106,7 @@ export const Wikilink = Mark.create<WikilinkOptions>({
       if (!target) return false;
       event.preventDefault();
       event.stopPropagation();
-      onOpen(target);
+      onOpen(target, event);
       return true;
     };
 

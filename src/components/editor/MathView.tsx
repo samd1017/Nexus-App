@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { ReactNodeViewProps } from "@tiptap/react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react";
 
 export function MathView({ node, updateAttributes, selected }: ReactNodeViewProps) {
   const tex = String(node.attrs.tex ?? "");
@@ -47,14 +47,14 @@ export function MathView({ node, updateAttributes, selected }: ReactNodeViewProp
     if (draft !== tex) updateAttributes({ tex: draft });
   };
 
-  const Tag = block ? "div" : "span";
   return (
-    <Tag
+    <NodeViewWrapper
+      as={block ? "div" : "span"}
       className={`${block ? "nexus-math nexus-math-block" : "nexus-math nexus-math-inline"}${selected ? " is-selected" : ""}`}
       contentEditable={false}
       data-type={block ? "math-block" : "math-inline"}
       data-tex={tex}
-      onDoubleClick={(e) => {
+      onDoubleClick={(e: MouseEvent) => {
         e.preventDefault();
         setDraft(tex);
         setEditing(true);
@@ -90,6 +90,6 @@ export function MathView({ node, updateAttributes, selected }: ReactNodeViewProp
           ) : null}
         </>
       )}
-    </Tag>
+    </NodeViewWrapper>
   );
 }

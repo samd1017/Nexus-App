@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
-import type { ReactNodeViewProps } from "@tiptap/react";
+import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react";
 import { usePrefsStore, resolveTheme } from "@/lib/prefs/preferences";
 
 export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewProps) {
@@ -55,12 +55,13 @@ export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewP
   };
 
   return (
-    <div
+    <NodeViewWrapper
+      as="div"
       className={`nexus-mermaid${selected ? " is-selected" : ""}`}
       contentEditable={false}
       data-type="mermaid"
       data-source={source}
-      onDoubleClick={(e) => {
+      onDoubleClick={(e: MouseEvent) => {
         e.preventDefault();
         setDraft(source);
         setEditing(true);
@@ -90,7 +91,7 @@ export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewP
       ) : (
         <div ref={hostRef} className="nexus-mermaid-svg" />
       )}
-    </div>
+    </NodeViewWrapper>
   );
 }
 

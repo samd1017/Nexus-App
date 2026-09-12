@@ -36,6 +36,9 @@ import {
   searchWithBackend as searchVault,
 } from "@/lib/search/search-backend";
 import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-ops";
+import { fuseSearchHits } from "@/lib/search/rank-fusion";
+import { buildAskAnswer, retrieveForAsk } from "@/lib/search/ask-notes";
+import { getBacklinks } from "@/lib/vault/backlinks";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
@@ -284,6 +287,7 @@ function CommandPaletteOpen() {
     ? q
     : searchText || (hasPathFolderOp ? "" : q);
   const isEmptyQuery = !raw && !isCommandMode;
+  const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
 
   const hits = useMemo(() => {
     if (isEmptyQuery) {
@@ -302,14 +306,29 @@ function CommandPaletteOpen() {
     }
     if (wantsOrphans || wantsBroken || isCommandMode) return [];
 
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const activeNode = activeNoteId ? nodes[activeNoteId] : null;
+    const neighborIds =
+      activeNode?.kind === "note"
+        ? getBacklinks(activeNode, nodes).map((b) => b.fromId)
+        : [];
+    const signals = { recentIds, activeNoteId, neighborIds };
+
+    if (isAskMode) {
+      return retrieveForAsk(nodes, debouncedSearch.trim() || raw, signals, 8);
+    }
+
     if (hasPathFolderOp) {
-      return searchWithOps(nodes, debouncedSearch.trim() || raw, 16);
+      return fuseSearchHits(
+        searchWithOps(nodes, debouncedSearch.trim() || raw, 16),
+        signals,
+      );
     }
     const needle = debouncedSearch.trim() || searchText || raw;
     if (needle) {
-      return searchVault(nodes, needle, 16);
+      return fuseSearchHits(searchVault(nodes, needle, 16), signals);
     }
-    return searchVault(nodes, raw, 16);
+    return fuseSearchHits(searchVault(nodes, raw, 16), signals);
   }, [
     nodes,
     vaultId,
@@ -329,7 +348,14 @@ function CommandPaletteOpen() {
     pathFolderOps.fileFilter,
     pathFolderOps.tagFilter,
     pathFolderOps.excludes,
+    isAskMode,
+    activeNoteId,
   ]);
+
+  const askAnswer = useMemo(() => {
+    if (!isAskMode) return null;
+    return buildAskAnswer(raw, hits, nodes);
+  }, [isAskMode, raw, hits, nodes]);
 
   const tags = useMemo(() => {
     if (!isTagBrowse) return [];
@@ -611,21 +637,28 @@ function CommandPaletteOpen() {
             setCommandOpen(false);
           }),
         }] : []),
-        ...(import.meta.env.DEV
-          ? [
-              {
-                id: "hermes-sim",
-                label: "Simulate Hermes write",
-                keywords: ["hermes", "agent", "external", "simulate", "dev"],
-                icon: <Sparkles size={15} />,
-                shortcut: undefined as string | undefined,
-                run: wrapRun("hermes-sim", () => {
-                  simulateHermesWrite();
-                  setCommandOpen(false);
-                }),
-              },
-            ]
-          : []),
+        {
+          id: "hermes-sim",
+          label: "Simulate agent write",
+          keywords: ["hermes", "agent", "external", "simulate", "grok", "pulse"],
+          icon: <Sparkles size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("hermes-sim", () => {
+            simulateHermesWrite();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "split-pane",
+          label: "Toggle dual-note workspace",
+          keywords: ["split", "pane", "dual", "workspace"],
+          icon: <PanelRight size={15} />,
+          shortcut: formatShortcut("2"),
+          run: wrapRun("split-pane", () => {
+            useVaultStore.getState().toggleWorkspaceSplit();
+            setCommandOpen(false);
+          }),
+        },
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
     [
       actionQuery,
@@ -884,7 +917,7 @@ function CommandPaletteOpen() {
             ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="Search notes…"
+            placeholder="Search, path: folder:, or ask: what links Hermes…"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
           />
@@ -907,6 +940,7 @@ function CommandPaletteOpen() {
             <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">-exclude</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">is:orphan</span> ·{" "}
+            <span className="font-mono text-[var(--text-secondary)]">ask:</span> cited answers ·{" "}
             <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
           </div>
         ) : null}
@@ -931,6 +965,41 @@ function CommandPaletteOpen() {
               </button>
             ) : null}
           </Command.Empty>
+
+          {askAnswer ? (
+            <Command.Group heading="Ask your notes" className={GROUP_HEADING}>
+              <div className="mb-1 rounded-[10px] border border-[var(--border)] bg-white/[0.02] px-3 py-2 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+                {askAnswer.summary}
+              </div>
+              {askAnswer.citations.map((c) => (
+                <Command.Item
+                  key={`ask-${c.noteId}-${c.snippet.slice(0, 24)}`}
+                  value={`ask-${c.noteId}-${c.title}`}
+                  onSelect={() => {
+                    setActiveNote(c.noteId, { heading: c.heading });
+                    setCommandOpen(false);
+                  }}
+                  className={cn(ITEM_CLASS, "items-start")}
+                >
+                  <FileText size={15} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-[var(--text-primary)]">
+                      {c.title}
+                      {c.heading ? (
+                        <span className="font-normal text-[var(--text-muted)]">
+                          {" "}
+                          #{c.heading}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
+                      {c.snippet}
+                    </div>
+                  </div>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          ) : null}
 
           {savedSearches.length > 0 && (isEmptyQuery || /^save/i.test(raw) || raw === "/") ? (
             <Command.Group heading="Saved searches" className={GROUP_HEADING}>

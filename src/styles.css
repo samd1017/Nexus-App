@@ -1829,6 +1829,22 @@
 .nexus-split-pane + .nexus-split-pane {
   border-left: 1px solid var(--border);
 }
+.nexus-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+.nexus-workspace-handle {
+  width: 6px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: col-resize;
+}
+.nexus-workspace-handle:hover,
+.nexus-workspace-handle[data-resize-handle-active] {
+  background: var(--accent);
+}
 .nexus-source-preview {
   min-height: 0;
   flex: 1;

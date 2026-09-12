@@ -78,7 +78,13 @@ turndown.addRule("embed", {
     node.nodeName === "DIV" &&
     (node as HTMLElement).getAttribute("data-type") === "embed",
   replacement: (_content, node) => {
-    const target = (node as HTMLElement).getAttribute("data-embed-target") || "";
+    const el = node as HTMLElement;
+    const target =
+      el.getAttribute("data-embed-target") ||
+      [el.getAttribute("data-embed-note"), el.getAttribute("data-embed-heading") ? `#${el.getAttribute("data-embed-heading")}` : "", el.getAttribute("data-embed-block") ? `#^${el.getAttribute("data-embed-block")}` : ""]
+        .filter(Boolean)
+        .join("") ||
+      "";
     return `\n\n![[${target}]]\n\n`;
   },
 });
@@ -168,13 +174,25 @@ turndown.addRule("taskListItem", {
       el.getAttribute("data-checked") === "true" ||
       !!input?.checked ||
       input?.hasAttribute("checked");
-    // content includes nested block text; strip leading checkbox artifacts
-    const body = content
+    // Preserve nested task lists / paragraphs. Flattening every newline
+    // to a space was dropping Obsidian-style subtasks on Visual → disk.
+    const raw = content
       .replace(/^\s*\[[ xX]\]\s*/, "")
       .replace(/^\n+/, "")
-      .replace(/\n+$/, "")
-      .replace(/\n+/g, " ")
-      .trim();
+      .replace(/\n+$/, "");
+    const lines = raw.split("\n");
+    const first = (lines[0] ?? "").trim();
+    const rest = lines
+      .slice(1)
+      .map((line) => {
+        if (!line.trim()) return "";
+        if (/^\s*[-*+]/.test(line) || /^\s*\d+\./.test(line)) {
+          return `  ${line.replace(/^\s+/, "")}`;
+        }
+        return `  ${line.trim()}`;
+      })
+      .filter(Boolean);
+    const body = rest.length ? `${first}\n${rest.join("\n")}` : first;
     return `- [${checked ? "x" : " "}] ${body}\n`;
   },
 });

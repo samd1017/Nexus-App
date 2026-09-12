@@ -565,6 +565,45 @@ export function SettingsPanel() {
             </div>
           </Section>
 
+          <Section title="Agents & Grok">
+            <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+              Humans and agents share the same folder of Markdown. Point Grok,
+              Cursor, or any script at this vault. Nexus watches the disk,
+              shows writes in Pulse, and opens Conflict Studio when you and an
+              agent edit the same note at once.
+            </p>
+            <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+              <li>Open a real folder (or stay in the demo vault).</li>
+              <li>
+                Have an agent write a <span className="font-mono">.md</span> file
+                — or run <strong>Simulate agent write</strong> from the vault
+                menu / command palette.
+              </li>
+              <li>Open Pulse. Resolve any conflict with Keep mine / Take theirs.</li>
+            </ol>
+            {vaultId ? (
+              <button
+                type="button"
+                className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                onClick={() => {
+                  useVaultStore.getState().simulateHermesWrite();
+                  useVaultStore.getState().openPulseRail?.();
+                  usePrefsStore.getState().setSettingsOpen(false);
+                }}
+              >
+                Simulate agent write
+              </button>
+            ) : (
+              <p className="mt-3 text-[12px] text-[var(--text-muted)]">
+                Open a vault to run the agent demo.
+              </p>
+            )}
+            <p className="mt-3 text-[11.5px] leading-snug text-[var(--text-muted)]">
+              No API keys live in Nexus. Grok Bot and external agents write
+              files on disk. Keep notes in clean Markdown so diffs stay honest.
+            </p>
+          </Section>
+
           {/* Sync */}
           <Section title="Sync">
             <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
@@ -738,8 +777,8 @@ export function SettingsPanel() {
                 body="Built-in sync watches your vault folder. Put it in Dropbox, Drive, OneDrive, iCloud, or Syncthing — no Nexus account. Conflicts open in Conflict Studio."
               />
               <HelpItem
-                title="Hermes & agents"
-                body="External apps can edit .md files on disk. Changes appear live. Keep Markdown clean — no proprietary formats."
+                title="Hermes, Grok & agents"
+                body="External apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Simulate an agent from Settings → Agents or the vault menu."
               />
               <HelpItem
                 title="Desktop"

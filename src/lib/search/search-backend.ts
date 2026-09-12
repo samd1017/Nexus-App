@@ -56,6 +56,22 @@ class FtsSearchBackend implements SearchBackend {
     }
     return indexedSearch(nodes, query, limit);
   }
+
+  async searchAsync(
+    nodes: Record<string, VaultNode>,
+    query: string,
+    limit = 40,
+  ): Promise<SearchHit[]> {
+    const idx = getDurableIndex();
+    if (idx?.ready && idx.searchFtsAsync) {
+      try {
+        return await idx.searchFtsAsync(query, limit);
+      } catch {
+        return idx.searchFts(query, limit);
+      }
+    }
+    return this.search(nodes, query, limit);
+  }
 }
 
 const fuseBackend = new FuseSearchBackend();
@@ -76,6 +92,19 @@ export function searchWithBackend(
   limit?: number,
 ): SearchHit[] {
   return getSearchBackend().search(nodes, query, limit);
+}
+
+/** Desktop: native BM25 FTS5 when the sqlite index exposes searchFtsAsync. */
+export async function searchWithBackendAsync(
+  nodes: Record<string, VaultNode>,
+  query: string,
+  limit?: number,
+): Promise<SearchHit[]> {
+  const backend = getSearchBackend();
+  if (backend instanceof FtsSearchBackend) {
+    return backend.searchAsync(nodes, query, limit);
+  }
+  return backend.search(nodes, query, limit);
 }
 
 /** Post-filter search hits by path: / folder: substring semantics. */

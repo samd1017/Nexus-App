@@ -21,7 +21,9 @@ export type HotkeyId =
   | "rightPanel"
   | "back"
   | "forward"
-  | "demo";
+  | "demo"
+  | "splitPane"
+  | "askNotes";
 
 export type HotkeyChord = {
   key: string;
@@ -48,6 +50,8 @@ export const HOTKEY_IDS: HotkeyId[] = [
   "back",
   "forward",
   "demo",
+  "splitPane",
+  "askNotes",
 ];
 
 export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
@@ -67,6 +71,8 @@ export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   back: { key: "[" },
   forward: { key: "]" },
   demo: { key: "d", shift: true },
+  splitPane: { key: "2" },
+  askNotes: { key: "/", shift: true },
 };
 
 export const HOTKEY_LABELS: Record<HotkeyId, string> = {
@@ -86,6 +92,8 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   back: "Note history back",
   forward: "Note history forward",
   demo: "Explore demo vault",
+  splitPane: "Dual-note workspace",
+  askNotes: "Ask your notes",
 };
 
 const ID_SET = new Set<string>(HOTKEY_IDS);

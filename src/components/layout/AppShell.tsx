@@ -8,7 +8,7 @@ import { DeleteConfirmHost } from "@/components/chrome/DeleteConfirmHost";
 import { ConflictStudioHost } from "@/components/conflict/ConflictStudioHost";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
-import { EditorPane } from "@/components/editor/EditorPane";
+import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
@@ -359,7 +359,7 @@ export function AppShell() {
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
       >
         {graphMode !== "fullscreen" ? <LeftSidebar /> : null}
-        {graphMode !== "fullscreen" ? <EditorPane /> : null}
+        {graphMode !== "fullscreen" ? <Workspace /> : null}
         <RightPanel />
       </main>
       {graphMode !== "fullscreen" ? <MobileBottomNav /> : null}

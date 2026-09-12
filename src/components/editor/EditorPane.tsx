@@ -14,8 +14,11 @@ import {
   Loader2,
   AlertCircle,
   Search,
+  X,
+  ArrowLeftRight,
 } from "lucide-react";
 import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
+import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
 import { VisualEditor } from "./VisualEditor";
 import { SourceEditor } from "./SourceEditor";
@@ -42,7 +45,13 @@ import {
   parseJournalDailyDate,
 } from "@/lib/vault/templates";
 
-export function EditorPane() {
+export function EditorPane({
+  noteId,
+  pane = "primary",
+}: {
+  noteId?: string | null;
+  pane?: "primary" | "secondary";
+} = {}) {
   const nodes = useVaultStore((s) => s.nodes);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
@@ -55,13 +64,20 @@ export function EditorPane() {
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const setEditorMode = useVaultStore((s) => s.setEditorMode);
+  const workspaceSplit = useVaultStore((s) => s.settings.workspaceSplit);
+  const toggleWorkspaceSplit = useVaultStore((s) => s.toggleWorkspaceSplit);
+  const closeSecondaryPane = useVaultStore((s) => s.closeSecondaryPane);
+  const swapWorkspacePanes = useVaultStore((s) => s.swapWorkspacePanes);
+  const pendingJump = useVaultStore((s) => s.pendingJump);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const [findOpen, setFindOpen] = useState(false);
   const [findSeed, setFindSeed] = useState("");
   const [findReplace, setFindReplace] = useState(false);
-  const note = useVaultStore((s) =>
-    s.activeNoteId ? (s.nodes[s.activeNoteId] ?? null) : null,
+  const resolvedId = useVaultStore((s) =>
+    pane === "secondary" ? (noteId ?? s.secondaryNoteId) : (noteId ?? s.activeNoteId),
   );
+  const note = resolvedId ? (nodes[resolvedId] ?? null) : null;
+  const isSecondary = pane === "secondary";
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const [hydrateError, setHydrateError] = useState(false);
 
@@ -73,6 +89,17 @@ export function EditorPane() {
     // Close find when switching notes
     setFindOpen(false);
   }, [note?.id]);
+
+  useEffect(() => {
+    if (!pendingJump || !note?.id || pendingJump.noteId !== note.id) return;
+    if (pendingJump.pane !== pane) return;
+    const t = window.setTimeout(() => {
+      if (pendingJump.heading) jumpToOutlineHeading(pendingJump.heading, 0, pane);
+      if (pendingJump.blockId) jumpToBlockRef(pendingJump.blockId, pane);
+      useVaultStore.getState().clearPendingJump?.();
+    }, 90);
+    return () => window.clearTimeout(t);
+  }, [pendingJump, note?.id, note?.content, pane]);
 
   useEffect(() => {
     const onOpenFind = (e: Event) => {
@@ -136,6 +163,28 @@ export function EditorPane() {
   const createNote = useVaultStore((s) => s.createNote);
 
   if (!note || note.kind !== "note") {
+    if (isSecondary) {
+      return (
+        <div
+          className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)] px-6 text-center"
+          data-editor-pane="secondary"
+        >
+          <p className="text-[14px] text-[var(--text-secondary)]">
+            Open a second note
+          </p>
+          <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+            Alt-click a file or wikilink to park it here.
+          </p>
+          <button
+            type="button"
+            className="ghost-btn mt-3"
+            onClick={() => closeSecondaryPane()}
+          >
+            Close pane
+          </button>
+        </div>
+      );
+    }
     const emptyVault = noteCount === 0;
     return (
       <div className="fade-in flex h-full flex-col items-center justify-center px-8 text-center">
@@ -230,6 +279,7 @@ export function EditorPane() {
       <div
         className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)]"
         data-active-note={note.id}
+        data-editor-pane={pane}
         data-body-loading="true"
       >
         <Loader2
@@ -251,6 +301,7 @@ export function EditorPane() {
     <div
       className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
       data-active-note={note.id}
+      data-editor-pane={pane}
     >
       <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
         <div className="min-w-0 flex-1">
@@ -386,13 +437,47 @@ export function EditorPane() {
                       editorMode === "split" && "is-active",
                     )}
                     onClick={() => setEditorMode("split")}
-                    title="Split: source + live preview"
+                    title="Source + live preview of this note"
                     aria-pressed={editorMode === "split"}
                   >
                     <Columns2 size={13} />
-                    <span className="hidden md:inline">Split</span>
+                    <span className="hidden md:inline">Preview</span>
                   </button>
                 ) : null}
+                {!isSecondary ? (
+                  <button
+                    type="button"
+                    className={cn(
+                      "chip-btn !border-0 hidden sm:inline-flex",
+                      workspaceSplit && "is-active",
+                    )}
+                    onClick={() => toggleWorkspaceSplit()}
+                    title="Dual note workspace (⌘2)"
+                    aria-pressed={workspaceSplit}
+                  >
+                    <Columns2 size={13} />
+                    <span className="hidden md:inline">Pane</span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="chip-btn !border-0 hidden sm:inline-flex"
+                      onClick={() => swapWorkspacePanes()}
+                      title="Swap panes"
+                    >
+                      <ArrowLeftRight size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="chip-btn !border-0"
+                      onClick={() => closeSecondaryPane()}
+                      title="Close pane"
+                    >
+                      <X size={13} />
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   className={cn(

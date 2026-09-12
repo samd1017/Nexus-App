@@ -25,15 +25,19 @@ jobs:
           targets: aarch64-apple-darwin
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Build Tauri (macOS Apple Silicon)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v0.1.0-alpha
-          releaseName: Nexus v0.1.0-alpha
+          tagName: v${{ steps.ver.outputs.version }}
+          releaseName: Nexus v${{ steps.ver.outputs.version }}
           releaseBody: |
             ## Alpha — early preview builds
 
@@ -83,15 +87,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Build Tauri (Windows NSIS)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v0.1.0-alpha
-          releaseName: Nexus v0.1.0-alpha
+          tagName: v${{ steps.ver.outputs.version }}
+          releaseName: Nexus v${{ steps.ver.outputs.version }}
           releaseBody: |
             ## Alpha — early preview builds
 

@@ -34,7 +34,7 @@ Writing, the 3D graph, and visual design matter. Ranking quality and grounded re
 
 ## Download Alpha (desktop)
 
-Pre-built **Alpha** installers for **macOS (Apple Silicon)** and **Windows** are published on the [Releases](https://github.com/samd1017/Nexus-App/releases) page when a build finishes.
+Unsigned **macOS (Apple Silicon)** and **Windows** installers are attached when the desktop workflow finishes a release build. Check the [Releases](https://github.com/samd1017/Nexus-App/releases) page: **v0.1.0-alpha** has installer assets; **v0.1.1-alpha** is a source checkpoint (no DMG/EXE). If the latest tag has no assets, build from source — see [DESKTOP.md](DESKTOP.md).
 
 These builds are **unsigned** (not notarized / not code-signed). That is expected for Alpha.
 
@@ -67,18 +67,23 @@ Everything else (editor, graph, command palette) supports that core loop.
 
 **What works well today**
 - Local-first Markdown vault (plain `.md` files)
-- TipTap visual editor with full Markdown round-trip
+- TipTap visual editor with Markdown round-trip (callouts, tables, nested tasks, mermaid/math)
+- `[[Note#Heading]]` / `[[Note#^block]]` navigation and heading/block embeds
+- Dual-note workspace (two notes, not just source+preview)
+- Attachments rail (images, PDFs, vault files) and per-note version history
 - Live 3D force-directed knowledge graph
 - Tauri 2 desktop shell (macOS + Windows) + web mode via File System Access API
-- Durable SQLite FTS5 index (disposable, lives outside the vault)
+- Durable SQLite FTS5 index (disposable, lives outside the vault) + fused ranking (recency, title, backlinks)
+- Grounded **Ask your notes** (`ask:` in ⌘K) with extractive citations — no cloud model
+- Pulse + Conflict Studio for humans and agents on the same folder
 - Command palette, backlinks, large-test-vault stress tooling
 - Lazy body loading + durable FTS snippets for large in-memory / disk vaults
 
 **What is still early**
-- Hybrid ranking (lexical + semantic) is the current north star, not yet production-quality
-- Grounded “Ask your notes” with reliable citations is planned, not finished
+- Semantic embeddings (vector rerank) are not shipped; lexical hybrid + Ask is the daily-driver path
 - Scale targets of 100k–500k notes are being pursued; real-disk proof at those sizes is still in progress
 - Desktop Alpha builds are unsigned (no Apple notarization / no Windows code signing yet)
+- Latest GitHub release tag may be source-only — installers exist on older tags or via `DESKTOP.md` builds
 
 Contributions and hard feedback are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -104,11 +109,16 @@ See [`docs/PUBLIC-BETA.md`](docs/PUBLIC-BETA.md) for release-readiness notes.
 ## Features
 
 - **Local-first** — Zero accounts. Notes are plain files you control.
-- **Visual editor** — TipTap with Markdown fidelity.
+- **Visual editor** — TipTap with Markdown fidelity (callouts, nested tasks, tables, mermaid, math).
+- **Heading & block links** — `[[Note#Heading]]`, `[[Note#^id]]`, heading/block embeds.
+- **Dual-note workspace** — Two notes side by side; Alt-click to open beside.
+- **Attachments** — Browse images, PDFs, and vault files.
+- **Version history** — Snapshots before each edit; restore from the History rail.
 - **3D knowledge graph** — Force-directed view of notes, folders, and links.
 - **Native desktop** — Tauri 2 (macOS + Windows).
 - **Web mode** — File System Access API.
-- **Search** — SQLite FTS5 + in-memory durable index; snippets from FTS when bodies are unloaded.
+- **Search + Ask** — FTS operators, fused ranking, `ask:` answers with citations.
+- **Agents** — Pulse inbox + Conflict Studio; simulate agent write in demo.
 - **Command palette** — Fast navigation and actions.
 - **Large test vault** — Included under `public/large-test-vault/` for stress testing.
 

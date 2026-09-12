@@ -232,6 +232,11 @@ const TreeRow = memo(function TreeRow({
       toggleFolder(node.id);
       return;
     }
+    if (e?.altKey || (e?.metaKey && e?.shiftKey)) {
+      useVaultStore.getState().openNoteInPane?.("secondary", node.id);
+      closeDrawersIfNarrow();
+      return;
+    }
     setActiveNote(node.id);
     closeDrawersIfNarrow();
   };

@@ -2,23 +2,67 @@
 
 const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
 
-export interface ParsedWikilink {
-  raw: string;
+export interface WikilinkParts {
+  /** Full target as written, including `#Heading` / `#^block` */
   target: string;
+  /** Note path/title only — empty for same-note `[[#Heading]]` */
+  noteTarget: string;
+  heading: string | null;
+  blockId: string | null;
   alias: string | null;
+}
+
+export interface ParsedWikilink extends WikilinkParts {
+  raw: string;
   start: number;
   end: number;
 }
 
-export function parseWikilinkInner(inner: string): { target: string; alias: string | null } {
+/** Parse `Note#Heading`, `Note#^block`, `#Heading`, `^block`, plus `|alias`. */
+export function parseWikilinkInner(inner: string): WikilinkParts {
   const pipe = inner.indexOf("|");
-  if (pipe >= 0) {
+  const rawTarget = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
+  const alias = pipe >= 0 ? inner.slice(pipe + 1).trim() || null : null;
+
+  const blockAt = rawTarget.indexOf("#^");
+  if (blockAt >= 0) {
     return {
-      target: inner.slice(0, pipe).trim(),
-      alias: inner.slice(pipe + 1).trim() || null,
+      target: rawTarget,
+      noteTarget: rawTarget.slice(0, blockAt).trim(),
+      heading: null,
+      blockId: rawTarget.slice(blockAt + 2).trim() || null,
+      alias,
     };
   }
-  return { target: inner.trim(), alias: null };
+
+  if (rawTarget.startsWith("^") && !rawTarget.includes("#")) {
+    return {
+      target: rawTarget,
+      noteTarget: "",
+      heading: null,
+      blockId: rawTarget.slice(1).trim() || null,
+      alias,
+    };
+  }
+
+  const hash = rawTarget.indexOf("#");
+  if (hash >= 0) {
+    return {
+      target: rawTarget,
+      noteTarget: rawTarget.slice(0, hash).trim(),
+      heading: rawTarget.slice(hash + 1).trim() || null,
+      blockId: null,
+      alias,
+    };
+  }
+
+  return {
+    target: rawTarget,
+    noteTarget: rawTarget,
+    heading: null,
+    blockId: null,
+    alias,
+  };
 }
 
 /**
@@ -38,9 +82,14 @@ export function extractWikilinks(markdown: string): ParsedWikilink[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) {
     const raw = m[0];
-    const { target, alias } = parseWikilinkInner(m[1] ?? "");
-    if (!target) continue;
-    out.push({ raw, target, alias, start: m.index, end: m.index + raw.length });
+    const parts = parseWikilinkInner(m[1] ?? "");
+    if (!parts.target && !parts.heading && !parts.blockId) continue;
+    out.push({
+      raw,
+      ...parts,
+      start: m.index,
+      end: m.index + raw.length,
+    });
   }
   return out;
 }
@@ -48,7 +97,7 @@ export function extractWikilinks(markdown: string): ParsedWikilink[] {
 export function extractWikilinkTargets(markdown: string): string[] {
   const seen = new Set<string>();
   for (const w of extractWikilinks(markdown)) {
-    seen.add(w.target);
+    if (w.noteTarget) seen.add(w.noteTarget);
   }
   return [...seen];
 }

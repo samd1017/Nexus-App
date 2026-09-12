@@ -64,6 +64,7 @@ export interface DurableIndex {
   /** O(1) meta lookup — used for unloaded-body search snippets */
   getNoteMeta(id: string): DurableNoteMeta | undefined;
   searchFts(query: string, limit?: number): SearchHit[];
+  searchFtsAsync?(query: string, limit?: number): Promise<SearchHit[]>;
   stats(): {
     notes: number;
     folders: number;
