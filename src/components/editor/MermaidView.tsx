@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react";
-import { usePrefsStore, resolveTheme } from "@/lib/prefs/preferences";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
 
 export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewProps) {
   const source = String(node.attrs.source ?? "");
@@ -23,18 +24,8 @@ export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewP
     }
     let cancelled = false;
     setErr(null);
-    void import("mermaid")
-      .then(async (mod) => {
-        const mermaid = mod.default;
-        const resolved = resolveTheme(theme);
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          theme: resolved === "light" ? "default" : "dark",
-          fontFamily: "inherit",
-        });
-        const id = `nexus-mmd-${uid}-${Math.abs(hash(source))}`;
-        const { svg } = await mermaid.render(id, source);
+    void renderMermaidSvg(source, theme, `nexus-mmd-${uid}`)
+      .then((svg) => {
         if (!cancelled && hostRef.current) {
           hostRef.current.innerHTML = svg;
         }
@@ -93,10 +84,4 @@ export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewP
       )}
     </NodeViewWrapper>
   );
-}
-
-function hash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
 }

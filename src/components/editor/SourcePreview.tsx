@@ -21,6 +21,7 @@ export function SourcePreview({ content }: { content: string }) {
     const root = hostRef.current;
     if (!root) return;
     let cancelled = false;
+    root.innerHTML = html;
     const state = useVaultStore.getState();
     const frame = window.requestAnimationFrame(() => {
       if (cancelled || !hostRef.current) return;
@@ -75,7 +76,6 @@ export function SourcePreview({ content }: { content: string }) {
           });
         }
       }}
-      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }

@@ -10,7 +10,8 @@ import { resolveWikilink } from "@/lib/graph/build-graph";
 import { searchWithOps } from "@/lib/search/query-ops";
 import { noteTitle } from "@/lib/vault/types";
 import type { VaultNode } from "@/lib/vault/types";
-import { resolveTheme, type ThemeMode } from "@/lib/prefs/preferences";
+import type { ThemeMode } from "@/lib/prefs/preferences";
+import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
 
 function escapeHtml(s: string): string {
   return s
@@ -20,12 +21,6 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function hash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
-}
-
 async function renderMermaid(
   els: HTMLElement[],
   theme: ThemeMode,
@@ -33,15 +28,6 @@ async function renderMermaid(
 ): Promise<void> {
   if (!els.length) return;
   try {
-    const mod = await import("mermaid");
-    if (cancelled()) return;
-    const mermaid = mod.default;
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: resolveTheme(theme) === "light" ? "default" : "dark",
-      fontFamily: "inherit",
-    });
     for (let i = 0; i < els.length; i++) {
       const el = els[i]!;
       const source = (el.getAttribute("data-source") || el.textContent || "").trim();
@@ -50,9 +36,9 @@ async function renderMermaid(
           '<div class="nexus-mermaid-empty">Empty mermaid diagram</div>';
         continue;
       }
-      const id = `nexus-prev-mmd-${Math.abs(hash(source))}-${i}-${Date.now().toString(36)}`;
+      el.innerHTML = '<div class="nexus-mermaid-empty">Rendering diagram…</div>';
       try {
-        const { svg } = await mermaid.render(id, source);
+        const svg = await renderMermaidSvg(source, theme, `nexus-prev-mmd-${i}`);
         if (cancelled()) return;
         el.innerHTML = `<div class="nexus-mermaid-svg">${svg}</div>`;
       } catch (e: unknown) {
