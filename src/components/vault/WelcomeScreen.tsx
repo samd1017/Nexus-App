@@ -163,7 +163,7 @@ export function WelcomeScreen() {
           >
             <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1 text-[11px] font-medium tracking-wide text-[var(--text-secondary)]">
               <Zap size={12} className="text-[var(--accent)]" />
-              Built for 300–500k notes
+              Same Markdown folder as your agents
             </div>
             <div className="flex items-center gap-4">
               <NexusMark size={60} className="text-[var(--text-primary)]" />

@@ -2848,6 +2848,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		return true;
 	},
 	simulateHermesWrite: () => {
+		try {
+			flushActiveEditors();
+		} catch {
+			/* ignore */
+		}
 		const { nodes, rootIds, mode } = get();
 		const systems = Object.values(nodes).find((n) => n.kind === "folder" && n.path === "Systems");
 		const path = HERMES_SAMPLE_NOTE.path;

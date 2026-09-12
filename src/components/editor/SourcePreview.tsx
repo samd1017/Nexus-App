@@ -1,10 +1,13 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { markdownToHtml } from "@/lib/markdown/serialize";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { hydratePreviewSpecials } from "@/lib/editor/hydrate-preview";
 
 export function SourcePreview({ content }: { content: string }) {
+  const theme = usePrefsStore((s) => s.theme);
   const html = useMemo(() => {
     try {
       return markdownToHtml(content || "");
@@ -12,11 +15,44 @@ export function SourcePreview({ content }: { content: string }) {
       return "<p></p>";
     }
   }, [content]);
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = hostRef.current;
+    if (!root) return;
+    let cancelled = false;
+    const state = useVaultStore.getState();
+    void hydratePreviewSpecials(
+      root,
+      theme,
+      state.nodes,
+      state.activeNoteId,
+      () => cancelled,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [html, theme]);
 
   return (
     <div
+      ref={hostRef}
       className="nexus-source-preview note-editor"
       onClick={(e) => {
+        const openBtn = (e.target as HTMLElement).closest("[data-open-note]");
+        if (openBtn instanceof HTMLElement) {
+          const id = openBtn.getAttribute("data-open-note") || "";
+          const heading = openBtn.getAttribute("data-jump-heading") || undefined;
+          const blockId = openBtn.getAttribute("data-jump-block") || undefined;
+          if (id) {
+            useVaultStore.getState().setActiveNote(id, {
+              heading: heading || undefined,
+              blockId: blockId || undefined,
+              pane: e.altKey ? "secondary" : "primary",
+            });
+          }
+          return;
+        }
         const el = (e.target as HTMLElement).closest("[data-wikilink]");
         if (!(el instanceof HTMLElement)) return;
         const target = el.getAttribute("data-wikilink") || "";

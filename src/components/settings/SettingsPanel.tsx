@@ -579,7 +579,11 @@ export function SettingsPanel() {
                 — or run <strong>Simulate agent write</strong> from the vault
                 menu / command palette.
               </li>
-              <li>Open Pulse. Resolve any conflict with Keep mine / Take theirs.</li>
+              <li>
+                Open Pulse. To practice a conflict, edit{" "}
+                <span className="font-mono">Systems/Hermes Pulse.md</span> then
+                simulate again — Keep mine / Take theirs.
+              </li>
             </ol>
             {vaultId ? (
               <button

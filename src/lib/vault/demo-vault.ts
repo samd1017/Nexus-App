@@ -72,7 +72,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
-| Embeds | ![[Welcome]] transcludes a note; ![[Linking Notes#Syntax]] a heading |
+| Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
 | Backlinks | Right panel → see what points here |
 | Graph | Right panel → Graph, or **Ctrl/⌘G** for fullscreen |
@@ -426,7 +426,7 @@ Creates, edits, renames, and deletes from outside the app appear in the UI withi
 
 In the vault switcher menu (More), choose **Simulate agent write**. A new note lands under Systems. Pulse opens so you can treat it like a Grok / Hermes dump.
 
-To see a conflict: edit [[Welcome]], leave it unsaved, then simulate again after changing the same file from outside (or edit Hermes Pulse in Nexus and simulate overwrite).
+To see a conflict: Simulate once to create \`Systems/Hermes Pulse.md\`, type a sentence in that note, then **Simulate agent write** again. Conflict Studio opens — Keep mine or Take theirs.
 
 ## Linked
 

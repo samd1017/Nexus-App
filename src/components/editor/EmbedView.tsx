@@ -52,14 +52,18 @@ export function EmbedView({ node }: NodeViewProps) {
     [body, parts.heading, parts.blockId],
   );
 
+  const isSelfFull =
+    Boolean(note && note.id === activeNoteId && !parts.heading && !parts.blockId);
+
   const html = useMemo(() => {
+    if (isSelfFull) return "";
     if (!sliced.body) return "";
     try {
       return markdownToHtml(sliced.body.replace(/!\[\[[^\]]+\]\]/g, ""));
     } catch {
       return "";
     }
-  }, [sliced.body]);
+  }, [sliced.body, isSelfFull]);
 
   const openTarget = (pane?: "primary" | "secondary") => {
     if (!note) return;
@@ -100,7 +104,11 @@ export function EmbedView({ node }: NodeViewProps) {
       </div>
       <div className="nexus-embed-body">
         {note ? (
-          html ? (
+          isSelfFull ? (
+            <p className="nexus-embed-missing">
+              This note — add #Heading or #^block to embed a slice.
+            </p>
+          ) : html ? (
             <div
               className="note-editor prose-note"
               dangerouslySetInnerHTML={{ __html: html }}
