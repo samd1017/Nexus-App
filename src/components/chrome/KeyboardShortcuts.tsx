@@ -11,6 +11,7 @@ import {
 } from "@/lib/vault/nav-history";
 import { openFindInNote, closeFindInNote } from "@/components/editor/FindInNoteBar";
 import { openCommandPalette } from "@/components/search/CommandPalette";
+import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
 import {
@@ -132,6 +133,9 @@ function runHotkey(id: HotkeyId): boolean {
       if (!hasVault || overlayOpen || !store.activeNoteId) return false;
       store.togglePinnedNote(store.activeNoteId);
       return true;
+    case "insertWikilink":
+      if (!hasVault || overlayOpen || !store.activeNoteId) return false;
+      return requestInsertWikilink();
     default:
       return false;
   }

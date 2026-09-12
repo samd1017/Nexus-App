@@ -1826,7 +1826,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			set({
 				secondaryNoteId: id,
 				pendingJump: jump,
-				settings: { ...get().settings, workspaceSplit: true, rightOpen: get().settings.rightOpen },
+				settings: {
+					...get().settings,
+					workspaceSplit: true,
+					rightOpen: get().settings.rightOpen,
+					lastSecondaryNotePath: note?.path ?? get().settings.lastSecondaryNotePath,
+				},
 			});
 			return;
 		}
@@ -1888,10 +1893,26 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return;
 		}
 		const primary = get().activeNoteId;
-		const next = get().secondaryNoteId ?? primary;
+		const rememberedPath = get().settings.lastSecondaryNotePath;
+		const remembered = rememberedPath
+			? Object.values(get().nodes).find(
+					(n) => n.kind === "note" && n.path === rememberedPath,
+				)?.id ?? null
+			: null;
+		const recents = get().recentNoteVisits ?? [];
+		const next =
+			get().secondaryNoteId ??
+			(remembered && remembered !== primary ? remembered : null) ??
+			recents.find((id) => id !== primary) ??
+			primary;
+		const nextNode = next ? get().nodes[next] : null;
 		set({
 			secondaryNoteId: next,
-			settings: { ...get().settings, workspaceSplit: true },
+			settings: {
+				...get().settings,
+				workspaceSplit: true,
+				lastSecondaryNotePath: nextNode?.path ?? rememberedPath,
+			},
 		});
 		if (next) {
 			const n = get().nodes[next];
@@ -1916,6 +1937,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				...get().settings,
 				workspaceSplit: true,
 				lastNotePath: get().nodes[b]?.path ?? get().settings.lastNotePath,
+				lastSecondaryNotePath: (a && get().nodes[a]?.path) || get().settings.lastSecondaryNotePath,
 			},
 		});
 	},

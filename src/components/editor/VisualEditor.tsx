@@ -68,6 +68,7 @@ import { EditorToolbar } from "./EditorToolbar";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import { SlashMenu } from "./SlashMenu";
 import { WikilinkHoverCard } from "./WikilinkHoverCard";
+import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
 
 interface Props {
   noteId: string;
@@ -602,6 +603,23 @@ export function VisualEditor({ noteId, content }: Props) {
       /* view gone */
     }
   }, [editor, spellCheck, editorFontSize]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    return registerInsertWikilink((focusedOnly) => {
+      if (!editor || editor.isDestroyed) return false;
+      if (focusedOnly && !editor.isFocused) return false;
+      if (
+        !focusedOnly &&
+        noteIdRef.current !== useVaultStore.getState().activeNoteId
+      ) {
+        return false;
+      }
+      editor.chain().focus().insertContent("[[").run();
+      refreshSuggest(editor);
+      return true;
+    });
+  }, [editor, refreshSuggest]);
 
   // Register find-in-note adapter for Visual mode
   useEffect(() => {

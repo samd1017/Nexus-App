@@ -462,10 +462,16 @@ To see a conflict: Simulate once to create \`Systems/Hermes Pulse.md\`, type a s
 | Shortcut | Action |
 | --- | --- |
 | ⌘K | Search / command palette |
+| ⌘⇧? | Ask your notes |
 | ⌘, | Settings |
 | ⌘E | Toggle Visual / Source |
+| ⌘F | Find in note |
 | ⌘G | Graph fullscreen |
 | ⌘N | New note |
+| ⌘D | Today's daily note |
+| ⌘2 | Dual-note workspace (restores the last companion) |
+| ⌘⇧P | Pin / unpin this note |
+| ⌘⇧L | Insert [[ wikilink |
 | ⌘S | Save (auto-save is already on) |
 | ⌘\\\\ | Toggle left sidebar |
 | ⌘⌥\\\\ | Toggle right panel |

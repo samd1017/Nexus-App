@@ -73,12 +73,20 @@ const STOP = new Set([
 const SYNONYMS: Record<string, string[]> = {
   agent: ["hermes", "grok", "pulse", "bot"],
   agents: ["hermes", "grok", "pulse"],
+  grok: ["hermes", "agent", "pulse"],
+  hermes: ["agent", "grok", "pulse"],
   share: ["folder", "vault", "disk", "markdown"],
   vault: ["folder", "notes", "markdown"],
   conflict: ["studio", "keep", "theirs", "mine"],
   write: ["save", "edit", "pulse"],
   link: ["wikilink", "backlink", "mention"],
   search: ["ask", "find", "palette"],
+  decision: ["log", "adr", "meeting"],
+  meeting: ["sync", "standup", "notes"],
+  design: ["spec", "review", "plan"],
+  spec: ["design", "plan"],
+  daily: ["journal", "today"],
+  pin: ["star", "bookmark"],
 };
 
 export function askQueryTokens(question: string): string[] {
@@ -148,7 +156,7 @@ export function buildAskAnswer(
     .toLowerCase()
     .trim();
   const citations: AskCitation[] = [];
-  const picked: string[] = [];
+  const picked: { text: string; title: string }[] = [];
 
   for (const h of hits.slice(0, 8)) {
     const node = nodes[h.noteId];
@@ -186,14 +194,15 @@ export function buildAskAnswer(
       score: h.score,
       heading: headingHint(body, snippet),
     });
-    if (best && picked.length < 3) picked.push(best);
+    if (best && picked.length < 3) {
+      picked.push({
+        text: best,
+        title: h.title || (node ? noteTitle(node) : h.path),
+      });
+    }
   }
 
-  const summary = picked.length
-    ? picked.join(" ")
-    : citations.length
-      ? `Found ${citations.length} note${citations.length === 1 ? "" : "s"} that match “${question.trim()}”. Open a citation to read the source.`
-      : `No matching notes for “${question.trim()}”. Try fewer words or a path: / folder: filter.`;
+  const summary = composeAskSummary(question, picked, citations.length);
 
   return {
     question: question.trim(),
@@ -201,6 +210,27 @@ export function buildAskAnswer(
     citations,
     mode: "extractive",
   };
+}
+
+function composeAskSummary(
+  question: string,
+  picked: { text: string; title: string }[],
+  citationCount: number,
+): string {
+  if (picked.length) {
+    const names = [...new Set(picked.map((p) => p.title))];
+    const from =
+      names.length === 1
+        ? names[0]
+        : names.length === 2
+          ? `${names[0]} and ${names[1]}`
+          : `${names[0]}, ${names[1]}, and ${names.length - 2} more`;
+    return `From ${from}: ${picked.map((p) => p.text).join(" ")}`;
+  }
+  if (citationCount) {
+    return `Found ${citationCount} note${citationCount === 1 ? "" : "s"} that match “${question.trim()}”. Open a citation to read the source.`;
+  }
+  return `No matching notes for “${question.trim()}”. Try fewer words or a path: / folder: filter.`;
 }
 
 function headingHint(body: string, snippet: string): string | null {

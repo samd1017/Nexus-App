@@ -24,7 +24,8 @@ export type HotkeyId =
   | "demo"
   | "splitPane"
   | "askNotes"
-  | "pinNote";
+  | "pinNote"
+  | "insertWikilink";
 
 export type HotkeyChord = {
   key: string;
@@ -54,6 +55,7 @@ export const HOTKEY_IDS: HotkeyId[] = [
   "splitPane",
   "askNotes",
   "pinNote",
+  "insertWikilink",
 ];
 
 export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
@@ -76,6 +78,7 @@ export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   splitPane: { key: "2" },
   askNotes: { key: "/", shift: true },
   pinNote: { key: "p", shift: true },
+  insertWikilink: { key: "l", shift: true },
 };
 
 export const HOTKEY_LABELS: Record<HotkeyId, string> = {
@@ -98,6 +101,7 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   splitPane: "Dual-note workspace",
   askNotes: "Ask your notes",
   pinNote: "Pin / unpin current note",
+  insertWikilink: "Insert wikilink ([[)",
 };
 
 const ID_SET = new Set<string>(HOTKEY_IDS);

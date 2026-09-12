@@ -17,6 +17,7 @@ import {
   registerSourceFindAdapter,
   type FindMatch,
 } from "@/lib/editor/find-target";
+import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
 
 interface Props {
   noteId: string;
@@ -314,6 +315,34 @@ export function SourceEditor({ noteId, content }: Props) {
     });
     return () => registerSourceFindAdapter(null);
   }, [noteId, scheduleSave]);
+
+  useEffect(() => {
+    return registerInsertWikilink((focusedOnly) => {
+      const ta = taRef.current;
+      if (!ta) return false;
+      if (focusedOnly && document.activeElement !== ta) return false;
+      if (
+        !focusedOnly &&
+        noteIdRef.current !== useVaultStore.getState().activeNoteId
+      ) {
+        return false;
+      }
+      const start = ta.selectionStart ?? ta.value.length;
+      const end = ta.selectionEnd ?? start;
+      const next = `${ta.value.slice(0, start)}[[${ta.value.slice(end)}`;
+      const caret = start + 2;
+      setValue(next);
+      valueRef.current = next;
+      dirtyRef.current = true;
+      scheduleSave(next);
+      ta.focus();
+      requestAnimationFrame(() => {
+        ta.setSelectionRange(caret, caret);
+        refreshSuggest(next, caret);
+      });
+      return true;
+    });
+  }, [noteId, scheduleSave, refreshSuggest]);
 
   return (
     <div

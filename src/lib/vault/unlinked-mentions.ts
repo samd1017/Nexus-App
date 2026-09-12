@@ -5,11 +5,7 @@
 
 import type { VaultNode } from "./types";
 import { noteTitle } from "./types";
-import {
-  extractWikilinks,
-  normalizeLinkTarget,
-  stripCodeForLinkScan,
-} from "@/lib/markdown/wikilinks";
+import { extractWikilinks, stripCodeForLinkScan } from "@/lib/markdown/wikilinks";
 
 export type UnlinkedMention = {
   fromId: string;

@@ -50,11 +50,13 @@ export function AttachmentsRail() {
     }
     let revoked: string | null = null;
     void resolveVaultImageUrl(preview.path).then((url) => {
-      if (url) {
+        if (url) {
         revoked = url.startsWith("blob:") ? url : null;
         setPreviewUrl(url);
       } else if (preview.demo && preview.path.endsWith(".svg")) {
         setPreviewUrl("/favicon.svg");
+      } else if (preview.demo && preview.path.endsWith(".pdf")) {
+        setPreviewUrl("/demo/agent-brief.pdf");
       }
     });
     return () => {

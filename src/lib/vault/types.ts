@@ -46,6 +46,8 @@ export interface VaultSettings {
   lastNotePath: string | null;
   /** Dual-note workspace (two notes, not source+preview) */
   workspaceSplit: boolean;
+  /** Last companion note in the split — restored on ⌘2, not auto-opened */
+  lastSecondaryNotePath: string | null;
   /** Vault-relative note paths the user pinned in the sidebar */
   pinnedNotePaths: string[];
 }
@@ -125,6 +127,7 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   graphMode: "panel",
   lastNotePath: null,
   workspaceSplit: false,
+  lastSecondaryNotePath: null,
   pinnedNotePaths: [],
 };
 

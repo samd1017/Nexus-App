@@ -1045,7 +1045,7 @@ function CommandPaletteOpen() {
                       ) : null}
                     </div>
                     <div className="line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
-                      {c.snippet}
+                      <HighlightedText text={c.snippet} query={askAnswer.question} />
                     </div>
                   </div>
                 </Command.Item>
