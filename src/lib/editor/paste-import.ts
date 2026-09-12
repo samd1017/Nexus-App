@@ -116,6 +116,7 @@ async function importAndInsertImages(
     if (!imported || editor.isDestroyed) continue;
     insertImportedImage(editor, imported, at);
     inserted += 1;
+    // Stack subsequent drops after the previous image
     if (typeof at === "number") {
       try {
         at = editor.state.selection.to;
@@ -127,6 +128,10 @@ async function importAndInsertImages(
   return inserted > 0;
 }
 
+/**
+ * TipTap handlePaste: vault image import + Markdown plain-text paste.
+ * Returns true when the event was handled.
+ */
 export function handleVisualPaste(
   editor: Editor,
   view: EditorView,
@@ -139,6 +144,7 @@ export function handleVisualPaste(
     ...imageFilesFromList(dt.items),
     ...imageFilesFromFileList(dt.files),
   ];
+  // Dedupe by name+size+lastModified
   const seen = new Set<string>();
   const uniqueImages = imageFiles.filter((f) => {
     const key = `${f.name}:${f.size}:${f.lastModified}`;
@@ -155,6 +161,7 @@ export function handleVisualPaste(
 
   const html = dt.getData("text/html")?.trim() ?? "";
   const text = dt.getData("text/plain") ?? "";
+  // Prefer TipTap's HTML path for rich sources (Word, browsers, Notion)
   if (html) return false;
   if (!looksLikeMarkdown(text)) return false;
 
@@ -165,6 +172,10 @@ export function handleVisualPaste(
   return true;
 }
 
+/**
+ * TipTap handleDrop: import dropped image files into vault assets.
+ * Returns true when the event was handled.
+ */
 export function handleVisualDrop(
   editor: Editor,
   view: EditorView,
