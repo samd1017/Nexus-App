@@ -106,7 +106,7 @@ Open the right panel → **Graph**, or press **Ctrl/⌘G** for fullscreen. Orbit
 - No accounts required
 - Agents can edit the same files you do
 
-![Nexus mark](assets/nexus-mark.svg)
+![Nexus mark](/favicon.svg)
 
 Brief: [agent-brief.pdf](assets/agent-brief.pdf)
 

@@ -91,6 +91,14 @@ const { fuseSearchHits } = await import(pathToFileURL(rankOut).href);
 }
 
 {
+  const md = `- [x] Seed demo notes\n- [ ] Parent\n  - [ ] Nested\n- [ ] Open my own folder as a vault ^next-step\n- [ ] After\n`;
+  const slice = sliceMarkdownByBlockId(md, "next-step");
+  assert.match(slice, /Open my own folder/);
+  assert.doesNotMatch(slice, /Seed demo notes/);
+  assert.doesNotMatch(slice, /After/);
+}
+
+{
   recordNoteRevision("n1", "Welcome.md", "# A\n");
   recordNoteRevision("n1", "Welcome.md", "# B\n");
   const list = listNoteRevisions("n1");

@@ -92,7 +92,7 @@ assert.equal(hasBodyArchive(), false);
 console.log("PASS body-archive lifecycle + scale flags");
 `,
   ],
-  { cwd: "/workspace", encoding: "utf8", timeout: 60000 },
+  { cwd: process.cwd(), encoding: "utf8", timeout: 60000 },
 );
 process.stdout.write(r.stdout || "");
 process.stderr.write(r.stderr || "");

@@ -550,7 +550,9 @@ export function resolveWikilink(
   index?: Map<string, string>,
 ): VaultNode | null {
   const parts = parseWikilinkInner(target);
-  const norm = normalizeLinkTarget(parts.noteTarget || parts.target);
+  // Same-note `[[#Heading]]` / `[[#^block]]` have no note target — caller supplies the note.
+  if (!parts.noteTarget) return null;
+  const norm = normalizeLinkTarget(parts.noteTarget);
   if (!norm) return null;
 
   const idx = index ?? buildWikilinkIndex(nodes);

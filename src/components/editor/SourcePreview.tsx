@@ -21,12 +21,14 @@ export function SourcePreview({ content }: { content: string }) {
         if (!(el instanceof HTMLElement)) return;
         const target = el.getAttribute("data-wikilink") || "";
         const parts = parseWikilinkInner(target);
-        const hit = resolveWikilink(
-          parts.noteTarget || parts.target,
-          useVaultStore.getState().nodes,
-        );
+        const state = useVaultStore.getState();
+        const hit = parts.noteTarget
+          ? resolveWikilink(parts.noteTarget, state.nodes)
+          : state.activeNoteId
+            ? state.nodes[state.activeNoteId]
+            : null;
         if (hit?.kind === "note") {
-          useVaultStore.getState().setActiveNote(hit.id, {
+          state.setActiveNote(hit.id, {
             heading: parts.heading,
             blockId: parts.blockId,
             pane: e.altKey ? "secondary" : "primary",

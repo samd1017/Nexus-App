@@ -1,6 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-// @ts-nocheck — Zustand create() surface is asserted as VaultStore below.
-// Module-level I/O buffers and helpers above the store factory are typed.
 /**
  * Vault store — session state for the open vault.
  */
@@ -176,31 +173,71 @@ export type OpenNoteOpts = {
   silent?: boolean;
 };
 
-/** Public vault session API. Implementation is still a recovered Zustand factory. */
+export type UpdateNoteOpts = {
+  external?: boolean;
+  source?: boolean;
+};
+export type CreateNoteOpts = {
+  activate?: boolean;
+  content?: string;
+  raw?: boolean;
+  template?: NoteTemplateId;
+};
+export type CreateFolderOpts = { expand?: boolean };
+export type DailyNoteOpts = { silent?: boolean };
+export type GraphEgoOpts = { returnPath?: string };
+export type ConflictFocus = { primaryPath: string; siblingPath: string } | null;
+export type LocalVaultSeed = {
+  nodes: Record<string, VaultNode>;
+  rootIds: string[];
+  vaultName?: string;
+};
+
+/** Public vault session API — factory is asserted through this surface. */
 export type VaultStore = {
+  ready: boolean;
+  vaultId: string | null;
+  vaultName: string;
+  vaultPath: string;
+  mode: VaultMode;
   nodes: Record<string, VaultNode>;
   rootIds: string[];
   activeNoteId: string | null;
   secondaryNoteId: string | null;
   pendingJump: NoteJump | null;
-  vaultId: string | null;
-  mode: VaultMode;
   settings: VaultSettings;
-  ready: boolean;
-  vaultName: string;
-  vaultPath: string;
-  dirtyNoteIds: string[];
   expandedFolders: string[];
+  lastExternalSync: number | null;
+  dirtyNoteIds: string[];
+  lastSavedAt: number | null;
   recentVaults: RecentVault[];
   commandOpen: boolean;
   toast: string | null;
   toastAction: ToastAction | null;
   rightTab: RightTab;
+  hermesTick: number;
+  cloudSession: CloudSession | null;
+  fsaSupported: boolean;
+  connecting: boolean;
   pendingDelete: PendingDelete | null;
+  recentNoteVisits: string[];
+  folderAccessLost: boolean;
   conflictStudioOpen: boolean;
+  conflictStudioFocus: ConflictFocus;
+  dismissedConflictKeys: string[];
   graphScopeMode: GraphScopeMode;
   graphBrowsePath: string;
   graphEgoReturnPath: string | null;
+
+  bootstrap: () => Promise<void>;
+  openDemoVault: () => void;
+  openLargeTestVault: () => Promise<void>;
+  openLocalVault: (name: string, seed?: LocalVaultSeed) => void;
+  openFolderAsVault: () => Promise<void>;
+  createNewVault: (name?: string) => Promise<void>;
+  revealVaultInFinder: () => Promise<void>;
+  reopenRecentVault: (id: string) => Promise<void>;
+  closeVault: () => void;
   setActiveNote: (id: string | null, opts?: OpenNoteOpts) => void;
   openNoteInPane: (pane: EditorPaneRole, id: string) => void;
   toggleWorkspaceSplit: () => void;
@@ -208,14 +245,87 @@ export type VaultStore = {
   swapWorkspacePanes: () => void;
   clearPendingJump: () => void;
   restoreNoteRevision: (noteId: string, revId: string) => boolean;
-  simulateHermesWrite: () => void;
-  openPulseRail: () => void;
-  setRightTab: (tab: RightTab) => void;
+  toggleFolder: (id: string) => void;
+  setExpandedFolders: (ids: string[]) => void;
+  setLeftOpen: (open: boolean) => void;
+  setRightOpen: (open: boolean) => void;
+  setLeftWidth: (w: number) => void;
+  setRightWidth: (w: number) => void;
+  setEditorMode: (mode: EditorMode) => void;
+  setGraphMode: (mode: GraphMode) => void;
+  toggleEditorMode: () => void;
+  toggleLeft: () => void;
+  toggleRight: () => void;
+  toggleGraphFullscreen: () => void;
+  updateNoteContent: (id: string, content: string, opts?: UpdateNoteOpts) => void;
+  renameNode: (id: string, newName: string) => void;
+  createNote: (
+    parentId: string | null,
+    title?: string,
+    opts?: CreateNoteOpts,
+  ) => string | null;
+  createFolder: (
+    parentId: string | null,
+    name?: string,
+    opts?: CreateFolderOpts,
+  ) => string | null;
+  createFromTemplate: (
+    templateId: NoteTemplateId,
+    parentId?: string | null,
+  ) => string | null | Promise<string | null>;
+  openDailyNote: (opts?: DailyNoteOpts) => string | null | Promise<string | null>;
+  openDailyNoteForDate: (
+    date: Date,
+    opts?: DailyNoteOpts,
+  ) => string | null | Promise<string | null>;
+  importBulk: (input: BulkImportInput) => BulkImportResult;
+  deleteNode: (id: string) => void;
+  requestDelete: (id: string) => void;
+  confirmPendingDelete: () => void;
+  cancelPendingDelete: () => void;
+  moveNode: (id: string, newParentId: string | null) => void;
+  setCommandOpen: (open: boolean) => void;
   setToast: (msg: string | null, action?: ToastAction | null) => void;
+  setRightTab: (tab: RightTab) => void;
+  openPulseRail: () => void;
+  listTrash: () => Promise<TrashEntry[]>;
+  restoreTrash: (trashPath: string) => Promise<boolean>;
+  simulateHermesWrite: () => void;
+  applyExternalSnapshot: (
+    nodes: Record<string, VaultNode>,
+    rootIds: string[],
+  ) => void;
+  _applyExternalSnapshotNow: (
+    nodesIn: Record<string, VaultNode>,
+    rootIds: string[],
+  ) => void;
+  getActiveNote: () => VaultNode | null;
+  getChildren: (parentId: string | null) => VaultNode[];
   ensureNoteBody: (id: string) => Promise<string | null>;
-  // Remaining actions exist at runtime.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any;
+  flushDirty: () => Promise<void>;
+  getBodyMemoryStats: () => BodyCacheStats;
+  trimBodyCache: (opts?: { aggressive?: boolean }) => number;
+  getConflictPairs: () => ConflictPair[];
+  getConflictItems: () => ConflictListItem[];
+  getOpenConflictCount: () => number;
+  openConflictStudio: (focus?: ConflictFocus) => void;
+  closeConflictStudio: () => void;
+  setConflictStudioFocus: (focus: ConflictFocus) => void;
+  resolveConflictKeepMine: (primaryPath: string, siblingPath: string) => void;
+  resolveConflictTakeTheirs: (primaryPath: string, siblingPath: string) => void;
+  openConflictPair: (primaryPath: string, siblingPath: string) => void;
+  dismissConflictFromList: (primaryPath: string, siblingPath: string) => void;
+  clearConflictDismissals: () => void;
+  enterGraphFolder: (path: string) => void;
+  exitGraphFolder: () => void;
+  resetGraphBrowse: () => void;
+  enterGraphEgo: (opts?: GraphEgoOpts) => void;
+  returnFromGraphEgo: () => void;
+  ensureGraphVisible: () => void;
+  revealInGraph: (nodeId: string) => void;
+  connectCloud: (provider: CloudProvider) => Promise<void>;
+  disconnectCloud: () => void;
+  refreshCloudSession: () => void;
 };
 
 /** Reset hierarchical folder graph session on every vault open/close. */
@@ -280,7 +390,7 @@ let diskFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let externalSnapTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingExternal: { nodes: Record<string, VaultNode>; rootIds: string[] } | null = null;
 /** Demo/in-memory autosave calm timers — keyed by note id */
-const demoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const demoSaveTimers = new Map<string, number>();
 /** path → fingerprint of external body already shelved as .conflict-* */
 let shelvedConflicts = new Map<string, string>();
 type StageBuf = {
@@ -752,8 +862,15 @@ function applyLaunchNotePreference() {
 		st.openDailyNote({ silent: true });
 	} catch {}
 }
-export const useVaultStore = create<VaultStore>()(
-  persist((set: any, get: any) => ({
+type StoreSet = {
+  (
+    partial: Partial<VaultStore> | ((state: VaultStore) => Partial<VaultStore>),
+  ): void;
+};
+type StoreGet = () => VaultStore;
+
+function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
+  return {
 	ready: false,
 	vaultId: null,
 	vaultName: "",
@@ -2356,14 +2473,18 @@ export const useVaultStore = create<VaultStore>()(
 		const nodes = { ...get().nodes };
 		const target = nodes[id];
 		if (!target) return;
-		const toDelete = new Set();
+		const toDelete = new Set<string>();
 		const idx = ensureVaultIndex(nodes);
-		const walk = (nid) => {
+		const walk = (nid: string) => {
 			toDelete.add(nid);
 			for (const c of idx.getChildIds(nid)) walk(c);
 		};
 		walk(id);
-		const trashPayload = [];
+		const trashPayload: Array<{
+			path: string;
+			content: string | null;
+			kind: "note" | "folder";
+		}> = [];
 		for (const d of toDelete) {
 			const n = nodes[d];
 			if (!n) continue;
@@ -2484,7 +2605,7 @@ export const useVaultStore = create<VaultStore>()(
 		if (!node || id === newParentId) return;
 		if ((node.parentId ?? null) === (newParentId ?? null)) return;
 		if (newParentId) {
-			let p = newParentId;
+			let p: string | null = newParentId;
 			while (p) {
 				if (p === id) {
 					get().setToast("Can't move a folder into itself");
@@ -2648,6 +2769,10 @@ export const useVaultStore = create<VaultStore>()(
 		}
 		const parts = destPath.split("/").filter(Boolean);
 		const fileName = parts.pop();
+		if (!fileName) {
+			get().setToast("Could not restore — empty path");
+			return false;
+		}
 		let parentId = null;
 		let acc = "";
 		for (const part of parts) {
@@ -2742,7 +2867,7 @@ export const useVaultStore = create<VaultStore>()(
 			return;
 		}
 		const id = mode === "fsa" ? "fsa_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_") : mode === "desktop" ? "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_") : stableId(path);
-		const node = {
+		const node: VaultNode = {
 			id,
 			path,
 			name: HERMES_SAMPLE_NOTE.name,
@@ -2796,7 +2921,7 @@ export const useVaultStore = create<VaultStore>()(
 		flushStageNow(set);
 		let nodes = nodesIn;
 		const prev = get().nodes;
-		const fingerprint = (map) => {
+		const fingerprint = (map: Record<string, VaultNode>) => {
 			let notes = 0;
 			let mtimeXor = 0;
 			let unloaded = 0;
@@ -2874,7 +2999,7 @@ export const useVaultStore = create<VaultStore>()(
 			if (local.content === undefined && disk.content !== undefined) continue;
 			const localBody = local.content;
 			const diskBody = disk.content;
-			if (localBody === diskBody || isOnlySerializationNoise(localBody, diskBody)) {
+			if (localBody === diskBody || isOnlySerializationNoise(localBody ?? "", diskBody ?? "")) {
 				nodes = {
 					...nodes,
 					[diskId]: {
@@ -2885,7 +3010,7 @@ export const useVaultStore = create<VaultStore>()(
 				};
 				continue;
 			}
-			const diskFp = markdownFingerprint(diskBody);
+			const diskFp = markdownFingerprint(diskBody ?? "");
 			if (shelvedConflicts.get(local.path) === diskFp) {
 				nodes = {
 					...nodes,
@@ -2936,8 +3061,8 @@ export const useVaultStore = create<VaultStore>()(
 				const primaryPath = local.path;
 				const primaryBody = localBody;
 				enqueueDiskOp(async () => {
-					await persistNoteIfFsa(siblingPath, body, { ack: false });
-					await persistNoteIfFsa(primaryPath, primaryBody, { ack: false });
+					await persistNoteIfFsa(siblingPath, body ?? "", { ack: false });
+					await persistNoteIfFsa(primaryPath, primaryBody ?? "", { ack: false });
 				});
 			}
 			conflictToast = `Conflict — kept your edits; disk copy saved as ${pathToName(sibling)}`;
@@ -3499,10 +3624,14 @@ export const useVaultStore = create<VaultStore>()(
 	},
 	refreshCloudSession: () => {
 		set({ cloudSession: loadCloudSession() });
-	}
-}), {
+	},
+  };
+}
+
+export const useVaultStore = create(
+  persist(createVaultState as never, {
 	name: STORAGE_KEY,
-	partialize: (s) => {
+	partialize: (s: VaultStore) => {
 		const disk = s.mode === "fsa" || s.mode === "desktop";
 		// Never write the 45k seed (or any huge mount) to localStorage — QuotaExceededError.
 		const isLargeTest = s.vaultId === LARGE_TEST_VAULT_ID;
@@ -3562,7 +3691,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			hasBodyArchive: hasBodyArchive(),
 			bodyArchiveSize: bodyArchiveSize(),
 			graphMode: s.settings?.graphMode ?? null,
-			rightTab: s.settings?.rightTab ?? null,
+			rightTab: s.rightTab ?? null,
 		};
 	};
 }

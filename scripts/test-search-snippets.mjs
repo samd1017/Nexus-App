@@ -84,7 +84,7 @@ closeDurableIndex();
 console.log("All snippet tests passed");
 `,
   ],
-  { cwd: "/workspace", encoding: "utf8", timeout: 120_000 },
+  { cwd: process.cwd(), encoding: "utf8", timeout: 120_000 },
 );
 
 if (r.stdout) process.stdout.write(r.stdout);

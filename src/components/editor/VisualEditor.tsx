@@ -111,9 +111,8 @@ function openWikilinkTarget(target: string, event?: Event) {
     blockId: parts.blockId,
     pane,
   };
-  const resolveTarget = parts.noteTarget || parts.target;
-  const hit = resolveTarget
-    ? resolveWikilink(resolveTarget, state.nodes)
+  const hit = parts.noteTarget
+    ? resolveWikilink(parts.noteTarget, state.nodes)
     : state.activeNoteId
       ? state.nodes[state.activeNoteId]
       : null;
@@ -812,6 +811,7 @@ export function VisualEditor({ noteId, content }: Props) {
     const state = useVaultStore.getState();
     // Stay on current note — create linked note without activating
     const id = state.createNote(null, cleaned, { activate: false });
+    if (!id) return;
     const node = useVaultStore.getState().nodes[id];
     const item: WikilinkSuggestItem = {
       id,

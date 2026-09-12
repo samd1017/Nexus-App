@@ -72,6 +72,23 @@ export function sliceMarkdownByBlockId(
     return Boolean(m && m[1] === id);
   });
   if (idx < 0) return null;
+  const line = lines[idx];
+  const listMatch = /^(\s*)(?:[-*+]|\d+\.)\s+/.exec(line);
+  if (listMatch) {
+    const indent = listMatch[1].length;
+    let end = idx;
+    while (end + 1 < lines.length) {
+      const next = lines[end + 1];
+      if (!next.trim()) break;
+      const nextList = /^(\s*)(?:[-*+]|\d+\.)\s+/.exec(next);
+      const nextIndent = nextList
+        ? nextList[1].length
+        : (/^(\s+)/.exec(next)?.[1].length ?? 0);
+      if (nextIndent <= indent) break;
+      end += 1;
+    }
+    return lines.slice(idx, end + 1).join("\n") + "\n";
+  }
   let start = idx;
   while (start > 0 && lines[start - 1].trim() !== "") start -= 1;
   let end = idx;

@@ -40,14 +40,14 @@ These builds are **unsigned** (not notarized / not code-signed). That is expecte
 
 ### macOS (unsigned)
 
-1. Download the `.dmg` from the latest Alpha release.
+1. Download the `.dmg` from a release that lists installer assets (currently **v0.1.0-alpha** — not the latest source-only tag).
 2. Open it and drag **Nexus** into Applications.
 3. First launch: **right-click** the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
 4. macOS Gatekeeper will warn because the developer is unidentified. Confirm Open.
 
 ### Windows (unsigned)
 
-1. Download the `.exe` installer from the latest Alpha release.
+1. Download the `.exe` from a release that lists installer assets (currently **v0.1.0-alpha** — not the latest source-only tag).
 2. Run it. If **SmartScreen** appears (“Windows protected your PC”), click **More info** → **Run anyway**.
 3. That warning is normal for unsigned Alpha builds.
 

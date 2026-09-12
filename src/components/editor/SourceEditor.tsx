@@ -179,6 +179,7 @@ export function SourceEditor({ noteId, content }: Props) {
       const state = useVaultStore.getState();
       // Stay on current note — create linked note without activating
       const id = state.createNote(null, cleaned, { activate: false });
+      if (!id) return;
       const node = useVaultStore.getState().nodes[id];
       const item: WikilinkSuggestItem = {
         id,
