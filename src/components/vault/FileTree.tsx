@@ -15,6 +15,7 @@ import {
   Users,
   Lightbulb,
   FolderKanban,
+  LayoutGrid,
   Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,7 @@ import type { NoteTemplateId } from "@/lib/vault/templates";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { useTreeStructureTick } from "@/lib/vault/tree-tick";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 
 
 /**
@@ -231,6 +233,7 @@ const TreeRow = memo(function TreeRow({
       return;
     }
     setActiveNote(node.id);
+    closeDrawersIfNarrow();
   };
 
   return (
@@ -524,6 +527,7 @@ export const FileTree = memo(function FileTree() {
           toggleFolder(node.id);
         } else {
           setActiveNote(node.id);
+          closeDrawersIfNarrow();
         }
       }
     },
@@ -911,6 +915,11 @@ export const FileTree = memo(function FileTree() {
                     icon={<FolderKanban size={13} />}
                     label="New project"
                     onClick={() => createFromTemplateInCtx("project")}
+                  />
+                  <MenuBtn
+                    icon={<LayoutGrid size={13} />}
+                    label="New canvas"
+                    onClick={() => createFromTemplateInCtx("canvas")}
                   />
                   <MenuBtn
                     icon={<FolderPlus size={13} />}

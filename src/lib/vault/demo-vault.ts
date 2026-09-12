@@ -70,19 +70,27 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | File tree | Folders on the left — Projects, Research, Systems, Journal |
 | Visual editor | Default calm writing surface with formatting toolbar |
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
-| Wikilinks | Click pills like [[Graph View]] or [[Linking Notes]] |
+| Split | Source + live preview side by side |
+| Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
+| Embeds | ![[Welcome]] live-transcludes a note |
+| Wikilinks | Click pills like [[Graph View]] or [[Linking Notes]] — hover to preview |
 | Backlinks | Right panel → see what points here |
 | Graph | Right panel → Graph, or **Ctrl/⌘G** for fullscreen |
 | Search | **Ctrl/⌘K** — find any note instantly |
-| Settings | Gear or **Ctrl/⌘,** — accents, density, editor prefs |
+| Callouts | Open [[Callouts]] or insert from the toolbar More menu |
+| Diagrams | Open [[Diagrams & Math]] — mermaid charts and $math$ |
+| Canvas | Open [[Welcome board]] — cards on a spatial board |
+| Theme | Sun/moon in the title bar — Dark, Light, or System |
+| Settings | Gear or **Ctrl/⌘,** — theme and remappable hotkeys |
 | Hermes | Vault menu → **Simulate Hermes write** |
 
 ## Quick path
 
-1. Open [[Local-first Vault]] for how storage works  
-2. Click a [[wikilink]] pill, or press **Ctrl/⌘G** for the graph  
-3. Edit this page, switch to **Source**, then back — content stays in sync  
-4. Press **⌘K** and type \`hermes\`
+1. Open [[Callouts]] to see note / tip / warning / danger blocks  
+2. Open [[Diagrams & Math]] for mermaid + formulas, or [[Welcome board]] for a canvas  
+3. Open [[Local-first Vault]] for how storage works  
+4. Edit this page, switch to **Source**, then back — content stays in sync  
+5. Press **⌘K** and type \`hermes\`
 
 ## See the graph
 
@@ -247,6 +255,90 @@ Open **Settings (⌘,)** and switch Cyan → Violet → Emerald. The whole UI up
 
   add(
     note(
+      pathJoin("Research", "Callouts.md"),
+      "Callouts.md",
+      research.id,
+      `# Callouts
+
+#writing #callouts
+
+Callouts are ordinary Markdown. They look rich in Visual and stay portable in Source.
+
+> [!NOTE]
+> Local-first notes. Same files on disk for you, git, and agents.
+
+> [!TIP] Toolbar
+> Open **More → Callout** and pick a type. Source writes \`> [!TIP]\`.
+
+> [!WARNING]
+> Huge vaults stay fast because callouts are per-note HTML — never a whole-vault scan.
+
+> [!DANGER]
+> Don't paste proprietary blobs. Callouts round-trip to standard blockquotes.
+
+> [!SUCCESS]
+> Highlights use ==this==. Properties sit above the editor.
+
+See also [[Visual & Source]] and [[Welcome]].
+`,
+    ),
+  );
+
+  add(
+    note(
+      pathJoin("Research", "Diagrams & Math.md"),
+      "Diagrams & Math.md",
+      research.id,
+      `# Diagrams & Math
+
+#writing #mermaid #math
+
+**Mermaid** turns a fenced code block into a diagram. **Math** is LaTeX between \`$…$\` (inline) or \`$$…$$\` (block). Both stay plain Markdown on disk — edit in Visual (double-click) or Source.
+
+## Flow
+
+\`\`\`mermaid
+flowchart LR
+  Write[Write a note] --> Link[Link with wikilinks]
+  Link --> See[See it on the graph]
+\`\`\`
+
+## Formula
+
+The mass–energy relation is $E = mc^2$.
+
+$$
+\\int_0^1 x^2 \\, dx = \\frac{1}{3}
+$$
+
+Insert from **More → Mermaid diagram** or **Math block**. See also [[Welcome board]] and [[Visual & Source]].
+`,
+    ),
+  );
+
+  const canvases = add(folder("Canvases", "Canvases", null));
+  add(
+    note(
+      pathJoin("Canvases", "Welcome board.md"),
+      "Welcome board.md",
+      canvases.id,
+      [
+        "---",
+        "type: canvas",
+        "---",
+        "",
+        "# Welcome board",
+        "",
+        "````canvas",
+        '{"cam":{"x":36,"y":24,"k":1},"snap":true,"cards":[{"id":"c_group","x":12,"y":8,"w":580,"h":300,"kind":"group","text":"Welcome","color":"6"},{"id":"c_welcome","x":36,"y":48,"w":240,"h":140,"kind":"text","color":"5","text":"Welcome board\\n\\nDrag a card. Hover a side to connect."},{"id":"c_welcome_link","x":320,"y":48,"w":240,"h":120,"kind":"note","notePath":"Welcome.md","color":"4"},{"id":"c_diagrams","x":320,"y":184,"w":240,"h":100,"kind":"note","notePath":"Research/Diagrams & Math.md"}],"edges":[{"id":"e_next","from":"c_welcome","to":"c_welcome_link","fromSide":"right","toSide":"left","label":"open","color":"5"}]}',
+        "````",
+        "",
+      ].join("\n"),
+    ),
+  );
+
+  add(
+    note(
       pathJoin("Research", "Visual & Source.md"),
       "Visual & Source.md",
       research.id,
@@ -265,6 +357,18 @@ Two views. **One note.** Same Markdown on disk.
 - Press **⌘E** or the Source chip  
 - Edit raw Markdown  
 - Switch back — rich view matches  
+
+## Split
+
+Source on the left, live preview on the right — no second editor, no lost fences.
+
+Type / in Visual for headings, callouts, mermaid, math, embeds, and live queries.
+
+Transclude a note with \`![[Welcome]]\`.
+
+\`\`\`query
+folder:Research
+\`\`\`
 
 ## Round-trip rules
 
@@ -400,6 +504,7 @@ Felt immediate. Calm center, powerful edges. Settings accents made it mine in on
     welcome.id,
     projects.id,
     research.id,
+    canvases.id,
     systems.id,
     journal.id,
   ];

@@ -27,7 +27,7 @@ export interface RecentVault {
 
 export type VaultMode = "demo" | "local" | "fsa" | "desktop";
 
-export type EditorMode = "visual" | "source";
+export type EditorMode = "visual" | "source" | "split";
 
 export type GraphMode = "panel" | "fullscreen" | "hidden";
 

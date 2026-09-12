@@ -10,8 +10,13 @@ import {
   insertWikilinkInSource,
   type WikilinkSuggestItem,
 } from "@/lib/editor/wikilink-suggest";
-import { dailyNotePath } from "@/lib/vault/templates";
+import { dailyNotePath, upgradeSparseDailySkeleton } from "@/lib/vault/templates";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
+import {
+  collectPlainMatches,
+  registerSourceFindAdapter,
+  type FindMatch,
+} from "@/lib/editor/find-target";
 
 interface Props {
   noteId: string;
@@ -27,16 +32,16 @@ function hasEmptyFocusBullet(markdown: string): boolean {
   if (!body) return true;
   const lines = body.split("\n").filter((l) => l.trim().length > 0);
   if (lines.length === 0) return true;
-  return lines.every((line) => /^\s*-\s*$/.test(line));
+  return lines.every((line) => /^\s*\\?-\s*(\[[ xX]\]\s*)?$/.test(line));
 }
 
-/** Caret index after first empty Focus bullet (`- `). */
+/** Caret index after first empty Focus bullet (`- ` or `- [ ] `). */
 function emptyFocusCaretIndex(markdown: string): number | null {
   const m = /^##\s+Focus\s*\n/m.exec(markdown);
   if (!m || m.index == null) return null;
   const afterHeading = m.index + m[0].length;
   const rest = markdown.slice(afterHeading);
-  const bullet = /^\s*-\s*/m.exec(rest);
+  const bullet = /^\s*-\s*(\[[ xX]\]\s*)?/m.exec(rest);
   if (!bullet || bullet.index == null) return null;
   return afterHeading + bullet.index + bullet[0].length;
 }
@@ -54,8 +59,9 @@ export function SourceEditor({ noteId, content }: Props) {
   const editorFontSize = usePrefsStore((s) => s.editorFontSize);
 
   // Prefer live store value at mount (post-flush), fall back to prop
-  const seed =
-    useVaultStore.getState().nodes[noteId]?.content ?? content ?? "";
+  const seed = upgradeSparseDailySkeleton(
+    useVaultStore.getState().nodes[noteId]?.content ?? content ?? "",
+  );
 
   const [value, setValue] = useState(seed);
   const valueRef = useRef(seed);
@@ -72,6 +78,15 @@ export function SourceEditor({ noteId, content }: Props) {
   const [suggestTo, setSuggestTo] = useState(0);
   const [suggestItems, setSuggestItems] = useState<WikilinkSuggestItem[]>([]);
   const [suggestSelected, setSuggestSelected] = useState(0);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+  const lineCount = (() => {
+    let n = 1;
+    for (let i = 0; i < value.length; i++) {
+      if (value.charCodeAt(i) === 10) n++;
+    }
+    return n;
+  })();
+  const showGutter = lineCount <= 2000;
   const [suggestRect, setSuggestRect] = useState({
     left: 0,
     top: 0,
@@ -181,8 +196,9 @@ export function SourceEditor({ noteId, content }: Props) {
   // Keep in sync with store/prop. Always reseed when noteId changes
   // (previous note was flushed on switch); only guard dirty for same-note updates.
   useEffect(() => {
-    const live =
-      useVaultStore.getState().nodes[noteId]?.content ?? content ?? "";
+    const live = upgradeSparseDailySkeleton(
+      useVaultStore.getState().nodes[noteId]?.content ?? content ?? "",
+    );
     const noteChanged = noteIdRef.current !== noteId;
     if (noteChanged) {
       noteIdRef.current = noteId;
@@ -247,12 +263,75 @@ export function SourceEditor({ noteId, content }: Props) {
     };
   }, [updateNoteContent, noteId]);
 
+  // Find-in-note adapter for Source mode
+  useEffect(() => {
+    registerSourceFindAdapter({
+      findAll: (query) => collectPlainMatches(valueRef.current, query),
+      reveal: (match: FindMatch) => {
+        const ta = taRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(match.from, match.to);
+        const before = ta.value.slice(0, match.from);
+        const lines = before.split("\n").length;
+        const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
+        ta.scrollTop = Math.max(0, (lines - 3) * lineHeight);
+      },
+      clear: () => {
+        /* selection-only */
+      },
+      replace: (match, text) => {
+        const v = valueRef.current;
+        const next = v.slice(0, match.from) + text + v.slice(match.to);
+        setValue(next);
+        valueRef.current = next;
+        dirtyRef.current = true;
+        scheduleSave(next);
+        const ta = taRef.current;
+        const caret = match.from + text.length;
+        requestAnimationFrame(() => {
+          if (!ta) return;
+          ta.focus();
+          ta.setSelectionRange(caret, caret);
+        });
+        return true;
+      },
+      replaceAll: (query, text) => {
+        const all = collectPlainMatches(valueRef.current, query);
+        if (!all.length) return 0;
+        let v = valueRef.current;
+        for (let i = all.length - 1; i >= 0; i--) {
+          const m = all[i]!;
+          v = v.slice(0, m.from) + text + v.slice(m.to);
+        }
+        setValue(v);
+        valueRef.current = v;
+        dirtyRef.current = true;
+        scheduleSave(v);
+        return all.length;
+      },
+    });
+    return () => registerSourceFindAdapter(null);
+  }, [noteId, scheduleSave]);
+
   return (
     <div
-      className="fade-in flex h-full min-h-0 flex-col overflow-hidden px-6 py-4 md:px-10 md:py-6"
+      className="fade-in flex h-full min-h-0 flex-col overflow-hidden px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6"
       data-note-id={noteId}
     >
-      <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] flex-1 flex-col">
+      <div className="source-editor-shell relative mx-auto flex min-h-0 w-full max-w-[720px] flex-1 flex-row overflow-hidden">
+        {showGutter ? (
+          <div
+            ref={gutterRef}
+            className="source-gutter"
+            aria-hidden
+            style={{ fontSize: editorFontSize }}
+          >
+            {Array.from({ length: lineCount }, (_, i) => (
+              <span key={i}>{i + 1}</span>
+            ))}
+          </div>
+        ) : null}
         <textarea
           ref={taRef}
           className="source-editor min-h-[50vh] w-full flex-1"
@@ -260,6 +339,11 @@ export function SourceEditor({ noteId, content }: Props) {
           value={value}
           spellCheck={spellCheck}
           style={{ fontSize: editorFontSize }}
+          onScroll={(e) => {
+            if (gutterRef.current) {
+              gutterRef.current.scrollTop = e.currentTarget.scrollTop;
+            }
+          }}
           onChange={(e) => {
             const val = e.target.value;
             const cursor = e.target.selectionStart ?? val.length;

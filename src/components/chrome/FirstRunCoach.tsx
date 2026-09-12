@@ -6,6 +6,7 @@ import {
   markFirstRunCoachDone,
 } from "@/lib/prefs/first-run";
 import { formatShortcut } from "@/lib/platform";
+import { toggleGraphForViewport } from "@/lib/layout/viewport";
 
 /**
  * Lightweight first-hour coach — appears once after the first vault opens.
@@ -17,7 +18,6 @@ export function FirstRunCoach() {
   const graphMode = useVaultStore((s) => s.settings.graphMode);
   const commandOpen = useVaultStore((s) => s.commandOpen);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
-  const setGraphMode = useVaultStore((s) => s.setGraphMode);
   const setToast = useVaultStore((s) => s.setToast);
   const [visible, setVisible] = useState(false);
 
@@ -65,7 +65,7 @@ export function FirstRunCoach() {
       label: "Open the graph",
       hint: formatShortcut("G"),
       action: () => {
-        setGraphMode("panel");
+        toggleGraphForViewport();
         dismiss();
       },
     },
@@ -73,7 +73,7 @@ export function FirstRunCoach() {
 
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-[95] flex justify-center px-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-5"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-[95] flex justify-center px-3 pb-[max(4.75rem,calc(3.25rem+env(safe-area-inset-bottom)))] sm:pb-5"
       role="dialog"
       aria-label="Quick tour"
     >

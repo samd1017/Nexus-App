@@ -14,6 +14,7 @@ import {
   Lightbulb,
   Users,
   FolderKanban,
+  LayoutGrid,
   Trash2,
   PanelLeft,
   PanelRight,
@@ -23,6 +24,7 @@ import {
   Unlink,
   ExternalLink,
   History,
+  Bookmark,
   Focus,
   CircleHelp,
   Database,
@@ -32,8 +34,8 @@ import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   searchWithBackend as searchVault,
-  searchWithPathFolderOps,
 } from "@/lib/search/search-backend";
+import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-ops";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
@@ -50,9 +52,10 @@ import {
   setPendingCommandQuery,
 } from "@/lib/vault/session-recents";
 import { getDurableIndex } from "@/lib/vault/durable-index";
-import { snippetForSearchHit } from "@/lib/search/snippets";
+import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
+import { toggleGraphForViewport } from "@/lib/layout/viewport";
 
 const GROUP_HEADING =
   "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.12em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]";
@@ -60,11 +63,50 @@ const GROUP_HEADING =
 const ITEM_CLASS =
   "cmdk-item flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]";
 
+const MATCH_TYPE_LABEL: Record<string, string> = {
+  title: "Title",
+  content: "In note",
+  path: "Path",
+  tag: "Tag",
+};
+
+function HighlightedText({
+  text,
+  query,
+  className,
+}: {
+  text: string;
+  query: string;
+  className?: string;
+}) {
+  const parts = useMemo(
+    () => highlightParts(text, query),
+    [text, query],
+  );
+  return (
+    <span className={className}>
+      {parts.map((p, i) =>
+        p.match ? (
+          <mark
+            key={i}
+            className="rounded-[2px] bg-[color-mix(in_srgb,var(--accent)_28%,transparent)] px-0.5 text-[var(--text-primary)]"
+          >
+            {p.text}
+          </mark>
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
+      )}
+    </span>
+  );
+}
+
 const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   daily: <CalendarDays size={15} />,
   meeting: <Users size={15} />,
   idea: <Lightbulb size={15} />,
   project: <FolderKanban size={15} />,
+  canvas: <LayoutGrid size={15} />,
 };
 
 /** Open command palette, optionally with a prefilled query. */
@@ -88,81 +130,6 @@ function wrapRun(id: string, run: () => void): () => void {
     trackCommand(id);
     run();
   };
-}
-
-/** Parse `path:foo` / `folder:bar` operators; rest is free-text search. */
-function parsePathFolderOps(raw: string): {
-  pathFilter: string | null;
-  folderFilter: string | null;
-  rest: string;
-} {
-  let rest = raw;
-  let pathFilter: string | null = null;
-  let folderFilter: string | null = null;
-  rest = rest.replace(/\bpath:("([^"]+)"|(\S+))/gi, (_, _all, quoted, bare) => {
-    pathFilter = (quoted ?? bare ?? "").trim() || null;
-    return " ";
-  });
-  rest = rest.replace(/\bfolder:("([^"]+)"|(\S+))/gi, (_, _all, quoted, bare) => {
-    folderFilter = (quoted ?? bare ?? "").trim() || null;
-    return " ";
-  });
-  return {
-    pathFilter,
-    folderFilter,
-    rest: rest.replace(/\s+/g, " ").trim(),
-  };
-}
-
-function filterHitsByPathOps(
-  hits: SearchHit[],
-  pathFilter: string | null,
-  folderFilter: string | null,
-): SearchHit[] {
-  let out = hits;
-  if (pathFilter) {
-    const needle = pathFilter.toLowerCase();
-    out = out.filter((h) => h.path.toLowerCase().includes(needle));
-  }
-  if (folderFilter) {
-    const needle = folderFilter.toLowerCase();
-    out = out.filter((h) => {
-      const p = h.path.toLowerCase();
-      if (p.includes(needle)) return true;
-      const slash = p.lastIndexOf("/");
-      const folder = slash >= 0 ? p.slice(0, slash) : "";
-      return folder.includes(needle);
-    });
-  }
-  return out;
-}
-
-/** All notes as hits (for path/folder-only filters). */
-function allNotesAsHits(
-  nodes: Record<string, import("@/lib/vault/types").VaultNode>,
-  limit = 40,
-): SearchHit[] {
-  const durable = getDurableIndex();
-  return Object.values(nodes)
-    .filter((n) => n.kind === "note")
-    .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, limit)
-    .map((n) => ({
-      noteId: n.id,
-      path: n.path,
-      title: noteTitle(n),
-      snippet: snippetForSearchHit({
-        path: n.path,
-        content: n.content,
-        durableBody:
-          n.content === undefined
-            ? durable?.getNoteMeta?.(n.id)?.bodySnippet
-            : undefined,
-        matchType: "title",
-      }),
-      score: 1,
-      matchType: "title" as const,
-    }));
 }
 
 /** Top notes by visit MRU, then mtime. */
@@ -245,7 +212,9 @@ function CommandPaletteOpen() {
   const setToast = useVaultStore((s) => s.setToast);
   const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
+  const savedSearches = usePrefsStore((s) => s.savedSearches);
   const [query, setQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [recentTick, setRecentTick] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -265,8 +234,20 @@ function CommandPaletteOpen() {
       return () => window.clearTimeout(t);
     } else {
       setQuery("");
+      setDebouncedSearch("");
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const rawQ = query.trim();
+    if (!rawQ || rawQ.startsWith(">")) {
+      setDebouncedSearch("");
+      return;
+    }
+    const t = window.setTimeout(() => setDebouncedSearch(query), 90);
+    return () => window.clearTimeout(t);
+  }, [open, query]);
 
   const raw = query.trim();
   const isCommandMode = raw.startsWith(">");
@@ -274,16 +255,15 @@ function CommandPaletteOpen() {
   const pathFolderOps = useMemo(
     () =>
       isCommandMode
-        ? { pathFilter: null, folderFilter: null, rest: q }
-        : parsePathFolderOps(raw),
-    [isCommandMode, q, raw],
+        ? parseSearchOps("")
+        : parseSearchOps(raw),
+    [isCommandMode, raw],
   );
   const searchText = isCommandMode ? "" : pathFolderOps.rest;
   const qLower = q.toLowerCase();
   const isTagBrowse =
     searchText.startsWith("#") ||
-    (!pathFolderOps.pathFilter &&
-      !pathFolderOps.folderFilter &&
+    (!hasSearchOps(pathFolderOps) &&
       q.startsWith("#"));
   const tagPartial = isTagBrowse
     ? (searchText.startsWith("#") ? searchText.slice(1) : q.slice(1)).toLowerCase()
@@ -298,9 +278,7 @@ function CommandPaletteOpen() {
     qLower === "is:broken" ||
     qLower === "broken" ||
     qLower === "broken links";
-  const hasPathFolderOp = Boolean(
-    pathFolderOps.pathFilter || pathFolderOps.folderFilter,
-  );
+  const hasPathFolderOp = hasSearchOps(pathFolderOps);
   const showAllActions = Boolean(raw) || isCommandMode;
   const actionQuery = isCommandMode
     ? q
@@ -324,18 +302,12 @@ function CommandPaletteOpen() {
     }
     if (wantsOrphans || wantsBroken || isCommandMode) return [];
 
-    // Scale-safe path:/folder: via FTS needle + post-filter (not sample-then-filter)
     if (hasPathFolderOp) {
-      return searchWithPathFolderOps(
-        nodes,
-        searchText,
-        pathFolderOps.pathFilter,
-        pathFolderOps.folderFilter,
-        16,
-      );
+      return searchWithOps(nodes, debouncedSearch.trim() || raw, 16);
     }
-    if (searchText) {
-      return searchVault(nodes, searchText, 16);
+    const needle = debouncedSearch.trim() || searchText || raw;
+    if (needle) {
+      return searchVault(nodes, needle, 16);
     }
     return searchVault(nodes, raw, 16);
   }, [
@@ -343,6 +315,7 @@ function CommandPaletteOpen() {
     vaultId,
     raw,
     searchText,
+    debouncedSearch,
     isEmptyQuery,
     isTagBrowse,
     tagPartial,
@@ -353,6 +326,9 @@ function CommandPaletteOpen() {
     hasPathFolderOp,
     pathFolderOps.pathFilter,
     pathFolderOps.folderFilter,
+    pathFolderOps.fileFilter,
+    pathFolderOps.tagFilter,
+    pathFolderOps.excludes,
   ]);
 
   const tags = useMemo(() => {
@@ -468,8 +444,8 @@ function CommandPaletteOpen() {
         },
         {
           id: "toggle-editor",
-          label: "Toggle Visual / Source",
-          keywords: ["editor", "source", "visual", "mode", "markdown"],
+          label: "Cycle Visual / Source / Split",
+          keywords: ["editor", "source", "visual", "split", "mode", "markdown"],
           icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
           shortcut: formatShortcut("E"),
           run: wrapRun("toggle-editor", () => {
@@ -484,13 +460,7 @@ function CommandPaletteOpen() {
           icon: <Network size={15} />,
           shortcut: formatShortcut("G"),
           run: wrapRun("toggle-graph", () => {
-            const st = useVaultStore.getState();
-            const cur = st.settings.graphMode;
-            const onPanel =
-              cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
-            if (cur === "fullscreen") st.setGraphMode("panel");
-            else if (onPanel) st.setGraphMode("fullscreen");
-            else st.setGraphMode("panel");
+            toggleGraphForViewport();
             setCommandOpen(false);
           }),
         },
@@ -743,7 +713,7 @@ function CommandPaletteOpen() {
       },
       {
         id: "toggle-editor",
-        label: "Toggle Visual / Source",
+        label: "Cycle Visual / Source / Split",
         icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
         shortcut: formatShortcut("E"),
         run: wrapRun("toggle-editor", () => {
@@ -758,13 +728,7 @@ function CommandPaletteOpen() {
         icon: <Network size={15} />,
         shortcut: formatShortcut("G"),
         run: wrapRun("toggle-graph", () => {
-          const st = useVaultStore.getState();
-          const cur = st.settings.graphMode;
-          const onPanel =
-            cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
-          if (cur === "fullscreen") st.setGraphMode("panel");
-          else if (onPanel) st.setGraphMode("fullscreen");
-          else st.setGraphMode("panel");
+          toggleGraphForViewport();
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),
@@ -939,7 +903,9 @@ function CommandPaletteOpen() {
         {!query.trim() ? (
           <div className="border-b border-[var(--border)] px-4 py-1.5 text-[11px] text-[var(--text-muted)]">
             Tips: <span className="font-mono text-[var(--text-secondary)]">path:</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">file:</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">-exclude</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">is:orphan</span> ·{" "}
             <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
           </div>
@@ -965,6 +931,65 @@ function CommandPaletteOpen() {
               </button>
             ) : null}
           </Command.Empty>
+
+          {savedSearches.length > 0 && (isEmptyQuery || /^save/i.test(raw) || raw === "/") ? (
+            <Command.Group heading="Saved searches" className={GROUP_HEADING}>
+              {savedSearches.map((s) => (
+                <Command.Item
+                  key={s.id}
+                  value={`saved-${s.id}-${s.name}-${s.query}`}
+                  onSelect={() => setQuery(s.query)}
+                  className={ITEM_CLASS}
+                >
+                  <Bookmark size={15} className="shrink-0 text-[var(--accent)]" />
+                  <span className="flex-1 truncate">{s.name}</span>
+                  <span className="max-w-[40%] truncate font-mono text-[10px] text-[var(--text-muted)]">
+                    {s.query}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      usePrefsStore.getState().updatePrefs({
+                        savedSearches: savedSearches.filter((x) => x.id !== s.id),
+                      });
+                    }}
+                    aria-label={`Delete saved search ${s.name}`}
+                  >
+                    <X size={12} />
+                  </button>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {!isCommandMode && searchText && hasPathFolderOp ? (
+            <Command.Group heading="Search" className={GROUP_HEADING}>
+              <Command.Item
+                value={`save-search-${raw}`}
+                onSelect={() => {
+                  const name = window.prompt("Name this search", raw) || raw;
+                  usePrefsStore.getState().updatePrefs({
+                    savedSearches: [
+                      {
+                        id: `s_${Date.now().toString(36)}`,
+                        name: name.trim() || raw,
+                        query: raw,
+                      },
+                      ...savedSearches.filter((s) => s.query !== raw),
+                    ].slice(0, 24),
+                  });
+                  setToast("Search saved");
+                }}
+                className={ITEM_CLASS}
+              >
+                <Bookmark size={15} className="shrink-0 text-[var(--accent)]" />
+                <span className="flex-1">Save this search</span>
+                <span className="font-mono text-[10px] text-[var(--text-muted)]">{raw}</span>
+              </Command.Item>
+            </Command.Group>
+          ) : null}
 
           {isEmptyQuery && recentCommands.length > 0 ? (
             <Command.Group heading="Recent commands" className={GROUP_HEADING}>
@@ -1070,20 +1095,19 @@ function CommandPaletteOpen() {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-[var(--text-primary)]">
-                      {h.title}
+                      <HighlightedText text={h.title} query={query} />
                     </div>
-                    <div className="truncate text-[11.5px] text-[var(--text-muted)]">
+                    <div className="truncate text-[11px] text-[var(--text-muted)]">
                       {h.path}
-                      {h.snippet ? ` · ${h.snippet}` : ""}
                     </div>
+                    {h.snippet && h.snippet !== h.path ? (
+                      <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--text-secondary)]">
+                        <HighlightedText text={h.snippet} query={query} />
+                      </div>
+                    ) : null}
                   </div>
-                  <span className="ml-auto shrink-0 text-[10px] tracking-wide text-[var(--text-muted)]">
-                    {({
-                      title: "Title",
-                      content: "Content",
-                      path: "Path",
-                      tag: "Tag",
-                    } as Record<string, string>)[String(h.matchType)] ??
+                  <span className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)] bg-[color-mix(in_srgb,var(--text-muted)_12%,transparent)]">
+                    {MATCH_TYPE_LABEL[String(h.matchType)] ??
                       String(h.matchType)}
                   </span>
                 </Command.Item>

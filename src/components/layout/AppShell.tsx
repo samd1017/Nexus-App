@@ -7,6 +7,7 @@ import { ShortcutsSheet } from "@/components/chrome/ShortcutsSheet";
 import { DeleteConfirmHost } from "@/components/chrome/DeleteConfirmHost";
 import { ConflictStudioHost } from "@/components/conflict/ConflictStudioHost";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
+import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { EditorPane } from "@/components/editor/EditorPane";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
@@ -32,6 +33,7 @@ import {
 } from "@/lib/vault/native-index";
 import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
 import { bindWindowState } from "@/lib/desktop/window-state";
+import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
 
 function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
@@ -169,6 +171,14 @@ export function AppShell() {
     void bootstrap();
   }, [bootstrap]);
 
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = () => applyPrefsToDom(getPrefs());
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
   // Wave A: warn before tab close when unsaved disk notes exist
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -212,15 +222,7 @@ export function AppShell() {
       newNote: () => {
         useVaultStore.getState().createNote(null, "Untitled");
       },
-      toggleGraph: () => {
-        const st = useVaultStore.getState();
-        const cur = st.settings.graphMode;
-        const onPanel =
-          cur === "panel" && st.settings.rightOpen && st.rightTab === "graph";
-        if (cur === "fullscreen") st.setGraphMode("panel");
-        else if (onPanel) st.setGraphMode("fullscreen");
-        else st.setGraphMode("panel");
-      },
+      toggleGraph: () => toggleGraphForViewport(),
       toggleSource: () => useVaultStore.getState().toggleEditorMode(),
     }).then((fn) => {
       un = fn;
@@ -228,16 +230,27 @@ export function AppShell() {
     return () => un?.();
   }, []);
 
-  // Responsive panels: only auto-close when crossing below tablet width,
-  // not on every vault open (keeps first-run chrome discoverable).
+  // Responsive panels: auto-close on narrow vault open + when crossing below tablet width
   useEffect(() => {
     if (!vaultId) return;
     let wasNarrow = window.innerWidth < 900;
+    if (wasNarrow) {
+      setLeftOpen(false);
+      setRightOpen(false);
+      if (window.innerWidth < 640) {
+        const st = useVaultStore.getState();
+        if (st.settings.graphMode === "panel") st.setGraphMode("hidden");
+      }
+    }
     const onResize = () => {
       const narrow = window.innerWidth < 900;
       if (narrow && !wasNarrow) {
         setLeftOpen(false);
         setRightOpen(false);
+        if (window.innerWidth < 640) {
+          const st = useVaultStore.getState();
+          if (st.settings.graphMode === "panel") st.setGraphMode("hidden");
+        }
       }
       wasNarrow = narrow;
     };
@@ -349,6 +362,7 @@ export function AppShell() {
         {graphMode !== "fullscreen" ? <EditorPane /> : null}
         <RightPanel />
       </main>
+      {graphMode !== "fullscreen" ? <MobileBottomNav /> : null}
       <Toast />
       <CommandPalette />
       <SettingsPanel />

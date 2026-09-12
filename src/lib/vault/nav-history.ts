@@ -10,6 +10,36 @@ let index = -1;
 /** When true, setActiveNote must not push (history traversal). */
 let suppressPush = false;
 
+type NavSnap = { canBack: boolean; canForward: boolean };
+let snap: NavSnap = { canBack: false, canForward: false };
+const listeners = new Set<() => void>();
+
+function refreshSnap(): NavSnap {
+  const canBack = index > 0;
+  const canForward = index >= 0 && index < stack.length - 1;
+  if (snap.canBack !== canBack || snap.canForward !== canForward) {
+    snap = { canBack, canForward };
+  }
+  return snap;
+}
+
+function emitNavChange(): void {
+  refreshSnap();
+  for (const l of listeners) l();
+}
+
+/** Subscribe to back/forward availability (title-bar chrome). */
+export function subscribeNavHistory(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function getNavHistorySnapshot(): NavSnap {
+  return refreshSnap();
+}
+
 export function pushNav(noteId: string | null | undefined): void {
   if (suppressPush) return;
   if (!noteId) return;
@@ -23,6 +53,7 @@ export function pushNav(noteId: string | null | undefined): void {
     stack = stack.slice(stack.length - MAX);
   }
   index = stack.length - 1;
+  emitNavChange();
 }
 
 export function canGoBack(): boolean {
@@ -36,12 +67,14 @@ export function canGoForward(): boolean {
 export function goBack(): string | null {
   if (!canGoBack()) return null;
   index -= 1;
+  emitNavChange();
   return stack[index] ?? null;
 }
 
 export function goForward(): string | null {
   if (!canGoForward()) return null;
   index += 1;
+  emitNavChange();
   return stack[index] ?? null;
 }
 
@@ -85,4 +118,5 @@ export function resetNavHistory(): void {
   stack = [];
   index = -1;
   suppressPush = false;
+  emitNavChange();
 }

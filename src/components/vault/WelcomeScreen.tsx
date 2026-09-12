@@ -4,13 +4,15 @@ import {
   FolderPlus,
   HardDrive,
   Network,
-  Radio,
   Sparkles,
   Database,
   AlertTriangle,
   Info,
   Loader2,
   Keyboard,
+  Highlighter,
+  Search,
+  Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
@@ -21,6 +23,7 @@ import {
   NEXUS_TAGLINE,
 } from "@/components/brand/NexusLogo";
 import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
+import { ThemeToggle } from "@/components/chrome/ThemeToggle";
 
 type PendingAction =
   | null
@@ -126,35 +129,42 @@ export function WelcomeScreen() {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]">
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.4]"
+        className="pointer-events-none absolute inset-0"
         style={{
           backgroundImage:
-            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,200,255,0.08), transparent 55%)",
+            "radial-gradient(ellipse 90% 55% at 12% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 52%), radial-gradient(ellipse 70% 45% at 92% 8%, color-mix(in srgb, var(--accent-violet) 18%, transparent), transparent 50%)",
         }}
       />
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.035]"
+        className="pointer-events-none absolute inset-0 opacity-[0.28]"
         style={{
           backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.07) 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
+            "linear-gradient(color-mix(in srgb, var(--text-primary) 7%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--text-primary) 7%, transparent) 1px, transparent 1px)",
+          backgroundSize: "56px 56px",
+          maskImage:
+            "radial-gradient(ellipse 80% 70% at 50% 20%, #000 20%, transparent 75%)",
         }}
       />
 
-      <div className="relative z-10 mx-auto flex min-h-full w-full max-w-2xl flex-col px-6">
-        {/* First viewport: brand + headline + one line + CTAs only */}
-        <section className="flex min-h-full flex-col justify-center py-12 sm:py-16">
+      <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-5">
+        <ThemeToggle showLabel />
+      </div>
+
+      <div className="relative z-10 mx-auto flex min-h-full w-full max-w-3xl flex-col px-6">
+        <section className="flex min-h-full flex-col justify-center py-14 sm:py-18">
           <div
-            className="welcome-hero-brand flex flex-col items-start gap-4"
-            style={{
-              animation: "welcomeFadeUp 520ms ease-out both",
-            }}
+            className="welcome-hero-brand flex flex-col items-start gap-5"
+            style={{ animation: "welcomeFadeUp 520ms ease-out both" }}
           >
+            <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1 text-[11px] font-medium tracking-wide text-[var(--text-secondary)]">
+              <Zap size={12} className="text-[var(--accent)]" />
+              Built for 300–500k notes
+            </div>
             <div className="flex items-center gap-4">
-              <NexusMark size={56} className="text-[var(--text-primary)]" />
+              <NexusMark size={60} className="text-[var(--text-primary)]" />
               <div>
                 <div
-                  className="nexus-wordmark select-none text-[34px] font-semibold leading-none tracking-[-0.03em] text-[var(--text-primary)] sm:text-[40px]"
+                  className="nexus-wordmark select-none text-[38px] font-semibold leading-none tracking-[-0.04em] text-[var(--text-primary)] sm:text-[46px]"
                   aria-label="Nexus"
                 >
                   Nexus
@@ -167,20 +177,22 @@ export function WelcomeScreen() {
           </div>
 
           <h1
-            className="mt-10 text-[22px] font-medium tracking-tight text-[var(--text-secondary)] sm:text-[24px]"
+            className="mt-10 max-w-xl text-[28px] font-semibold leading-[1.15] tracking-tight text-[var(--text-primary)] sm:text-[34px]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 80ms both" }}
           >
-            Your notes. Your folder.
+            A writing surface that stays fast
+            <span className="text-[var(--text-muted)]"> — even huge.</span>
           </h1>
           <p
-            className="mt-3 max-w-md text-[15px] leading-relaxed text-[var(--text-muted)]"
+            className="mt-4 max-w-lg text-[15.5px] leading-relaxed text-[var(--text-secondary)]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 140ms both" }}
           >
-            Local-first Markdown. Zero accounts. Find anything fast.
+            Local-first Markdown. Visual + Source. Live folder sync. Light or dark.
+            Zero accounts.
           </p>
 
           {!fsaOk && !desktop ? (
-            <div className="mt-6 flex flex-wrap items-start gap-3 rounded-[14px] border border-[rgba(0,200,255,0.28)] bg-[rgba(0,200,255,0.07)] px-4 py-3">
+            <div className="mt-6 flex flex-wrap items-start gap-3 rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_40%,var(--border))] bg-[var(--accent-dim)] px-4 py-3">
               <Info size={16} className="mt-0.5 shrink-0 text-[var(--accent)]" />
               <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-[var(--text-secondary)]">
                 <strong className="text-[var(--text-primary)]">
@@ -201,7 +213,7 @@ export function WelcomeScreen() {
           ) : null}
 
           {folderAccessLost ? (
-            <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[14px] border border-[rgba(255,159,10,0.35)] bg-[rgba(255,159,10,0.08)] px-4 py-3">
+            <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[14px] border border-[color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[var(--warning-dim)] px-4 py-3">
               <AlertTriangle
                 size={16}
                 className="shrink-0 text-[var(--warning,#FF9F0A)]"
@@ -232,7 +244,7 @@ export function WelcomeScreen() {
 
           {busy ? (
             <div
-              className="mt-8 flex items-center gap-3 rounded-[14px] border border-[rgba(0,200,255,0.28)] bg-[rgba(0,200,255,0.07)] px-4 py-3"
+              className="mt-8 flex items-center gap-3 rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_40%,var(--border))] bg-[var(--accent-dim)] px-4 py-3"
               role="status"
               aria-live="polite"
               aria-busy="true"
@@ -248,14 +260,14 @@ export function WelcomeScreen() {
           ) : null}
 
           <div
-            className="mt-8 flex flex-wrap gap-3"
+            className="mt-8 flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap"
             style={{ animation: "welcomeFadeUp 520ms ease-out 200ms both" }}
           >
             {hasRecents && topRecent ? (
               <>
                 <button
                   type="button"
-                  className="primary-btn min-h-11"
+                  className="primary-btn min-h-11 w-full justify-center sm:w-auto"
                   disabled={busy}
                   onClick={openTopRecent}
                 >
@@ -273,7 +285,7 @@ export function WelcomeScreen() {
                 {topRecent.mode !== "demo" ? (
                   <button
                     type="button"
-                    className="ghost-btn min-h-11"
+                    className="ghost-btn min-h-11 w-full justify-center sm:w-auto"
                     disabled={busy}
                     onClick={() => run("demo", () => openDemoVault())}
                   >
@@ -285,7 +297,7 @@ export function WelcomeScreen() {
             ) : (
               <button
                 type="button"
-                className="primary-btn min-h-11"
+                className="primary-btn min-h-11 w-full justify-center sm:w-auto"
                 disabled={busy}
                 onClick={() => run("demo", () => openDemoVault())}
               >
@@ -300,7 +312,7 @@ export function WelcomeScreen() {
 
             <button
               type="button"
-              className="ghost-btn min-h-11"
+              className="ghost-btn min-h-11 w-full justify-center sm:w-auto"
               disabled={busy || !fsaOk}
               onClick={onOpenFolder}
               title={!fsaOk ? "Not available in this browser" : undefined}
@@ -314,7 +326,7 @@ export function WelcomeScreen() {
             </button>
             <button
               type="button"
-              className="ghost-btn min-h-11"
+              className="ghost-btn min-h-11 w-full justify-center sm:w-auto"
               disabled={busy || !fsaOk}
               onClick={() => {
                 if (!fsaOk || busy) return;
@@ -328,9 +340,9 @@ export function WelcomeScreen() {
           </div>
 
           {showCreate && fsaOk ? (
-            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[rgba(15,15,18,0.9)] p-3">
+            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
               <input
-                className="min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-black/30 px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
                 placeholder="Vault name"
@@ -352,48 +364,57 @@ export function WelcomeScreen() {
           ) : null}
         </section>
 
-        {/* Below fold: capabilities, privacy, cloud, recents */}
         <section className="pb-16">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               {
-                icon: HardDrive,
-                title: "Local-first",
-                body: "Your folder of Markdown. No account required.",
+                icon: Highlighter,
+                title: "Write",
+                body: "Visual editor, callouts, highlights, properties.",
+              },
+              {
+                icon: Search,
+                title: "Find",
+                body: "Indexed search that stays snappy at huge scale.",
               },
               {
                 icon: Network,
-                title: "Spatial graph",
-                body: "See how notes link — neighborhood by default.",
+                title: "See",
+                body: "Spatial graph — neighborhood, then the whole vault.",
               },
               {
-                icon: Radio,
-                title: "Live on disk",
-                body: "Agents and apps write files; Nexus stays in sync.",
+                icon: Cloud,
+                title: "Sync",
+                body: "Your folder + live watcher. Dropbox, Drive, iCloud.",
               },
             ].map(({ icon: Icon, title, body }) => (
               <div
                 key={title}
-                className="rounded-[14px] border border-[var(--border)] bg-[rgba(15,15,18,0.72)] p-4"
+                className="rounded-[16px] border border-[var(--border)] bg-[var(--bg-elevated)] p-4 shadow-[var(--shadow-panel)]"
               >
                 <Icon size={16} className="text-[var(--accent)]" />
-                <div className="mt-2 text-[13px] font-medium text-[var(--text-primary)]">
+                <div className="mt-2 text-[13.5px] font-semibold text-[var(--text-primary)]">
                   {title}
                 </div>
-                <div className="mt-1 text-[12px] leading-relaxed text-[var(--text-muted)]">
+                <div className="mt-1 text-[12.5px] leading-relaxed text-[var(--text-muted)]">
                   {body}
                 </div>
               </div>
             ))}
           </div>
 
-          <p className="mt-10 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+          <div className="mt-6 rounded-[16px] border border-[var(--border)] bg-[var(--fill-subtle)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+            Scale: metadata-first index, lazy note bodies, virtualized tree.
+            Opening a 300k-note vault does not load 300k files into memory.
+          </div>
+
+          <p className="mt-8 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">
             Privacy: notes stay on your device. Nexus does not upload vault
             contents or require an account for core editing.
           </p>
 
           {import.meta.env.DEV ? (
-            <div className="mt-8 rounded-[14px] border border-dashed border-[rgba(0,200,255,0.22)] bg-[rgba(15,15,18,0.55)] p-4">
+            <div className="mt-8 rounded-[14px] border border-dashed border-[color-mix(in_srgb,var(--accent)_28%,var(--border))] bg-[var(--fill-subtle)] p-4">
               <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
                 <Database size={15} className="text-[var(--accent)]" />
                 Developer · scale QA
@@ -422,10 +443,10 @@ export function WelcomeScreen() {
             </div>
           ) : null}
 
-          <div className="mt-8 rounded-[14px] border border-[var(--border)] bg-[rgba(15,15,18,0.65)] p-4">
+          <div className="mt-8 rounded-[14px] border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
             <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)]">
               <Cloud size={15} className="text-[var(--accent)]" />
-              Want cloud sync?
+              Built-in folder sync
             </div>
             <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
               {CLOUD_SYNC_HINT}
@@ -461,7 +482,7 @@ export function WelcomeScreen() {
                         <button
                           type="button"
                           disabled={busy}
-                          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-[var(--text-secondary)] hover:bg-[var(--fill-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
                           onClick={() => {
                             if (busy) return;
                             run("recent", () => {

@@ -96,3 +96,66 @@ export function snippetForSearchHit(opts: {
 
   return path;
 }
+
+export type HighlightPart = { text: string; match: boolean };
+
+/**
+ * Split `text` into parts with query-token matches marked.
+ * Case-insensitive; longest tokens first to reduce overlap noise.
+ */
+export function highlightParts(text: string, query: string): HighlightPart[] {
+  const raw = text ?? "";
+  if (!raw) return [];
+  const q = (query ?? "").trim();
+  if (!q) return [{ text: raw, match: false }];
+
+  const tokens = [
+    ...new Set(
+      q
+        .toLowerCase()
+        .split(/[^a-z0-9_\u00c0-\u024f#+.-]+/i)
+        .map((t) => t.replace(/^#+/, ""))
+        .filter((t) => t.length >= 2),
+    ),
+  ].sort((a, b) => b.length - a.length);
+
+  if (!tokens.length) return [{ text: raw, match: false }];
+
+  const lower = raw.toLowerCase();
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const token of tokens) {
+    let from = 0;
+    while (from < lower.length) {
+      const i = lower.indexOf(token, from);
+      if (i < 0) break;
+      ranges.push({ start: i, end: i + token.length });
+      from = i + token.length;
+    }
+  }
+  if (!ranges.length) return [{ text: raw, match: false }];
+
+  ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r.start <= last.end) {
+      last.end = Math.max(last.end, r.end);
+    } else {
+      merged.push({ ...r });
+    }
+  }
+
+  const parts: HighlightPart[] = [];
+  let cursor = 0;
+  for (const r of merged) {
+    if (r.start > cursor) {
+      parts.push({ text: raw.slice(cursor, r.start), match: false });
+    }
+    parts.push({ text: raw.slice(r.start, r.end), match: true });
+    cursor = r.end;
+  }
+  if (cursor < raw.length) {
+    parts.push({ text: raw.slice(cursor), match: false });
+  }
+  return parts;
+}

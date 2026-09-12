@@ -42,7 +42,7 @@ export const Route = createRootRoute({
 
 function RootDocument() {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>

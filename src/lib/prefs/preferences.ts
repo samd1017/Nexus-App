@@ -1,7 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { applyScaleSafeDefaults } from "@/lib/vault/scale-flags";
-import { formatShortcut } from "@/lib/platform";
+import {
+  listShortcutRows,
+  sanitizeHotkeyOverrides,
+  type HotkeyOverrides,
+} from "@/lib/prefs/hotkeys";
 
 export type AccentPreset =
   | "cyan"
@@ -13,10 +17,12 @@ export type AccentPreset =
 
 export type Density = "comfortable" | "compact";
 export type PhysicsIntensity = "calm" | "standard" | "energetic";
-export type DefaultEditorMode = "visual" | "source";
+export type DefaultEditorMode = "visual" | "source" | "split";
+export type SavedSearch = { id: string; name: string; query: string };
 export type DefaultGraphView = "panel" | "hidden";
 /** Which note to open when a vault mounts */
 export type LaunchNoteMode = "today" | "last" | "smart";
+export type ThemeMode = "dark" | "light" | "system";
 
 export interface NexusPrefs {
   accentPreset: AccentPreset;
@@ -34,11 +40,13 @@ export interface NexusPrefs {
   openTodayOnLaunch: boolean;
   /**
    * Launch note preference:
-   * - today: always open today's Journal page
+   * - today: always open today's daily page
    * - last: keep restored last note
    * - smart: open today when no active note or last was a prior daily
    */
   launchNoteMode: LaunchNoteMode;
+  /** Top-level vault folder for daily notes (single segment, e.g. Journal). */
+  dailyFolder: string;
   /** Distraction-free: hide side panels */
   focusMode: boolean;
   /** Reduce UI motion (animations / transitions) */
@@ -47,6 +55,12 @@ export interface NexusPrefs {
   sidebarRecentOpen: boolean;
   /** Left sidebar: Tags section expanded */
   sidebarTagsOpen: boolean;
+  /** Color theme. System follows OS. */
+  theme: ThemeMode;
+  /** Remapped chords (factory defaults when omitted). */
+  hotkeyOverrides: HotkeyOverrides;
+  /** Command-palette saved searches (path:/#tag/-exclude). */
+  savedSearches: SavedSearch[];
   /**
    * @deprecated Single-path scale is always on for disk vaults.
    * Kept so older localStorage prefs rehydrate without error.
@@ -90,43 +104,50 @@ export const DEFAULT_PREFS: NexusPrefs = {
   openLastVault: true,
   openTodayOnLaunch: true,
   launchNoteMode: "today",
+  dailyFolder: "Journal",
   focusMode: false,
   // Seeded from OS on first load when not yet persisted
   reducedMotion: false,
-  sidebarRecentOpen: true,
+  sidebarRecentOpen: false,
   sidebarTagsOpen: false,
+  theme: "dark",
+  hotkeyOverrides: {},
+  savedSearches: [],
 };
 
-export const NEXUS_VERSION = "0.1.0";
+export const NEXUS_VERSION = "0.1.1-alpha";
 
 /** Platform-aware keyboard shortcut list for Settings (⌘ vs Ctrl). */
 export function getShortcuts(): { keys: string; action: string }[] {
-  return [
-    { keys: formatShortcut("K"), action: "Search / command palette" },
-    { keys: formatShortcut("O"), action: "Open vault folder" },
-    { keys: formatShortcut(","), action: "Open Settings" },
-    { keys: formatShortcut("."), action: "Focus / zen mode" },
-    { keys: formatShortcut("E"), action: "Toggle Visual / Source" },
-    { keys: formatShortcut("G"), action: "Toggle graph fullscreen" },
-    { keys: formatShortcut("N"), action: "New note" },
-    { keys: formatShortcut("D"), action: "Today's daily note" },
-    { keys: formatShortcut("S"), action: "Save (flush)" },
-    { keys: formatShortcut("\\"), action: "Toggle left sidebar" },
-    {
-      keys: formatShortcut("\\", { alt: true }),
-      action: "Toggle right panel",
-    },
-    {
-      keys: `${formatShortcut("[")} / ${formatShortcut("]")}`,
-      action: "Note history back / forward",
-    },
-    { keys: "Esc", action: "Close overlay / exit graph" },
-    { keys: formatShortcut("⌫"), action: "Delete current note" },
-  ];
+  const overrides =
+    typeof usePrefsStore === "undefined"
+      ? undefined
+      : usePrefsStore.getState().hotkeyOverrides;
+  return listShortcutRows(overrides).map(({ keys, action }) => ({
+    keys,
+    action,
+  }));
+}
+
+export function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
+  if (theme === "light") return "light";
+  if (theme === "dark") return "dark";
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "dark";
+  }
+  try {
+    return window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
+  } catch {
+    return "dark";
+  }
 }
 
 /** @deprecated Prefer getShortcuts() so labels match current platform. */
-export const SHORTCUTS: { keys: string; action: string }[] = getShortcuts();
+export const SHORTCUTS: { keys: string; action: string }[] = listShortcutRows().map(
+  ({ keys, action }) => ({ keys, action }),
+);
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -186,6 +207,29 @@ export function applyPrefsToDom(prefs: NexusPrefs): void {
   root.dataset.reducedMotion = prefs.reducedMotion ? "true" : "false";
   root.dataset.focusMode = prefs.focusMode ? "true" : "false";
 
+  const resolvedTheme = resolveTheme(prefs.theme);
+  root.dataset.theme = resolvedTheme;
+  root.style.colorScheme = resolvedTheme;
+  if (resolvedTheme === "light") {
+    root.style.setProperty(
+      "--accent-dim",
+      `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`,
+    );
+    root.style.setProperty(
+      "--shadow-elevated",
+      `0 10px 36px rgba(16, 18, 28, 0.08), 0 0 0 1px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`,
+    );
+  }
+  try {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    meta?.setAttribute(
+      "content",
+      resolvedTheme === "light" ? "#eef0f4" : "#050507",
+    );
+  } catch {
+    /* ignore */
+  }
+
   // Keep Tailwind theme token in sync where used
   root.style.setProperty("--color-accent", hex.toLowerCase());
 }
@@ -218,10 +262,23 @@ function snapshotPrefs(s: NexusPrefs): NexusPrefs {
     openLastVault: s.openLastVault,
     openTodayOnLaunch: s.openTodayOnLaunch,
     launchNoteMode: s.launchNoteMode,
+    dailyFolder: s.dailyFolder,
     focusMode: s.focusMode,
     reducedMotion: s.reducedMotion,
     sidebarRecentOpen: s.sidebarRecentOpen,
     sidebarTagsOpen: s.sidebarTagsOpen,
+    theme: s.theme === "light" || s.theme === "system" ? s.theme : "dark",
+    hotkeyOverrides: sanitizeHotkeyOverrides(s.hotkeyOverrides),
+    savedSearches: Array.isArray(s.savedSearches)
+      ? s.savedSearches
+          .filter((x) => x && typeof x.query === "string" && x.query.trim())
+          .map((x) => ({
+            id: typeof x.id === "string" && x.id ? x.id : `s_${Math.random().toString(36).slice(2, 8)}`,
+            name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : x.query,
+            query: x.query.trim(),
+          }))
+          .slice(0, 24)
+      : [],
   };
 }
 
@@ -258,6 +315,27 @@ export const usePrefsStore = create<PrefsStore>()(
         if (patch.openTodayOnLaunch != null && patch.launchNoteMode == null) {
           nextPatch.launchNoteMode = patch.openTodayOnLaunch ? "today" : "last";
         }
+        if (patch.hotkeyOverrides != null) {
+          nextPatch.hotkeyOverrides = sanitizeHotkeyOverrides(
+            patch.hotkeyOverrides,
+          );
+        }
+        if (patch.theme != null && patch.theme !== "light" && patch.theme !== "system") {
+          nextPatch.theme = "dark";
+        }
+        if (patch.dailyFolder != null) {
+          const cleaned = String(patch.dailyFolder)
+            .trim()
+            .replace(/\\/g, "/")
+            .replace(/^\/+|\/+$/g, "")
+            .split("/")[0]
+            ?.replace(/[<>:"|?*]/g, "")
+            .trim();
+          nextPatch.dailyFolder =
+            cleaned && cleaned !== "." && cleaned !== ".."
+              ? cleaned.slice(0, 64)
+              : DEFAULT_PREFS.dailyFolder;
+        }
         set(nextPatch);
         const next = { ...get(), ...nextPatch };
         applyPrefsToDom(next);
@@ -291,12 +369,18 @@ export const usePrefsStore = create<PrefsStore>()(
           p.launchNoteMode,
           openTodayOnLaunch,
         );
+        const dailyFolder =
+          typeof p.dailyFolder === "string" && p.dailyFolder.trim()
+            ? p.dailyFolder.trim().replace(/\\/g, "/").split("/")[0] ||
+              DEFAULT_PREFS.dailyFolder
+            : DEFAULT_PREFS.dailyFolder;
         return {
           ...current,
           ...p,
           reducedMotion,
           openTodayOnLaunch,
           launchNoteMode,
+          dailyFolder,
           sidebarRecentOpen:
             p.sidebarRecentOpen != null
               ? Boolean(p.sidebarRecentOpen)
@@ -305,6 +389,14 @@ export const usePrefsStore = create<PrefsStore>()(
             p.sidebarTagsOpen != null
               ? Boolean(p.sidebarTagsOpen)
               : DEFAULT_PREFS.sidebarTagsOpen,
+          theme:
+            p.theme === "light" || p.theme === "system" || p.theme === "dark"
+              ? p.theme
+              : DEFAULT_PREFS.theme,
+          hotkeyOverrides: sanitizeHotkeyOverrides(p.hotkeyOverrides),
+          savedSearches: Array.isArray(p.savedSearches)
+            ? (p.savedSearches as SavedSearch[])
+            : DEFAULT_PREFS.savedSearches,
         };
       },
       onRehydrateStorage: () => (state) => {

@@ -3,12 +3,41 @@
  * All output is plain Markdown (Hermes-safe).
  */
 
+import { getPrefs } from "@/lib/prefs/preferences";
+import { emptyCanvasTemplate } from "@/lib/vault/canvas";
+
+export const DEFAULT_DAILY_FOLDER = "Journal";
+
+/** Single top-level folder name for daily notes (no slashes). */
+export function sanitizeDailyFolder(raw: string | undefined | null): string {
+  const cleaned = String(raw ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  const first = (cleaned.split("/")[0] ?? "")
+    .replace(/[<>:"|?*\u0000-\u001f]/g, "")
+    .trim();
+  if (!first || first === "." || first === ".." || first.length > 64) {
+    return DEFAULT_DAILY_FOLDER;
+  }
+  return first;
+}
+
+export function dailyFolder(): string {
+  try {
+    return sanitizeDailyFolder(getPrefs().dailyFolder);
+  } catch {
+    return DEFAULT_DAILY_FOLDER;
+  }
+}
+
 export type NoteTemplateId =
   | "blank"
   | "daily"
   | "meeting"
   | "idea"
-  | "project";
+  | "project"
+  | "canvas";
 
 export type NoteTemplate = {
   id: NoteTemplateId;
@@ -52,17 +81,45 @@ export function shiftDate(d: Date, delta: number): Date {
 
 /** Vault-relative path for a daily note */
 export function dailyNotePath(d: Date = new Date()): string {
-  return `Journal/${formatDateISO(d)}.md`;
+  return `${dailyFolder()}/${formatDateISO(d)}.md`;
 }
 
-/** ISO dates (YYYY-MM-DD) that already have a Journal daily note on disk/in nodes. */
+/** True for any `Folder/YYYY-MM-DD.md` one level under the vault. */
+export function isJournalDailyPath(path: string): boolean {
+  return /^[^/]+\/\d{4}-\d{2}-\d{2}\.md$/i.test(path.replace(/\\/g, "/"));
+}
+
+export function isTodayDailyPath(path: string, d: Date = new Date()): boolean {
+  return path.replace(/\\/g, "/") === dailyNotePath(d);
+}
+
+export function parseJournalDailyDate(path: string): Date | null {
+  const m = /^[^/]+\/(\d{4})-(\d{2})-(\d{2})\.md$/i.exec(
+    path.replace(/\\/g, "/"),
+  );
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/** Turn leftover empty `-` / `\-` / `[ ]` Focus/Later bullets into GFM tasks. */
+export function upgradeSparseDailySkeleton(md: string): string {
+  return md
+    .replace(/- \\\[ \\\]/g, "- [ ] ")
+    .replace(/(## Focus\r?\n+)(?:- \[ \]|\\?-)\s*(?=\r?\n|$)/, "$1- [ ] ")
+    .replace(/(## Later\r?\n+)(?:- \[ \]|\\?-)\s*(?=\r?\n|$)/, "$1- [ ] ")
+    .replace(/^- \[ \](?! )/gm, "- [ ] ");
+}
+
+/** ISO dates (YYYY-MM-DD) that already have a daily note (`Folder/YYYY-MM-DD.md`). */
 export function collectExistingDailyIsos(
   nodes: Record<string, { kind: string; path: string }>,
 ): Set<string> {
   const set = new Set<string>();
   for (const n of Object.values(nodes)) {
     if (n.kind !== "note") continue;
-    const m = /^Journal\/(\d{4}-\d{2}-\d{2})\.md$/i.exec(n.path);
+    const m = /^[^/]+\/(\d{4}-\d{2}-\d{2})\.md$/i.exec(
+      n.path.replace(/\\/g, "/"),
+    );
     if (m) set.add(m[1]);
   }
   return set;
@@ -159,9 +216,9 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
   {
     id: "daily",
     label: "Daily note",
-    description: "Today’s page under Journal/",
+    description: "Today’s dated page in your daily folder",
     defaultTitle: formatDateISO(),
-    preferredFolder: "Journal",
+    preferredFolder: DEFAULT_DAILY_FOLDER,
     build: ({ date }) => {
       const long = formatDateLong(date);
       const iso = formatDateISO(date);
@@ -172,14 +229,14 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
         "",
         "## Focus",
         "",
-        "- ",
+        "- [ ] ",
         "",
         "## Notes",
         "",
         "",
         "## Later",
         "",
-        "- ",
+        "- [ ] ",
         "",
       ].join("\n");
     },
@@ -268,6 +325,14 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
         "",
         "",
       ].join("\n"),
+  },
+  {
+    id: "canvas",
+    label: "Canvas",
+    description: "Spatial board of cards — still a Markdown file",
+    defaultTitle: "Untitled board",
+    preferredFolder: "Canvases",
+    build: ({ title }) => emptyCanvasTemplate(title),
   },
 ];
 
