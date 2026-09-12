@@ -547,7 +547,12 @@ function cancelVaultModuleState() {
 	burstPaths = [];
 	writeQueue = Promise.resolve();
 	diskWriteError = null;
+	memoryTrash = [];
 }
+
+type MemoryTrashItem = TrashEntry & { content: string };
+let memoryTrash: MemoryTrashItem[] = [];
+
 /** Soft-trash path: .trash/<stamp>__<original path with / → __> — unique, no collisions */
 function trashRelativePath(originalPath: string) {
 	const safe = originalPath.replace(/[/\\]+/g, "__");
@@ -2516,11 +2521,24 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			removeDurableNote(d);
 		}
 		const diskTrash = isDiskVault(get().mode);
+		if (!diskTrash) {
+			for (const item of trashPayload) {
+				if (item.kind !== "note") continue;
+				const dest = trashRelativePath(item.path);
+				const parsed = trashEntryFromRel(dest, Date.now());
+				if (!parsed) continue;
+				memoryTrash.unshift({
+					...parsed,
+					content: item.content ?? "",
+				});
+			}
+			if (memoryTrash.length > 40) memoryTrash = memoryTrash.slice(0, 40);
+		}
 		pushPulse({
 			kind: "delete",
 			path: target.path,
 			title: target.kind === "note" ? noteTitle(target) : target.name,
-			message: diskTrash ? `Moved to trash: ${target.path}` : `Deleted ${target.path}`,
+			message: `Moved to trash: ${target.path}`,
 			vaultId: get().vaultId
 		});
 		set({
@@ -2530,7 +2548,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
 			dirtyNoteIds: get().dirtyNoteIds.filter((x) => !toDelete.has(x))
 		});
-		if (diskTrash) get().setToast("Moved to trash");
+		get().setToast("Moved to trash");
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
 			queueDiskWrite(async () => {
@@ -2735,7 +2753,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		} catch (err) {
 			console.warn("[vault] listTrash failed", err);
 		}
-		return [];
+		return memoryTrash.map(({ content: _c, ...row }) => row);
 	},
 	restoreTrash: async (trashPath) => {
 		flushStageNow(set);
@@ -2746,18 +2764,26 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return false;
 		}
 		const mode = get().mode;
-		if (!isDiskVault(mode) || !desktopRoot && !fsaRoot) {
-			get().setToast("Restore requires an open folder vault");
+		const memHit = memoryTrash.find((t) => t.trashPath === trashPath);
+		let body: string | undefined;
+		if (isDiskVault(mode) && (desktopRoot || fsaRoot)) {
+			try {
+				if (mode === "desktop" && desktopRoot) body = await readDesktopNote(desktopRoot, trashPath);
+				else if (mode === "fsa" && fsaRoot) body = await readNoteFile(fsaRoot, trashPath);
+				else return false;
+			} catch (err) {
+				console.warn("[vault] restoreTrash read failed", trashPath, err);
+				get().setToast("Could not read trash item");
+				return false;
+			}
+		} else if (memHit) {
+			body = memHit.content;
+		} else {
+			get().setToast("Could not restore — trash item is gone");
 			return false;
 		}
-		let body;
-		try {
-			if (mode === "desktop" && desktopRoot) body = await readDesktopNote(desktopRoot, trashPath);
-			else if (mode === "fsa" && fsaRoot) body = await readNoteFile(fsaRoot, trashPath);
-			else return false;
-		} catch (err) {
-			console.warn("[vault] restoreTrash read failed", trashPath, err);
-			get().setToast("Could not read trash item");
+		if (typeof body !== "string") {
+			get().setToast("Could not restore — empty trash item");
 			return false;
 		}
 		const occupied = new Set(Object.values(get().nodes).map((n) => n.path));
@@ -2816,6 +2842,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		flushStageNow(set);
 		const restoredNode = get().nodes[id];
 		if (restoredNode) upsertDurableNoteFromNode(restoredNode);
+		memoryTrash = memoryTrash.filter((t) => t.trashPath !== trashPath);
 		const pth = destPath;
 		const trashP = trashPath;
 		if (mode === "desktop" && desktopRoot) {
