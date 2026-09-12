@@ -170,12 +170,9 @@ turndown.addRule("taskListItem", {
       input?.hasAttribute("checked");
     // content includes nested block text; strip leading checkbox artifacts
     const body = content
-      .replace(/^\s*\[[ xX]\]\s*/,
-        "")
-      .replace(/^\n+/,
-        "")
-      .replace(/\n+$/,
-        "")
+      .replace(/^\s*\[[ xX]\]\s*/, "")
+      .replace(/^\n+/, "")
+      .replace(/\n+$/, "")
       .replace(/\n+/g, " ")
       .trim();
     return `- [${checked ? "x" : " "}] ${body}\n`;
@@ -236,10 +233,8 @@ turndown.addRule("styledListItem", {
     const style: BulletStyle = isBulletStyle(styleAttr) ? styleAttr : "disc";
     const marker = markerForStyle(style);
     const body = content
-      .replace(/^\n+/,
-        "")
-      .replace(/\n+$/,
-        "")
+      .replace(/^\n+/, "")
+      .replace(/\n+$/, "")
       .replace(/\n/g, "\n    ")
       .trim();
     return `${marker} ${body}\n`;
