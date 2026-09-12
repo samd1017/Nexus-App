@@ -200,3 +200,243 @@ function buildStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
   });
   return env;
 }
+
+/** Deep-space sky: fine dust stars + soft nebulae (not chunky sparkles) */
+function paintGalaxyTexture(full: boolean): THREE.CanvasTexture {
+  const size = full ? 2048 : 1536;
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d")!;
+
+  // Near-black void
+  ctx.fillStyle = "#02040a";
+  ctx.fillRect(0, 0, size, size);
+
+  // Subtle large-scale gradient (depth, not a blob)
+  const base = ctx.createRadialGradient(
+    size * 0.5,
+    size * 0.48,
+    size * 0.05,
+    size * 0.5,
+    size * 0.48,
+    size * 0.72,
+  );
+  base.addColorStop(0, "rgba(12, 22, 40, 0.55)");
+  base.addColorStop(0.45, "rgba(6, 12, 24, 0.25)");
+  base.addColorStop(1, "rgba(2, 4, 10, 0)");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  // Soft nebula washes — restrained, SpaceX-dark
+  const blobs: Array<{
+    x: number;
+    y: number;
+    r: number;
+    color: string;
+    a: number;
+  }> = [
+    { x: 0.3, y: 0.4, r: 0.42, color: "30,70,110", a: full ? 0.22 : 0.16 },
+    { x: 0.7, y: 0.36, r: 0.36, color: "55,40,95", a: full ? 0.17 : 0.12 },
+    { x: 0.52, y: 0.58, r: 0.48, color: "14,48,88", a: full ? 0.16 : 0.11 },
+    { x: 0.38, y: 0.7, r: 0.3, color: "28,72,88", a: full ? 0.14 : 0.1 },
+    { x: 0.62, y: 0.32, r: 0.24, color: "70,100,130", a: full ? 0.12 : 0.08 },
+  ];
+  for (const b of blobs) {
+    const x = b.x * size;
+    const y = b.y * size;
+    const r = b.r * size;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(${b.color},${b.a})`);
+    g.addColorStop(0.5, `rgba(${b.color},${b.a * 0.28})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+
+  // Thin milky-way style band
+  ctx.save();
+  ctx.translate(size / 2, size / 2);
+  ctx.rotate(-0.42);
+  const band = ctx.createLinearGradient(0, -size * 0.1, 0, size * 0.1);
+  band.addColorStop(0, "rgba(70,100,140,0)");
+  band.addColorStop(0.5, full ? "rgba(90,120,160,0.09)" : "rgba(90,120,160,0.07)");
+  band.addColorStop(1, "rgba(70,100,140,0)");
+  ctx.fillStyle = band;
+  ctx.fillRect(-size, -size * 0.12, size * 2, size * 0.24);
+
+  // Band dust — pinpricks only
+  for (let i = 0; i < (full ? 1100 : 650); i++) {
+    const x = (Math.random() - 0.5) * size * 1.6;
+    const y = (Math.random() - 0.5) * size * 0.09;
+    const mag = Math.pow(Math.random(), 2.8);
+    const r = 0.15 + mag * 0.4;
+    const a = 0.08 + mag * 0.28;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(220,230,245,${a})`;
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Field stars — dense pinpricks, hard dots (less fuzzy)
+  const n = full ? 5000 : 3200;
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const mag = Math.pow(Math.random(), 3.1);
+    // Smaller, sharper — no soft fat discs
+    const r = 0.12 + mag * (full ? 0.55 : 0.45);
+    const a = 0.1 + mag * 0.48;
+    const roll = Math.random();
+    let col: string;
+    if (roll < 0.1) col = `rgba(170,200,255,${a})`;
+    else if (roll > 0.93) col = `rgba(255,230,200,${a * 0.85})`;
+    else col = `rgba(230,235,245,${a})`;
+    ctx.beginPath();
+    ctx.fillStyle = col;
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Very few brighter pinpoints — no glow halos (fuzzy look)
+  const bright = full ? 18 : 10;
+  for (let i = 0; i < bright; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 0.35 + Math.random() * 0.3;
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(245,248,255,0.78)";
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Single sky sphere — fine galaxy field, slow drift.
+ * Dual shells doubled noise and made stars look chunky.
+ */
+function buildSpaceBackdrop(
+  scene: THREE.Scene,
+  mode: "panel" | "fullscreen",
+): { root: THREE.Group; layers: { obj: THREE.Object3D; speed: number }[] } {
+  const root = new THREE.Group();
+  const layers: { obj: THREE.Object3D; speed: number }[] = [];
+  const full = mode === "fullscreen";
+
+  const tex = paintGalaxyTexture(full);
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(full ? 3000 : 2400, 64, 40),
+    new THREE.MeshBasicMaterial({
+      map: tex,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      transparent: false,
+      fog: false,
+    }),
+  );
+  sky.renderOrder = -50;
+  sky.frustumCulled = false;
+  root.add(sky);
+  layers.push({ obj: sky, speed: 0.0009 });
+
+  scene.add(root);
+  scene.fog = null;
+  scene.background = new THREE.Color(0x02040a);
+  return { root, layers };
+}
+
+function truncateLabel(name: string, max = 22): string {
+  const clean = name.replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  return clean.slice(0, max - 1) + "\u2026";
+}
+
+function linkIds(link: GLink): [string, string] {
+  const s =
+    typeof link.source === "object" ? link.source.id : String(link.source);
+  const t =
+    typeof link.target === "object" ? link.target.id : String(link.target);
+  return [s, t];
+}
+
+function buildNeighbors(links: GLink[]): Map<string, Set<string>> {
+  const m = new Map<string, Set<string>>();
+  const add = (a: string, b: string) => {
+    if (!m.has(a)) m.set(a, new Set());
+    m.get(a)!.add(b);
+  };
+  for (const l of links) {
+    const [s, t] = linkIds(l);
+    add(s, t);
+    add(t, s);
+  }
+  return m;
+}
+
+function makeLabel(
+  text: string,
+  opts: {
+    active: boolean;
+    hover: boolean;
+    dim: boolean;
+    full: boolean;
+    radius: number;
+  },
+): THREE.Object3D {
+  const { active, hover, dim, full, radius } = opts;
+  const label = new SpriteText(text) as SpriteText & {
+    position: THREE.Vector3;
+    material: THREE.SpriteMaterial;
+  };
+
+  label.fontFace =
+    typeof document !== "undefined"
+      ? getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
+        "system-ui, sans-serif"
+      : "system-ui, sans-serif";
+  label.fontWeight = active || hover ? "bold" : "normal";
+  label.fontSize = 120;
+  label.color = active
+    ? "#f4f7fb"
+    : hover
+      ? "#e8eef6"
+      : dim
+        ? "#6a7280"
+        : "#c0c8d4";
+  label.backgroundColor = "rgba(0,0,0,0)";
+  label.padding = 2;
+  label.borderWidth = 0;
+  label.borderRadius = 0;
+  label.strokeWidth = active || hover ? 0.28 : 0.2;
+  label.strokeColor = "#000000";
+
+  const th = active
+    ? full
+      ? 3.2
+      : 2.4
+    : hover
+      ? full
+        ? 2.8
+        : 2.1
+      : full
+        ? 2.2
+        : 1.7;
+  label.textHeight = th;
+  label.position.y = radius + th * 0.65 + (full ? 0.4 : 0.25);
+  label.renderOrder = active || hover ? 20 : 8;
+  label.material.depthTest = false;
+  label.material.depthWrite = false;
+  label.material.transparent = true;
+  label.material.opacity = active ? 1 : hover ? 0.98 : dim ? 0.45 : 0.82;
+  label.material.sizeAttenuation = true;
+
+  return label;
+}
