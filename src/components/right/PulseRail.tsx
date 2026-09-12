@@ -111,6 +111,7 @@ export function PulseRail() {
   const openConflictPair = useVaultStore((s) => s.openConflictPair);
   const listTrash = useVaultStore((s) => s.listTrash);
   const restoreTrash = useVaultStore((s) => s.restoreTrash);
+  const trashTick = useVaultStore((s) => s.trashTick);
   const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
   const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
   const [filter, setFilter] = useState<FilterId>("all");
@@ -130,7 +131,7 @@ export function PulseRail() {
     return () => {
       cancelled = true;
     };
-  }, [vaultId, events, listTrash]);
+  }, [vaultId, events, listTrash, trashTick]);
 
   const conflictItems = useMemo(() => getConflictItems(), [nodes, getConflictItems]);
   const liveConflictCount = getOpenConflictCount();

@@ -28,12 +28,13 @@ export function Toast() {
   const toastAction = useVaultStore((s) => s.toastAction);
   const setToast = useVaultStore((s) => s.setToast);
   const openPulseRail = useVaultStore((s) => s.openPulseRail);
+  const restoreTrash = useVaultStore((s) => s.restoreTrash);
 
   useEffect(() => {
     if (!toast) return;
-    const hasAction = toastAction?.kind === "open-pulse";
+    const hasAction = Boolean(toastAction);
     const ms = hasAction
-      ? 5000
+      ? 7000
       : toastVariant(toast) === "error" || toastVariant(toast) === "warning"
         ? 4200
         : 2600;
@@ -44,7 +45,7 @@ export function Toast() {
   if (!toast) return null;
 
   const variant = toastVariant(toast);
-  const showOpenPulse = toastAction?.kind === "open-pulse";
+  const actionKind = toastAction?.kind;
 
   return (
     <div className="pointer-events-none fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 z-[120] -translate-x-1/2">
@@ -65,7 +66,7 @@ export function Toast() {
         )}
       >
         <span>{toast}</span>
-        {showOpenPulse ? (
+        {actionKind === "open-pulse" ? (
           <button
             type="button"
             className="pointer-events-auto shrink-0 rounded-full border border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[var(--accent-dim)] px-2.5 py-0.5 text-[11.5px] font-semibold text-[var(--accent)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)]"
@@ -75,6 +76,18 @@ export function Toast() {
             }}
           >
             {toastAction?.label ?? "Open Pulse"}
+          </button>
+        ) : null}
+        {actionKind === "restore-trash" && toastAction?.kind === "restore-trash" ? (
+          <button
+            type="button"
+            className="pointer-events-auto shrink-0 rounded-full border border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[var(--accent-dim)] px-2.5 py-0.5 text-[11.5px] font-semibold text-[var(--accent)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)]"
+            onClick={() => {
+              void restoreTrash(toastAction.trashPath);
+              setToast(null);
+            }}
+          >
+            {toastAction.label}
           </button>
         ) : null}
       </div>

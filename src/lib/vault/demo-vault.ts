@@ -88,6 +88,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Ask | **⌘K** then \`ask: how do agents share this vault\` |
 | Unlinked | Right panel — mentions of this title that are not [[linked]] yet |
 | Pins | Pin a note (⌘⇧P) — it stays in the sidebar |
+| Trash | Delete a note — toast **Restore**, sidebar Trash, or ⌘K \`is:deleted\` |
 | Agents | Vault menu → **Simulate agent write** → Pulse → Conflict Studio |
 
 ## Quick path

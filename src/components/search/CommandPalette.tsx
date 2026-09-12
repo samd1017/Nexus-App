@@ -25,6 +25,7 @@ import {
   ExternalLink,
   History,
   Bookmark,
+  RotateCcw,
   Focus,
   CircleHelp,
   Database,
@@ -43,6 +44,7 @@ import { getBacklinks } from "@/lib/vault/backlinks";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
+import type { TrashEntry } from "@/lib/vault/trash";
 import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
 import type { NoteTemplateId } from "@/lib/vault/templates";
@@ -214,6 +216,10 @@ function CommandPaletteOpen() {
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
   const flushDirty = useVaultStore((s) => s.flushDirty);
   const setToast = useVaultStore((s) => s.setToast);
+  const openPulseRail = useVaultStore((s) => s.openPulseRail);
+  const listTrash = useVaultStore((s) => s.listTrash);
+  const restoreTrash = useVaultStore((s) => s.restoreTrash);
+  const trashTick = useVaultStore((s) => s.trashTick);
   const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
   const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
@@ -221,6 +227,7 @@ function CommandPaletteOpen() {
   const [query, setQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [recentTick, setRecentTick] = useState(0);
+  const [trashItems, setTrashItems] = useState<TrashEntry[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -254,6 +261,17 @@ function CommandPaletteOpen() {
     return () => window.clearTimeout(t);
   }, [open, query]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void listTrash().then((rows) => {
+      if (!cancelled) setTrashItems(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, listTrash, trashTick]);
+
   const raw = query.trim();
   const isCommandMode = raw.startsWith(">");
   const q = isCommandMode ? raw.slice(1).trim() : raw;
@@ -283,6 +301,12 @@ function CommandPaletteOpen() {
     qLower === "is:broken" ||
     qLower === "broken" ||
     qLower === "broken links";
+  const wantsDeleted =
+    qLower === "is:deleted" ||
+    qLower === "is:trash" ||
+    qLower === "trash" ||
+    qLower === "deleted" ||
+    qLower === "restore";
   const hasPathFolderOp = hasSearchOps(pathFolderOps);
   const showAllActions = Boolean(raw) || isCommandMode;
   const actionQuery = isCommandMode
@@ -584,6 +608,22 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "recently-deleted",
+          label: "Recently deleted notes",
+          keywords: ["trash", "restore", "deleted", "undelete", "recycle"],
+          icon: <RotateCcw size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("recently-deleted", () => {
+            openPulseRail();
+            setCommandOpen(false);
+            setToast(
+              trashItems.length
+                ? `${trashItems.length} note${trashItems.length === 1 ? "" : "s"} in trash`
+                : "Trash is empty",
+            );
+          }),
+        },
+        {
           id: "save",
           label: "Save now",
           keywords: ["save", "flush", "write", "disk"],
@@ -595,7 +635,16 @@ function CommandPaletteOpen() {
           }),
         },
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
-    [actionQuery, activeNoteId, requestDelete, flushDirty, setToast, setCommandOpen],
+    [
+      actionQuery,
+      activeNoteId,
+      requestDelete,
+      flushDirty,
+      setToast,
+      setCommandOpen,
+      openPulseRail,
+      trashItems.length,
+    ],
   );
 
   const vaultActions = useMemo(
@@ -991,7 +1040,8 @@ function CommandPaletteOpen() {
             <span className="font-mono text-[var(--text-secondary)]">file:</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">-exclude</span>{" "}
-            <span className="font-mono text-[var(--text-secondary)]">is:orphan</span> ·{" "}
+            <span className="font-mono text-[var(--text-secondary)]">is:orphan</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">is:deleted</span> ·{" "}
             <span className="font-mono text-[var(--text-secondary)]">ask:</span> cited answers ·{" "}
             <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
           </div>
@@ -1231,6 +1281,44 @@ function CommandPaletteOpen() {
                     {MATCH_TYPE_LABEL[String(h.matchType)] ??
                       String(h.matchType)}
                   </span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {wantsDeleted ? (
+            <Command.Group
+              heading="Recently deleted"
+              className={cn(GROUP_HEADING, "mt-1")}
+            >
+              {trashItems.length === 0 ? (
+                <Command.Item
+                  value="no-trash"
+                  className={ITEM_CLASS}
+                  onSelect={() => {}}
+                >
+                  <span className="text-[var(--text-muted)]">Trash is empty</span>
+                </Command.Item>
+              ) : null}
+              {trashItems.map((t) => (
+                <Command.Item
+                  key={t.trashPath}
+                  value={`trash-${t.trashPath}-${t.name}`}
+                  onSelect={() => {
+                    void restoreTrash(t.trashPath);
+                    setCommandOpen(false);
+                  }}
+                  className={ITEM_CLASS}
+                >
+                  <RotateCcw size={15} className="shrink-0 text-[var(--accent)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-[var(--text-primary)]">
+                      Restore {t.name.replace(/\.md$/i, "")}
+                    </div>
+                    <div className="truncate text-[11px] text-[var(--text-muted)]">
+                      {t.originalPath}
+                    </div>
+                  </div>
                 </Command.Item>
               ))}
             </Command.Group>

@@ -18,10 +18,10 @@ export function DeleteConfirmHost() {
     if (pending.kind === "folder") {
       message = disk
         ? `Move “${pending.label}” and its contents to Trash (.trash)? You can restore files from Pulse or ${recoverWhere}.`
-        : `Move “${pending.label}” and its notes to Trash? Restore notes from Pulse → Recently deleted.`;
+        : `Move “${pending.label}” and its notes to Trash? Undo from the toast, the sidebar Trash list, ⌘K → trash, or Pulse → Recently deleted.`;
     } else {
       message =
-        "Move to Trash? Restore from the Pulse panel (Recently deleted).";
+        "Move to Trash? Undo from the toast, sidebar Trash, or ⌘K → trash.";
     }
   }
 

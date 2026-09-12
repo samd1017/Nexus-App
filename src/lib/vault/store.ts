@@ -156,7 +156,9 @@ export type RightTab =
   | "pulse"
   | "attachments"
   | "history";
-export type ToastAction = { label: string; kind: "open-pulse" };
+export type ToastAction =
+  | { label: string; kind: "open-pulse" }
+  | { label: string; kind: "restore-trash"; trashPath: string };
 export type PendingDelete = { id: string; kind: "note" | "folder"; label: string };
 export type EditorPaneRole = "primary" | "secondary";
 export type NoteJump = {
@@ -216,6 +218,8 @@ export type VaultStore = {
   toastAction: ToastAction | null;
   rightTab: RightTab;
   hermesTick: number;
+  /** Bumps when trash contents change so sidebar / palette can refresh */
+  trashTick: number;
   cloudSession: CloudSession | null;
   fsaSupported: boolean;
   connecting: boolean;
@@ -906,6 +910,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	toastAction: null,
 	rightTab: "backlinks",
 	hermesTick: 0,
+	trashTick: 0,
 	cloudSession: null,
 	fsaSupported: false,
 	connecting: false,
@@ -2569,6 +2574,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			removeDurableNote(d);
 		}
 		const diskTrash = isDiskVault(get().mode);
+		let undoTrashPath: string | null = null;
 		if (!diskTrash) {
 			for (const item of trashPayload) {
 				if (item.kind !== "note") continue;
@@ -2579,6 +2585,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					...parsed,
 					content: item.content ?? "",
 				});
+				if (!undoTrashPath) undoTrashPath = dest;
 			}
 			if (memoryTrash.length > 40) memoryTrash = memoryTrash.slice(0, 40);
 		}
@@ -2594,9 +2601,22 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
 			activeNoteId: toDelete.has(get().activeNoteId ?? "") ? null : get().activeNoteId,
 			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
-			dirtyNoteIds: get().dirtyNoteIds.filter((x) => !toDelete.has(x))
+			dirtyNoteIds: get().dirtyNoteIds.filter((x) => !toDelete.has(x)),
+			trashTick: get().trashTick + 1,
 		});
-		get().setToast("Moved to trash");
+		const trashLabel = target.kind === "note" ? noteTitle(target) : target.name;
+		if (undoTrashPath) {
+			get().setToast(`Moved to trash: ${trashLabel}`, {
+				label: "Restore",
+				kind: "restore-trash",
+				trashPath: undoTrashPath,
+			});
+		} else {
+			get().setToast(`Moved to trash: ${trashLabel}`, {
+				label: "Open trash",
+				kind: "open-pulse",
+			});
+		}
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
 			queueDiskWrite(async () => {
@@ -2891,6 +2911,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const restoredNode = get().nodes[id];
 		if (restoredNode) upsertDurableNoteFromNode(restoredNode);
 		memoryTrash = memoryTrash.filter((t) => t.trashPath !== trashPath);
+		set({ trashTick: get().trashTick + 1 });
 		const pth = destPath;
 		const trashP = trashPath;
 		if (mode === "desktop" && desktopRoot) {
