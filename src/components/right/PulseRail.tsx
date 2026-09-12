@@ -111,6 +111,8 @@ export function PulseRail() {
   const openConflictPair = useVaultStore((s) => s.openConflictPair);
   const listTrash = useVaultStore((s) => s.listTrash);
   const restoreTrash = useVaultStore((s) => s.restoreTrash);
+  const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
+  const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
   const [filter, setFilter] = useState<FilterId>("all");
   const [trash, setTrash] = useState<TrashEntry[]>([]);
   const [restoring, setRestoring] = useState<string | null>(null);
@@ -224,6 +226,25 @@ export function PulseRail() {
           </button>
         ))}
       </div>
+      {vaultId ? (
+        <div className="flex flex-wrap gap-1">
+          <button
+            type="button"
+            className="chip-btn text-[11px]"
+            onClick={() => simulateHermesWrite()}
+          >
+            Simulate write
+          </button>
+          <button
+            type="button"
+            className="chip-btn text-[11px]"
+            onClick={() => practiceAgentConflict()}
+            title="Edit Hermes Pulse locally, then write an agent copy so Conflict Studio opens"
+          >
+            Practice conflict
+          </button>
+        </div>
+      ) : null}
 
       {/* Wave C — live conflict pairs */}
       {(filter === "conflict" || filter === "inbox") && conflictItems.length > 0 ? (

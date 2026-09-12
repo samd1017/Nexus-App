@@ -586,17 +586,30 @@ export function SettingsPanel() {
               </li>
             </ol>
             {vaultId ? (
-              <button
-                type="button"
-                className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
-                onClick={() => {
-                  useVaultStore.getState().simulateHermesWrite();
-                  useVaultStore.getState().openPulseRail?.();
-                  usePrefsStore.getState().setSettingsOpen(false);
-                }}
-              >
-                Simulate agent write
-              </button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  onClick={() => {
+                    useVaultStore.getState().simulateHermesWrite();
+                    useVaultStore.getState().openPulseRail?.();
+                    usePrefsStore.getState().setSettingsOpen(false);
+                  }}
+                >
+                  Simulate agent write
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  onClick={() => {
+                    useVaultStore.getState().practiceAgentConflict();
+                    useVaultStore.getState().openPulseRail?.();
+                    usePrefsStore.getState().setSettingsOpen(false);
+                  }}
+                >
+                  Practice conflict
+                </button>
+              </div>
             ) : (
               <p className="mt-3 text-[12px] text-[var(--text-muted)]">
                 Open a vault to run the agent demo.

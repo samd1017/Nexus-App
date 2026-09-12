@@ -214,6 +214,7 @@ function CommandPaletteOpen() {
   const flushDirty = useVaultStore((s) => s.flushDirty);
   const setToast = useVaultStore((s) => s.setToast);
   const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
+  const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const savedSearches = usePrefsStore((s) => s.savedSearches);
   const [query, setQuery] = useState("");
@@ -649,6 +650,24 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "hermes-conflict",
+          label: "Practice agent conflict",
+          keywords: [
+            "hermes",
+            "conflict",
+            "studio",
+            "agent",
+            "practice",
+            "grok",
+          ],
+          icon: <Sparkles size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("hermes-conflict", () => {
+            practiceAgentConflict();
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "split-pane",
           label: "Toggle dual-note workspace",
           keywords: ["split", "pane", "dual", "workspace"],
@@ -668,6 +687,7 @@ function CommandPaletteOpen() {
       openDemoVault,
       openLargeTestVault,
       simulateHermesWrite,
+      practiceAgentConflict,
       setCommandOpen,
     ],
   );

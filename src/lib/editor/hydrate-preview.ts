@@ -50,7 +50,7 @@ async function renderMermaid(
           '<div class="nexus-mermaid-empty">Empty mermaid diagram</div>';
         continue;
       }
-      const id = `nexus-prev-mmd-${Math.abs(hash(source))}-${i}`;
+      const id = `nexus-prev-mmd-${Math.abs(hash(source))}-${i}-${Date.now().toString(36)}`;
       try {
         const { svg } = await mermaid.render(id, source);
         if (cancelled()) return;
@@ -180,6 +180,21 @@ function renderQueries(
   }
 }
 
+function promoteLeftoverMermaidFences(root: HTMLElement): void {
+  root.querySelectorAll("pre code").forEach((code) => {
+    const cls = `${code.className} ${code.getAttribute("class") || ""}`;
+    const lang = (code.getAttribute("data-language") || "").toLowerCase();
+    if (!/mermaid/.test(cls) && lang !== "mermaid") return;
+    const src = (code.textContent || "").replace(/\n$/, "");
+    const wrap = root.ownerDocument.createElement("div");
+    wrap.setAttribute("data-type", "mermaid");
+    wrap.setAttribute("data-source", src);
+    wrap.className = "nexus-mermaid";
+    const pre = code.closest("pre");
+    (pre ?? code).replaceWith(wrap);
+  });
+}
+
 export async function hydratePreviewSpecials(
   root: HTMLElement,
   theme: ThemeMode,
@@ -187,6 +202,7 @@ export async function hydratePreviewSpecials(
   activeNoteId: string | null,
   cancelled: () => boolean,
 ): Promise<void> {
+  promoteLeftoverMermaidFences(root);
   const mermaidEls = Array.from(
     root.querySelectorAll<HTMLElement>("[data-type='mermaid']"),
   );

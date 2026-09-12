@@ -1854,6 +1854,7 @@
 .nexus-wikilink-hover {
   position: fixed;
   z-index: 96;
+  pointer-events: none;
   width: min(340px, calc(100vw - 16px));
   max-height: 240px;
   overflow: hidden;

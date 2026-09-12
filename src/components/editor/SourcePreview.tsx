@@ -22,15 +22,19 @@ export function SourcePreview({ content }: { content: string }) {
     if (!root) return;
     let cancelled = false;
     const state = useVaultStore.getState();
-    void hydratePreviewSpecials(
-      root,
-      theme,
-      state.nodes,
-      state.activeNoteId,
-      () => cancelled,
-    );
+    const frame = window.requestAnimationFrame(() => {
+      if (cancelled || !hostRef.current) return;
+      void hydratePreviewSpecials(
+        hostRef.current,
+        theme,
+        state.nodes,
+        state.activeNoteId,
+        () => cancelled,
+      );
+    });
     return () => {
       cancelled = true;
+      window.cancelAnimationFrame(frame);
     };
   }, [html, theme]);
 

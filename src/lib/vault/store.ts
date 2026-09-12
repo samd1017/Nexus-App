@@ -292,6 +292,7 @@ export type VaultStore = {
   listTrash: () => Promise<TrashEntry[]>;
   restoreTrash: (trashPath: string) => Promise<boolean>;
   simulateHermesWrite: () => void;
+  practiceAgentConflict: () => void;
   applyExternalSnapshot: (
     nodes: Record<string, VaultNode>,
     rootIds: string[],
@@ -554,6 +555,11 @@ type MemoryTrashItem = TrashEntry & { content: string };
 let memoryTrash: MemoryTrashItem[] = [];
 
 /** Soft-trash path: .trash/<stamp>__<original path with / → __> — unique, no collisions */
+/** Ignore the demo timestamp line so a second simulate only conflicts on real edits. */
+function hermesBodyKey(md: string): string {
+	return (md || "").replace(/^Timestamp:\s*.+$/m, "Timestamp:");
+}
+
 function trashRelativePath(originalPath: string) {
 	const safe = originalPath.replace(/[/\\]+/g, "__");
 	return `.trash/${`${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`}__${safe}`;
@@ -2883,12 +2889,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const { nodes, rootIds, mode } = get();
 		const systems = Object.values(nodes).find((n) => n.kind === "folder" && n.path === "Systems");
 		const path = HERMES_SAMPLE_NOTE.path;
-		const existing = Object.values(nodes).find((n) => n.path === path);
+		const existing = Object.values(get().nodes).find((n) => n.path === path);
 		const content = HERMES_SAMPLE_NOTE.content.replace("${TS}", (new Date()).toISOString());
 		if (existing) {
 			const mine = existing.content ?? "";
 			const dirty =
-				get().dirtyNoteIds.includes(existing.id) && Boolean(mine) && mine !== content;
+				Boolean(mine) && hermesBodyKey(mine) !== hermesBodyKey(content);
 			if (dirty) {
 				const siblingPath = makeConflictSiblingPath(
 					path,
@@ -2986,6 +2992,26 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			vaultId: get().vaultId
 		});
 		if (isDiskVault(mode)) queueDiskWrite(() => persistNoteIfFsa(path, content));
+	},
+	practiceAgentConflict: () => {
+		try {
+			flushActiveEditors();
+		} catch {
+			/* ignore */
+		}
+		const path = HERMES_SAMPLE_NOTE.path;
+		let existing = Object.values(get().nodes).find((n) => n.path === path);
+		if (!existing) {
+			get().simulateHermesWrite();
+			existing = Object.values(get().nodes).find((n) => n.path === path);
+		}
+		if (!existing || existing.kind !== "note") {
+			get().setToast("Could not open Hermes Pulse");
+			return;
+		}
+		const mine = `${existing.content ?? ""}\n\nI am still editing this — keep mine.\n`;
+		get().updateNoteContent(existing.id, mine);
+		get().simulateHermesWrite();
 	},
 	applyExternalSnapshot: (nodes, rootIds) => {
 		pendingExternal = {

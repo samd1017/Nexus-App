@@ -433,7 +433,7 @@ export function EditorPane({
                   <button
                     type="button"
                     className={cn(
-                      "chip-btn !border-0 hidden sm:inline-flex",
+                      "chip-btn !border-0",
                       editorMode === "split" && "is-active",
                     )}
                     onClick={() => setEditorMode("split")}
