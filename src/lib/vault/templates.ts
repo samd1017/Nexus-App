@@ -43,16 +43,13 @@ export type NoteTemplate = {
   id: NoteTemplateId;
   label: string;
   description: string;
-  /** Default filename stem (without .md) */
   defaultTitle: string;
-  /** Optional folder preference under vault root */
   preferredFolder?: string;
   build: (ctx: TemplateContext) => string;
 };
 
 export type TemplateContext = {
   title: string;
-  /** Local calendar date */
   date: Date;
 };
 
@@ -72,19 +69,16 @@ export function formatDateLong(d: Date = new Date()): string {
   });
 }
 
-/** Calendar date shifted by `delta` days (local time). */
 export function shiftDate(d: Date, delta: number): Date {
   const next = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   next.setDate(next.getDate() + delta);
   return next;
 }
 
-/** Vault-relative path for a daily note */
 export function dailyNotePath(d: Date = new Date()): string {
   return `${dailyFolder()}/${formatDateISO(d)}.md`;
 }
 
-/** True for any `Folder/YYYY-MM-DD.md` one level under the vault. */
 export function isJournalDailyPath(path: string): boolean {
   return /^[^/]+\/\d{4}-\d{2}-\d{2}\.md$/i.test(path.replace(/\\/g, "/"));
 }
@@ -101,7 +95,6 @@ export function parseJournalDailyDate(path: string): Date | null {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
-/** Turn leftover empty `-` / `\-` / `[ ]` Focus/Later bullets into GFM tasks. */
 export function upgradeSparseDailySkeleton(md: string): string {
   return md
     .replace(/- \\\[ \\\]/g, "- [ ] ")
@@ -110,7 +103,6 @@ export function upgradeSparseDailySkeleton(md: string): string {
     .replace(/^- \[ \](?! )/gm, "- [ ] ");
 }
 
-/** ISO dates (YYYY-MM-DD) that already have a daily note (`Folder/YYYY-MM-DD.md`). */
 export function collectExistingDailyIsos(
   nodes: Record<string, { kind: string; path: string }>,
 ): Set<string> {
@@ -129,15 +121,9 @@ export function dailyNoteTitle(d: Date = new Date()): string {
   return formatDateISO(d);
 }
 
-/**
- * Extract open loops from a prior daily note for carry-forward:
- * - unchecked task lines `- [ ] ...`
- * - non-empty Focus section list items (not checked-done)
- */
 export function extractCarryForwardItems(markdown: string): string[] {
   const items: string[] = [];
   const seen = new Set<string>();
-
   const push = (line: string) => {
     const t = line.trim();
     if (!t) return;
@@ -145,14 +131,12 @@ export function extractCarryForwardItems(markdown: string): string[] {
     seen.add(t);
     items.push(t);
   };
-
   for (const raw of markdown.split("\n")) {
     const m = /^\s*-\s+\[ \]\s+(.+)$/.exec(raw);
     if (m && m[1].trim()) {
       push(`- [ ] ${m[1].trim()}`);
     }
   }
-
   const focusMatch =
     /^##\s+Focus\s*\n([\s\S]*?)(?=^##\s+|\s*$)/m.exec(markdown);
   if (focusMatch) {
@@ -161,7 +145,6 @@ export function extractCarryForwardItems(markdown: string): string[] {
       if (done) continue;
       const unchecked = /^\s*-\s+\[ \]\s+(.+)$/.exec(raw);
       if (unchecked && unchecked[1].trim()) {
-        // already covered by global task scan
         continue;
       }
       const bullet = /^\s*-\s+(?!\[)(.+)$/.exec(raw);
@@ -170,11 +153,9 @@ export function extractCarryForwardItems(markdown: string): string[] {
       }
     }
   }
-
   return items;
 }
 
-/** Insert a `## From yesterday` block into a fresh daily note body. */
 export function injectCarryForward(
   content: string,
   items: string[],
@@ -190,9 +171,6 @@ export function injectCarryForward(
   return `${content.trimEnd()}\n\n${block}\n`;
 }
 
-/**
- * Build today's daily content, optionally carrying open loops from yesterday's body.
- */
 export function buildDailyNoteContent(
   date: Date = new Date(),
   yesterdayMarkdown?: string | null,
@@ -349,7 +327,6 @@ export function buildTemplateContent(
   return t.build({ title: title.replace(/\.md$/i, ""), date });
 }
 
-/** First ATX H1 text, if any */
 export function extractLeadingH1(markdown: string): string | null {
   const m = /^(?:\uFEFF)?#\s+(.+?)\s*$/m.exec(markdown);
   if (!m) return null;
@@ -357,7 +334,6 @@ export function extractLeadingH1(markdown: string): string | null {
   return title || null;
 }
 
-/** True when filename is still an auto Untitled (or Untitled N) */
 export function isUntitledName(name: string): boolean {
   const stem = name.replace(/\.md$/i, "").trim();
   return /^untitled(\s+\d+)?$/i.test(stem);
