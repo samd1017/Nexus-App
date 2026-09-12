@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import type { SlashItem } from "@/lib/editor/slash-commands";
 
@@ -32,15 +33,15 @@ export function SlashMenu({
       ?.scrollIntoView({ block: "nearest" });
   }, [selected, open]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const top = Math.min(rect.bottom + 6, window.innerHeight - 140);
   const left = Math.min(Math.max(8, rect.left), window.innerWidth - 320);
 
-  return (
+  return createPortal(
     <div
       className="nexus-slash"
-      style={{ left, top, maxHeight: 280 }}
+      style={{ left, top, maxHeight: 280, zIndex: 120 }}
       role="listbox"
       aria-label="Insert block"
       onMouseDown={(e) => e.preventDefault()}
@@ -49,11 +50,15 @@ export function SlashMenu({
         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">
           Insert
         </span>
-        <span className="font-mono text-[10px] text-[var(--text-muted)]">/{query || "…"}</span>
+        <span className="font-mono text-[10px] text-[var(--text-muted)]">
+          /{query || "…"}
+        </span>
       </div>
       <div ref={listRef} className="max-h-[220px] overflow-y-auto p-1">
         {items.length === 0 ? (
-          <p className="px-2.5 py-3 text-[12px] text-[var(--text-muted)]">No matching commands</p>
+          <p className="px-2.5 py-3 text-[12px] text-[var(--text-muted)]">
+            No matching commands
+          </p>
         ) : (
           items.map((item, i) => (
             <button
@@ -71,7 +76,9 @@ export function SlashMenu({
               onMouseEnter={() => onHover(i)}
               onClick={() => onSelect(item)}
             >
-              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{item.label}</span>
+              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">
+                {item.label}
+              </span>
               <span className="shrink-0 font-mono text-[10px] text-[var(--text-muted)]">
                 {item.hint}
               </span>
@@ -81,10 +88,15 @@ export function SlashMenu({
       </div>
       <div className="border-t border-[var(--border)] px-3 py-1.5 text-[10px] text-[var(--text-muted)]">
         ↑↓ Enter · Esc
-        <button type="button" className="float-right hover:text-[var(--text-primary)]" onClick={onClose}>
+        <button
+          type="button"
+          className="float-right hover:text-[var(--text-primary)]"
+          onClick={onClose}
+        >
           Esc
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
