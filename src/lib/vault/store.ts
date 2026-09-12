@@ -2846,6 +2846,51 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const existing = Object.values(nodes).find((n) => n.path === path);
 		const content = HERMES_SAMPLE_NOTE.content.replace("${TS}", (new Date()).toISOString());
 		if (existing) {
+			const mine = existing.content ?? "";
+			const dirty =
+				get().dirtyNoteIds.includes(existing.id) && Boolean(mine) && mine !== content;
+			if (dirty) {
+				const siblingPath = makeConflictSiblingPath(
+					path,
+					new Set(Object.values(nodes).map((n) => n.path)),
+				);
+				const siblingId = makeId(siblingPath, mode);
+				const sibling: VaultNode = {
+					id: siblingId,
+					path: siblingPath,
+					name: pathToName(siblingPath),
+					kind: "note",
+					parentId: existing.parentId,
+					mtime: Date.now(),
+					content,
+				};
+				set({
+					nodes: { ...nodes, [siblingId]: sibling },
+					lastExternalSync: Date.now(),
+					hermesTick: get().hermesTick + 1,
+					toast: "Agent write conflicted with your edits",
+					toastAction: { label: "Open Pulse", kind: "open-pulse" },
+					activeNoteId: existing.id,
+					rightTab: "pulse",
+					conflictStudioOpen: true,
+					conflictStudioFocus: { primaryPath: path, siblingPath },
+					settings: { ...get().settings, rightOpen: true },
+				});
+				try {
+					ensureVaultIndex(get().nodes).markDirty([siblingId]);
+				} catch {}
+				pushPulse({
+					kind: "hermes",
+					path: siblingPath,
+					title: "Hermes Pulse",
+					message: "Agent write conflicted — open Conflict Studio",
+					vaultId: get().vaultId,
+				});
+				if (isDiskVault(mode)) {
+					queueDiskWrite(() => persistNoteIfFsa(siblingPath, content));
+				}
+				return;
+			}
 			get().updateNoteContent(existing.id, content, { external: true });
 			if (isDiskVault(mode)) queueDiskWrite(() => persistNoteIfFsa(path, content));
 			pushPulse({
@@ -3646,7 +3691,7 @@ export const useVaultStore = create(
 				nodes: {},
 				rootIds: [],
 				activeNoteId: null,
-				settings: s.settings,
+				settings: { ...s.settings, workspaceSplit: false },
 				expandedFolders: []
 			};
 		}
@@ -3658,7 +3703,7 @@ export const useVaultStore = create(
 			nodes: s.nodes,
 			rootIds: s.rootIds,
 			activeNoteId: s.activeNoteId,
-			settings: s.settings,
+			settings: { ...s.settings, workspaceSplit: false },
 			expandedFolders: s.expandedFolders
 		};
 	}
