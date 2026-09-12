@@ -44,7 +44,7 @@ export function AttachmentsRail() {
   }, [fromNotes, disk, mode]);
 
   useEffect(() => {
-    if (!preview || preview.kind !== "image") {
+    if (!preview || (preview.kind !== "image" && preview.kind !== "pdf")) {
       setPreviewUrl(null);
       return;
     }
@@ -67,7 +67,7 @@ export function AttachmentsRail() {
       <EmptyState
         icon={<Paperclip size={22} />}
         title="No attachments yet"
-        description="Paste or drop images into a note. They land in assets/ and show up here with PDFs and other files."
+        description="Paste or drop images and PDFs into a note. They land in assets/ and open here."
         compact
       />
     );
@@ -114,9 +114,15 @@ export function AttachmentsRail() {
               alt={preview.name}
               className="mt-2 max-h-40 w-full rounded-md object-contain"
             />
+          ) : preview.kind === "pdf" && previewUrl ? (
+            <iframe
+              title={preview.name}
+              src={previewUrl}
+              className="mt-2 h-48 w-full rounded-md border border-[var(--border)] bg-[var(--bg-deepest)]"
+            />
           ) : preview.kind === "pdf" ? (
             <p className="mt-2 text-[12px] text-[var(--text-muted)]">
-              PDF in the vault folder. Open the note that links it, or reveal the file on desktop.
+              PDF in the vault folder. Drop one into a note to preview it here, or open the referencing note.
             </p>
           ) : (
             <p className="mt-2 text-[12px] text-[var(--text-muted)]">

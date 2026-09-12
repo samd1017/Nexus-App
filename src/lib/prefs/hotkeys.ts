@@ -23,7 +23,8 @@ export type HotkeyId =
   | "forward"
   | "demo"
   | "splitPane"
-  | "askNotes";
+  | "askNotes"
+  | "pinNote";
 
 export type HotkeyChord = {
   key: string;
@@ -52,6 +53,7 @@ export const HOTKEY_IDS: HotkeyId[] = [
   "demo",
   "splitPane",
   "askNotes",
+  "pinNote",
 ];
 
 export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
@@ -73,6 +75,7 @@ export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   demo: { key: "d", shift: true },
   splitPane: { key: "2" },
   askNotes: { key: "/", shift: true },
+  pinNote: { key: "p", shift: true },
 };
 
 export const HOTKEY_LABELS: Record<HotkeyId, string> = {
@@ -94,6 +97,7 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   demo: "Explore demo vault",
   splitPane: "Dual-note workspace",
   askNotes: "Ask your notes",
+  pinNote: "Pin / unpin current note",
 };
 
 const ID_SET = new Set<string>(HOTKEY_IDS);

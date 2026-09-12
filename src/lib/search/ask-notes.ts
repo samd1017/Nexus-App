@@ -70,12 +70,29 @@ const STOP = new Set([
   "note",
 ]);
 
+const SYNONYMS: Record<string, string[]> = {
+  agent: ["hermes", "grok", "pulse", "bot"],
+  agents: ["hermes", "grok", "pulse"],
+  share: ["folder", "vault", "disk", "markdown"],
+  vault: ["folder", "notes", "markdown"],
+  conflict: ["studio", "keep", "theirs", "mine"],
+  write: ["save", "edit", "pulse"],
+  link: ["wikilink", "backlink", "mention"],
+  search: ["ask", "find", "palette"],
+};
+
 export function askQueryTokens(question: string): string[] {
-  return question
+  const base = question
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .split(/\s+/)
     .filter((t) => t.length >= 2 && !STOP.has(t));
+  const extra: string[] = [];
+  for (const t of base) {
+    const syn = SYNONYMS[t];
+    if (syn) extra.push(...syn);
+  }
+  return [...new Set([...base, ...extra])];
 }
 
 function sentencesFromMarkdown(md: string): string[] {
@@ -96,14 +113,28 @@ function sentencesFromMarkdown(md: string): string[] {
     .filter((s) => s.length >= 24);
 }
 
-function scoreSentence(sentence: string, tokens: string[]): number {
+function scoreSentence(sentence: string, tokens: string[], phrase: string): number {
   const lower = sentence.toLowerCase();
   let hits = 0;
+  let consecutive = 0;
+  let run = 0;
   for (const t of tokens) {
-    if (lower.includes(t)) hits += 1;
+    if (lower.includes(t)) {
+      hits += 1;
+      run += 1;
+      consecutive = Math.max(consecutive, run);
+    } else {
+      run = 0;
+    }
   }
   if (!hits) return 0;
-  return hits / tokens.length + Math.min(sentence.length, 220) / 800;
+  const phraseBoost = phrase.length >= 8 && lower.includes(phrase) ? 0.35 : 0;
+  return (
+    hits / Math.max(tokens.length, 1) +
+    consecutive * 0.08 +
+    phraseBoost +
+    Math.min(sentence.length, 220) / 900
+  );
 }
 
 export function buildAskAnswer(
@@ -112,6 +143,10 @@ export function buildAskAnswer(
   nodes: Record<string, VaultNode>,
 ): AskAnswer {
   const tokens = askQueryTokens(question);
+  const phrase = question
+    .replace(/^(ask:|\?)\s*/i, "")
+    .toLowerCase()
+    .trim();
   const citations: AskCitation[] = [];
   const picked: string[] = [];
 
@@ -125,7 +160,7 @@ export function buildAskAnswer(
     let best = "";
     let bestScore = 0;
     for (const s of sents) {
-      const sc = tokens.length ? scoreSentence(s, tokens) : 0;
+      const sc = tokens.length ? scoreSentence(s, tokens, phrase) : 0;
       if (sc > bestScore) {
         bestScore = sc;
         best = s;
@@ -199,7 +234,7 @@ export function retrieveForAsk(
   const fallback = raw.length
     ? raw
     : searchWithBackend(nodes, free, Math.max(limit * 3, 24));
-  return fuseSearchHits(fallback, signals).slice(0, limit);
+  return fuseSearchHits(fallback, { ...signals, queryText: free }).slice(0, limit);
 }
 
 /** Prefer a heading-scoped body when the question names a section. */

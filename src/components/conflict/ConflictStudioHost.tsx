@@ -8,11 +8,45 @@ import { AlertTriangle, X } from "lucide-react";
 import { ConfirmDialog } from "@/components/chrome/ConfirmDialog";
 import { useVaultStore } from "@/lib/vault/store";
 import { cn } from "@/lib/utils";
+import { countDiffHunks, diffLines, type DiffLine } from "@/lib/vault/line-diff";
 
 function previewBody(body: string | undefined): string {
   if (body === undefined) return "Loading…";
   if (!body.trim()) return "(empty)";
   return body.length > 12000 ? body.slice(0, 12000) + "\n…" : body;
+}
+
+function DiffPre({
+  lines,
+  empty,
+}: {
+  lines: DiffLine[] | null;
+  empty: string;
+}) {
+  if (!lines) {
+    return (
+      <pre className="min-h-0 flex-1 overflow-auto bg-[var(--bg-deepest)] p-3 font-mono text-[12.5px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap">
+        {empty}
+      </pre>
+    );
+  }
+  return (
+    <pre className="min-h-0 flex-1 overflow-auto bg-[var(--bg-deepest)] p-0 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap">
+      {lines.map((line, i) => (
+        <div
+          key={`${line.side}:${i}`}
+          className={cn(
+            "px-3 py-px",
+            line.side === "add" && "bg-[rgba(48,209,88,0.12)] text-[var(--success)]",
+            line.side === "del" && "bg-[rgba(255,69,58,0.12)] text-[var(--danger)]",
+            line.side === "same" && "text-[var(--text-secondary)]",
+          )}
+        >
+          {line.text || " "}
+        </div>
+      ))}
+    </pre>
+  );
 }
 
 export function ConflictStudioHost() {
@@ -70,6 +104,16 @@ export function ConflictStudioHost() {
       : undefined;
   const primaryDirty =
     !!primaryId && dirtyNoteIds.includes(primaryId);
+  const lineDiff = useMemo(() => {
+    if (primaryBody === undefined || siblingBody === undefined) return null;
+    return diffLines(previewBody(primaryBody), previewBody(siblingBody));
+  }, [primaryBody, siblingBody]);
+  const hunks = useMemo(() => {
+    if (primaryBody === undefined || siblingBody === undefined) {
+      return { added: 0, removed: 0 };
+    }
+    return countDiffHunks(previewBody(primaryBody), previewBody(siblingBody));
+  }, [primaryBody, siblingBody]);
 
   useEffect(() => {
     if (!open || !activeItem) return;
@@ -246,6 +290,7 @@ export function ConflictStudioHost() {
                     <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--accent)]">
                       Yours · kept
                       {primaryDirty ? " · unsaved" : ""}
+                      {hunks.removed ? ` · −${hunks.removed}` : ""}
                     </span>
                     <button
                       type="button"
@@ -255,9 +300,10 @@ export function ConflictStudioHost() {
                       Open
                     </button>
                   </div>
-                  <pre className="min-h-0 flex-1 overflow-auto bg-[var(--bg-deepest)] p-3 font-mono text-[12.5px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap">
-                    {previewBody(primaryBody)}
-                  </pre>
+                  <DiffPre
+                    lines={lineDiff?.mine ?? null}
+                    empty={previewBody(primaryBody)}
+                  />
                 </div>
                 <div
                   className={cn(
@@ -268,6 +314,7 @@ export function ConflictStudioHost() {
                   <div className="flex items-center justify-between gap-2 px-3 py-2">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--warning)]">
                       From disk
+                      {hunks.added ? ` · +${hunks.added}` : ""}
                     </span>
                     <button
                       type="button"
@@ -277,9 +324,10 @@ export function ConflictStudioHost() {
                       Open
                     </button>
                   </div>
-                  <pre className="min-h-0 flex-1 overflow-auto bg-[var(--bg-deepest)] p-3 font-mono text-[12.5px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap">
-                    {previewBody(siblingBody)}
-                  </pre>
+                  <DiffPre
+                    lines={lineDiff?.theirs ?? null}
+                    empty={previewBody(siblingBody)}
+                  />
                   <p className="truncate px-3 py-1 text-[10px] text-[var(--text-muted)]">
                     {activeItem.sibling.path}
                   </p>

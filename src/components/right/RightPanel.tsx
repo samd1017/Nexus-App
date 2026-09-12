@@ -2,6 +2,10 @@ import { lazy, Suspense, useMemo, useRef, useSyncExternalStore } from "react";
 import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
+import {
+  getUnlinkedMentions,
+  wrapUnlinkedMention,
+} from "@/lib/vault/unlinked-mentions";
 import { getBrokenLinksForNote } from "@/lib/vault/broken-links";
 import {
   extractTagsFromMarkdown,
@@ -53,6 +57,7 @@ export function RightPanel() {
   const setRightWidth = useVaultStore((s) => s.setRightWidth);
   const setToast = useVaultStore((s) => s.setToast);
   const createNote = useVaultStore((s) => s.createNote);
+  const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const tab = useVaultStore((s) => s.rightTab);
   const setRightTab = useVaultStore((s) => s.setRightTab);
@@ -109,6 +114,11 @@ export function RightPanel() {
   const brokenLinks = useMemo(() => {
     if (!note || note.kind !== "note") return [];
     return getBrokenLinksForNote(note, nodes);
+  }, [note, nodes]);
+
+  const unlinkedMentions = useMemo(() => {
+    if (!note || note.kind !== "note") return [];
+    return getUnlinkedMentions(note, nodes);
   }, [note, nodes]);
 
   const tags = useMemo(() => {
@@ -321,6 +331,57 @@ export function RightPanel() {
                             </div>
                           ) : null}
                         </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section>
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                  Unlinked mentions
+                </div>
+                {unlinkedMentions.length === 0 ? (
+                  <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
+                    No other notes say this title in plain text.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {unlinkedMentions.map((u) => (
+                      <li key={`${u.fromId}:${u.title}`}>
+                        <div className="tree-row flex w-full items-start gap-1 rounded-[10px] px-2.5 py-2 hover:bg-white/[0.04]">
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => setActiveNote(u.fromId)}
+                          >
+                            <div className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                              {u.fromTitle}
+                            </div>
+                            <div className="mt-0.5 line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
+                              {u.context}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn mt-0.5 h-6 shrink-0 px-1.5 text-[10px]"
+                            title={`Link “${u.title}” in ${u.fromTitle}`}
+                            aria-label={`Create wikilink in ${u.fromTitle}`}
+                            onClick={() => {
+                              const src = nodes[u.fromId];
+                              if (!src || src.kind !== "note" || src.content == null) return;
+                              const { next, did } = wrapUnlinkedMention(src.content, u.title);
+                              if (!did) {
+                                setToast("Could not wrap that mention");
+                                return;
+                              }
+                              updateNoteContent(u.fromId, next, { source: true });
+                              setToast(`Linked [[${u.title}]] in ${u.fromTitle}`);
+                            }}
+                          >
+                            Link
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>

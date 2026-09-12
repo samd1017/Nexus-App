@@ -4,11 +4,14 @@
  */
 
 import type { SearchHit } from "@/lib/vault/types";
+import { cosineSim, embedText } from "./lexical-embed";
 
 export type RankSignals = {
   recentIds?: string[];
   activeNoteId?: string | null;
   neighborIds?: string[];
+  /** Raw question / query for hashed n-gram rerank */
+  queryText?: string;
 };
 
 function clamp01(n: number): number {
@@ -24,6 +27,9 @@ export function fuseSearchHits(
   const recent = signals.recentIds ?? [];
   const neighbors = new Set(signals.neighborIds ?? []);
   const maxScore = Math.max(...hits.map((h) => h.score || 0), 1);
+  const qEmb = signals.queryText?.trim()
+    ? embedText(signals.queryText)
+    : null;
 
   return hits
     .map((h) => {
@@ -36,7 +42,12 @@ export function fuseSearchHits(
       const pathBoost = /(?:daily|journal|inbox|readme|welcome)/i.test(h.path)
         ? 0.04
         : 0;
-      const fused = bm25 * 0.62 + titleBoost + recency + nearActive + pathBoost;
+      const semantic =
+        qEmb && (h.title || h.snippet)
+          ? 0.16 * clamp01(cosineSim(qEmb, embedText(`${h.title} ${h.snippet}`)))
+          : 0;
+      const fused =
+        bm25 * 0.56 + titleBoost + recency + nearActive + pathBoost + semantic;
       return { ...h, score: Math.round(fused * 1000) / 1000 };
     })
     .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));

@@ -9,6 +9,7 @@ import {
   FolderPlus,
   Hash,
   PanelLeftClose,
+  Pin,
   Search,
 } from "lucide-react";
 import { VaultSwitcher } from "@/components/vault/VaultSwitcher";
@@ -59,6 +60,7 @@ export function LeftSidebar() {
     return n?.kind === "note" ? n.path : null;
   });
   const recentNoteVisits = useVaultStore((s) => s.recentNoteVisits);
+  const pinnedNotePaths = useVaultStore((s) => s.settings.pinnedNotePaths);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const setToast = useVaultStore((s) => s.setToast);
   const nodes = useVaultStore((s) => s.nodes);
@@ -118,6 +120,19 @@ export function LeftSidebar() {
     }
     return byVisit;
   }, [recentNoteVisits]);
+
+  const pinnedNotes = useMemo(() => {
+    const paths = pinnedNotePaths ?? [];
+    if (!paths.length) return [];
+    const byPath = new Map(
+      Object.values(nodes)
+        .filter((n) => n.kind === "note")
+        .map((n) => [n.path, n]),
+    );
+    return paths
+      .map((p) => byPath.get(p))
+      .filter((n): n is NonNullable<typeof n> => Boolean(n));
+  }, [nodes, pinnedNotePaths]);
 
   // H5: true focus — no rail at all
   if (focusMode) return null;
@@ -343,6 +358,39 @@ export function LeftSidebar() {
 
         {/* Footer stack: always visible below tree (not clipped by tree scroll) */}
         <div className="flex max-h-[28%] shrink-0 flex-col overflow-y-auto border-t border-[var(--border)] bg-[var(--panel-solid)]">
+        {pinnedNotes.length > 0 ? (
+          <div className="shrink-0 px-3 pt-1 pb-0.5">
+            <div className="sidebar-section-label flex items-center gap-1 px-1 py-1">
+              <Pin size={12} className="shrink-0 text-[var(--accent)] opacity-80" />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                Pinned
+              </span>
+            </div>
+            <ul className="mt-0.5 space-y-0.5 pb-0.5">
+              {pinnedNotes.map((n) => (
+                <li key={n.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveNote(n.id);
+                      closeDrawersIfNarrow();
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[12px] transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--text-primary)]",
+                      activeNoteId === n.id
+                        ? "bg-white/[0.05] text-[var(--text-primary)]"
+                        : "text-[var(--text-secondary)]",
+                    )}
+                  >
+                    <FileText size={12} className="shrink-0 opacity-50" />
+                    <span className="truncate">{noteTitle(n)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {/* 5. Recent — collapsible, compact */}
         {recentNotes.length > 0 ? (
           <div className="shrink-0 px-3 pt-1 pb-0.5">

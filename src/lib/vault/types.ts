@@ -46,6 +46,8 @@ export interface VaultSettings {
   lastNotePath: string | null;
   /** Dual-note workspace (two notes, not source+preview) */
   workspaceSplit: boolean;
+  /** Vault-relative note paths the user pinned in the sidebar */
+  pinnedNotePaths: string[];
 }
 
 export interface VaultStateSnapshot {
@@ -123,6 +125,7 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   graphMode: "panel",
   lastNotePath: null,
   workspaceSplit: false,
+  pinnedNotePaths: [],
 };
 
 export function noteTitle(node: VaultNode): string {

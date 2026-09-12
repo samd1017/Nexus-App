@@ -12,6 +12,8 @@ import {
 } from "@/lib/vault/image-import";
 
 const IMAGE_MIME = /^image\//i;
+const ATTACH_EXT =
+  /\.(png|jpe?g|gif|webp|bmp|avif|svg|pdf|txt|md|csv|json)$/i;
 
 /** Heuristic: clipboard looks like Markdown rather than plain prose. */
 export function looksLikeMarkdown(text: string): boolean {
@@ -31,27 +33,33 @@ export function looksLikeMarkdown(text: string): boolean {
   return false;
 }
 
-function imageFilesFromList(list: DataTransferItemList | undefined): File[] {
+function attachmentFilesFromList(list: DataTransferItemList | undefined): File[] {
   if (!list?.length) return [];
   const out: File[] = [];
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
     if (!item || item.kind !== "file") continue;
-    if (!IMAGE_MIME.test(item.type) && item.type !== "") continue;
     const file = item.getAsFile();
-    if (file && (IMAGE_MIME.test(file.type) || /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i.test(file.name))) {
+    if (
+      file &&
+      (IMAGE_MIME.test(file.type) ||
+        file.type === "application/pdf" ||
+        item.type === "" ||
+        ATTACH_EXT.test(file.name))
+    ) {
       out.push(file);
     }
   }
   return out;
 }
 
-function imageFilesFromFileList(list: FileList | undefined): File[] {
+function attachmentFilesFromFileList(list: FileList | undefined): File[] {
   if (!list?.length) return [];
   return Array.from(list).filter(
     (f) =>
       IMAGE_MIME.test(f.type) ||
-      /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i.test(f.name),
+      f.type === "application/pdf" ||
+      ATTACH_EXT.test(f.name),
   );
 }
 
@@ -103,7 +111,11 @@ export function insertImportedImage(
   });
 }
 
-async function importAndInsertImages(
+function isImageFile(file: File): boolean {
+  return IMAGE_MIME.test(file.type) || /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i.test(file.name);
+}
+
+async function importAndInsertAttachments(
   editor: Editor,
   files: File[],
   pos?: number,
@@ -114,9 +126,21 @@ async function importAndInsertImages(
   for (const file of files) {
     const imported = await importImageFile(file);
     if (!imported || editor.isDestroyed) continue;
-    insertImportedImage(editor, imported, at);
+    if (isImageFile(file)) {
+      insertImportedImage(editor, imported, at);
+    } else {
+      const href = imported.vaultPath.startsWith("data:")
+        ? imported.previewUrl
+        : imported.vaultPath;
+      const label = imported.alt || file.name;
+      const md = `[${label}](${href})`;
+      if (typeof at === "number") {
+        editor.chain().focus().insertContentAt(at, md).run();
+      } else {
+        editor.chain().focus().insertContent(md).run();
+      }
+    }
     inserted += 1;
-    // Stack subsequent drops after the previous image
     if (typeof at === "number") {
       try {
         at = editor.state.selection.to;
@@ -140,22 +164,21 @@ export function handleVisualPaste(
   const dt = event.clipboardData;
   if (!dt) return false;
 
-  const imageFiles = [
-    ...imageFilesFromList(dt.items),
-    ...imageFilesFromFileList(dt.files),
+  const attachmentFiles = [
+    ...attachmentFilesFromList(dt.items),
+    ...attachmentFilesFromFileList(dt.files),
   ];
-  // Dedupe by name+size+lastModified
   const seen = new Set<string>();
-  const uniqueImages = imageFiles.filter((f) => {
+  const uniqueFiles = attachmentFiles.filter((f) => {
     const key = `${f.name}:${f.size}:${f.lastModified}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  if (uniqueImages.length) {
+  if (uniqueFiles.length) {
     event.preventDefault();
-    void importAndInsertImages(editor, uniqueImages);
+    void importAndInsertAttachments(editor, uniqueFiles);
     return true;
   }
 
@@ -187,7 +210,7 @@ export function handleVisualDrop(
   const dt = event.dataTransfer;
   if (!dt) return false;
 
-  const files = imageFilesFromFileList(dt.files);
+  const files = attachmentFilesFromFileList(dt.files);
   if (!files.length) return false;
 
   event.preventDefault();
@@ -196,6 +219,6 @@ export function handleVisualDrop(
     top: event.clientY,
   });
   const pos = coords?.pos;
-  void importAndInsertImages(editor, files, pos);
+  void importAndInsertAttachments(editor, files, pos);
   return true;
 }

@@ -128,6 +128,10 @@ function runHotkey(id: HotkeyId): boolean {
       if (!hasVault) return false;
       openCommandPalette("ask: ");
       return true;
+    case "pinNote":
+      if (!hasVault || overlayOpen || !store.activeNoteId) return false;
+      store.togglePinnedNote(store.activeNoteId);
+      return true;
     default:
       return false;
   }

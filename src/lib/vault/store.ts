@@ -259,6 +259,8 @@ export type VaultStore = {
   toggleRight: () => void;
   toggleGraphFullscreen: () => void;
   updateNoteContent: (id: string, content: string, opts?: UpdateNoteOpts) => void;
+  togglePinnedNote: (id: string) => void;
+  isNotePinned: (id: string) => boolean;
   renameNode: (id: string, newName: string) => void;
   createNote: (
     parentId: string | null,
@@ -1998,6 +2000,24 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			},
 			rightTab: "graph"
 		});
+	},
+	togglePinnedNote: (id) => {
+		const node = get().nodes[id];
+		if (!node || node.kind !== "note") return;
+		const path = node.path;
+		const cur = get().settings.pinnedNotePaths ?? [];
+		const next = cur.includes(path)
+			? cur.filter((p) => p !== path)
+			: [path, ...cur.filter((p) => p !== path)].slice(0, 24);
+		set({
+			settings: { ...get().settings, pinnedNotePaths: next },
+		});
+		get().setToast(next.includes(path) ? `Pinned “${noteTitle(node)}”` : `Unpinned “${noteTitle(node)}”`);
+	},
+	isNotePinned: (id) => {
+		const node = get().nodes[id];
+		if (!node) return false;
+		return (get().settings.pinnedNotePaths ?? []).includes(node.path);
 	},
 	updateNoteContent: (id, content, opts) => {
 		flushStageNow(set);

@@ -16,6 +16,7 @@ import {
   Search,
   X,
   ArrowLeftRight,
+  Pin,
 } from "lucide-react";
 import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
@@ -69,6 +70,8 @@ export function EditorPane({
   const closeSecondaryPane = useVaultStore((s) => s.closeSecondaryPane);
   const swapWorkspacePanes = useVaultStore((s) => s.swapWorkspacePanes);
   const pendingJump = useVaultStore((s) => s.pendingJump);
+  const togglePinnedNote = useVaultStore((s) => s.togglePinnedNote);
+  const pinnedNotePaths = useVaultStore((s) => s.settings.pinnedNotePaths);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const [findOpen, setFindOpen] = useState(false);
   const [findSeed, setFindSeed] = useState("");
@@ -354,6 +357,30 @@ export function EditorPane({
                 Daily
               </span>
             ) : null}
+            <button
+              type="button"
+              className={cn(
+                "icon-btn h-7 w-7 shrink-0",
+                (pinnedNotePaths ?? []).includes(note.path) && "text-[var(--accent)]",
+              )}
+              title={
+                (pinnedNotePaths ?? []).includes(note.path)
+                  ? "Unpin note"
+                  : "Pin note"
+              }
+              aria-label={
+                (pinnedNotePaths ?? []).includes(note.path)
+                  ? "Unpin note"
+                  : "Pin note"
+              }
+              aria-pressed={(pinnedNotePaths ?? []).includes(note.path)}
+              onClick={() => togglePinnedNote(note.id)}
+            >
+              <Pin
+                size={14}
+                fill={(pinnedNotePaths ?? []).includes(note.path) ? "currentColor" : "none"}
+              />
+            </button>
           </div>
         </div>
 

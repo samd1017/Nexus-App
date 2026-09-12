@@ -85,16 +85,18 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Dual pane | **Pane** or **⌘2** — two notes at once. Alt-click a file to park it beside |
 | Files | Right rail → **Files** for images and PDFs |
 | History | Right rail → **History** after you edit — restore a prior version |
-| Ask | **⌘K** then \`ask: how do agents write notes\` |
+| Ask | **⌘K** then \`ask: how do agents share this vault\` |
+| Unlinked | Right panel — mentions of this title that are not [[linked]] yet |
+| Pins | Pin a note (⌘⇧P) — it stays in the sidebar |
 | Agents | Vault menu → **Simulate agent write** → Pulse → Conflict Studio |
 
 ## Quick path
 
 1. Open [[Heading & Block Links]] — jump to a section, then Alt-click a link to split  
 2. Open [[Callouts]] and [[Diagrams & Math]]  
-3. Press **⌘K** and type \`ask: local-first\`  
+3. Press **⌘K** and type \`ask: how do agents share this vault\`  
 4. Vault menu → **Simulate agent write** — Pulse lights up  
-5. Edit this page, then open **History** to restore a snapshot
+5. Pin this note (⌘⇧P), then open **Agent Day** and link the unlinked mention
 
 ## See the graph
 
@@ -531,6 +533,8 @@ Alt-click [[Graph View]] to open it beside this note. **⌘2** toggles the works
 #agents #grok #pulse
 
 First-hour path for humans + Grok on the same folder.
+
+Welcome already has the feature tour — this note is the five-minute switch: open, ask, let an agent write, resolve a conflict.
 
 ## Open
 

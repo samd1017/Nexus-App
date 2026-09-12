@@ -29,6 +29,7 @@ import {
   CircleHelp,
   Database,
   X,
+  Pin,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
@@ -313,7 +314,12 @@ function CommandPaletteOpen() {
       activeNode?.kind === "note"
         ? getBacklinks(activeNode, nodes).map((b) => b.fromId)
         : [];
-    const signals = { recentIds, activeNoteId, neighborIds };
+    const signals = {
+      recentIds,
+      activeNoteId,
+      neighborIds,
+      queryText: debouncedSearch.trim() || raw,
+    };
 
     if (isAskMode) {
       return retrieveForAsk(nodes, debouncedSearch.trim() || raw, signals, 8);
@@ -424,6 +430,20 @@ function CommandPaletteOpen() {
           shortcut: formatShortcut("D"),
           run: wrapRun("daily", () => {
             openDailyNote();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "pin-note",
+          label: activeNoteId && useVaultStore.getState().isNotePinned(activeNoteId)
+            ? "Unpin current note"
+            : "Pin current note",
+          keywords: ["pin", "star", "favorite", "bookmark"],
+          icon: <Pin size={15} />,
+          shortcut: formatShortcut("P", { shift: true }),
+          run: wrapRun("pin-note", () => {
+            const id = useVaultStore.getState().activeNoteId;
+            if (id) useVaultStore.getState().togglePinnedNote(id);
             setCommandOpen(false);
           }),
         },
@@ -725,6 +745,18 @@ function CommandPaletteOpen() {
         shortcut: formatShortcut("D"),
         run: wrapRun("daily", () => {
           openDailyNote();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "pin-note",
+        label: "Pin / unpin current note",
+        icon: <Pin size={15} />,
+        shortcut: formatShortcut("P", { shift: true }),
+        run: wrapRun("pin-note", () => {
+          const id = useVaultStore.getState().activeNoteId;
+          if (id) useVaultStore.getState().togglePinnedNote(id);
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),
