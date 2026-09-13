@@ -159,6 +159,10 @@ import {
   shouldJoinDesktopFill,
 } from "./sqlite-fill-progress";
 import { isNativeFillInFlight } from "./native-sqlite-index";
+import {
+  shouldDeferNoteBodyHydrate,
+  shouldSkipDurableUpsertOnHydrate,
+} from "./fill-interaction";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
   CHROME_FSA_GETFILE_MAX,
@@ -2935,8 +2939,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				return;
 			}
 			const note = get().nodes[id];
-			if (id && note?.kind === "note" && note.content === undefined) get().ensureNoteBody(id);
-			else if (id) touchBody(id);
+			if (id && note?.kind === "note" && note.content === undefined) {
+				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) {
+					get().ensureNoteBody(id);
+				}
+			} else if (id) touchBody(id);
 			set({
 				secondaryNoteId: id,
 				pendingJump: jump,
@@ -3004,8 +3011,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				? { settings: { ...get().settings, lastNotePath: nextPath } }
 				: {}),
 		});
-		if (id && note?.kind === "note" && note.content === undefined) get().ensureNoteBody(id);
-		else if (id) {
+		if (id && note?.kind === "note" && note.content === undefined) {
+			if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) {
+				get().ensureNoteBody(id);
+			}
+		} else if (id) {
 			touchBody(id);
 			evictBodiesKeeping([id, ...get().dirtyNoteIds, get().activeNoteId].filter(Boolean) as string[]);
 		}
@@ -3055,7 +3065,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		});
 		if (next) {
 			const n = get().nodes[next];
-			if (n?.kind === "note" && n.content === undefined) get().ensureNoteBody(next);
+			if (n?.kind === "note" && n.content === undefined) {
+				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) {
+					get().ensureNoteBody(next);
+				}
+			}
 		}
 	},
 	closeSecondaryPane: () => {
@@ -3774,7 +3788,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		});
 		if (nextActive) {
 			const n = nodes[nextActive];
-			if (n?.kind === "note" && n.content === undefined) get().ensureNoteBody(nextActive);
+			if (n?.kind === "note" && n.content === undefined) {
+				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) {
+					get().ensureNoteBody(nextActive);
+				}
+			}
 		}
 		const trashLabel = target.kind === "note" ? noteTitle(target) : target.name;
 		if (undoTrashPath) {
@@ -4606,22 +4624,33 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				const dirtyIds = [id, ...victims.filter((v) => v !== id)];
 				patchVaultIndex(live, dirtyIds);
 				set({ nodes: live });
-				vaultLinkIndex.setNoteLinks(id, content);
-				// Do not fatten slim 100k FTS on every open — that discarded Chrome.
-				const slimNotes = getDurableIndex()?.stats().slimNotes ?? 0;
-				if (slimNotes < 400) {
+				if (!vaultFillBusy()) {
+					vaultLinkIndex.setNoteLinks(id, content);
+				}
+				// Desktop SQLite mirror is empty at 100k — slimNotes≈0 used to
+				// vault_index_upsert every click into the live fill writer.
+				const idx = getDurableIndex();
+				if (
+					!shouldSkipDurableUpsertOnHydrate({
+						fillBusy: vaultFillBusy(),
+						indexKind: idx?.kind,
+						slimNotes: idx?.stats().slimNotes ?? 0,
+					})
+				) {
 					upsertDurableNoteFromNode({
 						...cur,
 						content
 					});
 				}
 				sampleHeap(`body:${path}`);
-				try {
-					upsertIndexedNote({
-						...cur,
-						content
-					});
-				} catch {}
+				if (!vaultFillBusy()) {
+					try {
+						upsertIndexedNote({
+							...cur,
+							content
+						});
+					} catch {}
+				}
 				return content;
 			} catch (e) {
 				console.warn("[nexus] ensureNoteBody failed", id, e);

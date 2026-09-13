@@ -184,6 +184,8 @@ fn open_conn(db_path: &str) -> Result<Connection, String> {
     // Readers (search / list_links) and the dedicated fill writer share the
     // file. Without a busy timeout the UI connection errors immediately and
     // a second writer raced into malloc corruption on Linux 100k fills.
+    // Fill now yields + writes ≤128 FTS rows/tx so this 15s cap is a
+    // safety net, not the common click path.
     let _ = conn.busy_timeout(Duration::from_millis(15_000));
     Ok(conn)
 }

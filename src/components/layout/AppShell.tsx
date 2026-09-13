@@ -45,7 +45,12 @@ import {
 } from "@/lib/vault/chrome-fsa-cap";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
 
-function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
+function OpenProgressBanner() {
+  // Subscribe here — not in AppShell — so 400ms fill ticks do not
+  // re-render the tree / editor / 3D graph while FTS is filling.
+  const [progress, setProgress] = useState<OpenProgress>(() => getOpenProgress());
+  useEffect(() => subscribeOpenProgress(setProgress), []);
+
   // Auto-dismiss ready flash so the banner doesn't stick forever
   useEffect(() => {
     if (progress.phase !== "ready") return;
@@ -226,14 +231,6 @@ export function AppShell() {
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
   const applyExternalSnapshot = useVaultStore((s) => s.applyExternalSnapshot);
   const watcherRef = useRef<VaultWatcher | null>(null);
-  const [openProgress, setOpenProgressUi] = useState<OpenProgress>(() =>
-    getOpenProgress(),
-  );
-
-  useEffect(() => {
-    return subscribeOpenProgress(setOpenProgressUi);
-  }, []);
-
   useEffect(() => {
     applyPrefsToDom(getPrefs());
     void bootstrap();
@@ -410,7 +407,7 @@ export function AppShell() {
           Skip to content
         </a>
         <TitleBar />
-        <OpenProgressBanner progress={openProgress} />
+        <OpenProgressBanner />
         <ChromeFsaLimitBanner />
         <main id="main-content" tabIndex={-1} className="min-h-0 flex-1 outline-none">
           <WelcomeScreen />
@@ -432,7 +429,7 @@ export function AppShell() {
         Skip to content
       </a>
       <TitleBar />
-      <OpenProgressBanner progress={openProgress} />
+      <OpenProgressBanner />
       <LargeVaultOverlayBanner vaultId={vaultId} />
       <ChromeFsaLimitBanner />
       <main

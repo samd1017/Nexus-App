@@ -8,6 +8,7 @@ import { resolveWikilink } from "@/lib/graph/build-graph";
 import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { markdownToHtml, previewSnippet } from "@/lib/markdown/serialize";
+import { shouldSkipBackgroundBodyHydrate } from "@/lib/vault/fill-interaction";
 
 export function EmbedView({ node, editor }: NodeViewProps) {
   const target = String(node.attrs.target || "").trim();
@@ -16,6 +17,7 @@ export function EmbedView({ node, editor }: NodeViewProps) {
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [body, setBody] = useState("");
   let hostNoteId = activeNoteId;
   try {
@@ -45,6 +47,10 @@ export function EmbedView({ node, editor }: NodeViewProps) {
       setBody(live);
       return;
     }
+    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
+      setBody("");
+      return;
+    }
     let cancelled = false;
     void ensureNoteBody(note.id).then((md: string | null) => {
       if (!cancelled) setBody(md ?? "");
@@ -52,7 +58,7 @@ export function EmbedView({ node, editor }: NodeViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [note, nodes, ensureNoteBody]);
+  }, [note, nodes, ensureNoteBody, indexFillBusy]);
 
   const sliced = useMemo(
     () => sliceEmbedBody(body, parts.heading, parts.blockId),

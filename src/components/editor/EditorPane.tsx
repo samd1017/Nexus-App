@@ -23,6 +23,10 @@ import { useTreeStructureTick } from "@/lib/vault/tree-tick";
 import { vaultIndex } from "@/lib/vault/indexes";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
+import {
+  scheduleFillSafeHydrate,
+  shouldDeferNoteBodyHydrate,
+} from "@/lib/vault/fill-interaction";
 import { VisualEditor } from "./VisualEditor";
 import { SourceEditor } from "./SourceEditor";
 import { SourcePreview } from "./SourcePreview";
@@ -86,6 +90,7 @@ export function EditorPane({
   const structureTick = useTreeStructureTick();
   const isSecondary = pane === "secondary";
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [hydrateError, setHydrateError] = useState(false);
   const [splitLive, setSplitLive] = useState<{ id: string; text: string } | null>(
     null,
@@ -159,17 +164,31 @@ export function EditorPane({
 
   useEffect(() => {
     setHydrateError(false);
-    if (note?.kind === "note" && note.content === undefined) {
-      let cancelled = false;
+    if (note?.kind !== "note" || note.content !== undefined) return;
+    let cancelled = false;
+    const start = () => {
+      if (cancelled) return;
       void ensureNoteBody(note.id).then((body: string | null) => {
         if (cancelled) return;
         if (body === null) setHydrateError(true);
       });
+    };
+    // During fill: wait for idle so tree/graph clicks paint first. Rapid
+    // selects cancel the previous idle work — only the last note reads disk.
+    if (shouldDeferNoteBodyHydrate({ fillBusy: indexFillBusy })) {
+      const stopIdle = scheduleFillSafeHydrate(() => {
+        if (!cancelled) start();
+      });
       return () => {
         cancelled = true;
+        stopIdle();
       };
     }
-  }, [note?.id, note?.content, ensureNoteBody]);
+    start();
+    return () => {
+      cancelled = true;
+    };
+  }, [note?.id, note?.content, ensureNoteBody, indexFillBusy]);
 
   const noteCount = useMemo(() => {
     void structureTick;

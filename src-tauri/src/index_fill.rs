@@ -6,6 +6,9 @@
 //! first), emit `ready-meta`, then read short heads. `FillUntil::Meta`
 //! still catalogs every title. No Tauri imports — also compiled by
 //! `src-tauri/fill-test`.
+//!
+//! Mid-fill UI (tree / note open / graph) must stay interactive: small WAL
+//! write batches, ≤2 head readers, yield after real I/O, time-gated progress.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -34,13 +37,23 @@ pub const DEFAULT_DEEP_HEAD: usize = 8000;
 pub const FILL_DEPTH_META: i64 = 0;
 pub const FILL_DEPTH_PARTIAL: i64 = 1;
 pub const FILL_DEPTH_DEEP: i64 = 2;
-const META_BATCH: usize = 1024;
-const FTS_WRITE_BATCH: usize = 1024;
-const READ_CHUNK: usize = 1024;
+const META_BATCH: usize = 256;
+/// FTS5 + link_edge writes hold the WAL exclusive lock. 1024-row batches
+/// made UI search / upsert / list_links wait multi-seconds (15s busy_timeout).
+pub const FTS_WRITE_BATCH: usize = 128;
+pub const READ_CHUNK: usize = 128;
+/// Sleep after a write that actually took work, so the WebView and note
+/// reads can sneak in on Linux desktop during a 100k fill.
+pub const FILL_YIELD_MS: u64 = 4;
+/// Head readers share the disk with `readNote` / tree clicks. 8 workers
+/// saturated Linux I/O and froze interaction.
+pub const FILL_READ_WORKERS_MAX: usize = 2;
 /// Title/path FTS rows written before `ready-meta` on Partial/Deep fills.
 /// Enough for useful Hub-title hits; the rest wait for short-head writes.
 pub const TITLE_FTS_SEED: usize = 2048;
-const PROGRESS_SCAN_DELTA: i64 = 256;
+/// Intra-phase banner ticks. Phase transitions still emit immediately.
+/// Scan-delta emits (256) re-rendered AppShell/graph at 10–20Hz on fast fills.
+pub const PROGRESS_EMIT_MS: u64 = 400;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FillUntil {
@@ -445,9 +458,24 @@ fn note_unchanged(existing: &ExistingNote, disk: &DiskNote) -> bool {
     existing.mtime == disk.mtime && existing.size == Some(disk.size)
 }
 
-fn should_emit_progress(last_at: Instant, last_scanned: i64, scanned: i64) -> bool {
-    scanned.saturating_sub(last_scanned) >= PROGRESS_SCAN_DELTA
-        || last_at.elapsed() >= Duration::from_millis(400)
+fn should_emit_progress(last_at: Instant, _last_scanned: i64, _scanned: i64) -> bool {
+    last_at.elapsed() >= Duration::from_millis(PROGRESS_EMIT_MS)
+}
+
+fn cooperate_after_write(started: Instant) {
+    if started.elapsed() >= Duration::from_millis(2) {
+        std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
+    } else {
+        std::thread::yield_now();
+    }
+}
+
+fn cooperate_after_io(started: Instant) {
+    if started.elapsed() >= Duration::from_millis(12) {
+        std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
+    } else {
+        std::thread::yield_now();
+    }
 }
 
 /// Filename tokens users search first on cold open (official soak: `Hub N.md`).
@@ -542,8 +570,8 @@ fn worker_count(n: usize) -> usize {
     }
     std::thread::available_parallelism()
         .map(|p| p.get())
-        .unwrap_or(4)
-        .clamp(2, 8)
+        .unwrap_or(2)
+        .clamp(1, FILL_READ_WORKERS_MAX)
         .min(n)
 }
 
@@ -594,11 +622,13 @@ fn flush_note_batch(
     if batch.is_empty() {
         return;
     }
+    let started = Instant::now();
     let tx = match conn.unchecked_transaction() {
         Ok(t) => t,
         Err(_) => {
             *errors += batch.len() as i64;
             batch.clear();
+            cooperate_after_write(started);
             return;
         }
     };
@@ -679,6 +709,7 @@ fn flush_note_batch(
         *indexed = (*indexed - batch.len() as i64).max(0);
     }
     batch.clear();
+    cooperate_after_write(started);
 }
 
 fn remove_stale_notes(
@@ -1007,7 +1038,9 @@ pub fn fill_from_disk_with_opts(
         if is_cancelled() {
             break;
         }
+        let io_started = Instant::now();
         let heads = read_heads(&files, chunk, short_head);
+        cooperate_after_io(io_started);
         for (i, body) in heads {
             let disk = &files[i];
             batch.push(FillNote {
@@ -1089,7 +1122,9 @@ pub fn fill_from_disk_with_opts(
         if is_cancelled() {
             break;
         }
+        let io_started = Instant::now();
         let heads = read_heads(&files, chunk, deep_head);
+        cooperate_after_io(io_started);
         for (i, body) in heads {
             let disk = &files[i];
             batch.push(FillNote {
@@ -1623,11 +1658,98 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "meta + ready-meta + later phases, got {}",
             ticks.len()
         );
-        assert!(ticks.iter().any(|p| p.scanned > 0 && p.phase == "meta"));
+        // Intra-phase ticks are time-gated (400ms) so a tiny vault may only
+        // emit phase transitions — that is intentional (UI must not re-render
+        // at 10–20Hz during a 100k fill).
+        assert!(ticks.iter().any(|p| p.phase == "ready-meta"));
+        assert!(ticks.iter().any(|p| p.phase == "ready-fts-partial" || p.phase == "done"));
         let (second, ticks2) = fill(&mut conn, &vault, false);
         assert_eq!(second.skipped, 80);
         assert_eq!(second.indexed, 0);
         assert!(ticks2.iter().any(|p| p.skipped >= 64 || p.phase == "done"));
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn cooperative_fill_limits_leave_room_for_ui() {
+        assert!(
+            FTS_WRITE_BATCH <= 128,
+            "FTS write batch {FTS_WRITE_BATCH} re-creates multi-second WAL locks"
+        );
+        assert!(
+            READ_CHUNK <= 128,
+            "read chunk {READ_CHUNK} saturates disk ahead of note open"
+        );
+        assert!(
+            FILL_YIELD_MS >= 2,
+            "fill must yield after a real write batch"
+        );
+        assert!(
+            FILL_READ_WORKERS_MAX <= 2,
+            "head readers must not take every core/disk queue"
+        );
+        assert_eq!(worker_count(1), 1);
+        assert_eq!(worker_count(10_000), FILL_READ_WORKERS_MAX);
+        assert!(PROGRESS_EMIT_MS >= 250);
+    }
+
+    #[test]
+    fn fill_write_locks_stay_short_for_concurrent_readers() {
+        // 3 FTS write batches of short heads. A reader with a 300ms busy
+        // timeout must keep succeeding — 1024-row FTS txs used to block
+        // search/upsert for seconds (UI hitch).
+        let (vault, db) = temp_pair("coop-lock");
+        write_n(&vault, 360);
+        let mut conn = open_test_conn(&db);
+        let db_reader = db.clone();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let worst = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let worst2 = worst.clone();
+        let busy = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let busy2 = busy.clone();
+        let reader = std::thread::spawn(move || {
+            let rconn = open_reader(&db_reader);
+            let _ = rconn.busy_timeout(Duration::from_millis(300));
+            while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                let t0 = Instant::now();
+                let ok = rconn
+                    .query_row(
+                        "SELECT COUNT(*) FROM note_fts WHERE note_fts MATCH 'cluster'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .is_ok();
+                let ms = t0.elapsed().as_millis() as u64;
+                worst2.fetch_max(ms, std::sync::atomic::Ordering::Relaxed);
+                if !ok {
+                    busy2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                std::thread::sleep(Duration::from_millis(4));
+            }
+        });
+
+        let (result, ticks) = fill_until(&mut conn, &vault, false, FillUntil::Partial, &[]);
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = reader.join();
+        let worst_ms = worst.load(std::sync::atomic::Ordering::Relaxed);
+        let busy_hits = busy.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(result.notes, 360);
+        assert!(ticks.iter().any(|p| p.phase == "ready-meta"));
+        assert_eq!(result.search_state, "ready-fts-partial");
+        assert!(
+            fts_has(&conn, "cluster"),
+            "short heads must still land for body search"
+        );
+        assert_eq!(
+            busy_hits, 0,
+            "reader hit SQLITE_BUSY {busy_hits} times — write lock too long"
+        );
+        assert!(
+            worst_ms < 300,
+            "concurrent FTS MATCH waited {worst_ms}ms — UI would hitch"
+        );
 
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
