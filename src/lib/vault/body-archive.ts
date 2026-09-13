@@ -39,6 +39,36 @@ export function archiveBodiesFromNodes(
   return map;
 }
 
+/**
+ * One 45k walk: copy bodies into the archive and strip store nodes except keepIds.
+ * Avoids a second Object.keys pass in prepareMountedNodes.
+ */
+export function archiveAndStripBodiesInPlace(
+  nodes: Record<string, VaultNode>,
+  keepIds?: Iterable<string>,
+): Map<string, string> {
+  const keep = new Set(
+    keepIds ? [...keepIds].filter((id): id is string => Boolean(id)) : [],
+  );
+  const map = new Map<string, string>();
+  for (const id of Object.keys(nodes)) {
+    const n = nodes[id];
+    if (!n || n.kind !== "note" || typeof n.content !== "string") continue;
+    map.set(n.path, n.content);
+    if (keep.has(id)) continue;
+    nodes[id] = {
+      id: n.id,
+      path: n.path,
+      name: n.name,
+      kind: n.kind,
+      parentId: n.parentId,
+      mtime: n.mtime,
+    };
+  }
+  bodyArchive = map;
+  return map;
+}
+
 /** Chunked archive so 45k+ open can paint the progress banner. */
 export async function archiveBodiesFromNodesAsync(
   nodes: Record<string, VaultNode>,

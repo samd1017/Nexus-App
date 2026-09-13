@@ -73,7 +73,7 @@ Everything else (editor, graph, command palette) supports that core loop.
 - Attachments rail (images, PDFs, vault files) and per-note version history
 - Live 3D force-directed knowledge graph
 - Tauri 2 desktop shell (macOS + Windows) + web mode via File System Access API
-- Durable SQLite FTS5 index (disposable, lives outside the vault) + fused ranking (recency, title, backlinks)
+- Search: desktop uses disposable SQLite FTS5 BM25 (`searchFtsAsync`); web / FSA uses an in-memory inverted index with an 800-candidate cap (not BM25). Palette heading names the live engine.
 - Grounded **Ask your notes** (`ask:` in ⌘K) with extractive citations — no cloud model
 - Pulse + Conflict Studio for humans and agents on the same folder
 - Command palette, backlinks, large-test-vault stress tooling
@@ -94,7 +94,7 @@ Contributions and hard feedback are welcome. See [CONTRIBUTING.md](CONTRIBUTING.
 | Layer | Role |
 |-------|------|
 | **Markdown files on disk** | Only source of truth. Hermes-compatible. No proprietary format. |
-| **DurableIndex (SQLite FTS5)** | Disposable search index. Lives outside the vault under app data. Can be wiped and rebuilt. |
+| **DurableIndex** | Desktop: SQLite FTS5 BM25 via `searchFtsAsync`. Web/FSA: in-memory FTS (800-candidate cap, not BM25). Disposable; lives outside the vault. |
 | **In-memory graph** | Backlinks, structure, 3D view. |
 | **Hybrid ranking (goal)** | Lexical (FTS5 + BM25 + title/path boosts) + semantic (local embeddings) + structural signals. |
 

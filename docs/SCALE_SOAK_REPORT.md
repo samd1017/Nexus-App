@@ -1,21 +1,21 @@
 # Scale soak report
 
-**SHA under test:** `f367384` (this branch), vs baseline **`907d8ea`**.
+**SHA under test:** `9bf8cd7` (this branch), vs baseline **`907d8ea`**.
 **Verdict: not SCALE READY.**
 
-I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM, including graph-panel switch and reload of a non-default seed + split. Disk Wave E wrote real 100k and 300k `.md` folders and searched them through the **memory** inverted index (2.4–2.6ms). That is not a Tauri/FSA mount and not SQLite BM25. Desktop 300–500k remains the north star.
+I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM, including graph-panel switch, reload of a non-default seed + split, and **session-created Soak Created.md surviving remount** via the remount-ticket overlay. Disk Wave E wrote real 100k and 300k `.md` folders and searched them through the **memory** inverted index (2.4–2.6ms). That is not a Tauri/FSA mount and not SQLite BM25. Palette on this VM reports `memory-fts-capped`. Desktop 300–500k remains the north star.
 
 Sam’s bar: do not PASS 45k UI on the absence of crashes. Common ops target **<1s app-ready**. Cold open may exceed 1s if progress is visible and the UI stays responsive (no ≥1s long task).
 
 ---
 
-## Before / after (907d8ea → `f367384`)
+## Before / after (907d8ea → `9bf8cd7`)
 
 ### Core in-process (`bench-vault-stress`)
 
 Re-run on this SHA after the two-stage open / FTS-cap work.
 
-| Size | Op | 907d8ea | `f367384` | Gate |
+| Size | Op | 907d8ea | `9bf8cd7` | Gate |
 |------|----|---------|-----------|------|
 | 10k | structural rebuild | 33.6ms | **28.9ms** | PASS |
 | 10k | **path-patch 20** | 60.0ms | **0.5ms** | PASS (<100ms) |
@@ -44,30 +44,31 @@ Path-patch 20 is no longer O(n). Production `idOf` is O(1). Scan `nodes` / `sign
 
 ### 45k UI on this SHA (`stress-ui-multisize` PASS)
 
-Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on **`f367384`**. Raw: `/opt/cursor/artifacts/stress/ui-multisize.json`.
+Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on **`9bf8cd7`**. Raw: `/opt/cursor/artifacts/stress/ui-multisize.json`.
 
-| Op | 907d8ea | `cfc74f1` | **`f367384`** | Budget | Result |
+| Op | 907d8ea | `cfc74f1` | **`9bf8cd7`** | Budget | Result |
 |----|---------|-----------|---------------|--------|--------|
-| open (cold, app-ready) | 2593ms | 2760ms (store 1686) | **2113ms** (store **1310ms**, interactive **654ms**) | <30s progressive; store ~1.5s | WARN wall / PASS store |
-| open long-task max | n/a | n/a | **375ms** (rAF 22ms) | <1000ms freeze | PASS |
+| open (cold, app-ready) | 2593ms | 2760ms (store 1686) | **1917ms** (store **1260ms**, interactive **525ms**) | <30s progressive; store ~1.5s | WARN wall / PASS store |
+| open long-task max | n/a | n/a | **488ms** (rAF 67ms) | <1000ms freeze | PASS |
 | open progress | n/a | banner | walking → indexing → ready | must show | PASS |
-| tree | 3842ms | 310ms | **346ms** | <1s | PASS |
-| search | 2501ms | 266ms | **89ms** | <1s | PASS |
-| graph chrome | 3836ms | 75ms | **59ms** | <1s | PASS |
-| new note | 3826ms | 282ms | **192ms** | <1s | PASS |
+| search engine | n/a | implied FTS5 | **`memory-fts-capped`** | must not say SQLite | PASS |
+| tree | 3842ms | 310ms | **307ms** | <1s | PASS |
+| search | 2501ms | 266ms | **126ms** | <1s | PASS |
+| graph chrome | 3836ms | 75ms | **70ms** | <1s | PASS |
+| new note | 3826ms | 282ms | **262ms** | <1s | PASS |
 | lastNotePath on create | n/a | missed | **Soak Created.md** | persist | PASS |
-| switch (graph closed) | count=0 | max 906 | **8× 77–142ms**, p95 **142** | <1s | PASS |
-| **switchGraphPanel** | n/a | later 110 | **8× 39–99ms**, p95 **99** | p95 <700 / max <1s | PASS |
+| switch (graph closed) | count=0 | max 906 | p95 **175** | <1s | PASS |
+| **switchGraphPanel** | n/a | later 110 | p95 **129** / max **129** | p95 <700 / max <1s | PASS |
 | editorTyped | false | true | **true** | must be true | PASS |
 | notes after create | toast | 45001 | **45001** | 45001 | PASS |
-| reload | unproven | default inbox | **45000**, `Brief-41936-jrg.md` + split + `Brief-02193-eyp.md` | restore | PASS |
+| reload | unproven | dropped create | **45001**, `Brief-41936-jrg.md` + split + **Soak Created.md restored** (`overlayApplied=11`) | no silent loss | PASS |
 | page errors | none | none | none | none | PASS |
 
 Demo same run: editorTyped **true**, search **102ms**, graph chrome **23ms**, newNote **153ms**, `lastNotePath=Soak Created.md`. Suite **PASS**.
 
-Two-stage open: tree/editor mount at **654ms** (store interactive); FTS fill **367ms**; store ready **1310ms**. App-ready 2113ms still includes navigation + waiting for FTS `openMs`. Progress banner is visible; one 375ms long task (under the 1s freeze bar).
+Two-stage open: tree/editor mount at store **interactiveMs** (525ms on `9bf8cd7`); FTS fill continues under a banner that says the workspace is ready and that this is **in-memory search, not SQLite**. App-ready wall still includes navigation + waiting for FTS `openMs`. Progress banner is visible; long-task max stayed under the 1s freeze bar.
 
-Reload remount drops session-created `Soak Created.md` (seed has 45,000 notes). That is intentional: persist never writes the 45k map. Active note + split restore from the remount ticket.
+Reload remount **keeps** session-created `Soak Created.md`. Persist still never writes the 45k map (quota). Creates/edits go to the browser overlay (IndexedDB + sync localStorage) **and** a clipped copy on the remount ticket (`ScaleRemount.overlay`, last 80). Title bar says **Test · this browser**; the banner has **Open a folder** for a real on-disk vault. Active note + split also restore from the remount ticket.
 
 ---
 
@@ -99,7 +100,7 @@ Reload remount drops session-created `Soak Created.md` (seed has 45,000 notes). 
 | Wikilink / backlinks | Index cached on `structureGeneration`; no O(n) reverse/fuzzy at ≥400 notes |
 | Graph exit | Esc returns to backlinks so ForceGraph3D does not remount in the panel |
 | Memory FTS | Intersect the rarest posting list and **stop at 800 candidates**; body scan only for the top `limit`. Palette labels this **Memory FTS (capped)**, never SQLite BM25 |
-| Large-seed writes | IndexedDB overlay (`large-vault-overlay.ts`) restores creates/edits on remount; banner tells the user this is not files |
+| Large-seed writes | Overlay + remount ticket restore creates/edits; banner **Open a folder** is the daily-driver path |
 | Playwright | App-ready vs wait; graph-panel switch p95; long-task + progress probe; non-default reload path + split |
 | Disk | `generate-synthetic-vault.mjs` + `bench-disk-vault.mjs` + `wave-e-disk.mjs` |
 
@@ -180,7 +181,12 @@ Run 100k first. Only then 300k. If 100k search is still `memory-fts-capped`, fix
 
 ## Browser overlay (45k / soak seeds)
 
-localStorage still cannot hold the 45k map. Creates and edits on large in-memory seeds now go to an **IndexedDB overlay** (`src/lib/vault/large-vault-overlay.ts`, cap 400). Remount reapplies them. Title bar + banner say this is **this browser**, not files. Daily-driver path remains **Open folder**. Overlay is not a 300k vault.
+localStorage still cannot hold the 45k map. Creates and edits on large in-memory seeds go to:
+
+1. **IndexedDB + sync localStorage** (`src/lib/vault/large-vault-overlay.ts`, cap 400)
+2. **Remount ticket** (`ScaleRemount.overlay`, last 80 entries, bodies clipped to 20k) — this is what survived a fast Playwright reload when IDB lost the last `put`
+
+Remount reapplies both. Title bar says **Test · this browser**. Banner: writes stay in this browser; **Open a folder** for files that survive across machines. Overlay is not a 300k vault and is not cross-browser. Disk vaults already write markdown; they do not use this overlay.
 
 ## What is still not proven
 
@@ -191,7 +197,7 @@ localStorage still cannot hold the 45k map. Creates and edits on large in-memory
 
 **Largest green N on this VM**
 
-- **UI:** browser 45k common-ops (store open 1.31s / interactive 0.65s; wall 2.1s WARN; no ≥1s freeze).
+- **UI:** browser 45k common-ops (store open 1.26s / interactive 0.53s; wall 1.9s WARN; overlay remount keeps Soak Created; no ≥1s freeze).
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
 
 Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a Mac Tauri open of the 300k folder stays responsive end-to-end.

@@ -5,7 +5,9 @@
  * write markdown. Browser test vaults would otherwise silently drop session
  * notes on remount.
  *
- * Overlay lives in IndexedDB (localStorage fallback), keyed by vaultId+path.
+ * Overlay lives in IndexedDB + sync localStorage, keyed by vaultId+path.
+ * Fast remount also copies the last 80 entries onto the zustand remount ticket
+ * (`ScaleRemount.overlay`) so a reload that races IDB still restores creates.
  * Not a substitute for “open a folder” — files on disk remain the daily-driver
  * path. Cap is small so this cannot become a 45k dump.
  */

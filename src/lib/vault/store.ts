@@ -112,7 +112,7 @@ import {
   type BodyCacheStats,
 } from "./body-cache";
 import {
-  archiveBodiesFromNodes,
+  archiveAndStripBodiesInPlace,
   archiveBodiesFromNodesAsync,
   clearBodyArchive,
   hasBodyArchive,
@@ -649,7 +649,7 @@ function prepareMountedNodes(
 	nodes: Record<string, VaultNode>,
 	mode: VaultMode,
 	keepIds: string[] = [],
-	opts?: { vaultId?: string | null; metaOnly?: boolean },
+	opts?: { vaultId?: string | null; metaOnly?: boolean; skipStrip?: boolean },
 ) {
 	if (!isLargeMemoryVault(opts?.vaultId)) {
 		rebuildLinkIndex(nodes);
@@ -660,8 +660,10 @@ function prepareMountedNodes(
 	let result;
 	if (lazy) {
 		for (const id of keep) touchBody(id);
-		if (opts?.metaOnly) {
-			for (const n of Object.values(nodes)) if (n.kind === "note" && n.content !== undefined) touchBody(n.id);
+		if (opts?.metaOnly || opts?.skipStrip) {
+			if (opts?.metaOnly) {
+				for (const n of Object.values(nodes)) if (n.kind === "note" && n.content !== undefined) touchBody(n.id);
+			}
 			result = nodes;
 		} else result = stripBodiesInPlace(nodes, keep);
 	} else {
@@ -1347,17 +1349,18 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				totalHint: noteCount,
 				message: overlay.applied
 					? `Restoring ${overlay.applied.toLocaleString()} browser-saved notes…`
-					: "Archiving note bodies…"
+					: "Preparing workspace…"
 			});
 
-			// Sync archive (one 45k walk). Async chunking was adding ~300ms of yields.
-			archiveBodiesFromNodes(data.nodes);
+			// One 45k walk: archive + strip. A second strip pass was ~80–120ms.
+			archiveAndStripBodiesInPlace(data.nodes, [firstNote?.id ?? ""]);
 			if (gen !== vaultGen) return;
 			syncActiveBackend("local");
 			await prepareDurableIndex(vaultId, "local");
 			if (gen !== vaultGen) return;
 			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""], {
-				vaultId
+				vaultId,
+				skipStrip: true,
 			});
 			if (gen !== vaultGen) return;
 			invalidateVaultTagsCache();
@@ -1423,7 +1426,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				phase: "indexing",
 				scanned: 0,
 				totalHint: noteCount,
-				message: "Indexing in-memory search (not SQLite)…",
+				message: "Workspace ready — indexing in-memory search (not SQLite)…",
 			});
 			await yieldToUi(true);
 			if (gen !== vaultGen) return;
@@ -1437,7 +1440,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						phase: "indexing",
 						scanned: done,
 						totalHint: total,
-						message: `In-memory search index… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+						message: `Workspace ready — in-memory search (not SQLite)… ${done.toLocaleString()} / ${total.toLocaleString()}`,
 					});
 				},
 			});
@@ -1636,7 +1639,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				phase: "indexing",
 				scanned: 0,
 				totalHint: data.noteCount,
-				message: "Indexing search…",
+				message: "Workspace ready — indexing in-memory search (not SQLite)…",
 			});
 			await yieldToUi(true);
 			if (gen !== vaultGen) return;
@@ -1650,7 +1653,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						phase: "indexing",
 						scanned: done,
 						totalHint: total,
-						message: `Indexing search… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+						message: `Workspace ready — in-memory search (not SQLite)… ${done.toLocaleString()} / ${total.toLocaleString()}`,
 					});
 				},
 			});

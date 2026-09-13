@@ -36,6 +36,7 @@ import { bindWindowState } from "@/lib/desktop/window-state";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
+import { canOpenLocalVaultFolder } from "@/lib/platform";
 
 function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
   // Auto-dismiss ready flash so the banner doesn't stick forever
@@ -151,14 +152,35 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
 
 function LargeVaultOverlayBanner({ vaultId }: { vaultId: string | null }) {
   if (!isLargeMemoryVault(vaultId)) return null;
+  const openFolder = () => {
+    if (!canOpenLocalVaultFolder()) {
+      useVaultStore
+        .getState()
+        .setToast(
+          "Open a folder in Chrome, Edge, or the desktop app for notes that live as files.",
+        );
+      return;
+    }
+    void useVaultStore.getState().openFolderAsVault();
+  };
   return (
     <div
-      className="shrink-0 border-b border-[rgba(255,159,10,0.22)] bg-[rgba(255,159,10,0.07)] px-3 py-1 text-[11px] text-[var(--warning)]"
+      className="flex shrink-0 items-center gap-2 border-b border-[rgba(255,159,10,0.22)] bg-[rgba(255,159,10,0.07)] px-3 py-1 text-[11px] text-[var(--warning)]"
       data-large-vault-overlay
       role="status"
     >
-      In-browser test vault — new notes and edits are saved in this browser, not
-      as files. Open a folder for a real vault that survives across machines.
+      <span className="min-w-0 flex-1">
+        In-browser test vault — new notes and edits stay in this browser, not as
+        files. Open a folder for a real vault that survives across machines.
+      </span>
+      <button
+        type="button"
+        className="ghost-btn shrink-0 px-2 py-0.5 text-[11px]"
+        data-large-vault-open-folder
+        onClick={openFolder}
+      >
+        Open a folder
+      </button>
     </div>
   );
 }

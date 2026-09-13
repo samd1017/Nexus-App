@@ -33,6 +33,7 @@ const tauriSteps = {
   steps: [
     "macOS: npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k",
     "macOS: npm run gen:soak-vault -- --notes 300000 --out ~/nexus-soak-300k",
+    "Windows: npm run gen:soak-vault -- --notes 100000 --out %USERPROFILE%\\nexus-soak-100k",
     "Windows: npm run gen:soak-vault -- --notes 300000 --out %USERPROFILE%\\nexus-soak-300k",
     "npm run tauri:dev → Welcome → Open folder → pick the generated vault",
     "Title bar must say On disk / Desktop — never Test · this browser",

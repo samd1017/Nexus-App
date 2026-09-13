@@ -170,4 +170,4 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 | `public/large-test-vault/*` | Prebuilt seed for in-app **Open 45k test vault** |
 | `src/lib/vault/large-test-vault.ts` | Loader → `openLargeTestVault()` |
 
-Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder.
+Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder. Session creates/edits on that seed stay in a **browser overlay** (not files); the title bar says `Test · this browser` and the banner offers **Open a folder**. Disk vaults write markdown; do not treat overlay remount as SCALE READY.

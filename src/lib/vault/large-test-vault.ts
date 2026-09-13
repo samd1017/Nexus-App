@@ -87,7 +87,8 @@ export async function buildLargeTestVault(opts?: {
   let loaded = 0;
   let firstNoteId: string | null = null;
   const now = Date.now();
-  const CONCURRENCY = 3;
+  // 18 chunks × 2500 notes; 6-wide fetch is 3 waves instead of 6.
+  const CONCURRENCY = 6;
   for (let c = 0; c < manifest.chunks; ) {
     const batch: Promise<NoteSeed[]>[] = [];
     for (let k = 0; k < CONCURRENCY && c + k < manifest.chunks; k++) {
@@ -107,7 +108,9 @@ export async function buildLargeTestVault(opts?: {
     }
     c += batch.length;
     onProgress?.(loaded, manifest.total, "notes");
-    await new Promise((r) => setTimeout(r, 0));
+    if (c < manifest.chunks) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
   // Root: top-level folders only (PARA roots)
@@ -124,13 +127,6 @@ export async function buildLargeTestVault(opts?: {
     .filter((f) => !f.parent)
     .map((f) => folderIdByPath.get(f.p)!)
     .filter(Boolean);
-
-  // Prefer opening README-like intro if present, else first inbox note, else first note
-  const readme = Object.values(nodes).find((n) => n.kind === "note" && n.path === "README.md");
-  if (readme) {
-    // ensure README is a root-level note id in rootIds? demo has Welcome at root
-    // keep folders as rootIds only; active note separate
-  }
 
   return {
     nodes,

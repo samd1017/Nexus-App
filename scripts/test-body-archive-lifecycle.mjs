@@ -24,6 +24,7 @@ const r = spawnSync(
 import assert from "node:assert/strict";
 import {
   archiveBodiesFromNodes,
+  archiveAndStripBodiesInPlace,
   getBodyFromArchive,
   setBodyInArchive,
   rekeyBodyArchive,
@@ -50,6 +51,16 @@ archiveBodiesFromNodes(nodes);
 assert.equal(hasBodyArchive(), true);
 assert.equal(bodyArchiveSize(), 2);
 assert.equal(getBodyFromArchive("00-Inbox/a.md"), "# A\\nbody-a");
+
+clearBodyArchive();
+const combined = {
+  keep: { id: "keep", path: "keep.md", name: "keep.md", kind: "note", parentId: null, mtime: 1, content: "keep-body" },
+  drop: { id: "drop", path: "drop.md", name: "drop.md", kind: "note", parentId: null, mtime: 1, content: "drop-body" },
+};
+archiveAndStripBodiesInPlace(combined, ["keep"]);
+assert.equal(combined.keep.content, "keep-body");
+assert.equal(combined.drop.content, undefined);
+assert.equal(getBodyFromArchive("drop.md"), "drop-body");
 
 // strip keeps only keep ids
 const stripped = stripBodies(nodes, new Set(["a"]));
