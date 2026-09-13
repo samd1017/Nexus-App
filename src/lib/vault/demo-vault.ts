@@ -89,14 +89,14 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Unlinked | Right panel — mentions of this title that are not [[linked]] yet |
 | Pins | Pin a note (⌘⇧P) — it stays in the sidebar |
 | Trash | Delete a note — toast **Restore**, sidebar Trash, or ⌘K \`is:deleted\` |
-| Agents | Vault menu → **Simulate agent write** → Pulse → Conflict Studio |
+| Agents | Vault menu → **Practice agent conflict** → Conflict Studio (Keep mine / Take theirs) |
 
 ## Quick path
 
 1. Open [[Heading & Block Links]] — jump to a section, then Alt-click a link to split  
 2. Open [[Callouts]] and [[Diagrams & Math]]  
 3. Press **⌘K** and type \`ask: how do agents share this vault\`  
-4. Vault menu → **Simulate agent write** — Pulse lights up  
+4. Vault menu → **Practice agent conflict** — Conflict Studio opens  
 5. Pin this note (⌘⇧P). Stay here — right panel **Unlinked mentions** should list Agent Day. Click **Link**.
 
 ## See the graph
@@ -429,7 +429,7 @@ Creates, edits, renames, and deletes from outside the app appear in the UI withi
 
 In the vault switcher menu (More), choose **Simulate agent write**. A new note lands under Systems. Pulse opens so you can treat it like a Grok / Hermes dump.
 
-To see a conflict: Simulate once to create \`Systems/Hermes Pulse.md\`, type a sentence in that note, then **Simulate agent write** again. Conflict Studio opens — Keep mine or Take theirs.
+To see a conflict: **Practice agent conflict** (vault menu, Pulse, Settings → Agents, or ⌘K). Conflict Studio opens with a line diff — Keep mine or Take theirs.
 
 ## Linked
 
@@ -549,7 +549,7 @@ This demo vault is already open. For a real folder: **Open…** and point at any
 
 ## Agent write
 
-1. Vault menu → **More → Simulate agent write**
+1. Vault menu → **More → Practice agent conflict**
 2. Or press **⌘K**, type \`hermes\` / \`agent\`
 3. Pulse shows **Hermes Pulse** — an external write
 
@@ -642,7 +642,7 @@ This is your vault. Notes are ordinary Markdown in a folder — you, git, and ag
 - Type \`[[\` to link a note
 - **⌘K** to search or \`ask:\` a question
 - **⌘2** to open a second note beside this one
-- Vault menu → **Simulate agent write** to see Pulse
+- Vault menu → **Practice agent conflict** to open Conflict Studio
 
 — Nexus · Notes for Humans and Agents
 `,

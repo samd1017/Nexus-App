@@ -43,6 +43,17 @@ export function attachmentKind(path: string): AttachmentKind {
   return "file";
 }
 
+/** Vault-relative image/PDF href (not http/data). Used to open the Files rail. */
+export function isVaultAttachmentHref(href: string): boolean {
+  const raw = (href || "").trim();
+  if (!raw || raw.startsWith("http") || raw.startsWith("data:") || raw.startsWith("blob:")) {
+    return false;
+  }
+  const path = raw.replace(/^\.\//, "").replace(/^\/+/, "").split(/[?#]/)[0] ?? "";
+  const kind = attachmentKind(path);
+  return kind === "image" || kind === "pdf";
+}
+
 const SKIP_PREFIX = /^(?:\.nexus\/|\.trash\/)/;
 
 /** Collect vault-relative file refs from Markdown (images, links, wikilinks). */

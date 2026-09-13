@@ -292,6 +292,19 @@ export function VaultSwitcher() {
                   }}
                 />
               ) : null}
+              {vaultId ? (
+                <MenuRow
+                  icon={<Sparkles size={15} className="text-[var(--accent-violet)]" />}
+                  label="Practice agent conflict"
+                  disabled={connecting}
+                  onClick={() => {
+                    useVaultStore.getState().practiceAgentConflict();
+                    useVaultStore.getState().openPulseRail?.();
+                    setOpen(false);
+                    setMoreOpen(false);
+                  }}
+                />
+              ) : null}
               <p className="px-2.5 py-1.5 text-[10.5px] leading-snug text-[var(--text-muted)]">
                 Cloud sync: turn on Dropbox, Drive, or OneDrive desktop sync,
                 then use Open… on that folder. Nexus never stores accounts.

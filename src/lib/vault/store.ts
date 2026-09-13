@@ -295,6 +295,7 @@ export type VaultStore = {
   setToast: (msg: string | null, action?: ToastAction | null) => void;
   setRightTab: (tab: RightTab) => void;
   openPulseRail: () => void;
+  openAttachmentsRail: () => void;
   listTrash: () => Promise<TrashEntry[]>;
   restoreTrash: (trashPath: string) => Promise<boolean>;
   simulateHermesWrite: () => void;
@@ -2832,6 +2833,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			rightTab: "pulse"
 		});
 	},
+	openAttachmentsRail: () => {
+		set({
+			settings: {
+				...get().settings,
+				rightOpen: true
+			},
+			rightTab: "attachments"
+		});
+	},
 	listTrash: async () => {
 		try {
 			if (get().mode === "desktop" && desktopRoot) return (await listDesktopTrash(desktopRoot)).map((r) => trashEntryFromRel(r.relPath, r.mtime)).filter((e) => e != null);
@@ -2933,7 +2943,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		flushStageNow(set);
 		const restoredNode = get().nodes[id];
 		if (restoredNode) upsertDurableNoteFromNode(restoredNode);
-		memoryTrash = memoryTrash.filter((t) => t.trashPath !== trashPath);
+		memoryTrash = memoryTrash.filter(
+			(t) => t.trashPath !== trashPath && t.originalPath !== entry.originalPath,
+		);
 		set({ trashTick: get().trashTick + 1 });
 		const pth = destPath;
 		const trashP = trashPath;

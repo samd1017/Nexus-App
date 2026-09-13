@@ -31,6 +31,7 @@ import {
   Database,
   X,
   Pin,
+  Paperclip,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
@@ -614,11 +615,11 @@ function CommandPaletteOpen() {
           icon: <RotateCcw size={15} />,
           shortcut: undefined as string | undefined,
           run: wrapRun("recently-deleted", () => {
-            openPulseRail();
+            useVaultStore.getState().setLeftOpen(true);
             setCommandOpen(false);
             setToast(
               trashItems.length
-                ? `${trashItems.length} note${trashItems.length === 1 ? "" : "s"} in trash`
+                ? `${trashItems.length} note${trashItems.length === 1 ? "" : "s"} in trash — Restore in the sidebar`
                 : "Trash is empty",
             );
           }),
@@ -737,6 +738,17 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "open-files",
+          label: "Open Files rail",
+          keywords: ["attachments", "pdf", "images", "files", "paperclip"],
+          icon: <Paperclip size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("open-files", () => {
+            useVaultStore.getState().openAttachmentsRail();
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "split-pane",
           label: "Toggle dual-note workspace",
           keywords: ["split", "pane", "dual", "workspace"],
@@ -841,6 +853,17 @@ function CommandPaletteOpen() {
         shortcut: formatShortcut("\\", { alt: true }),
         run: wrapRun("toggle-right", () => {
           toggleRight();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-files-rail",
+        label: "Open Files rail",
+        icon: <Paperclip size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-files-rail", () => {
+          useVaultStore.getState().openAttachmentsRail();
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),

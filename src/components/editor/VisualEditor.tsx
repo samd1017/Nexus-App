@@ -8,6 +8,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { VaultImage } from "@/lib/editor/vault-image";
 import { resolveVaultImageUrl } from "@/lib/vault/image-import";
+import { isVaultAttachmentHref } from "@/lib/vault/attachments";
 import {
   handleVisualDrop,
   handleVisualPaste,
@@ -492,6 +493,17 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
           class: "note-editor min-h-[50vh] focus:outline-none",
           "data-note-id": noteId,
           spellcheck: spellCheck ? "true" : "false",
+        },
+        handleDOMEvents: {
+          click: (_view, event) => {
+            const a = (event.target as HTMLElement | null)?.closest?.("a[href]");
+            if (!(a instanceof HTMLAnchorElement)) return false;
+            const href = a.getAttribute("href") || "";
+            if (!isVaultAttachmentHref(href)) return false;
+            event.preventDefault();
+            useVaultStore.getState().openAttachmentsRail();
+            return true;
+          },
         },
         handlePaste: (view, event) => {
           const ed = editorRef.current;

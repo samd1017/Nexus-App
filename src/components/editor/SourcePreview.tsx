@@ -5,6 +5,7 @@ import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { hydratePreviewSpecials } from "@/lib/editor/hydrate-preview";
+import { isVaultAttachmentHref } from "@/lib/vault/attachments";
 
 export function SourcePreview({ content }: { content: string }) {
   const theme = usePrefsStore((s) => s.theme);
@@ -44,6 +45,15 @@ export function SourcePreview({ content }: { content: string }) {
       ref={hostRef}
       className="nexus-source-preview note-editor"
       onClick={(e) => {
+        const hrefEl = (e.target as HTMLElement).closest("a[href]");
+        if (hrefEl instanceof HTMLAnchorElement) {
+          const href = hrefEl.getAttribute("href") || "";
+          if (isVaultAttachmentHref(href)) {
+            e.preventDefault();
+            useVaultStore.getState().openAttachmentsRail();
+            return;
+          }
+        }
         const openBtn = (e.target as HTMLElement).closest("[data-open-note]");
         if (openBtn instanceof HTMLElement) {
           const id = openBtn.getAttribute("data-open-note") || "";
