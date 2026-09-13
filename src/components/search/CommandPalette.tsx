@@ -61,6 +61,10 @@ import {
   setPendingCommandQuery,
 } from "@/lib/vault/session-recents";
 import { getDurableIndex } from "@/lib/vault/durable-index";
+import {
+  getOpenProgress,
+  subscribeOpenProgress,
+} from "@/lib/vault/native-index";
 import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
@@ -199,6 +203,10 @@ export function CommandPalette() {
 }
 
 function CommandPaletteOpen() {
+  const [openProgress, setOpenProgressUi] = useState(getOpenProgress);
+  useEffect(() => subscribeOpenProgress(setOpenProgressUi), []);
+  const searchIndexing =
+    openProgress.phase === "indexing" || openProgress.phase === "walking";
   const open = useVaultStore((s) => s.commandOpen);
   const vaultId = useVaultStore((s) => s.vaultId);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
@@ -403,8 +411,6 @@ function CommandPaletteOpen() {
     ) {
       return;
     }
-    const idx = getDurableIndex();
-    if (!idx?.searchFtsAsync) return;
     const needle = hasPathFolderOp
       ? debouncedSearch.trim() || raw
       : debouncedSearch.trim() || searchText || raw;
@@ -1070,6 +1076,7 @@ function CommandPaletteOpen() {
   };
 
   const searchEngine = describeSearchEngine();
+  const engineBit = searchEngine.shortLabel;
   const notesHeading = isEmptyQuery
     ? "Recent notes"
     : hasPathFolderOp
@@ -1078,6 +1085,7 @@ function CommandPaletteOpen() {
           pathFolderOps.folderFilter
             ? `folder:${pathFolderOps.folderFilter}`
             : null,
+          engineBit,
         ]
           .filter(Boolean)
           .join(" · ")
@@ -1085,8 +1093,10 @@ function CommandPaletteOpen() {
         ? isTagBrowse
           ? `Tagged #${tagPartial}`
           : hits.length > 0
-            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""} · ${searchEngine.shortLabel}`
-            : "Notes"
+            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""} · ${engineBit}`
+            : searchIndexing
+              ? `Notes · ${engineBit} · indexing…`
+              : `Notes · ${engineBit} · no matches`
         : "Recent";
 
   return (
@@ -1110,7 +1120,11 @@ function CommandPaletteOpen() {
         <div className="flex justify-center pt-2 sm:hidden" aria-hidden>
           <div className="h-1 w-10 rounded-full bg-white/15" />
         </div>
-        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]">
+        <div
+          className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]"
+          data-search-engine={searchEngine.id}
+          data-search-engine-label={searchEngine.shortLabel}
+        >
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
             ref={inputRef}
@@ -1374,11 +1388,25 @@ function CommandPaletteOpen() {
             </Command.Group>
           ) : null}
 
-          {hits.length > 0 && !(exactTagQuery && hits.length > 1) ? (
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) ? (
             <Command.Group
               heading={notesHeading}
               className={cn(GROUP_HEADING, tags.length > 0 && "mt-1")}
             >
+              {hits.length === 0 ? (
+                <Command.Item
+                  value="search-index-status"
+                  disabled
+                  className={ITEM_CLASS}
+                >
+                  <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+                  <span>
+                    {searchIndexing
+                      ? "Search is still reading files — try again when Ready."
+                      : "No matches in the current search index."}
+                  </span>
+                </Command.Item>
+              ) : null}
               {hits.map((h) => (
                 <Command.Item
                   key={h.noteId}

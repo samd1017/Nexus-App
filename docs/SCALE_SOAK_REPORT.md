@@ -1,9 +1,11 @@
 # Scale soak report
 
-**SHA under test:** `9ec34eb` (this branch), vs baseline **`907d8ea`**.
+**SHA under test:** this branch (FSA search fill), vs baseline **`907d8ea`**.
 **Verdict: not SCALE READY.**
 
-I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM, including graph-panel switch, reload of a non-default seed + split, and **session-created Soak Created.md surviving remount** via the remount-ticket overlay. Disk Wave E wrote real 100k and 300k `.md` folders and searched them through the **memory** inverted index (2.4–2.6ms). That is not a Tauri/FSA mount and not SQLite BM25. Palette on this VM reports `memory-fts-capped`. Desktop 300–500k remains the north star.
+A real Chrome FSA open of 100k on the Grok Bot Linux box (checkout still on `907d8ea`) proved the ship blocker: metadata Ready ~100k, then **Ctrl+K `hub` returned no hits**. Chrome discarded the tab twice. That is why this PR now fills search from file heads before Ready, always shows the engine id in the palette, and keeps bodies off the store.
+
+I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM. Disk generate + memory FTS through 300k is not a Tauri/FSA mount and not SQLite BM25. **100k FSA search + no tab discard is still required before SCALE READY.**
 
 Sam’s bar: do not PASS 45k UI on the absence of crashes. Common ops target **<1s app-ready**. Cold open may exceed 1s if progress is visible and the UI stays responsive (no ≥1s long task).
 
@@ -188,10 +190,33 @@ localStorage still cannot hold the 45k map. Creates and edits on large in-memory
 
 Remount reapplies both. Title bar says **Test · this browser**. Banner: writes stay in this browser; **Open a folder** for files that survive across machines. Overlay is not a 300k vault and is not cross-browser. Disk vaults already write markdown; they do not use this overlay.
 
+## FSA 100k (Grok Bot Linux box, `907d8ea`)
+
+| Fact | Result |
+|------|--------|
+| Vault | `/workspace/nexus-soak-100k` (100k `.md`) |
+| Open | Real Chrome FSA picker. Title: **On disk / Local folder · live watch** |
+| Metadata | Ready ~100,408 items in ~20–30s; could open a note |
+| Search `hub` | **No hits** — only “Create note: hub” |
+| Palette engine | **Hidden** (heading only rendered when hits > 0) |
+| Memory | Chrome discarded the tab twice; reopen recent restored |
+
+Root cause on current mainline too: `loadDiskVaultScan` marked Ready after a **meta-only** walk. DurableIndex then had title/path tokens only. `hub` lives in file bodies (`Cluster hub`). Palette hid the engine label when there were zero hits.
+
+Fix on this branch: `completeDiskSearchIndex()` reads a 2k file head, tokens it, stores an 180-char snippet, drops the string. Ready waits for that pass. Palette always shows `data-search-engine` + heading. Empty index says “still reading files”.
+
+Prove:
+
+```bash
+npm run test:disk-fts
+npm run soak:disk-fts -- --notes 2000
+npm run soak:fsa -- http://127.0.0.1:8080/ --notes 800
+```
+
 ## What is still not proven
 
-- Tauri/FSA **open** of the generated 100k/300k folder (this VM has no folder grant / no Tauri).
-- SQLite FTS5 BM25 at 100k+ (memory FTS is capped-candidate; palette must not be labeled FTS5).
+- Real Chrome FSA open of 100k **after this fill** (must not discard the tab; `hub`/`cluster` must hit).
+- Tauri open of `~/nexus-soak-300k` with SQLite FTS5 BM25.
 - Overlay surviving a different browser / machine (it will not — by design).
 - Desktop 300–500k as a daily driver.
 

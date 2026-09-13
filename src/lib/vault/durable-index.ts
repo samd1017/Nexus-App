@@ -47,6 +47,11 @@ export interface DurableNoteMeta {
   title?: string;
   /** Optional body snippet for FTS (loaded notes only) */
   bodySnippet?: string;
+  /**
+   * Tokenized on upsert then dropped from the stored meta.
+   * Lets disk fills index a 2k file head without retaining it.
+   */
+  ftsText?: string;
   tags?: string[];
   linkTargets?: string[];
 }
@@ -163,7 +168,8 @@ class MemoryDurableIndex implements DurableIndex {
       }
     }
     const title = meta.title ?? meta.name.replace(/\.md$/i, "");
-    const blob = `${title} ${meta.path} ${meta.bodySnippet ?? ""}`;
+    const extra = meta.ftsText ?? meta.bodySnippet ?? "";
+    const blob = `${title} ${meta.path} ${extra}`;
     const tokens = new Set(tokenize(blob));
     this.noteTokens.set(id, tokens);
     for (const t of tokens) {
@@ -265,10 +271,16 @@ class MemoryDurableIndex implements DurableIndex {
     }
     if (prev?.linkTargets) this.edges -= prev.linkTargets.length;
     if (prev?.tags) this.tagCount -= prev.tags.length;
-    this.notes.set(next.id, next);
+    const stored: DurableNoteMeta = { ...next };
+    delete stored.ftsText;
+    this.notes.set(stored.id, stored);
     if (next.linkTargets) this.edges += next.linkTargets.length;
     if (next.tags) this.tagCount += next.tags.length;
-    this.indexTokens(next.id, next);
+    const shouldReindex =
+      Boolean(next.ftsText) ||
+      !this.noteTokens.has(next.id) ||
+      (next.bodySnippet !== undefined && next.contentHash !== prev?.contentHash);
+    if (shouldReindex) this.indexTokens(next.id, next);
   }
 
   removeNote(id: string): void {
@@ -480,6 +492,10 @@ class MemoryDurableIndex implements DurableIndex {
         matchType: nextType,
       };
     });
+  }
+
+  async searchFtsAsync(query: string, limit = 40): Promise<SearchHit[]> {
+    return this.searchFts(query, limit);
   }
 
   stats() {

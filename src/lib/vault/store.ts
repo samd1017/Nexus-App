@@ -44,6 +44,7 @@ import {
   scanVaultMeta,
   writeNoteFile,
   readNoteFile,
+  readNoteFileHead,
   listFsaTrash,
   fsaNodeId,
 } from "./fs-adapter";
@@ -133,9 +134,15 @@ import {
   upsertLargeVaultOverlay,
 } from "./large-vault-overlay";
 import { describeSearchEngine } from "@/lib/search/search-backend";
+import {
+  DISK_FTS_HEAD_CHARS,
+  fillDurableIndexFromReader,
+  nodesFromFileMap,
+} from "./disk-fts-fill";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
   closeDurableIndex,
+  getDurableIndex,
   openDurableIndexForVault,
   upsertDurableNoteFromNode,
   syncDurableIndexFromNodes,
@@ -402,6 +409,9 @@ function migrateNamingKeys() {
 if (typeof window !== "undefined") migrateNamingKeys();
 let fsaRoot: FileSystemDirectoryHandle | null = null;
 let desktopRoot: string | null = null;
+/** Playwright / soak mock FSA — path → markdown. Not retained on store nodes. */
+let mockDiskBodies: Map<string, string> | null = null;
+let diskSearchReady = false;
 /** In-flight body hydrates — dedupe concurrent ensureNoteBody */
 let bodyHydrateInflight = new Map<string, Promise<string | null>>();
 /** Conflict pair cache — invalidated by structureGeneration / nodes ref */
@@ -594,6 +604,8 @@ function cancelVaultModuleState() {
 	pendingExternal = null;
 	shelvedConflicts.clear();
 	bodyHydrateInflight.clear();
+	mockDiskBodies = null;
+	diskSearchReady = false;
 	_conflictPairsCache = null;
 	_conflictPairsStructGen = -1;
 	_conflictPairsNodesRef = null;
@@ -740,6 +752,105 @@ async function prepareDurableIndex(vaultId: string | null, mode: VaultMode) {
 		});
 	} catch {}
 }
+
+async function readDiskSearchHead(path: string): Promise<string> {
+	if (mockDiskBodies?.has(path)) {
+		return (mockDiskBodies.get(path) ?? "").slice(0, DISK_FTS_HEAD_CHARS);
+	}
+	if (fsaRoot) return readNoteFileHead(fsaRoot, path, DISK_FTS_HEAD_CHARS);
+	if (desktopRoot) {
+		const full = await readDesktopNote(desktopRoot, path);
+		return full.slice(0, DISK_FTS_HEAD_CHARS);
+	}
+	throw new Error("no disk reader");
+}
+
+function canReadDiskSearchHeads(): boolean {
+	return Boolean(mockDiskBodies || fsaRoot || desktopRoot);
+}
+
+/**
+ * After meta-only disk mount: index file heads into DurableIndex, then Ready.
+ * Tree can already be interactive. Search is not Ready until this finishes.
+ */
+async function completeDiskSearchIndex(): Promise<{
+	indexed: number;
+	errors: number;
+	skipped: boolean;
+}> {
+	const gen = vaultGen;
+	const st = useVaultStore.getState();
+	if (!shouldUseDurableIndex(st.mode, st.vaultId)) {
+		return { indexed: 0, errors: 0, skipped: true };
+	}
+	if (!canReadDiskSearchHeads()) {
+		setOpenProgress({
+			phase: "ready",
+			scanned: 0,
+			totalHint: null,
+			message: "Ready · title search only",
+		});
+		return { indexed: 0, errors: 0, skipped: true };
+	}
+	let noteCount = 0;
+	for (const id in st.nodes) if (st.nodes[id]?.kind === "note") noteCount += 1;
+	setOpenProgress({
+		phase: "indexing",
+		scanned: 0,
+		totalHint: noteCount,
+		message: "Workspace ready — indexing search from files (not SQLite)…",
+	});
+	const result = await fillDurableIndexFromReader(st.nodes, readDiskSearchHead, {
+		concurrency: 8,
+		isCancelled: () => gen !== vaultGen,
+		onProgress: (done, total) => {
+			if (gen !== vaultGen) return;
+			setOpenProgress({
+				phase: "indexing",
+				scanned: done,
+				totalHint: total,
+				message: `Workspace ready — indexing search from files (not SQLite)… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+			});
+		},
+	});
+	if (gen !== vaultGen) return { ...result, skipped: true };
+	diskSearchReady = true;
+	if (typeof window !== "undefined") {
+		const prev =
+			(
+				window as unknown as {
+					__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+				}
+			).__NEXUS_SOAK_LAST__ ?? {};
+		(
+			window as unknown as { __NEXUS_SOAK_LAST__?: Record<string, unknown> }
+		).__NEXUS_SOAK_LAST__ = {
+			...prev,
+			searchIndexed: result.indexed,
+			searchIndexErrors: result.errors,
+			searchReady: true,
+		};
+	}
+	setOpenProgress({
+		phase: "ready",
+		scanned: noteCount,
+		totalHint: noteCount,
+		message: "Ready",
+	});
+	window.setTimeout(() => {
+		if (vaultGen !== gen) return;
+		const cur = getOpenProgress();
+		if (cur.phase === "ready") {
+			setOpenProgress({
+				phase: "idle",
+				scanned: 0,
+				totalHint: null,
+				message: "",
+			});
+		}
+	}, 1400);
+	return { ...result, skipped: false };
+}
 /** Single-path disk open: always meta-only for disk vaults (bodies on demand). */
 async function loadDiskVaultScan(mode: VaultMode) {
 	const metaOnly = shouldLazyBodies(mode) || mode === "desktop" || mode === "fsa";
@@ -770,13 +881,7 @@ async function loadDiskVaultScan(mode: VaultMode) {
 						phase: "indexing",
 						scanned: n,
 						totalHint: n,
-						message: "Building indexes…"
-					});
-					setOpenProgress({
-						phase: "ready",
-						scanned: n,
-						totalHint: n,
-						message: ""
+						message: "Metadata ready — indexing search from files…",
 					});
 					return {
 						scan,
@@ -793,13 +898,7 @@ async function loadDiskVaultScan(mode: VaultMode) {
 				phase: "indexing",
 				scanned: n,
 				totalHint: n,
-				message: "Building indexes…"
-			});
-			setOpenProgress({
-				phase: "ready",
-				scanned: n,
-				totalHint: n,
-				message: ""
+				message: "Metadata ready — indexing search from files…",
 			});
 			return {
 				scan,
@@ -813,13 +912,7 @@ async function loadDiskVaultScan(mode: VaultMode) {
 			phase: "indexing",
 			scanned: n,
 			totalHint: n,
-			message: "Building indexes…"
-		});
-		setOpenProgress({
-			phase: "ready",
-			scanned: n,
-			totalHint: n,
-			message: ""
+			message: "Metadata ready — indexing search from files…",
 		});
 		return {
 			scan,
@@ -1122,6 +1215,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 						await prepareDurableIndex(st.vaultId, st.mode);
 						maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+						await completeDiskSearchIndex();
 					}
 					applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -1172,6 +1266,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 							if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 							await prepareDurableIndex(st.vaultId, st.mode);
 							maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+							await completeDiskSearchIndex();
 						}
 						applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -1824,6 +1919,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 					await prepareDurableIndex(st.vaultId, st.mode);
 					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+					await completeDiskSearchIndex();
 				}
 				applyLaunchNotePreference();
 				set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -1892,6 +1988,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 				await prepareDurableIndex(st.vaultId, st.mode);
 				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+				await completeDiskSearchIndex();
 			}
 			applyLaunchNotePreference();
 			set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -1972,6 +2069,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 					await prepareDurableIndex(st.vaultId, st.mode);
 					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+					await completeDiskSearchIndex();
 				}
 				applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -2052,6 +2150,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 				await prepareDurableIndex(st.vaultId, st.mode);
 				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+				await completeDiskSearchIndex();
 			}
 			applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -2153,6 +2252,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 					await prepareDurableIndex(st.vaultId, st.mode);
 					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+					await completeDiskSearchIndex();
 				}
 				applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -2220,6 +2320,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 				await prepareDurableIndex(st.vaultId, st.mode);
 				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+				await completeDiskSearchIndex();
 			}
 			applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -3923,9 +4024,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				rootIds: get().rootIds,
 				signatures: {}
 			}));
-			if (!backend?.readNote) return null;
+			if (!backend?.readNote && !mockDiskBodies?.has(path)) return null;
 			try {
-				const content = await backend.readNote(path);
+				const content = mockDiskBodies?.has(path)
+					? mockDiskBodies.get(path)!
+					: await backend!.readNote(path);
 				if (genAtStart !== vaultGen) return null;
 				const cur = get().nodes[id];
 				if (!cur || cur.kind !== "note") return null;
@@ -4441,6 +4544,9 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			openProgress: getOpenProgress(),
 			overlayCount: overlayCount(s.vaultId),
 			searchEngine: describeSearchEngine(),
+			searchReady: diskSearchReady,
+			ftsNotes: getDurableIndex()?.stats().notes ?? 0,
+			bodiesLoadedOnStore: bodiesLoaded,
 		};
 	};
 	(
@@ -4456,6 +4562,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				findNoteId: (needle: string) => string | null;
 				flushOverlay: () => Promise<void>;
 				clearOverlay: () => Promise<void>;
+				openMockFsa: (files: Record<string, string>) => Promise<void>;
+				search: (query: string, limit?: number) => Promise<unknown>;
 				probe: () => Record<string, unknown> | undefined;
 			};
 		}
@@ -4486,6 +4594,58 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		},
 		flushOverlay: () => flushLargeVaultOverlay(useVaultStore.getState().vaultId),
 		clearOverlay: () => clearLargeVaultOverlay(),
+		openMockFsa: async (files: Record<string, string>) => {
+			cancelVaultModuleState();
+			clearBodyArchive();
+			invalidateVaultTagsCache();
+			resetNavHistory();
+			mockDiskBodies = new Map(Object.entries(files));
+			fsaRoot = null;
+			desktopRoot = null;
+			setDesktopVaultRoot(null);
+			const { nodes: raw, rootIds } = nodesFromFileMap(files);
+			let firstId: string | null = null;
+			for (const id in raw) {
+				if (raw[id]?.kind === "note") {
+					firstId = id;
+					break;
+				}
+			}
+			const vaultId = "fsa-mock-soak";
+			const nodes = prepareMountedNodes(raw, "fsa", [firstId ?? ""], {
+				vaultId,
+				metaOnly: true,
+			});
+			useVaultStore.setState({
+				vaultId,
+				vaultName: "Mock FSA",
+				vaultPath: "mock-fsa",
+				mode: "fsa",
+				nodes,
+				rootIds,
+				activeNoteId: firstId,
+				expandedFolders: smartExpandedFolders(raw, firstId),
+				dirtyNoteIds: [],
+				connecting: false,
+				...GRAPH_SCOPE_DEFAULTS,
+				settings: {
+					...useVaultStore.getState().settings,
+					lastNotePath: firstId ? raw[firstId]?.path ?? null : null,
+				},
+				toast: `Mock FSA open — ${Object.keys(files).length} files`,
+			});
+			await prepareDurableIndex(vaultId, "fsa");
+			maybeSyncDurableIndex(vaultId, "fsa", useVaultStore.getState().nodes);
+			await completeDiskSearchIndex();
+		},
+		search: async (query: string, limit = 16) => {
+			const { searchWithBackendAsync, describeSearchEngine } = await import(
+				"@/lib/search/search-backend"
+			);
+			const s = useVaultStore.getState();
+			const hits = await searchWithBackendAsync(s.nodes, query, limit);
+			return { hits, searchEngine: describeSearchEngine(), notes: Object.keys(s.nodes).length };
+		},
 		findNoteId: (needle: string) => {
 			const nodes = useVaultStore.getState().nodes;
 			const n = String(needle || "").toLowerCase();

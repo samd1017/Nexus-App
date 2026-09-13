@@ -345,6 +345,18 @@ export async function readNoteFile(
   return file.text();
 }
 
+/** First N chars only — FTS fill must not retain full 100k bodies. */
+export async function readNoteFileHead(
+  root: FileSystemDirectoryHandle,
+  path: string,
+  maxChars = 2000,
+): Promise<string> {
+  const file = await readFileAtPath(root, path);
+  const blob = file.size > maxChars * 3 ? file.slice(0, maxChars * 3) : file;
+  const text = await blob.text();
+  return text.length > maxChars ? text.slice(0, maxChars) : text;
+}
+
 /**
  * Wave C — pure path-patch: mutate prev.nodes only for changed paths.
  */

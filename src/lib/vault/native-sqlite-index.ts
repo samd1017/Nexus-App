@@ -240,9 +240,11 @@ export class NativeSqliteDurableIndex implements DurableIndex {
         title: stored.title ?? null,
         // Pass null when no body so Rust preserves FTS body
         bodySnippet:
-          meta.bodySnippet !== undefined
-            ? (stored.bodySnippet ?? null)
-            : null,
+          meta.ftsText !== undefined
+            ? meta.ftsText
+            : meta.bodySnippet !== undefined
+              ? (stored.bodySnippet ?? null)
+              : null,
         tags: meta.tags ?? null,
         linkTargets: meta.linkTargets ?? null,
       },
