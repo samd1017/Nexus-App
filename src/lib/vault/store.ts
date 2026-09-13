@@ -1334,7 +1334,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					...get().settings,
 					lastNotePath: restore?.lastNotePath ?? firstNote?.path ?? null,
 					lastSecondaryNotePath: restore?.lastSecondaryNotePath ?? null,
-					workspaceSplit: Boolean(restore?.workspaceSplit),
+					// Split only if applyScaleRestore finds the secondary note in the remounted seed.
+					workspaceSplit: false,
 					editorMode: getPrefs().defaultEditorMode,
 					graphMode: "panel",
 					rightOpen: true,

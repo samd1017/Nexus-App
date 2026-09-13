@@ -513,6 +513,13 @@ async function runLargeStress(page, errors) {
   );
   result.steps.save = save;
 
+  const postCreate = await probe(page);
+  result.steps.exact45kAfterCreate = postCreate.stress?.notes === 45001;
+  if (postCreate.stress?.notes !== 45001) {
+    result.ok = false;
+    result.blockers.push(`post-create notes ${postCreate.stress?.notes} !== 45001`);
+  }
+
   const seedId = await page.evaluate(() => {
     const soak = window.__NEXUS_SOAK__;
     const ids = soak?.noteIds?.(12) || [];
@@ -582,10 +589,12 @@ async function runLargeStress(page, errors) {
 
   const post = await probe(page);
   result.steps.postProbe = post.stress;
-  result.steps.exact45kAfterCreate = post.stress?.notes === 45001;
-  if (post.stress?.notes !== 45001) {
+  result.steps.exact45kAfterReload = post.stress?.notes === 45000;
+  if (post.stress?.notes !== 45000) {
     result.ok = false;
-    result.blockers.push(`post notes ${post.stress?.notes} !== 45001`);
+    result.blockers.push(
+      `post-reload notes ${post.stress?.notes} !== 45000 (seed remount drops Soak Created)`,
+    );
   }
   if ((post.stress?.bodiesLoaded ?? 99) > 20) {
     result.steps.bodyWarn = `bodiesLoaded=${post.stress.bodiesLoaded}`;
