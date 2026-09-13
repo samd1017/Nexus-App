@@ -48,16 +48,6 @@ async function clearVault(page) {
     try {
       await window.__NEXUS_SOAK__?.clearOverlay?.();
     } catch {}
-    await new Promise((resolve) => {
-      try {
-        const req = indexedDB.deleteDatabase("nexus-large-vault-overlay-v1");
-        req.onsuccess = () => resolve(true);
-        req.onerror = () => resolve(false);
-        req.onblocked = () => resolve(false);
-      } catch {
-        resolve(false);
-      }
-    });
   });
 }
 
@@ -641,6 +631,7 @@ async function runLargeStress(page, errors) {
     4000,
     25,
   );
+  await page.evaluate(() => window.__NEXUS_SOAK__?.flushOverlay?.());
   const preReload = await probe(page);
   const expectPath = preReload.stress?.activeNotePath;
   const expectSplit = Boolean(preReload.stress?.workspaceSplit);

@@ -240,6 +240,8 @@ export function upsertLargeVaultOverlay(
   entry: LargeVaultOverlayEntry,
 ): void {
   remember(vaultId, entry);
+  // Sync localStorage first — IDB can lose the last write on a fast reload.
+  lsWrite(vaultId, overlayEntriesFor(vaultId));
   void enqueuePersist(vaultId);
 }
 
@@ -258,6 +260,7 @@ export function markLargeVaultOverlayDeleted(
     mtime: Date.now(),
     deleted: true,
   });
+  lsWrite(vaultId, overlayEntriesFor(vaultId));
   void enqueuePersist(vaultId);
 }
 
@@ -265,8 +268,8 @@ export async function loadLargeVaultOverlay(
   vaultId: string,
 ): Promise<LargeVaultOverlayEntry[]> {
   if (!mem.has(vaultId)) {
+    const loaded: LargeVaultOverlayEntry[] = [...lsRead(vaultId)];
     const db = await openDb();
-    const loaded: LargeVaultOverlayEntry[] = [];
     if (db) {
       await new Promise<void>((resolve) => {
         try {
@@ -275,10 +278,15 @@ export async function loadLargeVaultOverlay(
             idbKey(vaultId, ""),
             idbKey(vaultId, "\uffff"),
           );
-          const req = tx.objectStore(LARGE_VAULT_OVERLAY_STORE).getAll(range);
+          const req = tx.objectStore(LARGE_VAULT_OVERLAY_STORE).openCursor(range);
           req.onsuccess = () => {
-            const rows = (req.result ?? []) as LargeVaultOverlayEntry[];
-            loaded.push(...rows);
+            const cursor = req.result;
+            if (!cursor) return;
+            const row = cursor.value as LargeVaultOverlayEntry;
+            if (row?.path && !loaded.some((e) => e.path === row.path)) {
+              loaded.push(row);
+            }
+            cursor.continue();
           };
           tx.oncomplete = () => {
             db.close();
@@ -296,7 +304,6 @@ export async function loadLargeVaultOverlay(
         }
       });
     }
-    if (!loaded.length) loaded.push(...lsRead(vaultId));
     const m = vaultMap(vaultId);
     for (const e of loaded) m.set(e.path, e);
   }
