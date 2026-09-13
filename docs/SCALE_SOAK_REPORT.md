@@ -1,6 +1,6 @@
 # Scale soak report
 
-**SHA under test:** `9bf8cd7` (this branch), vs baseline **`907d8ea`**.
+**SHA under test:** `9ec34eb` (this branch), vs baseline **`907d8ea`**.
 **Verdict: not SCALE READY.**
 
 I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM, including graph-panel switch, reload of a non-default seed + split, and **session-created Soak Created.md surviving remount** via the remount-ticket overlay. Disk Wave E wrote real 100k and 300k `.md` folders and searched them through the **memory** inverted index (2.4–2.6ms). That is not a Tauri/FSA mount and not SQLite BM25. Palette on this VM reports `memory-fts-capped`. Desktop 300–500k remains the north star.
@@ -9,13 +9,13 @@ Sam’s bar: do not PASS 45k UI on the absence of crashes. Common ops target **<
 
 ---
 
-## Before / after (907d8ea → `9bf8cd7`)
+## Before / after (907d8ea → `9ec34eb`)
 
 ### Core in-process (`bench-vault-stress`)
 
-Re-run on this SHA after the two-stage open / FTS-cap work.
+Core numbers from `9bf8cd7` (path-patch / reconcile unchanged on `9ec34eb`).
 
-| Size | Op | 907d8ea | `9bf8cd7` | Gate |
+| Size | Op | 907d8ea | this branch | Gate |
 |------|----|---------|-----------|------|
 | 10k | structural rebuild | 33.6ms | **28.9ms** | PASS |
 | 10k | **path-patch 20** | 60.0ms | **0.5ms** | PASS (<100ms) |
@@ -44,29 +44,29 @@ Path-patch 20 is no longer O(n). Production `idOf` is O(1). Scan `nodes` / `sign
 
 ### 45k UI on this SHA (`stress-ui-multisize` PASS)
 
-Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on **`9bf8cd7`**. Raw: `/opt/cursor/artifacts/stress/ui-multisize.json`.
+Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on **`9ec34eb`**. Raw: `/opt/cursor/artifacts/stress/ui-multisize.json`.
 
-| Op | 907d8ea | `cfc74f1` | **`9bf8cd7`** | Budget | Result |
+| Op | 907d8ea | `cfc74f1` | **`9ec34eb`** | Budget | Result |
 |----|---------|-----------|---------------|--------|--------|
-| open (cold, app-ready) | 2593ms | 2760ms (store 1686) | **1917ms** (store **1260ms**, interactive **525ms**) | <30s progressive; store ~1.5s | WARN wall / PASS store |
-| open long-task max | n/a | n/a | **488ms** (rAF 67ms) | <1000ms freeze | PASS |
-| open progress | n/a | banner | walking → indexing → ready | must show | PASS |
+| open (cold, app-ready) | 2593ms | 2760ms (store 1686) | **1794ms** (store **1148ms**, interactive **410ms**, index **377ms**) | <30s progressive; store ~1.5s | WARN wall / PASS store |
+| open long-task max | n/a | n/a | **464ms** (rAF 60ms) | <1000ms freeze | PASS |
+| open progress | n/a | banner | walking → indexing (“Workspace ready — in-memory search (not SQLite)”) → ready | must show | PASS |
 | search engine | n/a | implied FTS5 | **`memory-fts-capped`** | must not say SQLite | PASS |
-| tree | 3842ms | 310ms | **307ms** | <1s | PASS |
-| search | 2501ms | 266ms | **126ms** | <1s | PASS |
-| graph chrome | 3836ms | 75ms | **70ms** | <1s | PASS |
-| new note | 3826ms | 282ms | **262ms** | <1s | PASS |
+| tree | 3842ms | 310ms | **196ms** | <1s | PASS |
+| search | 2501ms | 266ms | **108ms** | <1s | PASS |
+| graph chrome | 3836ms | 75ms | **43ms** | <1s | PASS |
+| new note | 3826ms | 282ms | **222ms** | <1s | PASS |
 | lastNotePath on create | n/a | missed | **Soak Created.md** | persist | PASS |
-| switch (graph closed) | count=0 | max 906 | p95 **175** | <1s | PASS |
+| switch (graph closed) | count=0 | max 906 | p95 **160** | <1s | PASS |
 | **switchGraphPanel** | n/a | later 110 | p95 **129** / max **129** | p95 <700 / max <1s | PASS |
 | editorTyped | false | true | **true** | must be true | PASS |
 | notes after create | toast | 45001 | **45001** | 45001 | PASS |
-| reload | unproven | dropped create | **45001**, `Brief-41936-jrg.md` + split + **Soak Created.md restored** (`overlayApplied=11`) | no silent loss | PASS |
+| reload | unproven | dropped create | **45001**, `Brief-41936-jrg.md` + split + **Soak Created.md restored** (`overlayApplied=10`) | no silent loss | PASS |
 | page errors | none | none | none | none | PASS |
 
-Demo same run: editorTyped **true**, search **102ms**, graph chrome **23ms**, newNote **153ms**, `lastNotePath=Soak Created.md`. Suite **PASS**.
+Demo same run: editorTyped **true**, search **91ms**, graph chrome **26ms**, newNote **146ms**, `lastNotePath=Soak Created.md`, searchEngine **`inverted`**. Suite **PASS**.
 
-Two-stage open: tree/editor mount at store **interactiveMs** (525ms on `9bf8cd7`); FTS fill continues under a banner that says the workspace is ready and that this is **in-memory search, not SQLite**. App-ready wall still includes navigation + waiting for FTS `openMs`. Progress banner is visible; long-task max stayed under the 1s freeze bar.
+Two-stage open: tree/editor mount at store **interactiveMs** (**410ms** on `9ec34eb`); FTS fill continues under a banner that says the workspace is ready and that this is **in-memory search, not SQLite**. App-ready wall still includes navigation + waiting for FTS `openMs`. Progress banner is visible; long-task max stayed under the 1s freeze bar.
 
 Reload remount **keeps** session-created `Soak Created.md`. Persist still never writes the 45k map (quota). Creates/edits go to the browser overlay (IndexedDB + sync localStorage) **and** a clipped copy on the remount ticket (`ScaleRemount.overlay`, last 80). Title bar says **Test · this browser**; the banner has **Open a folder** for a real on-disk vault. Active note + split also restore from the remount ticket.
 
@@ -197,7 +197,7 @@ Remount reapplies both. Title bar says **Test · this browser**. Banner: writes 
 
 **Largest green N on this VM**
 
-- **UI:** browser 45k common-ops (store open 1.26s / interactive 0.53s; wall 1.9s WARN; overlay remount keeps Soak Created; no ≥1s freeze).
+- **UI:** browser 45k common-ops (store open 1.15s / interactive 0.41s; wall 1.79s WARN; overlay remount keeps Soak Created; no ≥1s freeze).
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
 
 Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a Mac Tauri open of the 300k folder stays responsive end-to-end.
