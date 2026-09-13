@@ -173,7 +173,18 @@ import {
   rebuildDurableIndexFromNodesAsync,
 } from "./durable-index";
 import { vaultLinkIndex, resetLinkIndex, rebuildLinkIndex, seedLinkIndex } from "./link-index";
-import { smartExpandedFolders, expandPathToNote, sameExpandedFolders } from "./tree-expand";
+import {
+	smartExpandedFolders as expandFoldersForActive,
+	expandPathToNote,
+	sameExpandedFolders,
+} from "./tree-expand";
+
+function smartExpandedFolders(
+	nodes: Record<string, VaultNode>,
+	activeId: string | null,
+) {
+	return expandFoldersForActive(nodes, activeId, dailyFolder());
+}
 import { invalidateSearchCache } from "@/lib/search/fuse-search";
 import { invalidateIndexedSearch, upsertIndexedNote } from "@/lib/search/indexed-search";
 import {

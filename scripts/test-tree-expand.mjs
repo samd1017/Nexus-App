@@ -21,6 +21,7 @@ const {
   smartExpandedFolders,
   expandPathToNote,
   sameExpandedFolders,
+  DEFAULT_JOURNAL_FOLDER,
 } = await import("../src/lib/vault/tree-expand.ts");
 const { resetVaultIndex, ensureVaultIndex } = await import(
   "../src/lib/vault/indexes.ts"
@@ -31,8 +32,8 @@ function makeVault(noteCount) {
   const nodes = {
     journal: {
       id: "journal",
-      path: "Journal",
-      name: "Journal",
+      path: DEFAULT_JOURNAL_FOLDER,
+      name: DEFAULT_JOURNAL_FOLDER,
       kind: "folder",
       parentId: null,
       mtime: 1,

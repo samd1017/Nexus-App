@@ -63,4 +63,34 @@ rebuildLinkIndex(lazy);
 assert.equal(vaultLinkIndex.ready, false, "all-lazy rebuild does not fake ready");
 assert.equal(vaultLinkIndex.stats().edgeCount, 0);
 
+const { buildEgoGraph } = await import("../../graph/build-graph.ts");
+seedLinkIndex([
+  { sourceId: "hub", targets: ["Topic 1"] },
+  { sourceId: "n1", targets: ["Hub"] },
+]);
+const egoNodes = {
+  hub: {
+    id: "hub",
+    path: "Hub.md",
+    name: "Hub.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+  },
+  n1: {
+    id: "n1",
+    path: "Topic 1.md",
+    name: "Topic 1.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+  },
+};
+const ego = buildEgoGraph(egoNodes, "hub", 2, 80);
+assert.ok(
+  ego.nodes.some((n) => n.id === "n1"),
+  "seeded index must populate ego without hydrating bodies",
+);
+assert.ok(ego.edges.length >= 1);
+
 console.log("link-index.contract: ok");

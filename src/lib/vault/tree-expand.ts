@@ -4,8 +4,10 @@
  */
 
 import type { VaultNode } from "./types";
-import { dailyFolder } from "./templates";
 import { ensureVaultIndex } from "./indexes";
+
+/** Fallback when caller does not pass `dailyFolder()`. Avoids prefs on this path. */
+export const DEFAULT_JOURNAL_FOLDER = "Journal";
 
 /** Expand folder ancestors so the note is visible in the tree. */
 export function expandPathToNote(
@@ -22,8 +24,11 @@ export function expandPathToNote(
   return out;
 }
 
-function journalRootId(nodes: Record<string, VaultNode>): string | null {
-  const path = dailyFolder();
+function journalRootId(
+  nodes: Record<string, VaultNode>,
+  journalPath: string,
+): string | null {
+  const path = journalPath || DEFAULT_JOURNAL_FOLDER;
   const id = ensureVaultIndex(nodes).pathToId.get(path);
   if (!id) return null;
   const n = nodes[id];
@@ -34,9 +39,10 @@ function journalRootId(nodes: Record<string, VaultNode>): string | null {
 export function smartExpandedFolders(
   nodes: Record<string, VaultNode>,
   activeId: string | null,
+  journalPath: string = DEFAULT_JOURNAL_FOLDER,
 ): string[] {
   const out: string[] = [];
-  const journal = journalRootId(nodes);
+  const journal = journalRootId(nodes, journalPath);
   if (journal) out.push(journal);
   let cur = activeId ? nodes[activeId] : null;
   while (cur?.parentId) {
