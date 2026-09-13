@@ -306,7 +306,8 @@ Opening one note after Ready was the last straw. Baseline heap was already huge:
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
 - **Disk file-head FTS (this SHA):** 10k fill 165ms / search 3ms / RSS **142MB** (was 175); slim fill `noteTokenSets=0`, `largestPosting=800`.
 - **Playwright mock FSA 800:** `soak:fsa-open` 20 opens. Not a 100k picker. Do not treat as PASS.
-- **Playwright mock FSA 20k:** `npm run soak:fsa-20k` (in-page). Required Chrome bar. Still not a directory picker.
+- **Playwright mock FSA 20k (`a583711`, `npm run soak:fsa-20k`):** 20 opens, no discard, `cluster` 16 every step, heap **110→89MB** (max 121), LRU max **8**, `ftsNoteTokenSets=0`, `ftsInvTokens=42`, `ftsSlimNotes=20000`, graph **hidden**, tree flatten **170** (cap 2400), chromeFsaLimit **warn**. In-page mock (in-memory heads). **Not a real directory picker. Not 100k PASS.**
+- **CDP real FSA:** `soak:fsa-cdp` skipped here (nothing on :9222). Still required for a real-folder verdict.
 - **Real 100k FSA on `d68b055`:** `cluster` 16, Ready 100,002, **11 notes then discard on 12th search**. Not PASS.
 - **Real 100k FSA on `024c28a`:** opened **7**, discard on note **8**. Not PASS. Worse/flaky.
 - **Real 100k FSA after this SHA:** Chrome must **refuse** at ≥25k unless forced. Forced 100k is still not a daily driver. Not PASS.
