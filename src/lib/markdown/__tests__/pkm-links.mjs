@@ -31,6 +31,7 @@ const rankOut = join(outDir, "rank.mjs");
 const unlinkedOut = join(outDir, "unlinked.mjs");
 const diffOut = join(outDir, "diff.mjs");
 const embedOut = join(outDir, "embed.mjs");
+const askOut = join(outDir, "ask-extract.mjs");
 
 await bundle("src/lib/markdown/wikilinks.ts", wikiOut);
 await bundle("src/lib/markdown/note-slice.ts", sliceOut);
@@ -39,6 +40,7 @@ await bundle("src/lib/search/rank-fusion.ts", rankOut);
 await bundle("src/lib/vault/unlinked-mentions.ts", unlinkedOut);
 await bundle("src/lib/vault/line-diff.ts", diffOut);
 await bundle("src/lib/search/lexical-embed.ts", embedOut);
+await bundle("src/lib/search/ask-extract.ts", askOut);
 
 const { parseWikilinkInner, extractWikilinkTargets } = await import(
   pathToFileURL(wikiOut).href
@@ -57,6 +59,9 @@ const { getUnlinkedMentions, wrapUnlinkedMention } = await import(
 );
 const { diffLines, countDiffHunks } = await import(pathToFileURL(diffOut).href);
 const { cosineSim, embedText } = await import(pathToFileURL(embedOut).href);
+const { sentencesFromMarkdown, scoreAskSentence, isAskCatalogNoise } = await import(
+  pathToFileURL(askOut).href
+);
 
 {
   const a = parseWikilinkInner("Linking Notes#Syntax|alias");
@@ -192,6 +197,34 @@ const { cosineSim, embedText } = await import(pathToFileURL(embedOut).href);
     .filter((t) => t.length >= 2);
   assert.ok(tokens.includes("agents"));
   assert.ok(tokens.includes("share"));
+}
+
+{
+  const tabley = `# Welcome
+| Feature | Try it |
+| --- | --- |
+| Ask | **⌘K** then \`ask: how do agents share this vault\` |
+| Files | Right rail |
+
+Agents can edit the same files you do.
+`;
+  const sents = sentencesFromMarkdown(tabley);
+  assert.ok(sents.some((s) => /same files/i.test(s)));
+  assert.ok(!sents.some((s) => s.includes("|") || /ask:/i.test(s)));
+  const tokens = ["agents", "share", "vault", "files"];
+  const phrase = "how do agents share this vault";
+  const answer = scoreAskSentence(
+    "External tools and agents write the same files.",
+    tokens,
+    phrase,
+  );
+  const catalog = scoreAskSentence(
+    "⌘K then ask: how do agents share this vault",
+    tokens,
+    phrase,
+  );
+  assert.ok(isAskCatalogNoise("Ask | ⌘K then ask: how do agents share this vault"));
+  assert.ok(answer > catalog);
 }
 
 rmSync(outDir, { recursive: true, force: true });
