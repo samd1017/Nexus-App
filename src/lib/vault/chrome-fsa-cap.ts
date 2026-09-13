@@ -41,7 +41,23 @@ export type ChromeFsaLimit = {
   kind: "warn" | "refuse";
 };
 
-export function allowForcedLargeFsa(): boolean {
+/**
+ * Production builds ignore `?forceLargeFsa` and localStorage.
+ * DEV-only crash-reproduction escape hatch — not a supported product path.
+ */
+export const FORCED_LARGE_FSA_CONFIRM =
+  "STOP. Chrome has already discarded this tab after 8–12 notes on a 15GB machine. Opening a 25,000+ folder here is a crash reproduction, not a vault. Chrome is not the 100k path. Nexus Desktop is (same markdown folder, SQLite FTS5). Continue only if you are a developer forcing an OOM on purpose.";
+
+export function isForcedLargeFsaBuildAllowed(): boolean {
+  try {
+    return Boolean(import.meta.env?.DEV);
+  } catch {
+    return false;
+  }
+}
+
+export function forceLargeFsaRequested(): boolean {
+  if (!isForcedLargeFsaBuildAllowed()) return false;
   if (typeof window === "undefined") return false;
   try {
     if (window.localStorage.getItem("nexus-force-large-fsa") === "1") return true;
@@ -49,6 +65,27 @@ export function allowForcedLargeFsa(): boolean {
   } catch {
     return false;
   }
+}
+
+let forcedLargeFsaAsked = false;
+let forcedLargeFsaOk = false;
+
+/** Test hook — do not call from product UI. */
+export function resetForcedLargeFsaConfirmForTests(): void {
+  forcedLargeFsaAsked = false;
+  forcedLargeFsaOk = false;
+}
+
+export function allowForcedLargeFsa(): boolean {
+  if (!forceLargeFsaRequested()) return false;
+  if (forcedLargeFsaAsked) return forcedLargeFsaOk;
+  forcedLargeFsaAsked = true;
+  if (typeof window === "undefined" || typeof window.confirm !== "function") {
+    forcedLargeFsaOk = false;
+    return false;
+  }
+  forcedLargeFsaOk = window.confirm(FORCED_LARGE_FSA_CONFIRM);
+  return forcedLargeFsaOk;
 }
 
 export function countVaultNotes(

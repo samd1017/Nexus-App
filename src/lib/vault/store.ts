@@ -1267,6 +1267,88 @@ function applyScaleRestore(
 	}
 }
 
+/** Desktop open without a folder dialog — Wave E soak + reopen. */
+async function mountDesktopVaultAt(
+	get: StoreGet,
+	set: StoreSet,
+	root: string,
+	opts?: { vaultId?: string; toast?: string },
+): Promise<{
+	notes: number;
+	vaultId: string;
+	vaultPath: string;
+	searchEngine: ReturnType<typeof describeSearchEngine>;
+	searchReady: boolean;
+}> {
+	cancelVaultModuleState();
+	clearBodyArchive();
+	invalidateVaultTagsCache();
+	desktopRoot = root;
+	fsaRoot = null;
+	set({
+		connecting: true,
+		folderAccessLost: false,
+		chromeFsaLimit: null,
+	});
+	const { scan, metaOnly } = await loadDiskVaultScan("desktop");
+	const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
+	const vaultId =
+		opts?.vaultId ||
+		"desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
+	const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+	const recents = pushRecent({
+		id: vaultId,
+		name,
+		path: root,
+		lastOpened: Date.now(),
+		mode: "desktop",
+	});
+	set({
+		vaultId,
+		vaultName: name,
+		vaultPath: root,
+		mode: "desktop",
+		nodes: prepareMountedNodes(scan.nodes, "desktop", [first?.id ?? ""], {
+			metaOnly,
+		}),
+		rootIds: scan.rootIds,
+		activeNoteId: first?.id ?? null,
+		expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
+		dirtyNoteIds: [],
+		recentVaults: recents,
+		connecting: false,
+		chromeFsaLimit: null,
+		toast: opts?.toast ?? `Opened vault: ${name}`,
+		...GRAPH_SCOPE_DEFAULTS,
+		settings: {
+			...get().settings,
+			lastNotePath: first?.path ?? null,
+			editorMode: getPrefs().defaultEditorMode,
+			graphMode: getPrefs().defaultGraphView,
+			rightOpen: getPrefs().defaultGraphView === "panel",
+		},
+	});
+	syncActiveBackend("desktop");
+	{
+		const st = useVaultStore.getState();
+		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
+		await prepareDurableIndex(st.vaultId, st.mode);
+		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+		await completeDiskSearchIndex();
+	}
+	applyLaunchNotePreference();
+	set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+	resetAndSeedNav(get().activeNoteId);
+	const live = useVaultStore.getState();
+	return {
+		notes: countVaultNotes(live.nodes),
+		vaultId: live.vaultId ?? vaultId,
+		vaultPath: live.vaultPath,
+		searchEngine: describeSearchEngine(),
+		searchReady: diskSearchReady,
+	};
+}
+
 function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
   return {
 	ready: false,
@@ -2043,55 +2125,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					set({ connecting: false });
 					return;
 				}
-				cancelVaultModuleState();
-				clearBodyArchive();
-				invalidateVaultTagsCache();
-				desktopRoot = root;
-				fsaRoot = null;
-				const { scan, metaOnly } = await loadDiskVaultScan("desktop");
-				const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
-				const vaultId = "desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
-				const first = Object.values(scan.nodes).find((n) => n.kind === "note");
-				const recents = pushRecent({
-					id: vaultId,
-					name,
-					path: root,
-					lastOpened: Date.now(),
-					mode: "desktop"
-				});
-				set({
-					vaultId,
-					vaultName: name,
-					vaultPath: root,
-					mode: "desktop",
-					nodes: prepareMountedNodes(scan.nodes, "desktop", [first?.id ?? ""], { metaOnly }),
-					rootIds: scan.rootIds,
-					activeNoteId: first?.id ?? null,
-					expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
-					dirtyNoteIds: [],
-					recentVaults: recents,
-					connecting: false,
-					toast: `Opened vault: ${name}`,
-					...GRAPH_SCOPE_DEFAULTS,
-					settings: {
-						...get().settings,
-						lastNotePath: first?.path ?? null,
-						editorMode: getPrefs().defaultEditorMode,
-						graphMode: getPrefs().defaultGraphView,
-						rightOpen: getPrefs().defaultGraphView === "panel"
-					}
-				});
-				syncActiveBackend("desktop");
-				{
-					const st = useVaultStore.getState();
-					if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-					await prepareDurableIndex(st.vaultId, st.mode);
-					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-					await completeDiskSearchIndex();
-				}
-				applyLaunchNotePreference();
-				set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
-				resetAndSeedNav(get().activeNoteId);
+				await mountDesktopVaultAt(get, set, root);
 				return;
 			}
 			const handle = await pickVaultFolder();
@@ -2204,52 +2238,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					return;
 				}
 				const vaultPath = await createNewDesktopVault(parent, vaultName, welcome);
-				desktopRoot = vaultPath;
-				fsaRoot = null;
-				const { scan, metaOnly } = await loadDiskVaultScan("desktop");
 				const nameOut = vaultPath.split(/[/\\]/).filter(Boolean).pop() || vaultName;
-				const vaultId = "desk-" + nameOut.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
-				const first = Object.values(scan.nodes).find((n) => n.kind === "note");
-				const recents = pushRecent({
-					id: vaultId,
-					name: nameOut,
-					path: vaultPath,
-					lastOpened: Date.now(),
-					mode: "desktop"
-				});
-				set({
-					vaultId,
-					vaultName: nameOut,
-					vaultPath,
-					mode: "desktop",
-					nodes: prepareMountedNodes(scan.nodes, "desktop", [first?.id ?? ""], { metaOnly }),
-					rootIds: scan.rootIds,
-					activeNoteId: first?.id ?? null,
-					expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
-					dirtyNoteIds: [],
-					recentVaults: recents,
-					connecting: false,
+				await mountDesktopVaultAt(get, set, vaultPath, {
 					toast: `Created vault: ${nameOut}`,
-					...GRAPH_SCOPE_DEFAULTS,
-					settings: {
-						...get().settings,
-						lastNotePath: first?.path ?? null,
-						editorMode: getPrefs().defaultEditorMode,
-						graphMode: getPrefs().defaultGraphView,
-						rightOpen: getPrefs().defaultGraphView === "panel"
-					}
 				});
-				syncActiveBackend("desktop");
-				{
-					const st = useVaultStore.getState();
-					if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-					await prepareDurableIndex(st.vaultId, st.mode);
-					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-					await completeDiskSearchIndex();
-				}
-				applyLaunchNotePreference();
-		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
-		resetAndSeedNav(get().activeNoteId);
 				return;
 			}
 			const parent = await pickVaultFolder();
@@ -2392,47 +2384,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 			set({ connecting: true });
 			try {
-				cancelVaultModuleState();
-				clearBodyArchive();
-				invalidateVaultTagsCache();
-				desktopRoot = root;
-				fsaRoot = null;
-				const { scan, metaOnly } = await loadDiskVaultScan("desktop");
 				const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
-				const first = Object.values(scan.nodes).find((n) => n.kind === "note");
-				const recents = pushRecent({
-					id,
-					name,
-					path: root,
-					lastOpened: Date.now(),
-					mode: "desktop"
-				});
-				set({
+				await mountDesktopVaultAt(get, set, root, {
 					vaultId: id,
-					vaultName: name,
-					vaultPath: root,
-					mode: "desktop",
-					nodes: prepareMountedNodes(scan.nodes, "desktop", [first?.id ?? ""], { metaOnly }),
-					rootIds: scan.rootIds,
-					activeNoteId: first?.id ?? null,
-					expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
-					dirtyNoteIds: [],
-					recentVaults: recents,
-					connecting: false,
 					toast: `Reopened vault: ${name}`,
-					...GRAPH_SCOPE_DEFAULTS,
 				});
-				syncActiveBackend("desktop");
-				{
-					const st = useVaultStore.getState();
-					if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-					await prepareDurableIndex(st.vaultId, st.mode);
-					maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-					await completeDiskSearchIndex();
-				}
-				applyLaunchNotePreference();
-		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
-		resetAndSeedNav(get().activeNoteId);
 			} catch (e) {
 				set({
 					connecting: false,
@@ -4805,6 +4761,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				openNotes: (limit?: number) => Promise<number>;
 				heapTrend: (opens?: number) => Promise<Record<string, unknown>>;
 				probe: () => Record<string, unknown> | undefined;
+				openDesktop: (absPath: string) => Promise<Record<string, unknown>>;
+				reloadDesktop: () => Promise<Record<string, unknown>>;
+				flushDirty: () => Promise<void>;
+				runWaveE: (
+					absPath: string,
+					opts?: { opens?: number },
+				) => Promise<Record<string, unknown>>;
 			};
 		}
 	).__NEXUS_SOAK__ = {
@@ -5009,7 +4972,123 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			(
 				window as unknown as { __NEXUS_STRESS__?: () => Record<string, unknown> }
 			).__NEXUS_STRESS__?.(),
+		openDesktop: async (absPath: string) => {
+			if (!import.meta.env.DEV) throw new Error("openDesktop is DEV-only");
+			if (!(await confirmDesktopShell())) {
+				throw new Error("openDesktop requires Nexus Desktop (Tauri)");
+			}
+			const root = String(absPath || "").trim();
+			if (!root) throw new Error("openDesktop needs an absolute folder path");
+			return mountDesktopVaultAt(
+				() => useVaultStore.getState(),
+				(partial) => useVaultStore.setState(partial),
+				root,
+				{
+					toast: `Wave E open: ${root.split(/[/\\]/).filter(Boolean).pop() || "vault"}`,
+				},
+			);
+		},
+		reloadDesktop: async () => {
+			if (!import.meta.env.DEV) throw new Error("reloadDesktop is DEV-only");
+			const root = desktopRoot;
+			if (!root) throw new Error("reloadDesktop: no desktop vault open");
+			const vaultId = useVaultStore.getState().vaultId ?? undefined;
+			return mountDesktopVaultAt(
+				() => useVaultStore.getState(),
+				(partial) => useVaultStore.setState(partial),
+				root,
+				{ vaultId, toast: `Wave E reload: ${root}` },
+			);
+		},
+		flushDirty: () => useVaultStore.getState().flushDirty(),
+		runWaveE: async (absPath: string, opts?: { opens?: number }) => {
+			const soak = (
+				window as unknown as {
+					__NEXUS_SOAK__?: {
+						openDesktop: (p: string) => Promise<Record<string, unknown>>;
+						reloadDesktop: () => Promise<Record<string, unknown>>;
+						search: (q: string, n?: number) => Promise<{ hits?: unknown[] }>;
+						openNotes: (n?: number) => Promise<number>;
+						createNote: (parent?: string | null, title?: string) => string | null;
+						findNoteId: (needle: string) => string | null;
+						flushDirty: () => Promise<void>;
+					};
+				}
+			).__NEXUS_SOAK__;
+			if (!soak) throw new Error("soak hook missing");
+			const t0 = performance.now();
+			const open = await soak.openDesktop(absPath);
+			const openMs = Math.round(performance.now() - t0);
+			const hub = await soak.search("retrieval hub", 16);
+			const cluster = await soak.search("cluster", 16);
+			const opened = await soak.openNotes(opts?.opens ?? 20);
+			const createdTitle = `Wave-E-Create-${Date.now()}`;
+			const createdId = soak.createNote(null, createdTitle);
+			await soak.flushDirty();
+			const reload = await soak.reloadDesktop();
+			const foundAfterReload = soak.findNoteId(createdTitle);
+			const engine = describeSearchEngine();
+			const hubHits = hub?.hits?.length ?? 0;
+			const clusterHits = cluster?.hits?.length ?? 0;
+			const pass =
+				engine.id === "sqlite-fts5-bm25" &&
+				hubHits >= 1 &&
+				clusterHits >= 1 &&
+				opened >= (opts?.opens ?? 20) &&
+				Boolean(foundAfterReload);
+			return {
+				pass,
+				scaleReady: false,
+				whyNotScaleReady: pass
+					? "This run is one desktop proof. SCALE READY still needs a human-confirmed 100k+ session that stays responsive (search, 20 opens, create+reload)."
+					: "Wave E desktop proof failed. Do not claim SCALE READY.",
+				open,
+				openMs,
+				searchEngine: engine,
+				hubHits,
+				clusterHits,
+				opened,
+				createdTitle,
+				createdId,
+				foundAfterReload,
+				reload,
+			};
+		},
 	};
+	try {
+		const soakPath =
+			new URLSearchParams(window.location.search).get("soakDesktop") ||
+			window.localStorage.getItem("nexus-soak-desktop");
+		if (soakPath) {
+			window.setTimeout(() => {
+				void (
+					window as unknown as {
+						__NEXUS_SOAK__?: {
+							runWaveE: (p: string) => Promise<unknown>;
+						};
+					}
+				).__NEXUS_SOAK__
+					?.runWaveE(soakPath)
+					.then((r) => {
+						(
+							window as unknown as { __NEXUS_WAVE_E__?: unknown }
+						).__NEXUS_WAVE_E__ = r;
+						console.info("[nexus-wave-e]", r);
+					})
+					.catch((err: unknown) => {
+						console.error("[nexus-wave-e]", err);
+						(
+							window as unknown as { __NEXUS_WAVE_E__?: unknown }
+						).__NEXUS_WAVE_E__ = {
+							error: err instanceof Error ? err.message : String(err),
+							pass: false,
+						};
+					});
+			}, 400);
+		}
+	} catch {
+		/* ignore */
+	}
 }
 
 export function getNoteDisplayTitle(node: VaultNode | null | undefined) {

@@ -758,10 +758,13 @@ pub struct IndexFillResult {
     pub notes: i64,
 }
 
+/// Must match TS `deskNodeId` in `src/lib/vault/tauri-adapter.ts`.
+/// Rel paths are POSIX (`/`); a Windows `\` is treated as `/`.
 fn desk_node_id(path: &str) -> String {
     let mut out = String::from("desk_");
     let mut prev_us = false;
-    for c in path.chars() {
+    for raw in path.chars() {
+        let c = if raw == '\\' { '/' } else { raw };
         let ok = c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-');
         if ok {
             out.push(c);
@@ -772,6 +775,19 @@ fn desk_node_id(path: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod desk_id_tests {
+    use super::desk_node_id;
+
+    #[test]
+    fn matches_ts_contract() {
+        assert_eq!(desk_node_id("Hub/Note-1.md"), "desk_Hub/Note-1.md");
+        assert_eq!(desk_node_id("a\\b.md"), "desk_a/b.md");
+        assert_eq!(desk_node_id("weird  name.md"), "desk_weird_name.md");
+        assert_eq!(desk_node_id("foo@@@bar.md"), "desk_foo_bar.md");
+    }
 }
 
 const FILL_SKIP_DIRS: &[&str] = &[

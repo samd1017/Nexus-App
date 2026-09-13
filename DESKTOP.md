@@ -76,6 +76,57 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
+## Wave E — 100k then 300k (SQLite FTS5 BM25)
+
+Chrome in the browser is **not** this path. Chrome refuses ≥25k. SCALE READY is a **desktop** claim only.
+
+### Build from source (Mac / Windows)
+
+1. Install [Rust](https://rustup.rs/) and Node **22+**.
+2. macOS: `xcode-select --install`. Windows: MSVC toolchain + WebView2.
+3. `npm install && npm run tauri:dev`
+4. Confirm the window is the Tauri shell (not `npm run dev` in Chrome).
+
+### Generate soak vaults
+
+```bash
+npm run soak:wave-e-desktop -- --notes 100000
+npm run soak:wave-e-desktop -- --notes 300000
+```
+
+That writes `~/nexus-soak-100k` / `~/nexus-soak-300k` (or `%USERPROFILE%\…` on Windows) if missing, then prints the prove steps. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
+
+### Prove (must all hold)
+
+1. Open the folder in `tauri:dev` (Welcome → Open folder), **or** DevTools:
+
+   ```js
+   await __NEXUS_SOAK__.runWaveE("/Users/you/nexus-soak-100k")
+   ```
+
+2. Banner: **Ready · SQLite FTS5 BM25**. Palette heading the same — never `Memory FTS (capped)`.
+3. Search `retrieval hub` and `cluster`. Hits > 0.
+4. Open 20 notes. UI stays responsive.
+5. Create a note, reload (or `await __NEXUS_SOAK__.reloadDesktop()`), confirm it is still on disk.
+
+### Drive from the script (Windows WebView2)
+
+```bat
+set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223
+npm run tauri:dev
+npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\nexus-soak-100k
+```
+
+`pass: true` is one automated run. Do **not** claim SCALE READY until a human watches a 100k+ session stay responsive.
+
+### Code path
+
+| Layer | What |
+|--------|------|
+| Rust | `vault_index_fill_from_disk` walks `.md` heads and batch-upserts FTS5. IDs via `desk_node_id`. |
+| JS | `NativeSqliteDurableIndex.fillFromDisk`. No 100k-row JS hydrate. |
+| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` |
+
 Outputs (typical paths):
 
 - macOS: `src-tauri/target/release/bundle/macos/Nexus.app` and `.../dmg/*.dmg`

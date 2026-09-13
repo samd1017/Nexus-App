@@ -24,6 +24,10 @@ import {
   chromeFsaWarnMessage,
   countVaultNotes,
   isChromeFsaCapError,
+  FORCED_LARGE_FSA_CONFIRM,
+  allowForcedLargeFsa,
+  forceLargeFsaRequested,
+  isForcedLargeFsaBuildAllowed,
 } from "./src/lib/vault/chrome-fsa-cap.ts";
 import { shouldPollFsaWatch } from "./src/lib/vault/watcher.ts";
 assert.equal(CHROME_FSA_NOTE_WARN, 15000);
@@ -44,6 +48,13 @@ assert.ok(chromeFsaRefuseDesktop().includes("SQLite FTS5"));
 assert.ok(chromeFsaRefuseChrome().includes("20,000"));
 assert.ok(chromeFsaWarnMessage(18000).includes("Nexus Desktop"));
 assert.ok(chromeFsaWarnMessage(18000).includes("discarded"));
+assert.ok(FORCED_LARGE_FSA_CONFIRM.includes("STOP"));
+assert.ok(FORCED_LARGE_FSA_CONFIRM.includes("discarded"));
+assert.ok(FORCED_LARGE_FSA_CONFIRM.includes("Desktop"));
+assert.ok(FORCED_LARGE_FSA_CONFIRM.includes("SQLite FTS5"));
+assert.equal(forceLargeFsaRequested(), false);
+assert.equal(allowForcedLargeFsa(), false);
+assert.equal(typeof isForcedLargeFsaBuildAllowed(), "boolean");
 assert.equal(shouldPollFsaWatch(3999), true);
 assert.equal(shouldPollFsaWatch(4000), false);
 assert.equal(shouldPollFsaWatch(100002), false);

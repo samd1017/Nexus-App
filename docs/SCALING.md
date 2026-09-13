@@ -82,7 +82,7 @@
 Still pending later (release ops / real hardware):
 
 - **Wave D:** sign + notarize + DMG + auto-update + product docs
-- **Wave E:** real-disk 100k/300k open numbers on Mac; closed beta → 1.0
+- **Wave E:** real-disk 100k/300k open numbers on Mac/Windows (`npm run soak:wave-e-desktop` + `tauri:dev`). Not proven. Not SCALE READY.
 - Optional store-level O(k) apply without shallow-copy map
 
 ---

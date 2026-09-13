@@ -1,7 +1,16 @@
 # Scale soak report
 
-**SHA under test:** this branch (Chrome honesty copy + ≤20k FSA LRU + desktop native FTS fill), vs baseline **`907d8ea`**.
-**Verdict: not SCALE READY.** No desktop 100k+ SQLite proof yet. Do not claim SCALE READY until that exists.
+**SHA under test:** this branch (Wave E desktop runner + DEV-only force-large + blunt refuse), vs baseline **`907d8ea`**.
+**Verdict: not SCALE READY.** Chrome 100k is refused. A real Nexus Desktop (Tauri) open of 100k+ with **SQLite FTS5 BM25** has not been proven. Do not claim SCALE READY until that exists.
+
+### Box GUI verified PASS on tip `09b2534` (Chrome only)
+
+| Folder | Result |
+|--------|--------|
+| 100k real FSA | Refuse card shown. No Ready. No discard. **PASS** for the honesty gate — not an open. |
+| 20k real FSA | Ready, `cluster` hits, 10+ opens, On disk, warn banner at 20k. **PASS** for the Chrome bar. |
+
+That is **not** SCALE READY and **not** a 100k desktop proof. Later tips (`2f202d3`+) add copy/LRU/native fill and this Wave E runner; re-verify Chrome refuse + 20k on those tips if the box is available.
 
 ### Supported N (honest)
 
@@ -11,7 +20,7 @@
 | In-browser 45k test vault | 45,000 (overlay) | QA only. Title bar: `Test · this browser`. Not files. |
 | **Nexus Desktop (Tauri)** | **100k then 300k** (north star 300–500k) | SQLite FTS5 BM25. Palette must say **SQLite FTS5 BM25**. Same folder as Obsidian. |
 
-**Refuse (Chrome ≥25k):** Welcome card `data-chrome-fsa-refused` — Chrome will kill the tab; Desktop is required; Chrome max is ~20k, not a lifetime Obsidian archive. Saved handle is cleared. Walk aborts so we do not allocate 100k nodes first. Override only `?forceLargeFsa` / `nexus-force-large-fsa=1` (soak).
+**Refuse (Chrome ≥25k):** Welcome card `data-chrome-fsa-refused` — Chrome will kill the tab; Desktop is required; Chrome max is ~20k, not a lifetime Obsidian archive. Saved handle is cleared. Walk aborts so we do not allocate 100k nodes first. `?forceLargeFsa` / `nexus-force-large-fsa=1` works **only in DEV** and pops a scary `window.confirm`. Production ignores both.
 
 **Desktop north star:** `~/nexus-soak-100k` then `~/nexus-soak-300k` via `npm run tauri:dev`. Native `vault_index_fill_from_disk` walks files in Rust (no 100k JS IPC). Not proven on this Linux VM.
 
@@ -24,7 +33,7 @@ Real Chrome FSA of a 100k folder:
 
 **`hub` → 0 hits on the unofficial one-off folder is a FALSE ALARM.** That vault was written by `/workspace/gen-soak-vault.mjs` (not in this repo) with **zero `hub` tokens**. Official generators emit Hub + `Cluster hub`. Probe unofficial folders with **`cluster` only**.
 
-This SHA does not claim 100k Chrome works. It (A) logs `jsHeapUsedMb` after every note open (`[nexus-heap]` / `__NEXUS_STRESS__().heapLog`), (B) **refuses Open folder at ≥25k** in Chrome (“use desktop/Tauri”), (C) caps the file-tree flatten at 2400 and accordion-expands at ≥400 notes, and **stops FSA signature poll / FileSystemObserver rescans above 4k** (the likely note-8 discard: every open re-walked the vault). Override only with `?forceLargeFsa` or `localStorage nexus-force-large-fsa=1`.
+This SHA does not claim 100k Chrome works. It (A) logs `jsHeapUsedMb` after every note open (`[nexus-heap]` / `__NEXUS_STRESS__().heapLog`), (B) **refuses Open folder at ≥25k** in Chrome (“use desktop/Tauri”), (C) caps the file-tree flatten at 2400 and accordion-expands at ≥400 notes, and **stops FSA signature poll / FileSystemObserver rescans above 4k** (the likely note-8 discard: every open re-walked the vault). DEV-only override: `?forceLargeFsa` or `localStorage nexus-force-large-fsa=1` plus a scary confirm. Production cannot force a 25k+ Chrome open.
 
 **Do not PASS 100k FSA on mock-800 or mock-20k.** Mock-20k (`npm run soak:fsa-20k`) is the in-browser FSA-path stand-in. Real folder: `scripts/stress-fsa-cdp.mjs` after attaching Chrome on port 9222.
 
@@ -162,10 +171,23 @@ npm run gen:soak-vault -- --notes 300000 --out $env:USERPROFILE\nexus-soak-300k
 
 Confirm `SOAK-MANIFEST.json` in the folder: `notes` equals 100000 / 300000.
 
-**Open**
+**Open (or automate)**
+
+```bash
+# Generates ~/nexus-soak-100k if needed and prints Mac/Windows steps.
+# Exit 2 unless a Tauri CDP session actually ran — this is not SCALE READY.
+npm run soak:wave-e-desktop -- --notes 100000
+npm run soak:wave-e-desktop -- --notes 300000
+
+# Windows: drive the live Tauri webview
+set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223
+npm run tauri:dev
+npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\nexus-soak-100k
+```
 
 1. `npm run tauri:dev` (signed install is also fine).
 2. Welcome → **Open folder** → pick `~/nexus-soak-100k` first, then `~/nexus-soak-300k` (Windows: `%USERPROFILE%\nexus-soak-300k`).
+   Or DevTools (DEV build): `await __NEXUS_SOAK__.runWaveE("/Users/you/nexus-soak-100k")`.
 3. Title bar must say **On disk** / **Desktop vault**, never `Test · this browser`.
 4. Command palette (`⌘K` / `Ctrl+K`) → type `retrieval hub`. Group heading must include **SQLite FTS5 BM25**. If it says `Memory FTS (capped)`, the native index failed — stop and file that, do not pass Wave E.
 
@@ -195,15 +217,18 @@ Closed on this SHA (needs a Mac/Windows Tauri run to prove):
 | `maybeSyncDurableIndex` reconciled every meta row over IPC | Skipped when `getDurableIndex().kind === "sqlite"` |
 | Desktop watch safety poll re-walked 100k signatures | No signature poll above 10k when native OS notify is live |
 | Progress banner said “not SQLite” on desktop | “indexing SQLite FTS5 from disk” → **Ready · SQLite FTS5 BM25** |
+| No desktop soak hook / Mac-Windows runner | `__NEXUS_SOAK__.openDesktop` / `runWaveE` (DEV+Tauri) + `npm run soak:wave-e-desktop` |
+| `desk_node_id` vs TS `deskNodeId` (Windows `\\`) | Shared `desk-node-id.ts`; Rust normalizes `\\` → `/`; `npm run test:desk-node-id` |
+| `?forceLargeFsa` in production | DEV-only + scary confirm. Production ignores query and localStorage |
 
 Still unproven / remaining:
 
 | Gap | Owner |
 |-----|-------|
-| Real Tauri open of 100k then 300k with `describeSearchEngine().id === sqlite-fts5-bm25` | Human / desktop agent |
-| `desk_node_id` must match TS `deskNodeId` for soak filenames (alphanumeric + `-` / `_`) | Verify on first 100k desktop search |
+| Real Tauri open of 100k then 300k with `describeSearchEngine().id === sqlite-fts5-bm25` | Human / desktop agent on Mac or Windows |
+| `cargo check` / Rust fill compile on this Linux VM | Missing crates (`bitflags` / notify). Compile on the desktop machine. |
 | First-open fill wall at 300k (Rust walk + FTS insert) | Measure; target progressive &lt;8s |
-| Windows path separators vs POSIX rel paths | Confirm `vault_meta_walk` + fill |
+| Windows path separators vs POSIX rel paths | Contract test exists; confirm on a real NTFS vault |
 | Signed / notarized install (Wave D) | Release ops |
 
 ---
@@ -287,7 +312,7 @@ npm run soak:fsa-cdp --   # attach Chrome :9222 after a human picks the folder
 | &lt;15k | Open normally. Watch poll only below 4k. |
 | 15k–24,999 | Open + amber banner. Prefer desktop. |
 | ≥25k | **Refuse.** Clear the saved handle. Welcome card `data-chrome-fsa-refused`. No silent OOM. |
-| Force | `?forceLargeFsa` or `localStorage.nexus-force-large-fsa=1` for soak only. |
+| Force | DEV only: `?forceLargeFsa` or `localStorage.nexus-force-large-fsa=1` plus a scary confirm. Production ignores both. |
 
 Playwright cannot drive `showDirectoryPicker` for `/workspace/nexus-soak-100k`. Attach a real Chrome:
 

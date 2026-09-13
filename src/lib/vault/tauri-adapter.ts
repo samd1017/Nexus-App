@@ -39,9 +39,8 @@ const SKIP_DIRS = new Set([
   "target",
 ]);
 
-export function deskNodeId(path: string): string {
-  return "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_");
-}
+import { deskNodeId } from "./desk-node-id";
+export { deskNodeId };
 
 function nodeId(path: string): string {
   return deskNodeId(path);
