@@ -28,6 +28,12 @@ export const DURABLE_INDEX_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION;
 export const DURABLE_INDEX_SQL = CONTRACT_SQL;
 /** Memory FTS only — not SQLite BM25. Never score more than this many inverted-index hits. */
 export const MEMORY_FTS_CANDIDATE_CAP = 800;
+/**
+ * Max note ids stored per token. Ubiquitous soak words (`cluster`, `hub`,
+ * `retrieval`) used to keep a 100k-id Set each. Search intersects uncapped
+ * (rare) lists first so a 16-file token still hits.
+ */
+export const MEMORY_FTS_POSTING_CAP = 800;
 /** Skip O(n) title/path fallback above this vault size. */
 export const MEMORY_FTS_FULL_SCAN_MAX_NOTES = 10_000;
 export {
@@ -52,6 +58,11 @@ export interface DurableNoteMeta {
    * Lets disk fills index a 2k file head without retaining it.
    */
   ftsText?: string;
+  /**
+   * Disk file-head fill: token into the inverted index without keeping a
+   * snippet, tag list, or per-note token Set (the 100k FSA retainers).
+   */
+  slim?: boolean;
   tags?: string[];
   linkTargets?: string[];
 }
@@ -90,7 +101,13 @@ export interface DurableIndex {
     schemaVersion: number;
     edges: number;
     tags: number;
+    invTokens?: number;
+    largestPosting?: number;
+    noteTokenSets?: number;
+    slimNotes?: number;
   };
+  /** Drop title-only postings before a file-head fill so we do not hold two indexes. */
+  beginSlimDiskFill?(): void;
 }
 
 function simpleHash(s: string): string {
@@ -133,6 +150,8 @@ class MemoryDurableIndex implements DurableIndex {
   /** inverted: token → note ids (title/path/body snippet) */
   private inv = new Map<string, Set<string>>();
   private noteTokens = new Map<string, Set<string>>();
+  /** Notes indexed by disk fill — no per-note token Set to walk on remove. */
+  private slimNotes = new Set<string>();
 
   open(vaultId: string): void {
     this.vaultId = vaultId;
@@ -155,9 +174,16 @@ class MemoryDurableIndex implements DurableIndex {
     this.tagCount = 0;
     this.inv.clear();
     this.noteTokens.clear();
+    this.slimNotes.clear();
   }
 
-  private indexTokens(id: string, meta: DurableNoteMeta) {
+  beginSlimDiskFill(): void {
+    this.inv.clear();
+    this.noteTokens.clear();
+    this.slimNotes.clear();
+  }
+
+  private indexTokens(id: string, meta: DurableNoteMeta, opts?: { slim?: boolean }) {
     const prev = this.noteTokens.get(id);
     if (prev) {
       for (const t of prev) {
@@ -166,18 +192,25 @@ class MemoryDurableIndex implements DurableIndex {
         set.delete(id);
         if (set.size === 0) this.inv.delete(t);
       }
+      this.noteTokens.delete(id);
     }
     const title = meta.title ?? meta.name.replace(/\.md$/i, "");
     const extra = meta.ftsText ?? meta.bodySnippet ?? "";
     const blob = `${title} ${meta.path} ${extra}`;
-    const tokens = new Set(tokenize(blob));
-    this.noteTokens.set(id, tokens);
+    const tokens = tokenize(blob);
+    if (!opts?.slim) {
+      this.noteTokens.set(id, new Set(tokens));
+      this.slimNotes.delete(id);
+    } else {
+      this.slimNotes.add(id);
+    }
     for (const t of tokens) {
       let set = this.inv.get(t);
       if (!set) {
         set = new Set();
         this.inv.set(t, set);
       }
+      if (set.size >= MEMORY_FTS_POSTING_CAP) continue;
       set.add(id);
     }
   }
@@ -260,7 +293,7 @@ class MemoryDurableIndex implements DurableIndex {
     const prev = this.notes.get(meta.id);
     // Wave B: never blank FTS when content not loaded
     let next = meta;
-    if (meta.bodySnippet === undefined && prev?.bodySnippet !== undefined) {
+    if (meta.bodySnippet === undefined && prev?.bodySnippet !== undefined && !meta.slim) {
       next = {
         ...meta,
         bodySnippet: prev.bodySnippet,
@@ -273,14 +306,33 @@ class MemoryDurableIndex implements DurableIndex {
     if (prev?.tags) this.tagCount -= prev.tags.length;
     const stored: DurableNoteMeta = { ...next };
     delete stored.ftsText;
+    delete stored.slim;
+    if (next.slim) {
+      delete stored.bodySnippet;
+      delete stored.tags;
+      delete stored.linkTargets;
+      delete stored.contentHash;
+    }
     this.notes.set(stored.id, stored);
-    if (next.linkTargets) this.edges += next.linkTargets.length;
-    if (next.tags) this.tagCount += next.tags.length;
+    if (!next.slim) {
+      if (next.linkTargets) this.edges += next.linkTargets.length;
+      if (next.tags) this.tagCount += next.tags.length;
+    }
+    // Title-only reconcile after a disk fill — keep file-head tokens.
+    if (
+      this.slimNotes.has(next.id) &&
+      !next.ftsText &&
+      next.bodySnippet === undefined &&
+      !next.slim
+    ) {
+      return;
+    }
     const shouldReindex =
       Boolean(next.ftsText) ||
+      Boolean(next.slim) ||
       !this.noteTokens.has(next.id) ||
       (next.bodySnippet !== undefined && next.contentHash !== prev?.contentHash);
-    if (shouldReindex) this.indexTokens(next.id, next);
+    if (shouldReindex) this.indexTokens(next.id, next, { slim: Boolean(next.slim) });
   }
 
   removeNote(id: string): void {
@@ -298,6 +350,7 @@ class MemoryDurableIndex implements DurableIndex {
       }
     }
     this.noteTokens.delete(id);
+    this.slimNotes.delete(id);
     this.notes.delete(id);
   }
 
@@ -403,11 +456,15 @@ class MemoryDurableIndex implements DurableIndex {
     const lists = tokens
       .map((t) => this.inv.get(t))
       .filter((s): s is Set<string> => Boolean(s));
+    // Truncated postings are stopword-like. Prefer rare (complete) lists so
+    // `retrieval hub` still finds the 16 hub files when both words are ubiquitous.
+    const uncapped = lists.filter((s) => s.size < MEMORY_FTS_POSTING_CAP);
+    const use = uncapped.length > 0 ? uncapped : lists;
     let candidateIds: string[] = [];
-    if (tokens.length && lists.length === tokens.length) {
-      lists.sort((a, b) => a.size - b.size);
-      const smallest = lists[0]!;
-      const rest = lists.slice(1);
+    if (tokens.length && lists.length === tokens.length && use.length) {
+      use.sort((a, b) => a.size - b.size);
+      const smallest = use[0]!;
+      const rest = use.slice(1);
       for (const id of smallest) {
         let ok = true;
         for (const set of rest) {
@@ -499,17 +556,29 @@ class MemoryDurableIndex implements DurableIndex {
   }
 
   stats() {
+    let largestPosting = 0;
+    for (const set of this.inv.values()) {
+      if (set.size > largestPosting) largestPosting = set.size;
+    }
     return {
       notes: this.notes.size,
       folders: this.folders,
       schemaVersion: DURABLE_INDEX_SCHEMA_VERSION,
       edges: this.edges,
       tags: this.tagCount,
+      invTokens: this.inv.size,
+      largestPosting,
+      noteTokenSets: this.noteTokens.size,
+      slimNotes: this.slimNotes.size,
     };
   }
 }
 
 let active: DurableIndex | null = null;
+
+export function beginSlimDiskFill(): void {
+  active?.beginSlimDiskFill?.();
+}
 
 export function getDurableIndex(): DurableIndex | null {
   return active;

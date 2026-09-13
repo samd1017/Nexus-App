@@ -17,6 +17,10 @@ import {
   expandPathsToNoteTargets,
   type NotePathOp,
 } from "./path-patch";
+import {
+  shouldRetainWatchScan,
+  watchPollIntervalMs,
+} from "./watcher";
 
 const ROOT_KEY = "nexus-desktop-vault-root";
 const RECENTS_KEY = "nexus-desktop-vault-recents";
@@ -636,6 +640,7 @@ export function startDesktopWatch(
   const metaOnly = !!opts?.metaOnly;
   let lastSig = "";
   let lastScan: VaultScan | null = null;
+  let sigCount = 0;
   let suppressUntil = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   let busy = false;
@@ -650,9 +655,9 @@ export function startDesktopWatch(
     try {
       const sigs = await scanDesktopSignatures(root);
       const hash = sigMapHash(sigs);
-      if (hash === lastSig && lastScan) return;
+      if (hash === lastSig) return;
       lastSig = hash;
-      if (lastScan) {
+      if (lastScan && shouldRetainWatchScan(Object.keys(sigs).length)) {
         const { scan, changedPaths } = await incrementalScanDesktopVault(root, lastScan, {
           metaOnly,
         });
@@ -662,7 +667,9 @@ export function startDesktopWatch(
         const scan = metaOnly
           ? await scanDesktopVaultMeta(root)
           : await scanDesktopVault(root);
-        lastScan = scan;
+        lastScan = shouldRetainWatchScan(Object.keys(scan.signatures).length)
+          ? scan
+          : null;
         onChange(scan);
       }
     } catch (err) {
@@ -681,9 +688,14 @@ export function startDesktopWatch(
     try {
       const sigs = await scanDesktopSignatures(root);
       lastSig = sigMapHash(sigs);
-      lastScan = metaOnly
-        ? await scanDesktopVaultMeta(root)
-        : await scanDesktopVault(root);
+      sigCount = Object.keys(sigs).length;
+      if (shouldRetainWatchScan(sigCount)) {
+        lastScan = metaOnly
+          ? await scanDesktopVaultMeta(root)
+          : await scanDesktopVault(root);
+      } else {
+        lastScan = null;
+      }
     } catch {
       lastSig = "";
       lastScan = null;
@@ -752,8 +764,8 @@ export function startDesktopWatch(
       usingNative = false;
     }
 
-    // Fallback: classic poll
-    startPoll(intervalMs);
+    // Fallback: classic poll (slow on 100k so we do not walk signatures every 900ms)
+    startPoll(watchPollIntervalMs(sigCount, intervalMs));
   })();
 
   return {

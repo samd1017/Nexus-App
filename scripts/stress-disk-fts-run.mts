@@ -54,6 +54,7 @@ const report = {
   errors: fill.errors,
   rssMb: rss,
   searchEngine: "memory-fts-capped",
+  fts: idx.stats(),
   out: root,
 };
 console.log(JSON.stringify(report, null, 2));

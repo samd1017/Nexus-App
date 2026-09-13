@@ -1,7 +1,8 @@
 /**
  * Live vault watching — Hermes-ready.
- * Prefers FileSystemObserver when available; falls back to ~800ms signature poll.
- * Uses incremental rescans to avoid full vault re-reads.
+ * Prefers FileSystemObserver when available; falls back to signature poll.
+ * Large FSA vaults keep signatures only — a second 100k node map was a
+ * Chrome-discard retainer.
  */
 
 import {
@@ -13,6 +14,23 @@ import {
   type VaultScan,
 } from "./fs-adapter";
 import { shouldLazyBodies } from "./scale-flags";
+
+/** Keep a full lastScan copy only under this many signature entries. */
+export const WATCH_RETAIN_SCAN_MAX = 10_000;
+
+export function watchPollIntervalMs(sigCount: number, requested = 900): number {
+  if (sigCount > 50_000) return Math.max(requested, 60_000);
+  if (sigCount > 10_000) return Math.max(requested, 8_000);
+  return requested;
+}
+
+export function shouldRetainWatchScan(sigCount: number): boolean {
+  return sigCount <= WATCH_RETAIN_SCAN_MAX;
+}
+
+function sigCountOf(sigs: Record<string, string>): number {
+  return Object.keys(sigs).length;
+}
 
 type WatchCallback = (event: {
   type: "change" | "create" | "delete";
@@ -57,14 +75,23 @@ export class VaultWatcher {
     this.cb = cb;
     this.dir = dir;
     try {
-      // Wave A: large-vault mode baselines on meta only (no body flood)
-      const full = shouldLazyBodies("fsa")
-        ? await scanVaultMeta(dir)
-        : await scanVault(dir);
-      this.lastScan = full;
-      this.lastSigs = full.signatures;
+      this.lastSigs = await scanSignatures(dir);
     } catch {
       this.lastSigs = {};
+    }
+    const n = sigCountOf(this.lastSigs);
+    if (shouldRetainWatchScan(n)) {
+      try {
+        const full = shouldLazyBodies("fsa")
+          ? await scanVaultMeta(dir)
+          : await scanVault(dir);
+        this.lastScan = full;
+        this.lastSigs = full.signatures;
+      } catch {
+        this.lastScan = null;
+      }
+    } else {
+      // 100k FSA: store already holds the tree. Do not clone it here.
       this.lastScan = null;
     }
 
@@ -92,10 +119,9 @@ export class VaultWatcher {
       }
     }
 
-    // Always keep a light poll as safety net (Hermes reliability)
     this.timer = setInterval(() => {
       void this.pollFsa(false);
-    }, intervalMs);
+    }, watchPollIntervalMs(sigCountOf(this.lastSigs), intervalMs));
   }
 
   private async pollFsa(force: boolean) {
@@ -107,6 +133,21 @@ export class VaultWatcher {
       if (!force && !signaturesChanged(this.lastSigs, next)) return;
 
       const metaOnly = shouldLazyBodies("fsa");
+      const n = sigCountOf(next);
+      if (!shouldRetainWatchScan(n)) {
+        const scan = metaOnly
+          ? await scanVaultMeta(this.dir)
+          : await scanVault(this.dir);
+        this.lastSigs = scan.signatures;
+        this.lastScan = null;
+        this.cb?.({
+          type: "change",
+          path: "*",
+          scan,
+        });
+        return;
+      }
+
       if (this.lastScan) {
         const { scan, changedPaths } = await incrementalRescan(
           this.dir,
@@ -141,7 +182,6 @@ export class VaultWatcher {
     this.suppressUntil = Date.now() + 1500;
     try {
       this.lastSigs = await scanSignatures(dir);
-      // keep lastScan nodes in sync lazily on next poll
     } catch {
       /* ignore */
     }
@@ -151,6 +191,8 @@ export class VaultWatcher {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.dir = null;
+    this.lastScan = null;
+    this.lastSigs = {};
     try {
       this.observer?.disconnect();
     } catch {

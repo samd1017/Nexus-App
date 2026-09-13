@@ -3,11 +3,13 @@
  *
  * Ready used to mean “tree scanned”. Search then ran on title/path tokens only,
  * so body terms like “hub” missed. This module reads a short file head, tokens
- * it into DurableIndex, then drops the string. Store nodes stay meta-only.
+ * it into DurableIndex (posting-capped, no per-note snippet/token Set), then
+ * drops the string. Store nodes stay meta-only.
  */
 
 import type { VaultNode } from "./types";
 import {
+  beginSlimDiskFill,
   getDurableIndex,
   noteMetaFromNode,
   type DurableNoteMeta,
@@ -16,8 +18,6 @@ import { yieldToUi } from "./yield-ui";
 
 /** Read this many chars from each file for tokens. Do not keep on the node. */
 export const DISK_FTS_HEAD_CHARS = 2000;
-/** Stored snippet for hit preview — not the full head. */
-export const DISK_FTS_SNIPPET_CHARS = 180;
 
 export type DiskHeadReader = (path: string) => Promise<string>;
 
@@ -25,11 +25,10 @@ export function upsertDiskFtsHead(node: VaultNode, head: string): void {
   const idx = getDurableIndex();
   if (!idx?.ready || node.kind !== "note") return;
   const text = head.slice(0, DISK_FTS_HEAD_CHARS);
-  const tmp: VaultNode = { ...node, content: text };
   const meta: DurableNoteMeta = {
-    ...noteMetaFromNode(tmp),
-    bodySnippet: text.slice(0, DISK_FTS_SNIPPET_CHARS),
+    ...noteMetaFromNode(node),
     ftsText: text,
+    slim: true,
   };
   idx.upsertNote(meta);
 }
@@ -49,6 +48,7 @@ export async function fillDurableIndexFromReader(
   }
   const total = ids.length;
   const concurrency = Math.max(1, Math.min(opts?.concurrency ?? 8, 16));
+  beginSlimDiskFill();
   let indexed = 0;
   let errors = 0;
   let cursor = 0;

@@ -40,6 +40,7 @@ const files = JSON.parse(gen.stdout.slice(gen.stdout.indexOf("{")));
 const browser = await chromium.launch({
   headless: true,
   executablePath: process.env.CHROME_PATH || "/opt/google/chrome/chrome",
+  args: ["--enable-precise-memory-info"],
 });
 const page = await browser.newPage();
 const t0 = Date.now();
@@ -62,6 +63,12 @@ const search = await page.evaluate(async () => {
   return { hub, cluster, probe };
 });
 const searchMs = Date.now() - searchT0;
+const opened = await page.evaluate(async () => {
+  const n = await window.__NEXUS_SOAK__.openNotes(20);
+  const cluster = await window.__NEXUS_SOAK__.search("cluster", 16);
+  const probe = window.__NEXUS_STRESS__();
+  return { n, clusterHits: cluster?.hits?.length ?? 0, probe };
+});
 await browser.close();
 
 const report = {
@@ -69,7 +76,12 @@ const report = {
     (search.hub?.hits?.length ?? 0) > 0 &&
     (search.cluster?.hits?.length ?? 0) > 0 &&
     search.probe?.searchEngine?.id === "memory-fts-capped" &&
-    search.probe?.searchReady === true,
+    search.probe?.searchReady === true &&
+    opened.n >= 20 &&
+    opened.clusterHits > 0 &&
+    (opened.probe?.bodiesLoaded ?? 99) <= 120 &&
+    (opened.probe?.ftsLargestPosting ?? 0) <= 800 &&
+    (opened.probe?.ftsNoteTokenSets ?? 1) === 0,
   notes: NOTES,
   files: Object.keys(files).length,
   openMs,
@@ -80,6 +92,15 @@ const report = {
   searchReady: search.probe?.searchReady ?? false,
   ftsNotes: search.probe?.ftsNotes ?? 0,
   bodiesLoaded: search.probe?.bodiesLoaded ?? 0,
+  openedNotes: opened.n,
+  openedClusterHits: opened.clusterHits,
+  openedBodiesLoaded: opened.probe?.bodiesLoaded ?? 0,
+  ftsLargestPosting: opened.probe?.ftsLargestPosting ?? null,
+  ftsNoteTokenSets: opened.probe?.ftsNoteTokenSets ?? null,
+  ftsSlimNotes: opened.probe?.ftsSlimNotes ?? null,
+  jsHeapUsedMb: opened.probe?.jsHeapUsedMb ?? null,
+  jsHeapLimitMb: opened.probe?.jsHeapLimitMb ?? null,
+  discarded: false,
   mode: search.probe?.mode ?? null,
   totalMs: Date.now() - t0,
 };

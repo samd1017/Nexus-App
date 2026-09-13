@@ -1,7 +1,11 @@
 /**
  * Write a deterministic soak vault to disk (plain Markdown).
  *
+ * Probe words: `hub` and `cluster` (every body has "Cluster hub"; Hub titles
+ * every 200 notes). `retrieval` is a rotating topic, not every file.
+ *
  *   node scripts/generate-synthetic-vault.mjs --notes 10000 --out /tmp/nexus-soak-10k
+ *   node scripts/gen-soak-vault.mjs --notes 100000 --out ~/nexus-soak-100k
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

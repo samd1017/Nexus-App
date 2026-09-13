@@ -4,6 +4,7 @@ import {
   openMemoryDurableIndex,
   getDurableIndex,
   closeDurableIndex,
+  MEMORY_FTS_POSTING_CAP,
 } from "../src/lib/vault/durable-index.ts";
 import {
   fillDurableIndexFromReader,
@@ -55,5 +56,45 @@ console.log(
     indexed: fill.indexed,
     clusterHits: clusterAfter.length,
     hubHits: hubAfter.length,
+  }),
+);
+
+// Posting cap: ubiquitous tokens must not retain a Set of every note id.
+closeDurableIndex();
+const many = 1200;
+const capFiles: Record<string, string> = {};
+for (let i = 0; i < many; i++) {
+  const extra = i < 16 ? " uniquetokenhub " : "";
+  capFiles[`n/Note-${i}.md`] = `# Note ${i}\n\ncluster word${extra}\n`;
+}
+const capNodes = nodesFromFileMap(capFiles).nodes;
+openMemoryDurableIndex("disk-fts-cap");
+const capIdx = getDurableIndex();
+if (!capIdx) throw new Error("no cap index");
+capIdx.reconcileFromNodes(capNodes);
+const capFill = await fillDurableIndexFromReader(
+  capNodes,
+  async (p) => capFiles[p]!.slice(0, DISK_FTS_HEAD_CHARS),
+  { concurrency: 4 },
+);
+const capStats = capIdx.stats();
+const clusterCap = capIdx.searchFts("cluster", 16);
+const uniqueHub = capIdx.searchFts("uniquetokenhub", 16);
+assert.ok(capFill.indexed >= many, "capped fill indexed all");
+assert.ok((capStats.largestPosting ?? 0) <= MEMORY_FTS_POSTING_CAP, "postings capped");
+assert.equal(capStats.noteTokenSets ?? -1, 0, "slim fill drops per-note token sets");
+assert.ok((capStats.slimNotes ?? 0) >= many, "slim notes tracked");
+assert.ok(clusterCap.length > 0, "cluster still hits under posting cap");
+assert.equal(uniqueHub.length, 16, "rare token is not truncated");
+closeDurableIndex();
+console.log(
+  JSON.stringify({
+    ok: true,
+    postingCap: MEMORY_FTS_POSTING_CAP,
+    largestPosting: capStats.largestPosting,
+    noteTokenSets: capStats.noteTokenSets,
+    slimNotes: capStats.slimNotes,
+    clusterHits: clusterCap.length,
+    uniqueHubHits: uniqueHub.length,
   }),
 );

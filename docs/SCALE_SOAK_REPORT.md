@@ -1,11 +1,15 @@
 # Scale soak report
 
-**SHA under test:** this branch (FSA search fill), vs baseline **`907d8ea`**.
+**SHA under test:** this branch (FSA memory retainers + file-head fill), vs baseline **`907d8ea`**.
 **Verdict: not SCALE READY.**
 
-A real Chrome FSA open of 100k on the Grok Bot Linux box (checkout still on `907d8ea`) proved the ship blocker: metadata Ready ~100k, then **Ctrl+K `hub` returned no hits**. Chrome discarded the tab twice. That is why this PR now fills search from file heads before Ready, always shows the engine id in the palette, and keeps bodies off the store.
+A real Chrome FSA open of `/workspace/nexus-soak-100k` on tip **`86a745f`** proved file-head fill works and then died on memory: **`cluster` → 16 hits (PASS)**, indexed 100,002/100,002, engine **Memory FTS (capped)**, then opening `Meeting-10949-1oo` rendered the body and Chrome discarded the tab.
 
-I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM. Disk generate + memory FTS through 300k is not a Tauri/FSA mount and not SQLite BM25. **100k FSA search + no tab discard is still required before SCALE READY.**
+**`hub` → 0 hits on that folder is a FALSE ALARM.** That vault was written by a one-off `/workspace/gen-soak-vault.mjs` (not in this repo) with **zero `hub` tokens** (`hub_files=0`, `cluster_files=100000`). Official `scripts/generate-synthetic-vault.mjs` / `scripts/gen-soak-vault.mjs` emit Hub titles and `Cluster hub` in every body. Probe that unofficial folder with **`cluster` only**, or regenerate.
+
+This SHA cuts the known 100k retainers (capped postings, no per-note token Sets/snippets on disk fill, no second watcher node map, no second inverted index, TipTap undo depth 24). **Do not PASS 100k FSA until a human re-opens the folder, searches the documented tokens, opens 20+ notes, and the tab is not discarded.**
+
+I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM. Disk generate + memory FTS through 300k is not a Tauri/FSA mount and not SQLite BM25.
 
 Sam’s bar: do not PASS 45k UI on the absence of crashes. Common ops target **<1s app-ready**. Cold open may exceed 1s if progress is visible and the UI stays responsive (no ≥1s long task).
 
@@ -173,7 +177,10 @@ Run 100k first. Only then 300k. If 100k search is still `memory-fts-capped`, fix
 | Folder graph draw | `folderMaxNodes` | **320** orbs |
 | Body LRU | `bodyLruSize` | **120** |
 | Memory FTS candidates | `MEMORY_FTS_CANDIDATE_CAP` | **800** |
+| Memory FTS postings per token | `MEMORY_FTS_POSTING_CAP` | **800** |
 | Memory FTS title fallback | `MEMORY_FTS_FULL_SCAN_MAX_NOTES` | **10_000** |
+| FSA watch full `lastScan` | `WATCH_RETAIN_SCAN_MAX` | **10_000** (above: signatures only) |
+| TipTap undo | `StarterKit.undoRedo.depth` | **24** |
 | Browser overlay | `LARGE_VAULT_OVERLAY_CAP` | **400** notes/folders |
 | Unlinked scan | `unlinked-mentions.ts` | 400 notes / 24 hits |
 | Native SQLite list | `native-sqlite-index.ts` | `limit: 500_000` |
@@ -222,9 +229,34 @@ npm run soak:disk-fts -- --notes 2000
 npm run soak:fsa -- http://127.0.0.1:8080/ --notes 800
 ```
 
+## Soak probe words
+
+| Vault | Generator | Probe |
+|-------|-----------|-------|
+| Official (`SOAK-MANIFEST.json` from this repo) | `npm run gen:soak-vault` → `scripts/generate-synthetic-vault.mjs` (alias `scripts/gen-soak-vault.mjs`) | **`hub`**, **`cluster`** (every body has `Cluster hub`; Hub titles every 200 notes). `retrieval` is a rotating topic. Wave E desktop query: `retrieval hub`. |
+| One-off `/workspace/nexus-soak-100k` on the Grok box | `/workspace/gen-soak-vault.mjs` (**not in repo**); names like `Meeting-10949-1oo` | **`cluster` only.** `rg` hub_files=0. Do not treat a `hub` miss as an engine bug. |
+
+Regenerate unofficial folders with `npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k` so `hub` and `cluster` both hit.
+
+## 100k FSA memory (why the tab discarded)
+
+Opening one note after Ready was the last straw. Baseline heap was already huge:
+
+| Retainer | Before | This SHA |
+|----------|--------|----------|
+| DurableIndex postings | ubiquitous tokens → Set of 100k ids | **`MEMORY_FTS_POSTING_CAP` 800**; search uses rare (complete) lists first |
+| `noteTokens` + 180-char snippets × 100k | ~two fat maps | slim fill: **no per-note token Set, no snippet** |
+| Title-only index + fill index | held both during fill | `beginSlimDiskFill()` clears inv before file-head pass |
+| `VaultWatcher.lastScan` | second 100k node map + 900ms full sig walk | signatures only above 10k; poll 8s / 60s |
+| `indexed-search` | second inverted index as notes open | skipped while DurableIndex is ready |
+| TipTap `undoRedo` | unbounded history | **depth 24** |
+| Store file map / structural index | still 100k meta nodes (required for the tree) | unchanged — document RSS on the next real FSA open |
+
+`__NEXUS_STRESS__()` now reports `jsHeapUsedMb`, `ftsLargestPosting`, `ftsNoteTokenSets`, `ftsSlimNotes`.
+
 ## What is still not proven
 
-- Real Chrome FSA open of 100k **after this fill** (must not discard the tab; `hub`/`cluster` must hit).
+- Real Chrome FSA open of 100k **after this memory pass** (must not discard the tab; documented tokens must hit; 20+ notes open).
 - Tauri open of `~/nexus-soak-300k` with SQLite FTS5 BM25.
 - Overlay surviving a different browser / machine (it will not — by design).
 - Desktop 300–500k as a daily driver.
@@ -233,6 +265,7 @@ npm run soak:fsa -- http://127.0.0.1:8080/ --notes 800
 
 - **UI:** browser 45k common-ops (store open 1.15s / interactive 0.41s; wall 1.79s WARN; overlay remount keeps Soak Created; no ≥1s freeze).
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
-- **Disk file-head FTS (this SHA):** 10k fill 196ms / search 3ms / RSS 175MB; Playwright mock FSA 800 notes, `hub`+`cluster` hit, `bodiesLoaded=1`.
+- **Disk file-head FTS (`86a745f`):** 10k fill 196ms / search 3ms / RSS 175MB; Playwright mock FSA 800 notes, `hub`+`cluster` hit, `bodiesLoaded=1`.
+- **Real 100k FSA on `86a745f`:** `cluster` 16 hits, Ready 100,002 — then **tab discard on note open**. Not PASS.
 
-Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a Mac Tauri open of the 300k folder stays responsive end-to-end.
+Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a real 100k FSA (or Mac Tauri 300k) stays in memory and search hits the documented tokens.

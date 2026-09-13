@@ -750,6 +750,7 @@ async function prepareDurableIndex(vaultId: string | null, mode: VaultMode) {
 			mode,
 			vaultRoot: root
 		});
+		invalidateIndexedSearch();
 	} catch {}
 }
 
@@ -4523,6 +4524,16 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				} else if (n.kind === "folder") folders++;
 			}
 		}
+		const fts = getDurableIndex()?.stats();
+		const heap = (
+			performance as Performance & {
+				memory?: {
+					usedJSHeapSize: number;
+					totalJSHeapSize: number;
+					jsHeapSizeLimit: number;
+				};
+			}
+		).memory;
 		return {
 			vaultId: s.vaultId,
 			vaultName: s.vaultName,
@@ -4548,7 +4559,14 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			overlayCount: overlayCount(s.vaultId),
 			searchEngine: describeSearchEngine(),
 			searchReady: diskSearchReady,
-			ftsNotes: getDurableIndex()?.stats().notes ?? 0,
+			ftsNotes: fts?.notes ?? 0,
+			ftsInvTokens: fts?.invTokens ?? 0,
+			ftsLargestPosting: fts?.largestPosting ?? 0,
+			ftsNoteTokenSets: fts?.noteTokenSets ?? 0,
+			ftsSlimNotes: fts?.slimNotes ?? 0,
+			jsHeapUsedMb: heap ? Math.round(heap.usedJSHeapSize / 1048576) : null,
+			jsHeapTotalMb: heap ? Math.round(heap.totalJSHeapSize / 1048576) : null,
+			jsHeapLimitMb: heap ? Math.round(heap.jsHeapSizeLimit / 1048576) : null,
 			bodiesLoadedOnStore: bodiesLoaded,
 		};
 	};
@@ -4567,6 +4585,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				clearOverlay: () => Promise<void>;
 				openMockFsa: (files: Record<string, string>) => Promise<void>;
 				search: (query: string, limit?: number) => Promise<unknown>;
+				openNotes: (limit?: number) => Promise<number>;
 				probe: () => Record<string, unknown> | undefined;
 			};
 		}
@@ -4640,6 +4659,21 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			await prepareDurableIndex(vaultId, "fsa");
 			maybeSyncDurableIndex(vaultId, "fsa", useVaultStore.getState().nodes);
 			await completeDiskSearchIndex();
+		},
+		openNotes: async (limit = 20) => {
+			const st = useVaultStore.getState();
+			const ids: string[] = [];
+			for (const id in st.nodes) {
+				if (st.nodes[id]?.kind === "note") {
+					ids.push(id);
+					if (ids.length >= limit) break;
+				}
+			}
+			for (const id of ids) {
+				st.setActiveNote(id, { silent: true });
+				await st.ensureNoteBody(id);
+			}
+			return ids.length;
 		},
 		search: async (query: string, limit = 16) => {
 			const { searchWithBackendAsync, describeSearchEngine } = await import(
