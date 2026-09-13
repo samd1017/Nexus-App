@@ -121,7 +121,7 @@ import {
   removeBodyFromArchive,
   setBodyInArchive,
 } from "./body-archive";
-import { shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
+import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
   closeDurableIndex,
   openDurableIndexForVault,
@@ -138,6 +138,7 @@ import {
   getActiveBackend,
   backendFromMode,
   stripBodies,
+  stripBodiesInPlace,
   contentForDiskWrite,
 } from "./backend";
 import {
@@ -637,7 +638,9 @@ function prepareMountedNodes(
 	keepIds: string[] = [],
 	opts?: { vaultId?: string | null; metaOnly?: boolean },
 ) {
-	rebuildLinkIndex(nodes);
+	if (!isLargeMemoryVault(opts?.vaultId)) {
+		rebuildLinkIndex(nodes);
+	}
 	clearBodyTouches();
 	const keep = new Set(keepIds.filter(Boolean));
 	const lazy = shouldLazyBodies(mode, opts?.vaultId);
@@ -647,7 +650,7 @@ function prepareMountedNodes(
 		if (opts?.metaOnly) {
 			for (const n of Object.values(nodes)) if (n.kind === "note" && n.content !== undefined) touchBody(n.id);
 			result = nodes;
-		} else result = stripBodies(nodes, keep);
+		} else result = stripBodiesInPlace(nodes, keep);
 	} else {
 		for (const n of Object.values(nodes)) if (n.kind === "note" && n.content !== undefined) touchBody(n.id);
 		result = nodes;
@@ -932,10 +935,12 @@ function applyScaleRestore(
 ): void {
 	if (!restore || restore === true) return;
 	const nodes = get().nodes;
-	const byPath = (p: string | null) =>
-		p
-			? Object.values(nodes).find((n) => n.kind === "note" && n.path === p) ?? null
-			: null;
+	const byPath = (p: string | null) => {
+		if (!p) return null;
+		const id = ensureVaultIndex(nodes).getIdByPath(nodes, p);
+		const n = id ? nodes[id] : null;
+		return n?.kind === "note" ? n : null;
+	};
 	const primary = byPath(restore.lastNotePath);
 	const secondary = byPath(restore.lastSecondaryNotePath);
 	if (primary) {
@@ -1012,7 +1017,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 			const vaultQ = (params.get("vault") || "").toLowerCase();
 			if (vaultQ === "45k" || vaultQ === "large") {
-				await get().openLargeTestVault();
+				const ticket = get().scaleRemount;
+				await get().openLargeTestVault(
+					ticket?.kind === "large-test" ? { restore: ticket } : undefined,
+				);
 				return;
 			}
 		}
@@ -1210,9 +1218,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		// Single-flight: one concurrent open; connecting stays true until done/fail
 		if (get().connecting) return;
+		const restoreEarly = opts?.restore && opts.restore !== true ? opts.restore : null;
 		set({
 			connecting: true,
-			folderAccessLost: false
+			folderAccessLost: false,
+			...(restoreEarly
+				? { vaultId: restoreEarly.vaultId, vaultName: restoreEarly.vaultName }
+				: {}),
 		});
 		// Bump gen so in-flight disk/hydrate ops cancel. Do NOT clear body archive
 		// here — if re-open fails, stripped large-test nodes must still rehydrate.
@@ -1251,8 +1263,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 
 			const vaultId = LARGE_TEST_VAULT_ID;
 			const firstNote =
-				Object.values(data.nodes).find((n) => n.kind === "note" && n.path.startsWith("00-Inbox/")) ||
-				Object.values(data.nodes).find((n) => n.kind === "note");
+				(data.firstNoteId ? data.nodes[data.firstNoteId] : null) ??
+				null;
 			// Only expand ancestors of active note — not all top-level roots
 			const expanded = smartExpandedFolders(data.nodes, firstNote?.id ?? null);
 			const recents = pushRecent({
@@ -1344,6 +1356,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					openMs,
 					vaultId,
 					kind: "large-test",
+					restoredPath: restore?.lastNotePath ?? firstNote?.path ?? null,
+					workspaceSplit: Boolean(restore?.workspaceSplit),
 				};
 			}
 			setOpenProgress({
@@ -2227,15 +2241,18 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const primary = get().activeNoteId;
 		const rememberedPath = get().settings.lastSecondaryNotePath;
+		const nodes = get().nodes;
 		const remembered = rememberedPath
-			? Object.values(get().nodes).find(
-					(n) => n.kind === "note" && n.path === rememberedPath,
-				)?.id ?? null
+			? ensureVaultIndex(nodes).getIdByPath(nodes, rememberedPath) ?? null
 			: null;
 		const recents = get().recentNoteVisits ?? [];
-		const otherNote = Object.values(get().nodes).find(
-			(n) => n.kind === "note" && n.id !== primary,
-		)?.id ?? null;
+		let otherNote: string | null = null;
+		for (const id in nodes) {
+			if (id !== primary && nodes[id]?.kind === "note") {
+				otherNote = id;
+				break;
+			}
+		}
 		const next =
 			get().secondaryNoteId ??
 			(remembered && remembered !== primary ? remembered : null) ??
@@ -4192,6 +4209,7 @@ export const useVaultStore = create(
 		if (!state) return;
 		queueMicrotask(() => {
 			const s = useVaultStore.getState();
+			if (s.scaleRemount) return;
 			if (!s.settings.workspaceSplit) return;
 			let secondary = s.secondaryNoteId;
 			if (secondary && !s.nodes[secondary]) secondary = null;
@@ -4248,6 +4266,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			bodiesLoaded,
 			dirty: s.dirtyNoteIds.length,
 			activeNoteId: s.activeNoteId,
+			activeNotePath: s.activeNoteId ? s.nodes[s.activeNoteId]?.path ?? null : null,
+			lastNotePath: s.settings?.lastNotePath ?? null,
 			secondaryNoteId: s.secondaryNoteId,
 			workspaceSplit: Boolean(s.settings?.workspaceSplit),
 			hasBodyArchive: hasBodyArchive(),
@@ -4265,6 +4285,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				open45k: () => Promise<void>;
 				createNote: (parentId?: string | null, title?: string) => string | null;
 				setActiveNote: (id: string | null) => void;
+				setRightTab: (tab: string) => void;
 				noteIds: (limit?: number) => string[];
 				probe: () => Record<string, unknown> | undefined;
 			};
@@ -4276,6 +4297,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			useVaultStore.getState().createNote(parentId ?? null, title ?? "Untitled"),
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),
+		setRightTab: (tab: string) =>
+			useVaultStore.getState().setRightTab(tab as RightTab),
 		noteIds: (limit = 8) => {
 			const s = useVaultStore.getState();
 			const nodes = s.nodes;

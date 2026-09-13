@@ -25,6 +25,10 @@ import {
 
 export const DURABLE_INDEX_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION;
 export const DURABLE_INDEX_SQL = CONTRACT_SQL;
+/** Memory FTS: never score more than this many inverted-index hits. */
+export const MEMORY_FTS_CANDIDATE_CAP = 800;
+/** Skip O(n) title/path fallback above this vault size. */
+export const MEMORY_FTS_FULL_SCAN_MAX_NOTES = 10_000;
 export {
   DURABLE_INDEX_CONTRACT,
   assertContractInvariants,
@@ -383,7 +387,10 @@ class MemoryDurableIndex implements DurableIndex {
       candidates = new Set(this.notes.keys());
     }
 
-    if (!candidates || candidates.size < limit) {
+    if (
+      (!candidates || candidates.size < limit) &&
+      this.notes.size <= MEMORY_FTS_FULL_SCAN_MAX_NOTES
+    ) {
       const set = candidates ?? new Set<string>();
       for (const n of this.notes.values()) {
         const title = (n.title ?? n.name).toLowerCase();
@@ -394,8 +401,21 @@ class MemoryDurableIndex implements DurableIndex {
       candidates = set;
     }
 
-    const hits: SearchHit[] = [];
-    for (const id of candidates) {
+    if (candidates && candidates.size > MEMORY_FTS_CANDIDATE_CAP) {
+      const capped = new Set<string>();
+      for (const id of candidates) {
+        capped.add(id);
+        if (capped.size >= MEMORY_FTS_CANDIDATE_CAP) break;
+      }
+      candidates = capped;
+    }
+
+    const scored: Array<{
+      n: DurableNoteMeta;
+      score: number;
+      matchType: "title" | "content";
+    }> = [];
+    for (const id of candidates ?? []) {
       const n = this.notes.get(id);
       if (!n) continue;
       const title = n.title ?? n.name.replace(/\.md$/i, "");
@@ -422,7 +442,12 @@ class MemoryDurableIndex implements DurableIndex {
         score += 10;
         matchType = matchType === "title" && score >= 80 ? "title" : "content";
       }
-      hits.push({
+      scored.push({ n, score, matchType });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, limit).map(({ n, score, matchType }) => {
+      const title = n.title ?? n.name.replace(/\.md$/i, "");
+      return {
         noteId: n.id,
         path: n.path,
         title,
@@ -430,14 +455,12 @@ class MemoryDurableIndex implements DurableIndex {
           path: n.path,
           query: q,
           matchType,
-          durableBody: body || undefined,
+          durableBody: n.bodySnippet || undefined,
         }),
         score,
         matchType,
-      });
-    }
-    hits.sort((a, b) => b.score - a.score);
-    return hits.slice(0, limit);
+      };
+    });
   }
 
   stats() {

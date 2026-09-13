@@ -62,6 +62,7 @@ export async function buildLargeTestVault(opts?: {
   rootIds: string[];
   vaultName: string;
   noteCount: number;
+  firstNoteId: string | null;
 }> {
   const onProgress = opts?.onProgress;
   onProgress?.(0, 1, "manifest");
@@ -84,6 +85,7 @@ export async function buildLargeTestVault(opts?: {
   }
 
   let loaded = 0;
+  let firstNoteId: string | null = null;
   const now = Date.now();
   for (let c = 0; c < manifest.chunks; c++) {
     const chunk = await fetchJson<NoteSeed[]>(`/large-test-vault/notes-${c}.json`);
@@ -91,6 +93,9 @@ export async function buildLargeTestVault(opts?: {
       const parentId = n.f ? folderIdByPath.get(n.f) ?? null : null;
       const node = note(n.p, n.n, parentId, n.c, now - (manifest.total - loaded));
       nodes[node.id] = node;
+      if (!firstNoteId && (n.p.startsWith("00-Inbox/") || n.p === "README.md")) {
+        firstNoteId = node.id;
+      }
       loaded++;
     }
     onProgress?.(loaded, manifest.total, "notes");
@@ -99,6 +104,15 @@ export async function buildLargeTestVault(opts?: {
   }
 
   // Root: top-level folders only (PARA roots)
+  if (!firstNoteId) {
+    for (const id in nodes) {
+      if (nodes[id]?.kind === "note") {
+        firstNoteId = id;
+        break;
+      }
+    }
+  }
+
   const rootIds = sortedFolders
     .filter((f) => !f.parent)
     .map((f) => folderIdByPath.get(f.p)!)
@@ -116,6 +130,7 @@ export async function buildLargeTestVault(opts?: {
     rootIds,
     vaultName: manifest.vaultName || "Large Test Vault",
     noteCount: loaded,
+    firstNoteId,
   };
 }
 

@@ -334,7 +334,7 @@ export function backendFromMode(
   return null;
 }
 
-/** Strip bodies for lazy open — keep metadata only. */
+/** Strip bodies for lazy open — keep metadata only (new map). */
 export function stripBodies(
   nodes: Record<string, VaultNode>,
   keepIds?: Set<string>,
@@ -359,6 +359,28 @@ export function stripBodies(
     };
   }
   return out;
+}
+
+/** Mutate the map in place — do not allocate a second 45k–300k object. */
+export function stripBodiesInPlace(
+  nodes: Record<string, VaultNode>,
+  keepIds?: Set<string>,
+): Record<string, VaultNode> {
+  for (const id of Object.keys(nodes)) {
+    const n = nodes[id];
+    if (!n || n.kind !== "note") continue;
+    if (keepIds?.has(id)) continue;
+    if (n.content === undefined) continue;
+    nodes[id] = {
+      id: n.id,
+      path: n.path,
+      name: n.name,
+      kind: n.kind,
+      parentId: n.parentId,
+      mtime: n.mtime,
+    };
+  }
+  return nodes;
 }
 
 /** Note body for disk rename — undefined when unloaded so adapters re-read. */

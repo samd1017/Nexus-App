@@ -46,6 +46,7 @@
     "soak:scale": "node scripts/scale-soak.mjs",
     "soak:ui": "node scripts/stress-ui-multisize.mjs",
     "gen:soak-vault": "node scripts/generate-synthetic-vault.mjs",
+    "wave:e": "node scripts/wave-e-disk.mjs",
     "test:synthetic-vault": "node src/lib/vault/__tests__/synthetic-vault.contract.mjs",
     "test:wave-c": "node src/lib/vault/__tests__/wave-c.contract.mjs",
     "test:fixture-integrity": "node scripts/verify-large-test-vault.mjs",

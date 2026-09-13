@@ -13,6 +13,7 @@ const BASE = process.argv[2] || "http://127.0.0.1:8080/";
 const OUT = "/opt/cursor/artifacts/stress/ui-multisize.json";
 const SHOT_DIR = "/opt/cursor/artifacts/stress/shots";
 const COMMON_OP_MS = 1000;
+const SWITCH_P95_MS = 700;
 const OPEN_OK_MS = 30000;
 
 mkdirSync(SHOT_DIR, { recursive: true });
@@ -66,6 +67,28 @@ async function appReadyOp(page, work, ready, timeoutMs = 8000) {
     ready: readyAt.ok,
     value: readyAt.value,
   };
+}
+
+function p95(samples) {
+  if (!samples.length) return 0;
+  const s = [...samples].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)];
+}
+
+async function switchSample(page, id) {
+  return appReadyOp(
+    page,
+    () => page.evaluate((noteId) => window.__NEXUS_SOAK__?.setActiveNote?.(noteId), id),
+    async () => {
+      const p = await probe(page);
+      if (p.stress?.activeNoteId !== id) return null;
+      const shown = await page
+        .locator(`[data-testid="nexus-editor"][data-active-note="${id}"] .ProseMirror`)
+        .count();
+      return shown ? id : null;
+    },
+    3000,
+  );
 }
 
 function failIfSlow(result, key, ms, budget, blockers) {
@@ -408,31 +431,22 @@ async function runLargeStress(page, errors) {
     result.blockers.push("45k editorTyped=false");
   }
 
-  const ids = await page.evaluate(() => window.__NEXUS_SOAK__?.noteIds?.(6) || []);
+  const ids = await page.evaluate(() => window.__NEXUS_SOAK__?.noteIds?.(8) || []);
   let switchCount = 0;
   const switchSamples = [];
   for (const id of ids) {
-    const one = await appReadyOp(
-      page,
-      () => page.evaluate((noteId) => window.__NEXUS_SOAK__?.setActiveNote?.(noteId), id),
-      async () => {
-        const p = await probe(page);
-        if (p.stress?.activeNoteId !== id) return null;
-        const shown = await page
-          .locator(`[data-testid="nexus-editor"][data-active-note="${id}"] .ProseMirror`)
-          .count();
-        return shown ? id : null;
-      },
-      3000,
-    );
+    const one = await switchSample(page, id);
     switchSamples.push(one.appReadyMs);
     if (one.ready) switchCount += 1;
   }
   const switchMax = switchSamples.length ? Math.max(...switchSamples) : 0;
+  const switchP95 = p95(switchSamples);
   result.steps.switchNotes = {
     switchNotesCount: switchCount,
     samplesMs: switchSamples,
     appReadyMs: switchMax,
+    p95Ms: switchP95,
+    graphPanel: false,
     ready: switchCount >= 2,
   };
   if (switchCount < 2) {
@@ -440,6 +454,53 @@ async function runLargeStress(page, errors) {
     result.blockers.push(`switchNotesCount=${switchCount} (need >0 real switches)`);
   }
   failIfSlow(result, "switchNotes", switchMax, COMMON_OP_MS, result.blockers);
+
+  await page.evaluate(() => window.__NEXUS_SOAK__?.setRightTab?.("graph"));
+  const graphPanel = await waitFor(
+    page,
+    async () => {
+      const n = await page.locator("[data-graph-host][data-graph-engine='ready']").count();
+      return n >= 1 ? n : null;
+    },
+    8000,
+    50,
+  );
+  result.steps.graphPanelReady = graphPanel;
+  const graphIds = await page.evaluate(() => window.__NEXUS_SOAK__?.noteIds?.(8) || []);
+  let graphSwitchCount = 0;
+  const graphSwitchSamples = [];
+  for (const id of graphIds) {
+    const one = await switchSample(page, id);
+    graphSwitchSamples.push(one.appReadyMs);
+    if (one.ready) graphSwitchCount += 1;
+  }
+  const graphSwitchMax = graphSwitchSamples.length ? Math.max(...graphSwitchSamples) : 0;
+  const graphSwitchP95 = p95(graphSwitchSamples);
+  result.steps.switchGraphPanel = {
+    switchNotesCount: graphSwitchCount,
+    samplesMs: graphSwitchSamples,
+    appReadyMs: graphSwitchMax,
+    p95Ms: graphSwitchP95,
+    graphPanel: true,
+    ready: graphSwitchCount >= 2,
+  };
+  result.steps.switchGraphPanelBudgetMs = SWITCH_P95_MS;
+  if (graphSwitchCount < 2) {
+    result.ok = false;
+    result.blockers.push("switchGraphPanel count < 2");
+  }
+  if (graphSwitchP95 > SWITCH_P95_MS) {
+    result.ok = false;
+    result.blockers.push(
+      `switchGraphPanel p95 ${graphSwitchP95}ms > ${SWITCH_P95_MS}ms`,
+    );
+  }
+  if (graphSwitchMax > COMMON_OP_MS) {
+    result.ok = false;
+    result.blockers.push(
+      `switchGraphPanel max ${graphSwitchMax}ms > ${COMMON_OP_MS}ms`,
+    );
+  }
 
   const save = await appReadyOp(
     page,
@@ -451,6 +512,73 @@ async function runLargeStress(page, errors) {
     3000,
   );
   result.steps.save = save;
+
+  const seedId = await page.evaluate(() => {
+    const soak = window.__NEXUS_SOAK__;
+    const ids = soak?.noteIds?.(12) || [];
+    const seed = ids.find((id) => !/Soak_Created/.test(id)) || ids[0];
+    if (seed) soak?.setActiveNote?.(seed);
+    return seed || null;
+  });
+  await waitFor(
+    page,
+    async () => {
+      const p = await probe(page);
+      return p.stress?.activeNoteId === seedId ? p : null;
+    },
+    4000,
+    25,
+  );
+  await page.keyboard.press("Control+2").catch(() => {});
+  await waitFor(
+    page,
+    async () => {
+      const p = await probe(page);
+      return p.stress?.workspaceSplit ? p : null;
+    },
+    2500,
+    25,
+  );
+  const preReload = await probe(page);
+  const expectPath = preReload.stress?.activeNotePath;
+  const reload = await appReadyOp(
+    page,
+    () => page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }),
+    async () => {
+      const ready = await page.evaluate(() => typeof window.__NEXUS_STRESS__ === "function");
+      if (!ready) return null;
+      const p = await probe(page);
+      return p.stress && p.stress.notes >= 45000 && !p.stress.connecting && p.stress.activeNoteId
+        ? p
+        : null;
+    },
+    45000,
+  );
+  result.steps.reload = reload;
+  result.steps.reloadRestore = {
+    notes: reload.value?.stress?.notes ?? null,
+    activeNotePath: reload.value?.stress?.activeNotePath ?? null,
+    expectedPath: expectPath ?? null,
+    workspaceSplit: Boolean(reload.value?.stress?.workspaceSplit),
+    vaultId: reload.value?.stress?.vaultId ?? null,
+    openMs: reload.value?.last?.openMs ?? null,
+  };
+  if (!reload.ready) {
+    result.ok = false;
+    result.blockers.push("reload remount did not restore 45k");
+  } else if (
+    expectPath &&
+    reload.value?.stress?.activeNotePath &&
+    reload.value.stress.activeNotePath !== expectPath
+  ) {
+    result.ok = false;
+    result.blockers.push(
+      `reload active ${reload.value.stress.activeNotePath} !== ${expectPath}`,
+    );
+  } else if (!reload.value?.stress?.vaultId) {
+    result.ok = false;
+    result.blockers.push("reload landed on Welcome (vaultId null)");
+  }
 
   const post = await probe(page);
   result.steps.postProbe = post.stress;

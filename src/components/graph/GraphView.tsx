@@ -897,7 +897,7 @@ export function GraphView({ mode, className }: Props) {
       return `folder:${idx.structureGeneration}:${graphBrowsePath}:${graphScopeMode}`;
     }
     if (large && graphScopeMode === "ego") {
-      return `ego:${vaultLinkIndex.generation}:${activeNoteId}`;
+      return `ego:${vaultLinkIndex.generation}:${activeNoteId ?? ""}`;
     }
     // Full notes (demo / small vault)
     const parts: string[] = [`links:${vaultLinkIndex.generation}`];
@@ -917,7 +917,7 @@ export function GraphView({ mode, className }: Props) {
     vaultNoteCount,
     graphBrowsePath,
     graphScopeMode,
-    activeNoteId,
+    graphScopeMode === "ego" ? activeNoteId : null,
     graphTick,
   ]);
 
@@ -931,7 +931,9 @@ export function GraphView({ mode, className }: Props) {
         deferredNodes as Record<string, VaultNode>,
       ),
     });
-  }, [graphStructureKey, activeNoteId, graphBrowsePath, graphScopeMode]);
+    // Folder/vault keys already ignore the active note; ego keys include it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphStructureKey, graphBrowsePath, graphScopeMode]);
 
   const graphModeResolved: GraphViewMode = resolved.mode;
 
@@ -1072,7 +1074,15 @@ export function GraphView({ mode, className }: Props) {
       });
     }
     return { nodes, links };
-  }, [data, neighborhood, isolateHops, graphQuery, activeNoteId, showGhosts, graphModeResolved]);
+  }, [
+    data,
+    neighborhood,
+    isolateHops,
+    graphQuery,
+    graphModeResolved === "folder" ? null : activeNoteId,
+    showGhosts,
+    graphModeResolved,
+  ]);
 
   const shownNoteCount = useMemo(
     () => displayData.nodes.filter((n) => !n.ghost).length,
@@ -1809,6 +1819,13 @@ export function GraphView({ mode, className }: Props) {
   /** W5: camera fly-to when activeNoteId changes (not on hover) */
   useEffect(() => {
     const g = graphRef.current;
+    if (
+      graphModeResolved === "folder" &&
+      (activeNoteMissingFromFolderMap || !activeNoteId)
+    ) {
+      prevActiveFlyRef.current = activeNoteId;
+      return;
+    }
     if (!g || !activeNoteId) {
       prevActiveFlyRef.current = activeNoteId;
       return;
@@ -1860,7 +1877,7 @@ export function GraphView({ mode, className }: Props) {
     // Wait a frame so graphData / layout coords settle after active change
     const t = window.setTimeout(fly, 80);
     return () => window.clearTimeout(t);
-  }, [activeNoteId, mode]);
+  }, [activeNoteId, mode, graphModeResolved, activeNoteMissingFromFolderMap]);
 
   useEffect(() => {
     if (!graphRef.current) return;
@@ -1873,11 +1890,11 @@ export function GraphView({ mode, className }: Props) {
           : 3
         : 0;
 
-    const focusId = () => hoverRef.current || activeNoteId;
+    const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
       if (hoverRef.current) return 1;
-      if (neighborhood !== "all" && activeNoteId) return 0.9;
-      if (activeNoteId) return 0.35;
+      if (neighborhood !== "all" && activeRef.current) return 0.9;
+      if (activeRef.current) return 0.35;
       return 0;
     };
 
@@ -1892,7 +1909,7 @@ export function GraphView({ mode, className }: Props) {
     const shouldShowLabel = (n: GNode) => {
       const f = focusId();
       const ns = neighborSet(f);
-      if (n.id === activeNoteId || n.id === hoverRef.current) return true;
+      if (n.id === activeRef.current || n.id === hoverRef.current) return true;
       if (f && ns?.has(n.id) && n.id !== f) return true;
       if (hoverRef.current) return false;
       if (n.ghost) return false;
@@ -1910,7 +1927,7 @@ export function GraphView({ mode, className }: Props) {
       const f = focusId();
       const obj = createOrb(
         n,
-        activeNoteId,
+        activeRef.current,
         hoverRef.current,
         f,
         neighborSet(f),
@@ -1944,8 +1961,8 @@ export function GraphView({ mode, className }: Props) {
           particles: 0,
         };
       }
-      if (activeNoteId) {
-        const hot = s === activeNoteId || t === activeNoteId;
+      if (activeRef.current) {
+        const hot = s === activeRef.current || t === activeRef.current;
         if (hot) {
           return {
             color: `rgba(${ar},${ag},${ab},0.62)`,
@@ -1979,7 +1996,20 @@ export function GraphView({ mode, className }: Props) {
       .linkWidth((link) => edgeStyle(link as GLink).width)
       .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles)
       .refresh();
-  }, [activeNoteId, mode, accentPreset, accentCustom, graphParticles, desktopBoost, neighborhood, isolateHops, colorBy, showGhosts]);
+  }, [mode, accentPreset, accentCustom, graphParticles, desktopBoost, neighborhood, isolateHops, colorBy, showGhosts]);
+
+  const prevActiveTintRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!graphRef.current) return;
+    const prev = prevActiveTintRef.current;
+    const next = activeNoteId;
+    if (prev === next) return;
+    const { r, g, b } = accentRgb();
+    const accent = new THREE.Color(r / 255, g / 255, b / 255);
+    if (prev) tintOrbHover(nodeObjMapRef.current.get(prev), false, accent);
+    if (next) tintOrbHover(nodeObjMapRef.current.get(next), true, accent);
+    prevActiveTintRef.current = next;
+  }, [activeNoteId]);
 
   return (
     <div
