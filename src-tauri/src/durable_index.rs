@@ -3,11 +3,12 @@
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::fill_join::{fill_is_inflight, start_or_join, FillRole, JoinedFill};
 use crate::index_fill::{
     fill_from_disk_on_conn, replace_source_links, IndexFillProgress, IndexFillResult,
 };
@@ -176,6 +177,10 @@ fn open_conn(db_path: &str) -> Result<Connection, String> {
     let conn = Connection::open(db_path).map_err(|e| format!("sqlite open: {e}"))?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
         .map_err(|e| format!("pragma: {e}"))?;
+    // Readers (search / list_links) and the dedicated fill writer share the
+    // file. Without a busy timeout the UI connection errors immediately and
+    // a second writer raced into malloc corruption on Linux 100k fills.
+    let _ = conn.busy_timeout(Duration::from_millis(15_000));
     Ok(conn)
 }
 
@@ -585,6 +590,11 @@ pub fn vault_index_close(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
 ) -> Result<OkResult, String> {
+    if fill_is_inflight(&db_path) {
+        // Keep the UI connection while the dedicated fill writer is running.
+        // Closing mid-fill opened a third handle and raced writers at 100k.
+        return Ok(OkResult { ok: true });
+    }
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     guard.conns.remove(&db_path);
     Ok(OkResult { ok: true })
@@ -596,6 +606,9 @@ pub fn vault_index_wipe(
     db_path: String,
 ) -> Result<OkResult, String> {
     let guard = state.lock().map_err(|e| e.to_string())?;
+    if fill_is_inflight(&db_path) {
+        return Err("index fill in progress".into());
+    }
     let conn = guard
         .conns
         .get(&db_path)
@@ -610,6 +623,9 @@ pub fn vault_index_rebuild(
     db_path: String,
     notes: Vec<NoteMetaDto>,
 ) -> Result<IndexStatsDto, String> {
+    if fill_is_inflight(&db_path) {
+        return Err("index fill in progress".into());
+    }
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     let conn = guard
         .conns
@@ -782,28 +798,23 @@ pub fn vault_index_list(
     Ok(out)
 }
 
-fn fill_inflight() -> &'static Mutex<HashSet<String>> {
-    static LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-struct FillGuard(String);
-
-impl FillGuard {
-    fn acquire(db_path: &str) -> Result<Self, String> {
-        let mut g = fill_inflight().lock().map_err(|e| e.to_string())?;
-        if !g.insert(db_path.to_string()) {
-            return Err("index fill already running for this vault".into());
-        }
-        Ok(Self(db_path.to_string()))
+fn joined_from_fill(r: IndexFillResult) -> JoinedFill {
+    JoinedFill {
+        indexed: r.indexed,
+        skipped: r.skipped,
+        errors: r.errors,
+        notes: r.notes,
+        edges: r.edges,
     }
 }
 
-impl Drop for FillGuard {
-    fn drop(&mut self) {
-        if let Ok(mut g) = fill_inflight().lock() {
-            g.remove(&self.0);
-        }
+fn fill_from_joined(j: JoinedFill) -> IndexFillResult {
+    IndexFillResult {
+        indexed: j.indexed,
+        skipped: j.skipped,
+        errors: j.errors,
+        notes: j.notes,
+        edges: j.edges,
     }
 }
 
@@ -839,7 +850,6 @@ fn fill_from_disk_job(
     }
 
     let mut conn = open_conn(db_path)?;
-    let _ = conn.busy_timeout(Duration::from_millis(8_000));
     let vault_id: String = conn
         .query_row(
             "SELECT value FROM meta_kv WHERE key = 'vault_id'",
@@ -847,7 +857,20 @@ fn fill_from_disk_job(
             |r| r.get(0),
         )
         .unwrap_or_else(|_| "fill".into());
-    ensure_schema(&conn, &vault_id, Some(vault_root))?;
+    let schema_ver: i32 = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    // Avoid CREATE/migrate DDL while the UI connection is live — that locked
+    // the 100k writer and contributed to concurrent malloc crashes.
+    if schema_ver != SCHEMA_VERSION {
+        ensure_schema(&conn, &vault_id, Some(vault_root))?;
+    }
 
     let app_emit = app.clone();
     fill_from_disk_on_conn(
@@ -886,32 +909,44 @@ pub async fn vault_index_fill_from_disk(
 
     let head = head_chars.unwrap_or(8000).clamp(256, 32_000) as usize;
     let force = force_rebuild.unwrap_or(false);
-    let _fill_guard = FillGuard::acquire(&db_path)?;
-    let app2 = app.clone();
-    let db2 = db_path.clone();
-    let root2 = vault_root.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        match fill_from_disk_job(&app2, &db2, &root2, head, force) {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                emit_fill_progress(
-                    &app2,
-                    &IndexFillProgress {
-                        db_path: db2,
-                        scanned: 0,
-                        total: 0,
-                        indexed: 0,
-                        skipped: 0,
-                        errors: 1,
-                        phase: "error".into(),
-                        message: Some(e.clone()),
-                    },
-                );
-                Err(e)
-            }
+    match start_or_join(&db_path) {
+        FillRole::Joiner(joiner) => {
+            // Idempotent: await the in-flight writer. Progress events already
+            // emit from the leader — JS listeners keep the banner moving.
+            let joined = tauri::async_runtime::spawn_blocking(move || joiner.wait())
+                .await
+                .map_err(|e| format!("SQLite FTS fill join failed: {e}"))?;
+            return Ok(fill_from_joined(joined?));
         }
-    })
-    .await
-    .map_err(|e| format!("SQLite FTS fill task failed: {e}"))?
+        FillRole::Leader(leader) => {
+            let app2 = app.clone();
+            let db2 = db_path.clone();
+            let root2 = vault_root.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                match fill_from_disk_job(&app2, &db2, &root2, head, force) {
+                    Ok(r) => Ok(r),
+                    Err(e) => {
+                        emit_fill_progress(
+                            &app2,
+                            &IndexFillProgress {
+                                db_path: db2,
+                                scanned: 0,
+                                total: 0,
+                                indexed: 0,
+                                skipped: 0,
+                                errors: 1,
+                                phase: "error".into(),
+                                message: Some(e.clone()),
+                            },
+                        );
+                        Err(e)
+                    }
+                }
+            })
+            .await
+            .map_err(|e| format!("SQLite FTS fill task failed: {e}"))?;
+            let mapped = result.map(joined_from_fill);
+            Ok(fill_from_joined(leader.finish(mapped)?))
+        }
+    }
 }

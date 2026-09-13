@@ -21,6 +21,7 @@ const {
   isEmptyNativeFillFailure,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
+  isInFlightFillError,
 } = await import("../src/lib/vault/sqlite-fill-progress.ts");
 
 assert.equal(
@@ -77,5 +78,36 @@ assert.equal(
   "Ready · SQLite FTS5 BM25 (unchanged)",
 );
 assert.equal(sqliteFillReadyMessage(0, 100000), "Ready · SQLite FTS5 BM25");
+
+assert.equal(
+  isInFlightFillError(new Error("index fill already running for this vault")),
+  true,
+);
+assert.equal(isInFlightFillError("index fill in progress"), true);
+assert.equal(
+  isInFlightFillError(new Error("SQLite FTS fill failed: disk I/O")),
+  false,
+  "real fill failures stay fatal",
+);
+
+{
+  const { NativeSqliteDurableIndex } = await import(
+    "../src/lib/vault/native-sqlite-index.ts"
+  );
+  let calls = 0;
+  /** @type {(cmd: string, args?: Record<string, unknown>) => Promise<unknown>} */
+  const invoke = async (cmd) => {
+    if (cmd !== "vault_index_fill_from_disk") throw new Error(cmd);
+    calls += 1;
+    await new Promise((r) => setTimeout(r, 40));
+    return { indexed: 3, skipped: 1, errors: 0, notes: 4, edges: 6 };
+  };
+  const idx = new NativeSqliteDurableIndex("db.sqlite", "vault", "/vault", invoke);
+  const [a, b] = await Promise.all([idx.fillFromDisk(8000), idx.fillFromDisk(8000)]);
+  assert.equal(calls, 1, "second fillFromDisk must join the in-flight invoke");
+  assert.equal(a.indexed, 3);
+  assert.equal(b.indexed, 3);
+  assert.equal(a.edges, 6);
+}
 
 console.log("sqlite-fill-progress: PASS");

@@ -14,6 +14,62 @@ import {
   type DurableNoteMeta,
   DURABLE_INDEX_SCHEMA_VERSION,
 } from "./durable-index";
+import { isInFlightFillError } from "./sqlite-fill-progress";
+
+type FillResult = {
+  indexed: number;
+  skipped: number;
+  errors: number;
+  notes: number;
+  edges: number;
+};
+
+type FillProgressFn = (p: {
+  dbPath?: string;
+  scanned: number;
+  total: number;
+  indexed: number;
+  skipped: number;
+  errors: number;
+  phase: string;
+  message?: string | null;
+}) => void;
+
+const fillInflightByDb = new Map<string, Promise<FillResult>>();
+const fillProgressByDb = new Map<string, Set<FillProgressFn>>();
+
+function addFillProgress(dbPath: string, fn?: FillProgressFn): () => void {
+  if (!fn) return () => {};
+  let set = fillProgressByDb.get(dbPath);
+  if (!set) {
+    set = new Set();
+    fillProgressByDb.set(dbPath, set);
+  }
+  set.add(fn);
+  return () => {
+    const cur = fillProgressByDb.get(dbPath);
+    cur?.delete(fn);
+    if (cur && cur.size === 0) fillProgressByDb.delete(dbPath);
+  };
+}
+
+function emitFillProgress(
+  dbPath: string,
+  p: {
+    dbPath?: string;
+    scanned: number;
+    total: number;
+    indexed: number;
+    skipped: number;
+    errors: number;
+    phase: string;
+    message?: string | null;
+  },
+): void {
+  const set = fillProgressByDb.get(dbPath);
+  if (!set) return;
+  for (const fn of set) fn(p);
+}
 
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
@@ -130,24 +186,34 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     headChars = 8000,
     opts?: {
       forceRebuild?: boolean;
-      onProgress?: (p: {
-        dbPath?: string;
-        scanned: number;
-        total: number;
-        indexed: number;
-        skipped: number;
-        errors: number;
-        phase: string;
-        message?: string | null;
-      }) => void;
+      onProgress?: FillProgressFn;
     },
-  ): Promise<{
-    indexed: number;
-    skipped: number;
-    errors: number;
-    notes: number;
-    edges: number;
-  }> {
+  ): Promise<FillResult> {
+    const detach = addFillProgress(this.dbPath, opts?.onProgress);
+    const existing = fillInflightByDb.get(this.dbPath);
+    if (existing) {
+      try {
+        return await existing;
+      } finally {
+        detach();
+      }
+    }
+    const run = this.runFillFromDisk(headChars, opts?.forceRebuild === true)
+      .finally(() => {
+        fillInflightByDb.delete(this.dbPath);
+      });
+    fillInflightByDb.set(this.dbPath, run);
+    try {
+      return await run;
+    } finally {
+      detach();
+    }
+  }
+
+  private async runFillFromDisk(
+    headChars: number,
+    forceRebuild: boolean,
+  ): Promise<FillResult> {
     type FillPayload = {
       dbPath?: string;
       scanned?: number;
@@ -189,7 +255,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
               (ev) => {
                 const p = ev.payload;
                 if (p?.dbPath && p.dbPath !== this.dbPath) return;
-                opts?.onProgress?.({
+                emitFillProgress(this.dbPath, {
                   dbPath: p?.dbPath,
                   scanned: Number(p?.scanned ?? 0),
                   total: Number(p?.total ?? 0),
@@ -224,11 +290,16 @@ export class NativeSqliteDurableIndex implements DurableIndex {
                 dbPath: this.dbPath,
                 vaultRoot: this.vaultRoot,
                 headChars,
-                forceRebuild: opts?.forceRebuild === true,
+                forceRebuild,
               },
             );
             finish(resolve, toResult(r));
           } catch (err) {
+            if (isInFlightFillError(err)) {
+              // Rust join should make this rare. Stay on the progress
+              // listener — do not reject while the leader is healthy.
+              return;
+            }
             if (!settled) {
               settled = true;
               reject(err);
@@ -242,8 +313,12 @@ export class NativeSqliteDurableIndex implements DurableIndex {
   }
 
   close(): void {
-    this.ready = false;
     this.mirror.close();
+    if (fillInflightByDb.has(this.dbPath)) {
+      // Keep the native writer + adapter ready so a remount joins fill.
+      return;
+    }
+    this.ready = false;
     void this.invoke("vault_index_close", { dbPath: this.dbPath }).catch(
       () => {},
     );
@@ -415,6 +490,10 @@ export class NativeSqliteDurableIndex implements DurableIndex {
 
   getDbPath(): string {
     return this.dbPath;
+  }
+
+  getVaultRoot(): string {
+    return this.vaultRoot;
   }
 
   async listLinkGroups(): Promise<Array<{ sourceId: string; targets: string[] }>> {

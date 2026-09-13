@@ -48,3 +48,16 @@ export function sqliteFillReadyMessage(skipped: number, notes: number): string {
   }
   return "Ready · SQLite FTS5 BM25";
 }
+
+/** Second fill invoke while one is healthy — join, do not paint a red banner. */
+export function isInFlightFillError(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : String(err ?? "");
+  return /already running for this vault|fill join failed|fill in progress/i.test(
+    msg,
+  );
+}

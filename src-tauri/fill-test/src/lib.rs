@@ -2,5 +2,8 @@
 
 #[path = "../../src/index_fill.rs"]
 mod index_fill;
+#[path = "../../src/fill_join.rs"]
+mod fill_join;
 
+pub use fill_join::*;
 pub use index_fill::*;

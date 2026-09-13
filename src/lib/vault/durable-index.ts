@@ -682,8 +682,18 @@ export async function openDurableIndexForVault(opts: {
   // Prefer native SQLite on desktop when vault root is known
   if (mode === "desktop" && vaultRoot) {
     try {
-      const { openNativeSqliteIndex } = await import("./native-sqlite-index");
-      // Close previous vault index before opening a new one
+      const { openNativeSqliteIndex, NativeSqliteDurableIndex } = await import(
+        "./native-sqlite-index"
+      );
+      if (
+        active instanceof NativeSqliteDurableIndex &&
+        active.ready &&
+        active.getVaultRoot() === vaultRoot
+      ) {
+        return active;
+      }
+      // Close previous vault index before opening a new one — but never
+      // while the same root's fill is still the active writer.
       if (active?.ready) {
         closeDurableIndex();
       }

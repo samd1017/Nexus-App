@@ -150,6 +150,7 @@ import {
   isEmptyNativeFillFailure,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
+  isInFlightFillError,
 } from "./sqlite-fill-progress";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
@@ -943,6 +944,13 @@ async function completeDiskSearchIndex(opts?: {
 				skipped: false,
 			};
 		} catch (err) {
+			if (isInFlightFillError(err)) {
+				console.warn(
+					"[nexus] native FTS fill already running — keeping progress banner",
+					err,
+				);
+				return { indexed: 0, errors: 0, skipped: true };
+			}
 			if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
 				const message =
 					err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
