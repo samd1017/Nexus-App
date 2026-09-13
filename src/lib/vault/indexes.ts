@@ -100,9 +100,95 @@ export class VaultStructuralIndex {
     else this.pendingDirtyIds.push(...ids);
   }
 
+  /**
+   * Apply ≤64 store-hinted dirty ids: insert / delete / rename / content.
+   * Works when `nodes` is a new map *or* the same object mutated in place.
+   */
+  private applyHintedDirty(
+    prev: Record<string, VaultNode> | null,
+    nodes: Record<string, VaultNode>,
+  ): boolean {
+    const hinted = this.pendingDirtyIds;
+    if (!hinted?.length || hinted.length > 64) return false;
+    this.pendingDirtyIds = null;
+    const uniq = Array.from(new Set(hinted));
+    const inPlace = !prev || prev === nodes;
+    let structural = false;
+    let contentOnly = false;
+
+    for (const id of uniq) {
+      const after = nodes[id];
+      const known = this.parentOf.has(id);
+      if (after && !known) {
+        this.insertNode(after, nodes, true);
+        this.nodeCount += 1;
+        if (after.kind === "note") this.noteCount += 1;
+        else this.folderCount += 1;
+        structural = true;
+        continue;
+      }
+      if (!after && known) {
+        const kind = this.kindOf.get(id);
+        this.removeNode(id);
+        this.nodeCount = Math.max(0, this.nodeCount - 1);
+        if (kind === "note") this.noteCount = Math.max(0, this.noteCount - 1);
+        else this.folderCount = Math.max(0, this.folderCount - 1);
+        structural = true;
+        continue;
+      }
+      if (!after || !known) continue;
+
+      const before: VaultNode | undefined = inPlace
+        ? {
+            id,
+            path: this.pathOf.get(id) ?? after.path,
+            name: this.nameOf.get(id) ?? after.name,
+            kind: this.kindOf.get(id) ?? after.kind,
+            parentId: this.parentOf.get(id) ?? after.parentId,
+            mtime: this.mtimeOf.get(id) ?? after.mtime,
+          }
+        : prev?.[id];
+
+      if (
+        before &&
+        (before.parentId !== after.parentId ||
+          before.path !== after.path ||
+          before.name !== after.name ||
+          before.kind !== after.kind)
+      ) {
+        this.applyNodeDelta(before, after);
+        structural = true;
+      } else {
+        this.mtimeOf.set(id, after.mtime);
+        this.contentLenOf.set(id, (after.content ?? "").length);
+        contentOnly = true;
+        const p = after.parentId;
+        if (p) this.childSigCache.delete(p);
+        else this.childSigCache.delete("__root__");
+      }
+    }
+
+    if (structural) {
+      this.structureGeneration += 1;
+      this.childSigCache.clear();
+      this.titleListDirty = true;
+    } else if (contentOnly) {
+      this.contentGeneration += 1;
+    }
+    this.patchCount += 1;
+    this.lastNodesRef = nodes;
+    return true;
+  }
+
   /** Sync index to current nodes map. Patches when possible, full rebuild otherwise. */
   sync(nodes: Record<string, VaultNode>): void {
-    if (this.lastNodesRef === nodes) return;
+    if (this.lastNodesRef === nodes) {
+      if (this.pendingDirtyIds?.length && !this.applyHintedDirty(nodes, nodes)) {
+        this.pendingDirtyIds = null;
+        this.rebuild(nodes);
+      }
+      return;
+    }
 
     if (!this.lastNodesRef) {
       this.pendingDirtyIds = null;
@@ -111,51 +197,8 @@ export class VaultStructuralIndex {
     }
 
     const prev = this.lastNodesRef;
-    const hinted = this.pendingDirtyIds;
+    if (this.applyHintedDirty(prev, nodes)) return;
     this.pendingDirtyIds = null;
-
-    // Fast path: store-known dirty ids (avoids Object.keys over 45k map)
-    if (hinted && hinted.length > 0 && hinted.length <= 64) {
-      const uniq = Array.from(new Set(hinted));
-      const changed = uniq.filter((id) => nodes[id] !== prev[id] && nodes[id] != null);
-      if (
-        changed.length > 0 &&
-        changed.length === uniq.filter((id) => prev[id] != null || nodes[id] != null).length &&
-        changed.every((id) => prev[id] != null && nodes[id] != null)
-      ) {
-        let structural = false;
-        for (const id of changed) {
-          const before = prev[id]!;
-          const after = nodes[id]!;
-          if (
-            before.parentId !== after.parentId ||
-            before.path !== after.path ||
-            before.name !== after.name ||
-            before.kind !== after.kind
-          ) {
-            structural = true;
-          }
-          this.applyNodeDelta(before, after);
-        }
-        if (structural) {
-          this.structureGeneration += 1;
-          this.childSigCache.clear();
-          this.titleListDirty = true;
-          this.recount(nodes);
-        } else {
-          this.contentGeneration += 1;
-          for (const id of changed) {
-            const p = nodes[id]?.parentId;
-            if (p) this.childSigCache.delete(p);
-            else this.childSigCache.delete("__root__");
-          }
-          // content-only: skip recount
-        }
-        this.patchCount += 1;
-        this.lastNodesRef = nodes;
-        return;
-      }
-    }
 
     const prevKeys = Object.keys(prev);
     const nextKeys = Object.keys(nodes);

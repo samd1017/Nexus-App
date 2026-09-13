@@ -113,13 +113,10 @@ async function main() {
   const tRebuild = ms(() => idx.rebuild(nodes));
   console.log(`  structural rebuild: ${tRebuild.ms.toFixed(1)}ms`);
 
-  // Path-patch 20 notes
-  const idOf = (p) => {
-    for (const n of Object.values(nodes)) {
-      if (n.path === p) return n.id;
-    }
-    return "x_" + p;
-  };
+  // Path-patch 20 notes — production adapters use O(1) path→id (not a vault scan).
+  const pathToId = new Map();
+  for (const n of Object.values(nodes)) pathToId.set(n.path, n.id);
+  const idOf = (p) => pathToId.get(p) ?? `x_${p}`;
   // Build a fake scan
   const signatures = {};
   for (const n of Object.values(nodes)) {
@@ -170,6 +167,14 @@ async function main() {
   }
   if (tPatch.result.changedPaths.length < 1) {
     console.error("FAIL path-patch no changes");
+    ok = false;
+  }
+  if (tPatch.result.scan.nodes !== nodes) {
+    console.error("FAIL path-patch copied nodes map (must mutate in place)");
+    ok = false;
+  }
+  if (tPatch.result.scan.signatures !== signatures) {
+    console.error("FAIL path-patch copied signatures map (must mutate in place)");
     ok = false;
   }
 

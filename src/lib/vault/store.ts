@@ -16,6 +16,16 @@ import type {
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
+import {
+  buildSyntheticVault,
+  isSyntheticSoakVault,
+  parseSoakNoteCount,
+  soakVaultId,
+} from "./synthetic-vault";
+import {
+  partializeVaultPersist,
+  type ScaleRemount,
+} from "./persist-policy";
 import { preferCleanWrite } from "@/lib/markdown/serialize";
 import { flushActiveEditors } from "@/lib/editor/flush";
 import { slugifyTitle } from "@/lib/utils";
@@ -118,6 +128,7 @@ import {
   upsertDurableNoteFromNode,
   syncDurableIndexFromNodes,
   removeDurableNote,
+  rebuildDurableIndexFromNodesAsync,
 } from "./durable-index";
 import { vaultLinkIndex, resetLinkIndex, rebuildLinkIndex } from "./link-index";
 import { invalidateSearchCache } from "@/lib/search/fuse-search";
@@ -232,10 +243,17 @@ export type VaultStore = {
   graphScopeMode: GraphScopeMode;
   graphBrowsePath: string;
   graphEgoReturnPath: string | null;
+  /** Ticket to remount a large in-memory vault after reload (nodes never persisted). */
+  scaleRemount: ScaleRemount | null;
 
   bootstrap: () => Promise<void>;
   openDemoVault: () => void;
-  openLargeTestVault: () => Promise<void>;
+  openLargeTestVault: (opts?: { restore?: ScaleRemount | true }) => Promise<void>;
+  openSyntheticVault: (
+    noteCount: number,
+    opts?: { restore?: ScaleRemount | true },
+  ) => Promise<void>;
+  remountScaleSession: () => Promise<boolean>;
   openLocalVault: (name: string, seed?: LocalVaultSeed) => void;
   openFolderAsVault: () => Promise<void>;
   createMemoryVault: (name?: string) => void;
@@ -482,14 +500,33 @@ function enqueueDiskOp(op: () => Promise<void>, immediate = false) {
 	diskFlushTimer = setTimeout(flushDiskOps, DISK_ACK_MS);
 }
 function beginStage(get: () => VaultStore) {
-	if (!stageBuf) stageBuf = {
-		nodes: { ...get().nodes },
-		rootIds: [...get().rootIds],
-		expandedFolders: [...get().expandedFolders],
-		dirtyNoteIds: [...get().dirtyNoteIds],
-		activeNoteId: get().activeNoteId
-	};
+	if (!stageBuf) {
+		const cur = get();
+		// Mutate the live node map — never clone 45k–100k records for one create.
+		stageBuf = {
+			nodes: cur.nodes,
+			rootIds: [...cur.rootIds],
+			expandedFolders: [...cur.expandedFolders],
+			dirtyNoteIds: [...cur.dirtyNoteIds],
+			activeNoteId: cur.activeNoteId
+		};
+	}
 	return stageBuf;
+}
+
+function pathOccupied(nodes: Record<string, VaultNode>, path: string): boolean {
+	try {
+		if (ensureVaultIndex(nodes).hasPath(path)) return true;
+	} catch {}
+	return false;
+}
+
+function patchVaultIndex(nodes: Record<string, VaultNode>, dirtyIds: string[]) {
+	try {
+		const idx = ensureVaultIndex(nodes);
+		idx.markDirty(dirtyIds);
+		idx.sync(nodes);
+	} catch {}
 }
 function scheduleStageFlush(set: (partial: Partial<VaultStore>) => void) {
 	if (stageTimer) return;
@@ -888,6 +925,34 @@ type StoreSet = {
 };
 type StoreGet = () => VaultStore;
 
+function applyScaleRestore(
+	get: StoreGet,
+	set: StoreSet,
+	restore?: ScaleRemount | true | null,
+): void {
+	if (!restore || restore === true) return;
+	const nodes = get().nodes;
+	const byPath = (p: string | null) =>
+		p
+			? Object.values(nodes).find((n) => n.kind === "note" && n.path === p) ?? null
+			: null;
+	const primary = byPath(restore.lastNotePath);
+	const secondary = byPath(restore.lastSecondaryNotePath);
+	if (primary) {
+		get().setActiveNote(primary.id);
+	}
+	if (restore.workspaceSplit && secondary) {
+		set({
+			secondaryNoteId: secondary.id,
+			settings: {
+				...get().settings,
+				workspaceSplit: true,
+				lastSecondaryNotePath: secondary.path,
+			},
+		});
+	}
+}
+
 function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
   return {
 	ready: false,
@@ -925,6 +990,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	graphScopeMode: "vault",
 	graphBrowsePath: "",
 	graphEgoReturnPath: null,
+	scaleRemount: null,
 	bootstrap: async () => {
 		const recents = loadRecents();
 		const fsaSupported = canOpenLocalVaultFolder();
@@ -937,6 +1003,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			ready: true,
 			folderAccessLost: false
 		});
+		if (import.meta.env.DEV && typeof window !== "undefined") {
+			const soak = Number(new URLSearchParams(window.location.search).get("soak"));
+			if (Number.isFinite(soak) && soak > 0) {
+				await get().openSyntheticVault(soak);
+				return;
+			}
+		}
 		if (isDesktopShell() && getPrefs().openLastVault) {
 			const root = getDesktopVaultRoot();
 			if (root) {
@@ -1055,6 +1128,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		resetAndSeedNav(get().activeNoteId);
 			return;
 		}
+		if (await get().remountScaleSession()) return;
 		set({
 			vaultId: null,
 			vaultName: "",
@@ -1107,6 +1181,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			secondaryNoteId: null,
 			// Keep rightTab at default (backlinks). Do NOT auto-open Graph —
 			// GraphView must be user-initiated (see RightPanel R1.1).
+			scaleRemount: null,
 			settings: {
 				...get().settings,
 				lastNotePath: welcome?.path ?? null,
@@ -1114,6 +1189,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				graphMode: "panel",
 				rightOpen: true,
 				workspaceSplit: false,
+				soakNoteCount: null,
 			}
 		});
 		syncActiveBackend("demo");
@@ -1121,7 +1197,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		set({ recentNoteVisits: recentsForOpenVault(vaultId, nodes) });
 		resetAndSeedNav(get().activeNoteId);
 	},
-	openLargeTestVault: async () => {
+	openLargeTestVault: async (opts) => {
 		if (import.meta.env.PROD) {
 			get().setToast("Large test vault is not available in production");
 			return;
@@ -1137,6 +1213,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		cancelVaultModuleState();
 		const gen = vaultGen;
 		resetNavHistory();
+		const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
 		try {
 			fsaRoot = null;
 			desktopRoot = null;
@@ -1193,12 +1270,25 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			syncActiveBackend("local");
 			await prepareDurableIndex(vaultId, "local");
 			if (gen !== vaultGen) return;
-			maybeSyncDurableIndex(vaultId, "local", data.nodes);
+			await rebuildDurableIndexFromNodesAsync(vaultId, data.nodes, true, {
+				chunkSize: 2000,
+				onProgress: (done, total) => {
+					if (gen !== vaultGen) return;
+					setOpenProgress({
+						phase: "indexing",
+						scanned: done,
+						totalHint: total,
+						message: `Indexing… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+					});
+				},
+			});
+			if (gen !== vaultGen) return;
 			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""], {
 				vaultId
 			});
 			if (gen !== vaultGen) return;
 			invalidateVaultTagsCache();
+			const restore = opts?.restore && opts.restore !== true ? opts.restore : null;
 			set({
 				vaultId,
 				vaultName: data.vaultName,
@@ -1213,15 +1303,43 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				recentVaults: recents,
 				connecting: false,
 				...GRAPH_SCOPE_DEFAULTS,
+				scaleRemount: {
+					kind: "large-test",
+					vaultId,
+					vaultName: data.vaultName,
+					noteCount: data.noteCount,
+					lastNotePath: restore?.lastNotePath ?? firstNote?.path ?? null,
+					lastSecondaryNotePath: restore?.lastSecondaryNotePath ?? null,
+					workspaceSplit: Boolean(restore?.workspaceSplit),
+				},
 				settings: {
 					...get().settings,
-					lastNotePath: firstNote?.path ?? null,
+					lastNotePath: restore?.lastNotePath ?? firstNote?.path ?? null,
+					lastSecondaryNotePath: restore?.lastSecondaryNotePath ?? null,
+					workspaceSplit: Boolean(restore?.workspaceSplit),
 					editorMode: getPrefs().defaultEditorMode,
 					graphMode: "panel",
-					rightOpen: true
+					rightOpen: true,
+					soakNoteCount: null,
 				},
 				toast: `Large Test Vault ready — ${data.noteCount.toLocaleString()} notes`
 			});
+			applyScaleRestore(get, set, restore);
+			const openMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+			);
+			if (typeof window !== "undefined") {
+				(
+					window as unknown as {
+						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+					}
+				).__NEXUS_SOAK_LAST__ = {
+					noteCount: data.noteCount,
+					openMs,
+					vaultId,
+					kind: "large-test",
+				};
+			}
 			setOpenProgress({
 				phase: "ready",
 				scanned: data.noteCount,
@@ -1251,6 +1369,191 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				message: msg
 			});
 		}
+	},
+	openSyntheticVault: async (noteCount, opts) => {
+		if (import.meta.env.PROD) {
+			get().setToast("Soak vaults are not available in production");
+			return;
+		}
+		const n = Math.max(1, Math.floor(Number(noteCount) || 0));
+		if (!n) {
+			get().setToast("Soak vault needs a note count");
+			return;
+		}
+		if (get().connecting) return;
+		set({ connecting: true, folderAccessLost: false });
+		cancelVaultModuleState();
+		const gen = vaultGen;
+		resetNavHistory();
+		const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
+		try {
+			fsaRoot = null;
+			desktopRoot = null;
+			setDesktopVaultRoot(null);
+			setOpenProgress({
+				phase: "walking",
+				scanned: 0,
+				totalHint: n,
+				message: `Building soak vault (${n.toLocaleString()} notes)…`,
+			});
+			const data = await buildSyntheticVault({
+				noteCount: n,
+				yieldEvery: n > 4000 ? 800 : 0,
+				onProgress: (loaded, total, phase) => {
+					if (gen !== vaultGen) return;
+					setOpenProgress({
+						phase: "walking",
+						scanned: loaded,
+						totalHint: total,
+						message:
+							phase === "notes"
+								? `Building notes… ${loaded.toLocaleString()} / ${total.toLocaleString()}`
+								: "Building folders…",
+					});
+				},
+			});
+			if (gen !== vaultGen) return;
+			const vaultId = soakVaultId(data.noteCount);
+			const firstNote =
+				Object.values(data.nodes).find((node) => node.kind === "note") ?? null;
+			const expanded = smartExpandedFolders(data.nodes, firstNote?.id ?? null);
+			const recents = pushRecent({
+				id: vaultId,
+				name: data.vaultName,
+				path: `Soak vault (${data.noteCount.toLocaleString()} in-browser)`,
+				lastOpened: Date.now(),
+				mode: "local",
+			});
+			setOpenProgress({
+				phase: "indexing",
+				scanned: 0,
+				totalHint: data.noteCount,
+				message: "Archiving bodies…",
+			});
+			archiveBodiesFromNodes(data.nodes);
+			syncActiveBackend("local");
+			await prepareDurableIndex(vaultId, "local");
+			if (gen !== vaultGen) return;
+			const tIndex = typeof performance !== "undefined" ? performance.now() : Date.now();
+			await rebuildDurableIndexFromNodesAsync(vaultId, data.nodes, true, {
+				chunkSize: 1500,
+				onProgress: (done, total) => {
+					if (gen !== vaultGen) return;
+					setOpenProgress({
+						phase: "indexing",
+						scanned: done,
+						totalHint: total,
+						message: `Indexing… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+					});
+				},
+			});
+			const indexMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - tIndex,
+			);
+			if (gen !== vaultGen) return;
+			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""], {
+				vaultId,
+			});
+			if (gen !== vaultGen) return;
+			invalidateVaultTagsCache();
+			const restore = opts?.restore && opts.restore !== true ? opts.restore : null;
+			const openMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+			);
+			set({
+				vaultId,
+				vaultName: data.vaultName,
+				vaultPath: `${data.vaultName} · ${data.noteCount.toLocaleString()} notes`,
+				mode: "local",
+				nodes,
+				rootIds: data.rootIds,
+				activeNoteId: firstNote?.id ?? null,
+				expandedFolders: expanded,
+				dirtyNoteIds: [],
+				lastExternalSync: null,
+				recentVaults: recents,
+				connecting: false,
+				...GRAPH_SCOPE_DEFAULTS,
+				scaleRemount: {
+					kind: "soak",
+					vaultId,
+					vaultName: data.vaultName,
+					noteCount: data.noteCount,
+					lastNotePath: restore?.lastNotePath ?? firstNote?.path ?? null,
+					lastSecondaryNotePath: restore?.lastSecondaryNotePath ?? null,
+					workspaceSplit: Boolean(restore?.workspaceSplit),
+				},
+				settings: {
+					...get().settings,
+					lastNotePath: restore?.lastNotePath ?? firstNote?.path ?? null,
+					lastSecondaryNotePath: restore?.lastSecondaryNotePath ?? null,
+					workspaceSplit: Boolean(restore?.workspaceSplit),
+					editorMode: getPrefs().defaultEditorMode,
+					graphMode: "panel",
+					rightOpen: true,
+					soakNoteCount: data.noteCount,
+				},
+				toast: `${data.vaultName} ready — ${data.noteCount.toLocaleString()} notes (${openMs}ms)`,
+			});
+			applyScaleRestore(get, set, restore);
+			if (typeof window !== "undefined") {
+				(
+					window as unknown as {
+						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+					}
+				).__NEXUS_SOAK_LAST__ = {
+					noteCount: data.noteCount,
+					openMs,
+					indexMs,
+					folderCount: data.folderCount,
+					vaultId,
+				};
+			}
+			setOpenProgress({
+				phase: "ready",
+				scanned: data.noteCount,
+				totalHint: data.noteCount,
+				message: "Ready",
+			});
+			window.setTimeout(() => {
+				setOpenProgress({
+					phase: "idle",
+					scanned: 0,
+					totalHint: null,
+					message: "",
+				});
+			}, 1400);
+		} catch (err) {
+			if (gen !== vaultGen) return;
+			console.error("[vault] openSyntheticVault failed", err);
+			const msg = err instanceof Error ? err.message : String(err);
+			set({
+				connecting: false,
+				toast: `Could not open soak vault: ${msg}`,
+			});
+			setOpenProgress({
+				phase: "error",
+				scanned: 0,
+				totalHint: null,
+				message: msg,
+			});
+		}
+	},
+	remountScaleSession: async () => {
+		const ticket = get().scaleRemount;
+		if (!ticket) return false;
+		if (import.meta.env.PROD) return false;
+		if (ticket.kind === "soak") {
+			const n = ticket.noteCount ?? parseSoakNoteCount(ticket.vaultId);
+			if (!n) return false;
+			await get().openSyntheticVault(n, { restore: ticket });
+			return true;
+		}
+		if (ticket.kind === "large-test") {
+			await get().openLargeTestVault({ restore: ticket });
+			return true;
+		}
+		return false;
 	},
 	openLocalVault: (name, seed) => {
 		cancelVaultModuleState();
@@ -1621,6 +1924,16 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		) {
 			await get().openLargeTestVault();
 			return;
+		}
+		if (isSyntheticSoakVault(id) || isSyntheticSoakVault(recentEarly?.id)) {
+			const n =
+				parseSoakNoteCount(id) ??
+				parseSoakNoteCount(recentEarly?.id) ??
+				get().settings.soakNoteCount;
+			if (n) {
+				await get().openSyntheticVault(n);
+				return;
+			}
 		}
 		if (await confirmDesktopShell() || isDesktopShell()) {
 			const recent = get().recentVaults.find((r) => r.id === id);
@@ -2078,16 +2391,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (!opts?.external && prev) recordNoteRevision(id, node.path, prev);
 		// Keep body archive in sync for large-test lazy mounts
 		if (hasBodyArchive() && node.path) setBodyInArchive(node.path, next);
-		try { ensureVaultIndex(get().nodes).markDirty([id]); } catch {}
+		const nextNode: VaultNode = {
+			...node,
+			content: next,
+			mtime: Date.now(),
+		};
+		get().nodes[id] = nextNode;
+		patchVaultIndex(get().nodes, [id]);
 		set({
-			nodes: {
-				...get().nodes,
-				[id]: {
-					...node,
-					content: next,
-					mtime: Date.now()
-				}
-			},
+			nodes: get().nodes,
 			dirtyNoteIds: opts?.external ? get().dirtyNoteIds.filter((x) => x !== id) : get().dirtyNoteIds.includes(id) ? get().dirtyNoteIds : [...get().dirtyNoteIds, id],
 			lastExternalSync: opts?.external ? Date.now() : get().lastExternalSync
 		});
@@ -2244,8 +2556,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		let name = base.endsWith(".md") ? base : `${base}.md`;
 		let path = parent ? pathJoin(parent.path, name) : name;
 		let i = 1;
-		const paths = new Set(Object.values(stage.nodes).map((n) => n.path));
-		while (paths.has(path)) {
+		while (pathOccupied(stage.nodes, path)) {
 			name = `${base.replace(/\.md$/i, "")} ${i}.md`;
 			path = parent ? pathJoin(parent.path, name) : name;
 			i++;
@@ -2286,6 +2597,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			stage.activeNoteId = id;
 		}
 		if (!stage.dirtyNoteIds.includes(id)) stage.dirtyNoteIds = [...stage.dirtyNoteIds, id];
+		patchVaultIndex(stage.nodes, [id]);
 		scheduleStageFlush(set);
 		if (isDiskVault(get().mode)) {
 			const pth = path;
@@ -2315,9 +2627,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const parent = parentId ? stage.nodes[parentId] : null;
 		let folderName = slugifyTitle(name) || "New Folder";
 		let path = parent ? pathJoin(parent.path, folderName) : folderName;
-		const paths = new Set(Object.values(stage.nodes).map((n) => n.path));
 		let i = 1;
-		while (paths.has(path)) {
+		while (pathOccupied(stage.nodes, path)) {
 			folderName = `${name} ${i}`;
 			path = parent ? pathJoin(parent.path, folderName) : folderName;
 			i++;
@@ -2338,6 +2649,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		};
 		if (parentId == null && !stage.rootIds.includes(id)) stage.rootIds = [...stage.rootIds, id];
 		if (expand && !stage.expandedFolders.includes(id)) stage.expandedFolders = [...stage.expandedFolders, id];
+		patchVaultIndex(stage.nodes, [id]);
 		scheduleStageFlush(set);
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
@@ -3442,18 +3754,18 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				if (act) protectedIds.add(act);
 				touchBody(id);
 				const victims = pickEvictions(protectedIds);
-				const next = { ...get().nodes };
-				next[id] = {
+				const live = get().nodes;
+				live[id] = {
 					...cur,
 					content,
 					mtime: cur.mtime
 				};
 				for (const v of victims) {
 					if (v === id) continue;
-					const n = next[v];
+					const n = live[v];
 					if (n?.kind === "note" && n.content !== undefined) {
 						if (hasBodyArchive()) setBodyInArchive(n.path, n.content);
-						next[v] = {
+						live[v] = {
 							id: n.id,
 							path: n.path,
 							name: n.name,
@@ -3464,10 +3776,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					}
 				}
 				const dirtyIds = [id, ...victims.filter((v) => v !== id)];
-				try {
-					ensureVaultIndex(get().nodes).markDirty(dirtyIds);
-				} catch {}
-				set({ nodes: next });
+				patchVaultIndex(live, dirtyIds);
+				set({ nodes: live });
 				vaultLinkIndex.setNoteLinks(id, content);
 				upsertDurableNoteFromNode({
 					...cur,
@@ -3539,12 +3849,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const stats = getBodyCacheStats(protectedIds);
 		const victims = pickEvictions(protectedIds, { aggressive: opts?.aggressive ?? stats.underPressure });
 		if (!victims.length) return 0;
-		const next = { ...get().nodes };
+		const live = get().nodes;
 		for (const v of victims) {
-			const n = next[v];
+			const n = live[v];
 			if (n?.kind === "note" && n.content !== undefined) {
 				if (hasBodyArchive()) setBodyInArchive(n.path, n.content);
-				next[v] = {
+				live[v] = {
 					id: n.id,
 					path: n.path,
 					name: n.name,
@@ -3555,10 +3865,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				removeBodyTouch(v);
 			}
 		}
-		try {
-			ensureVaultIndex(get().nodes).markDirty(victims);
-		} catch {}
-		set({ nodes: next });
+		patchVaultIndex(live, victims);
+		set({ nodes: live });
 		return victims.length;
 	},
 	getConflictPairs: () => {
@@ -3826,7 +4134,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const n = get().nodes[nodeId];
 		if (!n) return;
 		get().ensureGraphVisible();
-		const noteCount = Object.values(get().nodes).filter((x) => x.kind === "note").length;
+		const noteCount = (() => {
+			try {
+				return ensureVaultIndex(get().nodes).noteCount;
+			} catch {
+				return 0;
+			}
+		})();
 		if (n.kind === "folder") {
 			get().enterGraphFolder(n.path || "");
 			return;
@@ -3864,43 +4178,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 export const useVaultStore = create(
   persist(createVaultState as never, {
 	name: STORAGE_KEY,
-	partialize: (s: VaultStore) => {
-		const disk = s.mode === "fsa" || s.mode === "desktop";
-		// Never write the 45k seed (or any huge mount) to localStorage — QuotaExceededError.
-		const isLargeTest = s.vaultId === LARGE_TEST_VAULT_ID;
-		const nodeCount = s.nodes ? Object.keys(s.nodes).length : 0;
-		const tooBig = isLargeTest || nodeCount > 2500;
-		if (disk || tooBig) {
-			return {
-				vaultId: null,
-				vaultName: "",
-				vaultPath: "",
-				mode: "demo",
-				nodes: {},
-				rootIds: [],
-				activeNoteId: null,
-				secondaryNoteId: null,
-				settings: {
-					...s.settings,
-					// Keep companion path so a later demo/session can restore ⌘2
-					workspaceSplit: false,
-				},
-				expandedFolders: []
-			};
-		}
-		return {
-			vaultId: s.vaultId,
-			vaultName: s.vaultName,
-			vaultPath: s.vaultPath,
-			mode: s.mode,
-			nodes: s.nodes,
-			rootIds: s.rootIds,
-			activeNoteId: s.activeNoteId,
-			secondaryNoteId: s.secondaryNoteId,
-			settings: s.settings,
-			expandedFolders: s.expandedFolders
-		};
-	},
+	partialize: (s: VaultStore) => partializeVaultPersist(s),
 	onRehydrateStorage: () => (state) => {
 		if (!state) return;
 		queueMicrotask(() => {
@@ -3954,11 +4232,49 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			bodiesLoaded,
 			dirty: s.dirtyNoteIds.length,
 			activeNoteId: s.activeNoteId,
+			secondaryNoteId: s.secondaryNoteId,
+			workspaceSplit: Boolean(s.settings?.workspaceSplit),
 			hasBodyArchive: hasBodyArchive(),
 			bodyArchiveSize: bodyArchiveSize(),
 			graphMode: s.settings?.graphMode ?? null,
 			rightTab: s.rightTab ?? null,
+			scaleRemount: s.scaleRemount,
+			soakNoteCount: s.settings?.soakNoteCount ?? null,
 		};
+	};
+	(
+		window as unknown as {
+			__NEXUS_SOAK__?: {
+				open: (n: number) => Promise<void>;
+				open45k: () => Promise<void>;
+				createNote: (parentId?: string | null, title?: string) => string | null;
+				setActiveNote: (id: string | null) => void;
+				noteIds: (limit?: number) => string[];
+				probe: () => Record<string, unknown> | undefined;
+			};
+		}
+	).__NEXUS_SOAK__ = {
+		open: (n: number) => useVaultStore.getState().openSyntheticVault(n),
+		open45k: () => useVaultStore.getState().openLargeTestVault(),
+		createNote: (parentId?: string | null, title?: string) =>
+			useVaultStore.getState().createNote(parentId ?? null, title ?? "Untitled"),
+		setActiveNote: (id: string | null) =>
+			useVaultStore.getState().setActiveNote(id),
+		noteIds: (limit = 8) => {
+			const nodes = useVaultStore.getState().nodes;
+			const out: string[] = [];
+			for (const id in nodes) {
+				if (nodes[id]?.kind === "note") {
+					out.push(id);
+					if (out.length >= limit) break;
+				}
+			}
+			return out;
+		},
+		probe: () =>
+			(
+				window as unknown as { __NEXUS_STRESS__?: () => Record<string, unknown> }
+			).__NEXUS_STRESS__?.(),
 	};
 }
 

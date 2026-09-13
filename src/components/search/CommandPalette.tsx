@@ -186,20 +186,7 @@ function topNotesByVisitMtime(
     });
     if (out.length >= limit) return out;
   }
-  const rest = Object.values(nodes)
-    .filter((n) => n.kind === "note" && !seen.has(n.id))
-    .sort((a, b) => b.mtime - a.mtime);
-  for (const n of rest) {
-    out.push({
-      noteId: n.id,
-      path: n.path,
-      title: noteTitle(n),
-      snippet: snip(n),
-      score: 1,
-      matchType: "title",
-    });
-    if (out.length >= limit) break;
-  }
+  // Recents-only on large vaults — never sort 45k notes for an empty query.
   return out;
 }
 
@@ -213,7 +200,9 @@ function CommandPaletteOpen() {
   const open = useVaultStore((s) => s.commandOpen);
   const vaultId = useVaultStore((s) => s.vaultId);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
-  const nodes = useVaultStore((s) => s.nodes);
+  const nodesTick = useVaultStore((s) => s.activeNoteId);
+  const nodes = useVaultStore.getState().nodes;
+  void nodesTick;
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const createNote = useVaultStore((s) => s.createNote);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
@@ -225,6 +214,7 @@ function CommandPaletteOpen() {
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
+  const openSyntheticVault = useVaultStore((s) => s.openSyntheticVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createMemoryVault = useVaultStore((s) => s.createMemoryVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
@@ -704,17 +694,30 @@ function CommandPaletteOpen() {
             setCommandOpen(false);
           }),
         },
-        ...(import.meta.env.DEV ? [{
-          id: "large-test-vault",
-          label: "Open 45k test vault",
-          keywords: ["large", "stress", "45k", "test", "scale", "benchmark"],
-          icon: <Database size={15} />,
-          shortcut: undefined as string | undefined,
-          run: wrapRun("large-test-vault", () => {
-            void openLargeTestVault();
-            setCommandOpen(false);
-          }),
-        }] : []),
+        ...(import.meta.env.DEV ? [
+          {
+            id: "large-test-vault",
+            label: "Open 45k test vault",
+            keywords: ["large", "stress", "45k", "test", "scale", "benchmark"],
+            icon: <Database size={15} />,
+            shortcut: undefined as string | undefined,
+            run: wrapRun("large-test-vault", () => {
+              void openLargeTestVault();
+              setCommandOpen(false);
+            }),
+          },
+          ...([10_000, 50_000, 100_000, 200_000] as const).map((n) => ({
+            id: `soak-vault-${n}`,
+            label: `Open soak vault (${n.toLocaleString()} notes)`,
+            keywords: ["soak", "scale", "stress", "synthetic", String(n), "large"],
+            icon: <Database size={15} />,
+            shortcut: undefined as string | undefined,
+            run: wrapRun(`soak-vault-${n}`, () => {
+              void openSyntheticVault(n);
+              setCommandOpen(false);
+            }),
+          })),
+        ] : []),
         {
           id: "hermes-sim",
           label: "Simulate agent write",
@@ -774,6 +777,7 @@ function CommandPaletteOpen() {
       revealVaultInFinder,
       openDemoVault,
       openLargeTestVault,
+      openSyntheticVault,
       simulateHermesWrite,
       practiceAgentConflict,
       setCommandOpen,

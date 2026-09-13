@@ -19,6 +19,8 @@ import {
   Pin,
 } from "lucide-react";
 import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
+import { useTreeStructureTick } from "@/lib/vault/tree-tick";
+import { vaultIndex } from "@/lib/vault/indexes";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
 import { VisualEditor } from "./VisualEditor";
@@ -53,7 +55,6 @@ export function EditorPane({
   noteId?: string | null;
   pane?: "primary" | "secondary";
 } = {}) {
-  const nodes = useVaultStore((s) => s.nodes);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
   const rightOpen = useVaultStore((s) => s.settings.rightOpen);
@@ -79,7 +80,10 @@ export function EditorPane({
   const resolvedId = useVaultStore((s) =>
     pane === "secondary" ? (noteId ?? s.secondaryNoteId) : (noteId ?? s.activeNoteId),
   );
-  const note = resolvedId ? (nodes[resolvedId] ?? null) : null;
+  const note = useVaultStore((s) =>
+    resolvedId ? (s.nodes[resolvedId] ?? null) : null,
+  );
+  const structureTick = useTreeStructureTick();
   const isSecondary = pane === "secondary";
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const [hydrateError, setHydrateError] = useState(false);
@@ -130,8 +134,8 @@ export function EditorPane({
   }, [pane]);
 
   const crumbs = useMemo(
-    () => getBreadcrumbTrail(note ?? null, nodes),
-    [note, nodes],
+    () => getBreadcrumbTrail(note ?? null, useVaultStore.getState().nodes),
+    [note],
   );
 
   const revealFolder = (id: string) => {
@@ -167,10 +171,10 @@ export function EditorPane({
     }
   }, [note?.id, note?.content, ensureNoteBody]);
 
-  const noteCount = useMemo(
-    () => Object.values(nodes).filter((n) => n.kind === "note").length,
-    [nodes],
-  );
+  const noteCount = useMemo(() => {
+    void structureTick;
+    return vaultIndex.noteCount;
+  }, [structureTick]);
   const createNote = useVaultStore((s) => s.createNote);
 
   if (!note || note.kind !== "note") {

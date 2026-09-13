@@ -50,6 +50,8 @@ export interface VaultSettings {
   lastSecondaryNotePath: string | null;
   /** Vault-relative note paths the user pinned in the sidebar */
   pinnedNotePaths: string[];
+  /** Soak vault size when remounting a synthetic in-memory vault after reload */
+  soakNoteCount: number | null;
 }
 
 export interface VaultStateSnapshot {
@@ -129,6 +131,7 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   workspaceSplit: false,
   lastSecondaryNotePath: null,
   pinnedNotePaths: [],
+  soakNoteCount: null,
 };
 
 export function noteTitle(node: VaultNode): string {

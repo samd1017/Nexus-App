@@ -53,6 +53,11 @@ export interface DurableIndex {
   close(): void;
   wipe(): void;
   rebuildFromNodes(nodes: Record<string, VaultNode>): void;
+  /** Chunked rebuild so large mounts do not freeze the UI for seconds. */
+  rebuildFromNodesAsync?(
+    nodes: Record<string, VaultNode>,
+    opts?: { chunkSize?: number; onProgress?: (done: number, total: number) => void },
+  ): Promise<void>;
   /** Wave B: delta sync — upsert/remove only; never wipe FTS bodies for unloaded notes */
   reconcileFromNodes(nodes: Record<string, VaultNode>): {
     upserted: number;
@@ -162,44 +167,73 @@ class MemoryDurableIndex implements DurableIndex {
     }
   }
 
+  private indexOneNode(n: VaultNode): { folders: number; edges: number; tags: number } {
+    if (n.kind === "folder") return { folders: 1, edges: 0, tags: 0 };
+    const body = n.content !== undefined ? n.content.slice(0, 4000) : undefined;
+    const tags = n.content !== undefined ? extractTags(n.content) : [];
+    const links = n.content !== undefined ? extractWikilinkTargets(n.content) : [];
+    const meta: DurableNoteMeta = {
+      id: n.id,
+      path: n.path,
+      name: n.name,
+      kind: "note",
+      parentId: n.parentId,
+      mtime: n.mtime,
+      title: noteTitle(n),
+      bodySnippet: body,
+      contentHash: body !== undefined ? simpleHash(body) : undefined,
+      tags,
+      linkTargets: links,
+    };
+    this.notes.set(n.id, meta);
+    this.indexTokens(n.id, meta);
+    return { folders: 0, edges: links.length, tags: tags.length };
+  }
+
   rebuildFromNodes(nodes: Record<string, VaultNode>): void {
     this.wipe();
     let folders = 0;
     let edges = 0;
     let tagCount = 0;
     for (const n of Object.values(nodes)) {
-      if (n.kind === "folder") {
-        folders += 1;
-        continue;
-      }
-      const body =
-        n.content !== undefined ? n.content.slice(0, 4000) : undefined;
-      const tags = n.content !== undefined ? extractTags(n.content) : [];
-      const links =
-        n.content !== undefined ? extractWikilinkTargets(n.content) : [];
-      edges += links.length;
-      tagCount += tags.length;
-      const meta: DurableNoteMeta = {
-        id: n.id,
-        path: n.path,
-        name: n.name,
-        kind: "note",
-        parentId: n.parentId,
-        mtime: n.mtime,
-        title: noteTitle(n),
-        bodySnippet: body,
-        contentHash: body !== undefined ? simpleHash(body) : undefined,
-        tags,
-        linkTargets: links,
-      };
-      this.notes.set(n.id, meta);
-      this.indexTokens(n.id, meta);
+      const r = this.indexOneNode(n);
+      folders += r.folders;
+      edges += r.edges;
+      tagCount += r.tags;
     }
     this.folders = folders;
     this.edges = edges;
     this.tagCount = tagCount;
     this.metaKv.set("last_full_rebuild_ms", String(Date.now()));
     this.metaKv.set("index_gen", String(Date.now()));
+  }
+
+  async rebuildFromNodesAsync(
+    nodes: Record<string, VaultNode>,
+    opts?: { chunkSize?: number; onProgress?: (done: number, total: number) => void },
+  ): Promise<void> {
+    this.wipe();
+    const list = Object.values(nodes);
+    const chunk = Math.max(200, opts?.chunkSize ?? 1500);
+    let folders = 0;
+    let edges = 0;
+    let tagCount = 0;
+    for (let i = 0; i < list.length; i++) {
+      const r = this.indexOneNode(list[i]!);
+      folders += r.folders;
+      edges += r.edges;
+      tagCount += r.tags;
+      if ((i + 1) % chunk === 0) {
+        opts?.onProgress?.(i + 1, list.length);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+    this.folders = folders;
+    this.edges = edges;
+    this.tagCount = tagCount;
+    this.metaKv.set("last_full_rebuild_ms", String(Date.now()));
+    this.metaKv.set("index_gen", String(Date.now()));
+    opts?.onProgress?.(list.length, list.length);
   }
 
   upsertNote(meta: DurableNoteMeta): void {
@@ -502,6 +536,25 @@ export function rebuildDurableIndexFromNodes(
     return;
   }
   const idx = active?.ready ? active : openMemoryDurableIndex(vaultId);
+  idx.rebuildFromNodes(nodes);
+}
+
+/** Chunked full rebuild — use on soak / 45k mounts so the UI can paint. */
+export async function rebuildDurableIndexFromNodesAsync(
+  vaultId: string | null,
+  nodes: Record<string, VaultNode>,
+  enabled: boolean,
+  opts?: { chunkSize?: number; onProgress?: (done: number, total: number) => void },
+): Promise<void> {
+  if (!enabled || !vaultId) {
+    closeDurableIndex();
+    return;
+  }
+  const idx = active?.ready ? active : openMemoryDurableIndex(vaultId);
+  if (idx.rebuildFromNodesAsync) {
+    await idx.rebuildFromNodesAsync(nodes, opts);
+    return;
+  }
   idx.rebuildFromNodes(nodes);
 }
 

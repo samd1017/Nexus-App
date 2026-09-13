@@ -936,9 +936,13 @@ export function GraphView({ mode, className }: Props) {
 
   const data = useMemo(() => {
     const tagByNote = new Map<string, string>();
-    for (const t of collectVaultTags(deferredNodes as Record<string, VaultNode>)) {
-      for (const id of t.noteIds) {
-        if (!tagByNote.has(id)) tagByNote.set(id, t.tag);
+    // Folder/ego color-by-folder must not walk 45k tag metas.
+    if (colorBy === "tag") {
+      const visible = new Set(resolved.nodes.map((n) => n.id));
+      for (const t of collectVaultTags(deferredNodes as Record<string, VaultNode>)) {
+        for (const id of t.noteIds) {
+          if (visible.has(id) && !tagByNote.has(id)) tagByNote.set(id, t.tag);
+        }
       }
     }
     return {
@@ -967,7 +971,7 @@ export function GraphView({ mode, className }: Props) {
         target: e.target,
       })) as GLink[],
     };
-  }, [resolved, deferredNodes]);
+  }, [resolved, deferredNodes, colorBy]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);

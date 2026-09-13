@@ -1,73 +1,51 @@
 /**
- * Pure unit test for vault store partialize policy (no browser / zustand).
- * Mirrors src/lib/vault/store.ts partialize rules for large mounts.
+ * Partialize policy — must match persist-policy.ts (bundled).
  * Run: node scripts/test-partialize-policy.mjs
  */
-
 import assert from "node:assert/strict";
+import { build } from "esbuild";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-/** @constant Must match large-test-vault.ts LARGE_TEST_VAULT_ID */
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const outDir = join(tmpdir(), `nexus-partialize-${Date.now()}`);
+mkdirSync(outDir, { recursive: true });
+const outFile = join(outDir, "persist-policy.mjs");
+
+await build({
+  entryPoints: [path.join(root, "src/lib/vault/persist-policy.ts")],
+  outfile: outFile,
+  bundle: true,
+  format: "esm",
+  platform: "neutral",
+  logLevel: "silent",
+});
+
+const { partializeVaultPersist, PARTIALIZE_NODE_CAP } = await import(
+  pathToFileURL(outFile).href
+);
+
 const LARGE_TEST_VAULT_ID = "large-test-vault-45k";
 
-/**
- * Inline reimplementation of store partialize large-vault gate.
- * @param {{
- *   mode?: string,
- *   vaultId?: string | null,
- *   vaultName?: string,
- *   vaultPath?: string,
- *   nodes?: Record<string, unknown>,
- *   rootIds?: string[],
- *   activeNoteId?: string | null,
- *   settings?: unknown,
- *   expandedFolders?: string[],
- * }} s
- */
-function partialize(s) {
-  const disk = s.mode === "fsa" || s.mode === "desktop";
-  // Never write the 45k seed (or any huge mount) to localStorage — QuotaExceededError.
-  const isLargeTest = s.vaultId === LARGE_TEST_VAULT_ID;
-  const nodeCount = s.nodes ? Object.keys(s.nodes).length : 0;
-  const tooBig = isLargeTest || nodeCount > 2500;
-  if (disk || tooBig) {
-    return {
-      vaultId: null,
-      vaultName: "",
-      vaultPath: "",
-      mode: "demo",
-      nodes: {},
-      rootIds: [],
-      activeNoteId: null,
-      settings: s.settings,
-      expandedFolders: [],
-    };
-  }
-  return {
-    vaultId: s.vaultId,
-    vaultName: s.vaultName,
-    vaultPath: s.vaultPath,
-    mode: s.mode,
-    nodes: s.nodes,
-    rootIds: s.rootIds,
-    activeNoteId: s.activeNoteId,
-    secondaryNoteId: s.secondaryNoteId ?? null,
-    settings: s.settings,
-    expandedFolders: s.expandedFolders,
-  };
-}
-
 function makeNodes(n) {
-  /** @type {Record<string, { id: string }>} */
   const nodes = {};
   for (let i = 0; i < n; i++) nodes[`n${i}`] = { id: `n${i}` };
   return nodes;
 }
 
-const baseSettings = { theme: "dark" };
+const baseSettings = {
+  theme: "dark",
+  workspaceSplit: false,
+  lastNotePath: null,
+  lastSecondaryNotePath: null,
+};
 
-// 1) large-test-vault-45k → nodes emptied regardless of small node map
 {
-  const out = partialize({
+  const out = partializeVaultPersist({
     mode: "demo",
     vaultId: LARGE_TEST_VAULT_ID,
     vaultName: "Large Test Vault",
@@ -75,115 +53,98 @@ const baseSettings = { theme: "dark" };
     nodes: makeNodes(10),
     rootIds: ["r"],
     activeNoteId: "n0",
-    settings: baseSettings,
+    settings: { ...baseSettings, lastNotePath: "00-Inbox/a.md", workspaceSplit: true },
     expandedFolders: ["r"],
   });
-  assert.deepEqual(out.nodes, {}, "large-test-vault-45k must persist empty nodes");
+  assert.deepEqual(out.nodes, {}, "large-test must persist empty nodes");
   assert.equal(out.vaultId, null);
   assert.equal(out.mode, "demo");
-  assert.equal(out.settings, baseSettings);
-  console.log("OK: vaultId large-test-vault-45k → nodes empty");
+  assert.ok(out.scaleRemount, "large-test writes a remount ticket");
+  assert.equal(out.scaleRemount.kind, "large-test");
+  assert.equal(out.scaleRemount.lastNotePath, "00-Inbox/a.md");
+  assert.equal(out.scaleRemount.workspaceSplit, true);
+  assert.equal(out.settings.workspaceSplit, true);
+  console.log("OK: 45k → empty nodes + remount ticket (split/path kept)");
 }
 
-// 2) nodeCount > 2500 → nodes emptied
 {
-  const out = partialize({
+  const out = partializeVaultPersist({
+    mode: "local",
+    vaultId: "soak-vault-10000",
+    vaultName: "Soak 10,000",
+    nodes: makeNodes(100),
+    settings: { ...baseSettings, soakNoteCount: 10000, workspaceSplit: true, lastSecondaryNotePath: "Hub.md" },
+  });
+  assert.deepEqual(out.nodes, {});
+  assert.equal(out.scaleRemount.kind, "soak");
+  assert.equal(out.scaleRemount.noteCount, 10000);
+  assert.equal(out.scaleRemount.lastSecondaryNotePath, "Hub.md");
+  console.log("OK: soak-vault-* → remount ticket, no nodes");
+}
+
+{
+  const out = partializeVaultPersist({
     mode: "demo",
     vaultId: "some-vault",
     vaultName: "Big",
-    vaultPath: "/big",
-    nodes: makeNodes(2501),
-    rootIds: ["r"],
-    activeNoteId: "n0",
+    nodes: makeNodes(PARTIALIZE_NODE_CAP + 1),
     settings: baseSettings,
-    expandedFolders: [],
   });
-  assert.deepEqual(out.nodes, {}, "nodeCount > 2500 must persist empty nodes");
+  assert.deepEqual(out.nodes, {});
   assert.equal(out.vaultId, null);
-  console.log("OK: nodeCount > 2500 → nodes empty");
+  assert.equal(out.scaleRemount, null);
+  console.log(`OK: nodeCount > ${PARTIALIZE_NODE_CAP} → nodes empty`);
 }
 
-// 3) nodeCount === 2500 → still persisted (threshold is strict >)
 {
-  const nodes = makeNodes(2500);
-  const out = partialize({
+  const nodes = makeNodes(PARTIALIZE_NODE_CAP);
+  const out = partializeVaultPersist({
     mode: "demo",
     vaultId: "edge-vault",
-    vaultName: "Edge",
-    vaultPath: "/edge",
     nodes,
-    rootIds: ["r"],
+    settings: baseSettings,
     activeNoteId: "n0",
-    settings: baseSettings,
-    expandedFolders: [],
   });
-  assert.equal(Object.keys(out.nodes).length, 2500, "exactly 2500 nodes may persist");
+  assert.equal(Object.keys(out.nodes).length, PARTIALIZE_NODE_CAP);
   assert.equal(out.vaultId, "edge-vault");
-  console.log("OK: nodeCount === 2500 → nodes kept");
+  console.log(`OK: nodeCount === ${PARTIALIZE_NODE_CAP} → nodes kept`);
 }
 
-// 4) small demo vault → full snapshot
-{
-  const nodes = makeNodes(3);
-  const out = partialize({
-    mode: "demo",
-    vaultId: "demo",
-    vaultName: "Demo",
-    vaultPath: "",
-    nodes,
-    rootIds: ["a"],
-    activeNoteId: "n1",
-    settings: baseSettings,
-    expandedFolders: ["a"],
-  });
-  assert.deepEqual(out.nodes, nodes);
-  assert.equal(out.vaultId, "demo");
-  assert.equal(out.activeNoteId, "n1");
-  assert.equal(out.secondaryNoteId, null);
-  console.log("OK: small demo vault → full snapshot");
-}
-
-// 4b) demo session restore keeps dual-pane flags
 {
   const nodes = makeNodes(3);
   const settings = { workspaceSplit: true, lastSecondaryNotePath: "Callouts.md" };
-  const out = partialize({
+  const out = partializeVaultPersist({
     mode: "demo",
     vaultId: "demo",
     vaultName: "Demo",
-    vaultPath: "",
     nodes,
     rootIds: ["a"],
     activeNoteId: "n1",
     secondaryNoteId: "n2",
     settings,
-    expandedFolders: [],
   });
+  assert.deepEqual(out.nodes, nodes);
   assert.equal(out.settings.workspaceSplit, true);
   assert.equal(out.secondaryNoteId, "n2");
-  assert.equal(out.settings.lastSecondaryNotePath, "Callouts.md");
-  console.log("OK: demo dual-pane session flags persist");
+  console.log("OK: small demo → full snapshot + dual-pane");
 }
 
-// 5) fsa / desktop → never persist nodes (disk path)
 {
   for (const mode of ["fsa", "desktop"]) {
-    const out = partialize({
+    const out = partializeVaultPersist({
       mode,
       vaultId: "disk",
       vaultName: "Disk",
-      vaultPath: "/path",
       nodes: makeNodes(5),
-      rootIds: ["r"],
-      activeNoteId: "n0",
-      settings: baseSettings,
-      expandedFolders: [],
+      settings: { ...baseSettings, lastNotePath: "Welcome.md", workspaceSplit: true },
     });
     assert.deepEqual(out.nodes, {}, `${mode} must not persist nodes`);
     assert.equal(out.vaultId, null);
-    assert.equal(out.mode, "demo");
+    assert.equal(out.settings.lastNotePath, "Welcome.md");
+    assert.equal(out.settings.workspaceSplit, true);
   }
-  console.log("OK: fsa/desktop → nodes empty");
+  console.log("OK: fsa/desktop → nodes empty, last path + split kept");
 }
 
+rmSync(outDir, { recursive: true, force: true });
 console.log("test-partialize-policy: PASS");

@@ -32,6 +32,7 @@ export function VaultSwitcher() {
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
+  const openSyntheticVault = useVaultStore((s) => s.openSyntheticVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
   const createMemoryVault = useVaultStore((s) => s.createMemoryVault);
@@ -279,6 +280,35 @@ export function VaultSwitcher() {
                   setMoreOpen(false);
                 }}
               />
+              {import.meta.env.DEV ? (
+                <>
+                  <MenuRow
+                    icon={<HardDrive size={15} />}
+                    label="Open 45k test vault"
+                    disabled={connecting}
+                    onClick={() => {
+                      if (connecting) return;
+                      void openLargeTestVault();
+                      setOpen(false);
+                      setMoreOpen(false);
+                    }}
+                  />
+                  {([10_000, 50_000, 100_000] as const).map((n) => (
+                    <MenuRow
+                      key={n}
+                      icon={<HardDrive size={15} />}
+                      label={`Open soak ${n / 1000}k`}
+                      disabled={connecting}
+                      onClick={() => {
+                        if (connecting) return;
+                        void openSyntheticVault(n);
+                        setOpen(false);
+                        setMoreOpen(false);
+                      }}
+                    />
+                  ))}
+                </>
+              ) : null}
               {vaultId ? (
                 <MenuRow
                   icon={<Sparkles size={15} className="text-[var(--accent)]" />}

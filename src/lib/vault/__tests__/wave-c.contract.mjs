@@ -158,6 +158,9 @@ async function main() {
   // Unchanged note keeps same object reference
   assert.equal(scan.nodes[idOf("Folder/A.md")], aRef);
   assert.equal(scan.nodes[idOf("Folder/B.md")].content, "b2");
+  // Sparse path-patch mutates in place — no full nodes/signature copies
+  assert.equal(scan.nodes, prev.nodes);
+  assert.equal(scan.signatures, prev.signatures);
 
   // --- contract ---
   assert.equal(contract.DURABLE_INDEX_SCHEMA_VERSION, 3);

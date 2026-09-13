@@ -356,10 +356,10 @@ export async function patchFsaVaultPaths(
 ): Promise<{ scan: VaultScan; changedPaths: string[] }> {
   const metaOnly = !!opts?.metaOnly;
   const nextSigs = opts?.nextSigs;
-  const targets = expandPathsToNoteTargets(paths, {
-    ...prev.signatures,
-    ...(nextSigs ?? {}),
-  });
+  const targets = expandPathsToNoteTargets(
+    paths,
+    nextSigs ?? prev.signatures,
+  );
   if (nextSigs) {
     for (const p of Object.keys(nextSigs)) {
       if (prev.signatures[p] === undefined) targets.add(p);
@@ -404,10 +404,8 @@ export async function patchFsaVaultPaths(
   }
 
   const { scan, changedPaths } = applyNoteOpsToScan(prev, ops, nodeId);
-  // Prefer authoritative nextSigs when provided (complete walk)
-  const signatures = nextSigs
-    ? { ...nextSigs }
-    : scan.signatures;
+  // Prefer authoritative nextSigs when provided — do not copy 100k keys.
+  const signatures = nextSigs ?? scan.signatures;
   return {
     scan: {
       nodes: scan.nodes,
