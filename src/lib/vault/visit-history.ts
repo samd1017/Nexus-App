@@ -4,6 +4,8 @@
  * Vault open-recents stay in store localStorage keys (nexus-recent-v1).
  */
 
+import { vaultIndex } from "./indexes";
+
 const VISIT_KEY = "nexus-visits-v1";
 const MAX_VISITS = 40;
 
@@ -75,16 +77,15 @@ export function recentNoteIdsForVault(
   limit = 12,
 ): string[] {
   if (!vaultId) return [];
-  const byPath = new Map<string, string>();
-  for (const [id, n] of Object.entries(nodes)) {
-    if (n?.kind === "note" && typeof n.path === "string") byPath.set(n.path, id);
-  }
   const out: string[] = [];
   const seen = new Set<string>();
   for (const v of recentVisitsForVault(vaultId, 40)) {
     let id: string | null = null;
     if (nodes[v.noteId]?.kind === "note") id = v.noteId;
-    else if (v.path && byPath.has(v.path)) id = byPath.get(v.path)!;
+    else if (v.path) {
+      const mapped = vaultIndex.pathToId.get(v.path);
+      if (mapped && nodes[mapped]?.kind === "note") id = mapped;
+    }
     if (!id || seen.has(id)) continue;
     seen.add(id);
     out.push(id);

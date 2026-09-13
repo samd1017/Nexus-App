@@ -1162,7 +1162,10 @@ export function GraphView({ mode, className }: Props) {
   }, [activeNoteId, enterGraphEgo, graphBrowsePath]);
 
   useEffect(() => {
-    if (!hostRef.current) return;
+    let outerCancel = false;
+    let teardown: (() => void) | undefined;
+    const startId = window.requestAnimationFrame(() => {
+    if (outerCancel || !hostRef.current) return;
     const el = hostRef.current;
     el.innerHTML = "";
     setEngineReady(false);
@@ -1678,7 +1681,7 @@ export function GraphView({ mode, className }: Props) {
       }
     }, usePrefsStore.getState().reducedMotion ? 80 : 900);
 
-    return () => {
+    teardown = () => {
       cancelled = true;
       window.clearTimeout(zoomTimer);
       cancelAnimationFrame(raf);
@@ -1724,6 +1727,12 @@ export function GraphView({ mode, className }: Props) {
       }
       graphRef.current = null;
       el.innerHTML = "";
+    };
+    });
+    return () => {
+      outerCancel = true;
+      window.cancelAnimationFrame(startId);
+      teardown?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [

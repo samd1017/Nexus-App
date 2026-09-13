@@ -82,7 +82,7 @@ async function openPalette(page) {
 }
 
 async function typeInEditor(page, text) {
-  const editor = page.locator(".ProseMirror, [contenteditable='true'], [aria-label='Markdown source']").first();
+  const editor = page.locator("[data-editor-pane] .ProseMirror, [data-editor-pane] [contenteditable='true'], .ProseMirror, [contenteditable='true'], [aria-label='Markdown source']").first();
   try {
     await editor.waitFor({ state: "visible", timeout: 6000 });
   } catch {
@@ -366,34 +366,34 @@ async function runLargeStress(page, errors) {
     result.blockers.push("45k editorTyped=false");
   }
 
-  const switchOp = await appReadyOp(
-    page,
-    async () => {
-      await page.evaluate(async () => {
-        const soak = window.__NEXUS_SOAK__;
-        const ids = soak?.noteIds?.(6) || [];
-        for (const id of ids) {
-          soak?.setActiveNote?.(id);
-          await new Promise((r) => setTimeout(r, 16));
-        }
-      });
-    },
-    async () => {
-      const p = await probe(page);
-      return p.stress?.activeNoteId || null;
-    },
-    4000,
-  );
-  const switched = await page.evaluate(() => {
-    const ids = window.__NEXUS_SOAK__?.noteIds?.(6) || [];
-    return ids.length;
-  });
-  result.steps.switchNotes = { ...switchOp, switchNotesCount: switched };
-  if (switched < 2) {
-    result.ok = false;
-    result.blockers.push(`switchNotesCount=${switched} (need >0 real switches)`);
+  const ids = await page.evaluate(() => window.__NEXUS_SOAK__?.noteIds?.(6) || []);
+  let switchCount = 0;
+  const switchSamples = [];
+  for (const id of ids) {
+    const one = await appReadyOp(
+      page,
+      () => page.evaluate((noteId) => window.__NEXUS_SOAK__?.setActiveNote?.(noteId), id),
+      async () => {
+        const p = await probe(page);
+        return p.stress?.activeNoteId === id ? id : null;
+      },
+      3000,
+    );
+    switchSamples.push(one.appReadyMs);
+    if (one.ready) switchCount += 1;
   }
-  failIfSlow(result, "switchNotes", switchOp.appReadyMs, COMMON_OP_MS, result.blockers);
+  const switchMax = switchSamples.length ? Math.max(...switchSamples) : 0;
+  result.steps.switchNotes = {
+    switchNotesCount: switchCount,
+    samplesMs: switchSamples,
+    appReadyMs: switchMax,
+    ready: switchCount >= 2,
+  };
+  if (switchCount < 2) {
+    result.ok = false;
+    result.blockers.push(`switchNotesCount=${switchCount} (need >0 real switches)`);
+  }
+  failIfSlow(result, "switchNotes", switchMax, COMMON_OP_MS, result.blockers);
 
   const save = await appReadyOp(
     page,
