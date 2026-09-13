@@ -116,6 +116,19 @@ const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   canvas: <LayoutGrid size={15} />,
 };
 
+const ASK_STARTERS = [
+  { q: "ask: how do agents share this vault", label: "How do agents share this vault?" },
+  { q: "ask: what is a wikilink", label: "What is a wikilink?" },
+  { q: "ask: where are daily notes", label: "Where are daily notes?" },
+];
+
+const ASK_OPS = [
+  { fill: "ask: path:Systems ", label: "path:Systems" },
+  { fill: "ask: folder:Research ", label: "folder:Research" },
+  { fill: "ask: #agents ", label: "#agents" },
+  { fill: "ask: -welcome ", label: "−welcome" },
+];
+
 /** Open command palette, optionally with a prefilled query. */
 export function openCommandPalette(query?: string) {
   setPendingCommandQuery(query ?? null);
@@ -1086,37 +1099,68 @@ function CommandPaletteOpen() {
           </Command.Empty>
 
           {askAnswer ? (
-            <Command.Group heading="Ask your notes" className={GROUP_HEADING}>
+            <Command.Group heading="Ask your notes · local" className={GROUP_HEADING}>
               <div className="mb-1 rounded-[10px] border border-[var(--border)] bg-white/[0.02] px-3 py-2 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-                {askAnswer.summary}
+                <p>{askAnswer.summary}</p>
+                <p className="mt-1.5 text-[10.5px] text-[var(--text-muted)]">
+                  Extractive citations from this vault — no cloud model.
+                </p>
               </div>
-              {askAnswer.citations.map((c) => (
-                <Command.Item
-                  key={`ask-${c.noteId}-${c.snippet.slice(0, 24)}`}
-                  value={`ask-${c.noteId}-${c.title}`}
-                  onSelect={() => {
-                    setActiveNote(c.noteId, { heading: c.heading });
-                    setCommandOpen(false);
-                  }}
-                  className={cn(ITEM_CLASS, "items-start")}
-                >
-                  <FileText size={15} className="mt-0.5 shrink-0 text-[var(--accent)]" />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-[var(--text-primary)]">
-                      {c.title}
-                      {c.heading ? (
-                        <span className="font-normal text-[var(--text-muted)]">
-                          {" "}
-                          #{c.heading}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
-                      <HighlightedText text={c.snippet} query={askAnswer.question} />
-                    </div>
+              {askAnswer.citations.length === 0 ? (
+                <>
+                  <div className="mb-1 flex flex-wrap gap-1 px-1 py-1">
+                    {ASK_OPS.map((op) => (
+                      <button
+                        key={op.label}
+                        type="button"
+                        className="rounded-full border border-[var(--border)] px-2 py-0.5 font-mono text-[10px] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                        onClick={() => setQuery(op.fill)}
+                      >
+                        {op.label}
+                      </button>
+                    ))}
                   </div>
-                </Command.Item>
-              ))}
+                  {ASK_STARTERS.map((s) => (
+                    <Command.Item
+                      key={s.q}
+                      value={s.q}
+                      onSelect={() => setQuery(s.q)}
+                      className={ITEM_CLASS}
+                    >
+                      <CircleHelp size={15} className="shrink-0 text-[var(--accent)]" />
+                      <span>{s.label}</span>
+                    </Command.Item>
+                  ))}
+                </>
+              ) : (
+                askAnswer.citations.map((c) => (
+                  <Command.Item
+                    key={`ask-${c.noteId}-${c.snippet.slice(0, 24)}`}
+                    value={`ask-${c.noteId}-${c.title}`}
+                    onSelect={() => {
+                      setActiveNote(c.noteId, { heading: c.heading });
+                      setCommandOpen(false);
+                    }}
+                    className={cn(ITEM_CLASS, "items-start")}
+                  >
+                    <FileText size={15} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-[var(--text-primary)]">
+                        {c.title}
+                        {c.heading ? (
+                          <span className="font-normal text-[var(--text-muted)]">
+                            {" "}
+                            #{c.heading}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
+                        <HighlightedText text={c.snippet} query={askAnswer.question} />
+                      </div>
+                    </div>
+                  </Command.Item>
+                ))
+              )}
             </Command.Group>
           ) : null}
 

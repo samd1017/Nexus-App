@@ -126,8 +126,9 @@ export function buildAskAnswer(
 
   ranked.sort((a, b) => b.extract - a.extract || b.citation.score - a.citation.score);
   const strong = ranked.filter((r) => r.extract >= 0.18).slice(0, 5);
-  const citations = strong.map((r) => r.citation);
-  const picked = strong
+  const usable = strong.length ? strong : ranked.slice(0, 3);
+  const citations = usable.map((r) => r.citation);
+  const picked = usable
     .filter((r) => r.sentence)
     .slice(0, 3)
     .map((r) => ({ text: r.sentence, title: r.citation.title }));
@@ -160,7 +161,11 @@ function composeAskSummary(
   if (citationCount) {
     return `Found ${citationCount} note${citationCount === 1 ? "" : "s"} that match “${question.trim()}”. Open a citation to read the source.`;
   }
-  return `No matching notes for “${question.trim()}”. Try fewer words or a path: / folder: filter.`;
+  const q = question.replace(/^(ask:|\?)\s*/i, "").trim();
+  if (!q) {
+    return "Ask your vault locally — no cloud. Try a starter below, or add path: folder: #tag −exclude.";
+  }
+  return `No matching notes for “${q}”. Narrow with path:Systems, folder:Research, #agents, or −welcome.`;
 }
 
 function headingHint(body: string, snippet: string): string | null {

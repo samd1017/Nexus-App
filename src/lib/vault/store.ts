@@ -1104,6 +1104,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			trashTick: get().trashTick + 1,
 			conflictStudioOpen: false,
 			conflictStudioFocus: null,
+			secondaryNoteId: null,
 			// Keep rightTab at default (backlinks). Do NOT auto-open Graph —
 			// GraphView must be user-initiated (see RightPanel R1.1).
 			settings: {
@@ -1111,7 +1112,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				lastNotePath: welcome?.path ?? null,
 				editorMode: getPrefs().defaultEditorMode,
 				graphMode: "panel",
-				rightOpen: true
+				rightOpen: true,
+				workspaceSplit: false,
 			}
 		});
 		syncActiveBackend("demo");
@@ -3877,7 +3879,12 @@ export const useVaultStore = create(
 				nodes: {},
 				rootIds: [],
 				activeNoteId: null,
-				settings: { ...s.settings, workspaceSplit: false },
+				secondaryNoteId: null,
+				settings: {
+					...s.settings,
+					// Keep companion path so a later demo/session can restore ⌘2
+					workspaceSplit: false,
+				},
 				expandedFolders: []
 			};
 		}
@@ -3889,10 +3896,38 @@ export const useVaultStore = create(
 			nodes: s.nodes,
 			rootIds: s.rootIds,
 			activeNoteId: s.activeNoteId,
-			settings: { ...s.settings, workspaceSplit: false },
+			secondaryNoteId: s.secondaryNoteId,
+			settings: s.settings,
 			expandedFolders: s.expandedFolders
 		};
-	}
+	},
+	onRehydrateStorage: () => (state) => {
+		if (!state) return;
+		queueMicrotask(() => {
+			const s = useVaultStore.getState();
+			if (!s.settings.workspaceSplit) return;
+			let secondary = s.secondaryNoteId;
+			if (secondary && !s.nodes[secondary]) secondary = null;
+			if (!secondary && s.settings.lastSecondaryNotePath) {
+				secondary =
+					Object.values(s.nodes).find(
+						(n) =>
+							n.kind === "note" &&
+							n.path === s.settings.lastSecondaryNotePath,
+					)?.id ?? null;
+			}
+			if (!secondary) {
+				useVaultStore.setState({
+					secondaryNoteId: null,
+					settings: { ...s.settings, workspaceSplit: false },
+				});
+				return;
+			}
+			if (s.secondaryNoteId !== secondary) {
+				useVaultStore.setState({ secondaryNoteId: secondary });
+			}
+		});
+	},
 })
 ) as unknown as import("zustand").UseBoundStore<import("zustand").StoreApi<VaultStore>>;
 

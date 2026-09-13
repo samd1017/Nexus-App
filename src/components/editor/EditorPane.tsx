@@ -451,7 +451,7 @@ export function EditorPane({
                 >
                   <Eye size={13} />
                   <span className="hidden md:inline">
-                    {canvasNote ? "Board" : "Visual"}
+                    {canvasNote ? "Tour board" : "Visual"}
                   </span>
                 </button>
                 <button
@@ -527,7 +527,7 @@ export function EditorPane({
                       "is-active",
                   )}
                   onClick={() => toggleGraphForViewport()}
-                  title={`Graph (${formatShortcut("G")})`}
+                  title={`Fullscreen graph (${formatShortcut("G")}) — Esc or Exit to leave`}
                   aria-pressed={
                     graphMode === "fullscreen" ||
                     (graphMode === "panel" && rightOpen && rightTab === "graph")

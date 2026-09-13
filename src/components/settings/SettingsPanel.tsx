@@ -805,9 +805,13 @@ export function SettingsPanel() {
                 title="Desktop"
                 body={
                   isAppleModPlatform()
-                    ? `Reveal in Finder shows the vault folder. Open Settings anytime with ${formatShortcut(",")}.`
-                    : `Reveal in file manager shows the vault folder. Open Settings anytime with ${formatShortcut(",")}.`
+                    ? `The desktop app (Tauri) opens a real folder and watches it. Reveal in Finder shows that folder. Open Settings with ${formatShortcut(",")}.`
+                    : `The desktop app (Tauri) opens a real folder and watches it. Reveal in your file manager shows that folder. Open Settings with ${formatShortcut(",")}.`
                 }
+              />
+              <HelpItem
+                title="Local folder (browser)"
+                body="Chrome or Edge: Open… uses the File System Access API and remembers the directory handle in IndexedDB. After a reload the browser still asks you to re-grant access — that is a browser permission gate, not a Nexus account. This Cloud Agent VM does not exercise FSA or Tauri; on your machine, Open… (Chromium) or the desktop build is the local-folder path."
               />
             </div>
             <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">

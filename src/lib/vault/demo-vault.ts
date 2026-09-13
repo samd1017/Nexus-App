@@ -79,7 +79,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Search | **Ctrl/⌘K** — find any note instantly |
 | Callouts | Open [[Callouts]] or insert from the toolbar More menu |
 | Diagrams | Open [[Diagrams & Math]] — mermaid charts and $math$ |
-| Canvas | Open [[Welcome board]] — cards on a spatial board |
+| Canvas | Open [[Welcome board]] — **tour board** (cards in this vault; not Obsidian Canvas parity) |
 | Theme | Sun/moon in the title bar — Dark, Light, or System |
 | Settings | Gear or **Ctrl/⌘,** — theme and remappable hotkeys |
 | Dual pane | **Pane** or **⌘2** — two notes at once. Alt-click a file to park it beside |

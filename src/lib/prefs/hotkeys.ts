@@ -87,7 +87,7 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   settings: "Open Settings",
   focusMode: "Focus / zen mode",
   toggleEditor: "Toggle Visual / Source / Preview",
-  graph: "Toggle graph",
+  graph: "Fullscreen graph (Esc / Exit to leave)",
   newNote: "New note",
   daily: "Today's daily note",
   find: "Find in note",

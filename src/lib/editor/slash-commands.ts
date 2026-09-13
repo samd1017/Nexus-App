@@ -175,7 +175,69 @@ export function filterSlashItems(query: string): SlashItem[] {
   });
 }
 
-/** `/query` at the start of the current textblock. */
+/** True when typed text in the current block is a slash command (`/` or `/query`). */
+export function isSlashCommandText(textBefore: string): boolean {
+  const m = textBefore.match(/^\s*\/([^\n]*)$/);
+  if (!m) return false;
+  return !(m[1] ?? "").includes("\0");
+}
+
+/**
+ * After a table (or at EOF), users often land in a non-empty last paragraph.
+ * Breaking onto a new line before `/` makes slash reliable on long Visual notes.
+ */
+export function shouldBreakForSlash(editor: Editor): boolean {
+  const { state } = editor;
+  if (!state.selection.empty) return false;
+  try {
+    if (editor.isActive("table")) return false;
+  } catch {
+    /* older TipTap without table */
+  }
+  const $from = state.selection.$from;
+  if (!$from.parent.isTextblock) return false;
+  if ($from.parentOffset !== $from.parent.content.size) return false;
+  if (!$from.parent.textContent.trim()) return false;
+  const index = $from.index($from.depth - 1);
+  const parent = $from.node($from.depth - 1);
+  const next = parent.maybeChild(index + 1);
+  const prev = parent.maybeChild(index - 1);
+  const last = index === parent.childCount - 1;
+  if (prev?.type.name === "table") return true;
+  if (last) return true;
+  if (next && /^(heading|table|horizontalRule|mermaid|mathBlock|codeBlock)$/.test(next.type.name)) {
+    return true;
+  }
+  return false;
+}
+
+/** Insert an empty paragraph after every table and at the end of the doc. */
+export function ensureEditableGaps(editor: Editor): void {
+  const { doc, schema } = editor.state;
+  const para = schema.nodes.paragraph;
+  if (!para) return;
+  const inserts: number[] = [];
+  doc.forEach((node, offset) => {
+    if (node.type.name !== "table") return;
+    const after = offset + node.nodeSize;
+    const next = doc.nodeAt(after);
+    const nextIsEmptyPara =
+      next?.type.name === "paragraph" && next.content.size === 0;
+    if (!nextIsEmptyPara) inserts.push(after);
+  });
+  const last = doc.lastChild;
+  const lastEmptyPara =
+    last?.type.name === "paragraph" && last.content.size === 0;
+  if (!lastEmptyPara) inserts.push(doc.content.size);
+  if (!inserts.length) return;
+  let { tr } = editor.state;
+  for (const pos of [...inserts].sort((a, b) => b - a)) {
+    tr = tr.insert(pos, para.create());
+  }
+  editor.view.dispatch(tr);
+}
+
+/** `/query` at the start of the current textblock. Never opens inside a table. */
 export function detectSlashCommand(
   editor: Editor,
 ): { query: string; from: number; to: number } | null {
@@ -188,10 +250,9 @@ export function detectSlashCommand(
   }
   const $from = state.selection.$from;
   const textBefore = $from.parent.textBetween(0, $from.parentOffset, "\0", "\0");
+  if (!isSlashCommandText(textBefore)) return null;
   const m = textBefore.match(/^\s*\/([^\n]*)$/);
-  if (!m) return null;
-  const query = m[1] ?? "";
-  if (query.includes("\0")) return null;
+  const query = m?.[1] ?? "";
   return {
     query,
     from: $from.start(),

@@ -28,7 +28,9 @@ import { Embed } from "@/lib/editor/embed-node";
 import { QueryBlock } from "@/lib/editor/query-node";
 import {
   detectSlashCommand,
+  ensureEditableGaps,
   filterSlashItems,
+  shouldBreakForSlash,
   type SlashItem,
 } from "@/lib/editor/slash-commands";
 import { usePrefsStore } from "@/lib/prefs/preferences";
@@ -519,6 +521,52 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
           return handleVisualDrop(ed, view, event, slice, moved);
         },
         handleKeyDown: (view, event) => {
+          const edLive = editorRef.current;
+          if (
+            edLive &&
+            !edLive.isDestroyed &&
+            event.key === "/" &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey &&
+            shouldBreakForSlash(edLive)
+          ) {
+            event.preventDefault();
+            edLive.chain().focus().splitBlock().insertContent("/").run();
+            refreshSlash(edLive);
+            return true;
+          }
+          if (
+            edLive &&
+            !edLive.isDestroyed &&
+            event.key === "Enter" &&
+            !event.shiftKey
+          ) {
+            try {
+              if (edLive.isActive("table") && !edLive.can().goToNextCell()) {
+                event.preventDefault();
+                const { $from } = edLive.state.selection;
+                let tableEnd: number | null = null;
+                for (let d = $from.depth; d > 0; d--) {
+                  if ($from.node(d).type.name === "table") {
+                    tableEnd = $from.after(d);
+                    break;
+                  }
+                }
+                if (tableEnd != null) {
+                  edLive
+                    .chain()
+                    .focus()
+                    .insertContentAt(tableEnd, { type: "paragraph" })
+                    .setTextSelection(tableEnd + 1)
+                    .run();
+                }
+                return true;
+              }
+            } catch {
+              /* table commands unavailable */
+            }
+          }
           if (slashOpenRef.current && !suggestOpenRef.current) {
             const items = slashItemsRef.current;
             if (event.key === "ArrowDown") {
@@ -593,6 +641,11 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         applying.current = true;
         const html = markdownWithWikilinksToHtml(contentRef.current || "");
         ed.commands.setContent(html, { emitUpdate: false });
+        try {
+          ensureEditableGaps(ed);
+        } catch {
+          /* schema without paragraph */
+        }
         baselineMd.current = contentRef.current;
         userEdited.current = false;
         requestAnimationFrame(() => {

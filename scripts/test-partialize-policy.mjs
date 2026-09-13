@@ -50,6 +50,7 @@ function partialize(s) {
     nodes: s.nodes,
     rootIds: s.rootIds,
     activeNoteId: s.activeNoteId,
+    secondaryNoteId: s.secondaryNoteId ?? null,
     settings: s.settings,
     expandedFolders: s.expandedFolders,
   };
@@ -138,7 +139,30 @@ const baseSettings = { theme: "dark" };
   assert.deepEqual(out.nodes, nodes);
   assert.equal(out.vaultId, "demo");
   assert.equal(out.activeNoteId, "n1");
+  assert.equal(out.secondaryNoteId, null);
   console.log("OK: small demo vault → full snapshot");
+}
+
+// 4b) demo session restore keeps dual-pane flags
+{
+  const nodes = makeNodes(3);
+  const settings = { workspaceSplit: true, lastSecondaryNotePath: "Callouts.md" };
+  const out = partialize({
+    mode: "demo",
+    vaultId: "demo",
+    vaultName: "Demo",
+    vaultPath: "",
+    nodes,
+    rootIds: ["a"],
+    activeNoteId: "n1",
+    secondaryNoteId: "n2",
+    settings,
+    expandedFolders: [],
+  });
+  assert.equal(out.settings.workspaceSplit, true);
+  assert.equal(out.secondaryNoteId, "n2");
+  assert.equal(out.settings.lastSecondaryNotePath, "Callouts.md");
+  console.log("OK: demo dual-pane session flags persist");
 }
 
 // 5) fsa / desktop → never persist nodes (disk path)
