@@ -867,6 +867,11 @@ export function GraphView({ mode, className }: Props) {
   /** Skip first browse-path effect so it doesn't fight mount zoomToFit */
   const browsePathReadyRef = useRef(false);
 
+  useEffect(() => {
+    if (mode !== "fullscreen") return;
+    useVaultStore.getState().setToast("Fullscreen graph · Esc or Exit to leave");
+  }, [mode]);
+
   activeRef.current = activeNoteId;
   neighborhoodRef.current = neighborhood;
   colorByRef.current = colorBy;
