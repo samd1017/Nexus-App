@@ -1711,7 +1711,82 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "10k short-head FTS {partial_ms}ms exceeds 30000ms CI budget"
         );
         assert_eq!(partial.search_state, "ready-fts-partial");
+        eprintln!(
+            "10k desktop Partial: ready-meta {meta_ms}ms (FTS seed {seeded}), short-head total {partial_ms}ms"
+        );
 
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    /// Local soak probe — not CI. `cargo test -p nexus-fill-test -- --ignored --nocapture`
+    /// with `NEXUS_FILL_PROBE_N` (default 25000).
+    #[test]
+    #[ignore]
+    fn cold_open_title_seed_probe_not_ci() {
+        let n: usize = std::env::var("NEXUS_FILL_PROBE_N")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(25_000);
+        let (vault, db) = temp_pair("probe");
+        write_n(&vault, n);
+        write_note(
+            &vault,
+            "zz-late/Hub.md",
+            "secretbodytoken cluster retrieval\n",
+        );
+        let mut conn = open_test_conn(&db);
+        let t0 = Instant::now();
+        let mut ready_meta_ms: Option<u128> = None;
+        let mut hub_ms: Option<u128> = None;
+        let mut cluster_ms: Option<u128> = None;
+        let mut seeded: Option<i64> = None;
+        let result = fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Partial,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && ready_meta_ms.is_none() {
+                    ready_meta_ms = Some(t0.elapsed().as_millis());
+                    seeded = Some(fts_row_count_at(&db));
+                    if fts_has_at(&db, "Hub") {
+                        hub_ms = Some(t0.elapsed().as_millis());
+                    }
+                }
+                if cluster_ms.is_none()
+                    && (p.phase == "fts-partial" || p.phase == "ready-fts-partial")
+                {
+                    if fts_has_at(&db, "cluster") {
+                        cluster_ms = Some(t0.elapsed().as_millis());
+                    }
+                }
+            },
+        )
+        .unwrap();
+        eprintln!(
+            "probe n={} notes={} ready-meta {:?}ms seed {:?} hub {:?}ms cluster {:?}ms total {}ms state {}",
+            n,
+            result.notes,
+            ready_meta_ms,
+            seeded,
+            hub_ms,
+            cluster_ms,
+            t0.elapsed().as_millis(),
+            result.search_state
+        );
+        assert!(ready_meta_ms.is_some());
+        assert!(
+            hub_ms.is_some(),
+            "Hub title must be searchable at ready-meta"
+        );
+        assert!(cluster_ms.is_some(), "cluster must land during short heads");
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 }
