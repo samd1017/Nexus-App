@@ -54,7 +54,7 @@ export function Toast() {
         aria-live={variant === "error" ? "assertive" : "polite"}
         aria-atomic="true"
         className={cn(
-          "flex items-center gap-2.5 rounded-full border px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.45)]",
+          "pointer-events-auto flex items-center gap-2.5 rounded-full border px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.45)]",
           "bg-[var(--bg-elevated,#16161A)]",
           variant === "success" &&
             "border-[rgba(48,209,88,0.35)] shadow-[0_0_20px_rgba(48,209,88,0.12)]",
@@ -83,8 +83,11 @@ export function Toast() {
             type="button"
             className="pointer-events-auto shrink-0 rounded-full border border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[var(--accent-dim)] px-2.5 py-0.5 text-[11.5px] font-semibold text-[var(--accent)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)]"
             onClick={() => {
-              void restoreTrash(toastAction.trashPath);
-              setToast(null);
+              const path = toastAction.trashPath;
+              void restoreTrash(path).then((ok) => {
+                if (!ok) return;
+                setToast(null);
+              });
             }}
           >
             {toastAction.label}

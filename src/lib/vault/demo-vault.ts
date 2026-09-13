@@ -97,7 +97,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 2. Open [[Callouts]] and [[Diagrams & Math]]  
 3. Press **⌘K** and type \`ask: how do agents share this vault\`  
 4. Vault menu → **Simulate agent write** — Pulse lights up  
-5. Pin this note (⌘⇧P), then open **Agent Day** and link the unlinked mention
+5. Pin this note (⌘⇧P). Stay here — right panel **Unlinked mentions** should list Agent Day. Click **Link**.
 
 ## See the graph
 

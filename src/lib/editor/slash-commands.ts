@@ -183,7 +183,7 @@ export function detectSlashCommand(
   if (!state.selection.empty) return null;
   const $from = state.selection.$from;
   const textBefore = $from.parent.textBetween(0, $from.parentOffset, "\0", "\0");
-  const m = textBefore.match(/^\/([^\n]*)$/);
+  const m = textBefore.match(/^\s*\/([^\n]*)$/);
   if (!m) return null;
   const query = m[1] ?? "";
   if (query.includes("\0")) return null;

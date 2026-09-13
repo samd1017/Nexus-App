@@ -2597,14 +2597,25 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			message: `Moved to trash: ${target.path}`,
 			vaultId: get().vaultId
 		});
+		const nextActive = toDelete.has(get().activeNoteId ?? "")
+			? (get().recentNoteVisits ?? []).find(
+					(nid) => nodes[nid]?.kind === "note",
+				) ??
+				Object.values(nodes).find((n) => n.kind === "note")?.id ??
+				null
+			: get().activeNoteId;
 		set({
 			nodes,
 			rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
-			activeNoteId: toDelete.has(get().activeNoteId ?? "") ? null : get().activeNoteId,
+			activeNoteId: nextActive,
 			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
 			dirtyNoteIds: get().dirtyNoteIds.filter((x) => !toDelete.has(x)),
 			trashTick: get().trashTick + 1,
 		});
+		if (nextActive) {
+			const n = nodes[nextActive];
+			if (n?.kind === "note" && n.content === undefined) get().ensureNoteBody(nextActive);
+		}
 		const trashLabel = target.kind === "note" ? noteTitle(target) : target.name;
 		if (undoTrashPath) {
 			get().setToast(`Moved to trash: ${trashLabel}`, {
@@ -2833,7 +2844,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return false;
 		}
 		const mode = get().mode;
-		const memHit = memoryTrash.find((t) => t.trashPath === trashPath);
+		const memHit =
+			memoryTrash.find((t) => t.trashPath === trashPath) ??
+			(entry
+				? memoryTrash.find((t) => t.originalPath === entry.originalPath)
+				: undefined) ??
+			memoryTrash[0];
 		let body: string | undefined;
 		if (isDiskVault(mode) && (desktopRoot || fsaRoot)) {
 			try {
