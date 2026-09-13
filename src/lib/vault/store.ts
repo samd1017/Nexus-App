@@ -929,6 +929,7 @@ async function completeDiskSearchIndex(opts?: {
 
 async function runCompleteDiskSearchIndex(opts?: {
 	forceRebuild?: boolean;
+	waitFor?: "meta" | "done";
 }): Promise<{
 	indexed: number;
 	errors: number;

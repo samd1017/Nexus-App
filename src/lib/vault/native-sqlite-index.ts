@@ -60,19 +60,7 @@ function addFillProgress(dbPath: string, fn?: FillProgressFn): () => void {
   };
 }
 
-function emitFillProgress(
-  dbPath: string,
-  p: {
-    dbPath?: string;
-    scanned: number;
-    total: number;
-    indexed: number;
-    skipped: number;
-    errors: number;
-    phase: string;
-    message?: string | null;
-  },
-): void {
+function emitFillProgress(dbPath: string, p: Parameters<FillProgressFn>[0]): void {
   const set = fillProgressByDb.get(dbPath);
   if (!set) return;
   for (const fn of set) fn(p);
