@@ -1101,6 +1101,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			recentVaults: recents,
 			connecting: false,
 			trashTick: get().trashTick + 1,
+			conflictStudioOpen: false,
+			conflictStudioFocus: null,
 			// Keep rightTab at default (backlinks). Do NOT auto-open Graph —
 			// GraphView must be user-initiated (see RightPanel R1.1).
 			settings: {
