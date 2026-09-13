@@ -214,7 +214,11 @@ async function runDemoStress(page, errors) {
     page,
     async () => {
       const p = await probe(page);
-      return p.stress?.graphMode && p.stress.graphMode !== "fullscreen" ? p : null;
+      return p.stress?.graphMode &&
+        p.stress.graphMode !== "fullscreen" &&
+        p.stress.rightTab !== "graph"
+        ? p
+        : null;
     },
     2000,
     25,
@@ -365,7 +369,11 @@ async function runLargeStress(page, errors) {
     page,
     async () => {
       const p = await probe(page);
-      return p.stress?.graphMode && p.stress.graphMode !== "fullscreen" ? p : null;
+      return p.stress?.graphMode &&
+        p.stress.graphMode !== "fullscreen" &&
+        p.stress.rightTab !== "graph"
+        ? p
+        : null;
     },
     2000,
     25,
