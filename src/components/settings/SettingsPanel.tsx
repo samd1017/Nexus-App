@@ -799,7 +799,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Hermes, Grok & agents"
-                body="External apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Practice agent conflict from the vault menu, Pulse, Settings → Agents, or ⌘K."
+                body={`External apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Practice agent conflict from the vault menu, Pulse, Settings → Agents, or ${formatShortcut("K")}.`}
               />
               <HelpItem
                 title="Desktop"
