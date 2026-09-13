@@ -93,6 +93,7 @@ export function SettingsPanel() {
   const connectCloud = useVaultStore((s) => s.connectCloud);
   const disconnectCloud = useVaultStore((s) => s.disconnectCloud);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+  const openLocked = useVaultStore((s) => s.connecting || s.indexFillBusy);
   const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
   const getConflictItems = useVaultStore((s) => s.getConflictItems);
   const conflictCount = useSyncExternalStore(
@@ -698,8 +699,11 @@ export function SettingsPanel() {
             <button
               type="button"
               className="ghost-btn mt-3 min-h-9 w-full justify-center"
-              disabled={!canOpenLocalVaultFolder()}
-              onClick={() => void openFolderAsVault()}
+              disabled={!canOpenLocalVaultFolder() || openLocked}
+              onClick={() => {
+                if (openLocked) return;
+                void openFolderAsVault();
+              }}
             >
               Open a synced folder…
             </button>

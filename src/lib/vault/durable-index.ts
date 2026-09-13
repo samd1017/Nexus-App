@@ -15,6 +15,7 @@ import { yieldToUi } from "./yield-ui";
 import { noteTitle } from "./types";
 import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
 import { snippetForSearchHit } from "@/lib/search/snippets";
+import { normalizeVaultRoot } from "./sqlite-fill-progress";
 import {
   DURABLE_INDEX_SCHEMA_VERSION as CONTRACT_SCHEMA_VERSION,
   DURABLE_INDEX_SQL as CONTRACT_SQL,
@@ -688,7 +689,8 @@ export async function openDurableIndexForVault(opts: {
       if (
         active instanceof NativeSqliteDurableIndex &&
         active.ready &&
-        active.getVaultRoot() === vaultRoot
+        normalizeVaultRoot(active.getVaultRoot()) ===
+          normalizeVaultRoot(vaultRoot)
       ) {
         return active;
       }

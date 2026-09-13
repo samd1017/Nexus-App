@@ -58,6 +58,7 @@ export function WelcomeScreen() {
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const connecting = useVaultStore((s) => s.connecting);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const folderAccessLost = useVaultStore((s) => s.folderAccessLost);
   const chromeFsaLimit = useVaultStore((s) => s.chromeFsaLimit);
@@ -72,17 +73,17 @@ export function WelcomeScreen() {
   const hasRecents = recentVaults.length > 0;
 
   useEffect(() => {
-    if (!connecting) setPending(null);
-  }, [connecting]);
+    if (!connecting && !indexFillBusy) setPending(null);
+  }, [connecting, indexFillBusy]);
 
   const run = (kind: Exclude<PendingAction, null>, fn: () => void) => {
-    if (connecting) return;
+    if (connecting || indexFillBusy) return;
     setPending(kind);
     fn();
   };
 
   const openTopRecent = () => {
-    if (connecting || !topRecent) return;
+    if (connecting || indexFillBusy || !topRecent) return;
     run("recent", () => {
       if (topRecent.mode === "demo") openDemoVault();
       else if (
@@ -102,7 +103,7 @@ export function WelcomeScreen() {
   };
 
   const onOpenFolder = () => {
-    if (connecting) return;
+    if (connecting || indexFillBusy) return;
     if (!fsaOk) {
       setToast(
         desktop
@@ -117,7 +118,7 @@ export function WelcomeScreen() {
   };
 
   const onCreateVault = (onDisk: boolean) => {
-    if (connecting) return;
+    if (connecting || indexFillBusy) return;
     const name = createName.trim() || "Nexus Vault";
     if (onDisk && !fsaOk && !desktop) {
       setToast(
@@ -136,8 +137,12 @@ export function WelcomeScreen() {
     });
   };
 
-  const busy = connecting;
-  const busyLabel = pending ? PENDING_LABEL[pending] : "Opening…";
+  const busy = connecting || indexFillBusy;
+  const busyLabel = pending
+    ? PENDING_LABEL[pending]
+    : indexFillBusy && !connecting
+      ? "Indexing…"
+      : "Opening…";
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]">

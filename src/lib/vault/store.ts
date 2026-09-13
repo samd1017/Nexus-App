@@ -151,6 +151,9 @@ import {
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
   isInFlightFillError,
+  FILL_IN_PROGRESS_TOAST,
+  shouldBlockDesktopOpen,
+  shouldJoinDesktopFill,
 } from "./sqlite-fill-progress";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
@@ -213,6 +216,7 @@ import {
   vaultScanFromNodeMeta,
   setOpenProgress,
   getOpenProgress,
+  isIndexFillInFlight,
 } from "./native-index";
 import { invalidateVaultTagsCache } from "./tags";
 import { recordNoteRevision, getNoteRevision, clearNoteHistory } from "./note-history";
@@ -291,6 +295,8 @@ export type VaultStore = {
   cloudSession: CloudSession | null;
   fsaSupported: boolean;
   connecting: boolean;
+  /** Native / disk FTS fill in flight — Open must join or wait. */
+  indexFillBusy: boolean;
   pendingDelete: PendingDelete | null;
   recentNoteVisits: string[];
   folderAccessLost: boolean;
@@ -832,11 +838,61 @@ async function seedLinkIndexFromDurable(
 	}
 }
 
+let diskSearchInflight: Promise<{
+	indexed: number;
+	errors: number;
+	skipped: boolean;
+}> | null = null;
+let diskSearchInflightRoot: string | null = null;
+
+function vaultFillBusy(): boolean {
+	return (
+		useVaultStore.getState().indexFillBusy ||
+		isIndexFillInFlight() ||
+		Boolean(diskSearchInflight)
+	);
+}
+
+/** Open / remount is locked while connecting or a healthy fill is running. */
+export function vaultOpenLocked(): boolean {
+	return useVaultStore.getState().connecting || vaultFillBusy();
+}
+
 /**
  * After meta-only disk mount: index file heads into DurableIndex, then Ready.
  * Tree can already be interactive. Search is not Ready until this finishes.
  */
 async function completeDiskSearchIndex(opts?: {
+	forceRebuild?: boolean;
+}): Promise<{
+	indexed: number;
+	errors: number;
+	skipped: boolean;
+}> {
+	const root = desktopRoot || "";
+	if (
+		diskSearchInflight &&
+		diskSearchInflightRoot === root &&
+		opts?.forceRebuild !== true
+	) {
+		return diskSearchInflight;
+	}
+	const run = runCompleteDiskSearchIndex(opts);
+	diskSearchInflight = run;
+	diskSearchInflightRoot = root;
+	useVaultStore.setState({ indexFillBusy: true });
+	try {
+		return await run;
+	} finally {
+		if (diskSearchInflight === run) {
+			diskSearchInflight = null;
+			diskSearchInflightRoot = null;
+			useVaultStore.setState({ indexFillBusy: false });
+		}
+	}
+}
+
+async function runCompleteDiskSearchIndex(opts?: {
 	forceRebuild?: boolean;
 }): Promise<{
 	indexed: number;
@@ -1412,6 +1468,38 @@ async function mountDesktopVaultAt(
 	searchEngine: ReturnType<typeof describeSearchEngine>;
 	searchReady: boolean;
 }> {
+	const fillBusy = isIndexFillInFlight() || Boolean(diskSearchInflight);
+	if (
+		shouldJoinDesktopFill({
+			currentRoot: desktopRoot,
+			nextRoot: root,
+			fillInFlight: fillBusy,
+		})
+	) {
+		if (diskSearchInflight) await diskSearchInflight;
+		set({ connecting: false });
+		const live = useVaultStore.getState();
+		return {
+			notes: countVaultNotes(live.nodes),
+			vaultId: live.vaultId ?? opts?.vaultId ?? "",
+			vaultPath: live.vaultPath || root,
+			searchEngine: describeSearchEngine(),
+			searchReady: diskSearchReady,
+		};
+	}
+	if (
+		shouldBlockDesktopOpen({
+			currentRoot: desktopRoot,
+			nextRoot: root,
+			fillInFlight: fillBusy,
+		})
+	) {
+		set({
+			connecting: false,
+			toast: FILL_IN_PROGRESS_TOAST,
+		});
+		throw new Error(FILL_IN_PROGRESS_TOAST);
+	}
 	cancelVaultModuleState();
 	clearBodyArchive();
 	invalidateVaultTagsCache();
@@ -1546,6 +1634,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	cloudSession: null,
 	fsaSupported: false,
 	connecting: false,
+	indexFillBusy: false,
 	pendingDelete: null,
 	recentNoteVisits: loadNoteVisits(),
 	folderAccessLost: false,
@@ -1562,13 +1651,19 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const recents = loadRecents();
 		const fsaSupported = canOpenLocalVaultFolder();
 		const cloudSession = loadCloudSession();
+		const autoOpenLastDesktop =
+			isDesktopShell() &&
+			getPrefs().openLastVault &&
+			Boolean(getDesktopVaultRoot());
 		set({
 			recentVaults: recents,
 			recentNoteVisits: loadNoteVisits(),
 			fsaSupported,
 			cloudSession,
 			ready: true,
-			folderAccessLost: false
+			folderAccessLost: false,
+			// Gate Welcome Open before last-vault scan/fill starts (pref defaults true).
+			connecting: autoOpenLastDesktop,
 		});
 		if (import.meta.env.DEV && typeof window !== "undefined") {
 			const params = new URLSearchParams(window.location.search);
@@ -1729,6 +1824,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	openDemoVault: () => {
 		// Don't clobber an in-flight vault open (e.g. large test vault)
 		if (get().connecting) return;
+		if (vaultFillBusy()) {
+			set({ toast: FILL_IN_PROGRESS_TOAST });
+			return;
+		}
 		cancelVaultModuleState();
 		clearBodyArchive();
 		invalidateVaultTagsCache();
@@ -1792,6 +1891,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		// Single-flight: one concurrent open; connecting stays true until done/fail
 		if (get().connecting) return;
+		if (vaultFillBusy()) {
+			set({ toast: FILL_IN_PROGRESS_TOAST });
+			return;
+		}
 		const restoreEarly = opts?.restore && opts.restore !== true ? opts.restore : null;
 		set({
 			connecting: true,
@@ -2024,6 +2127,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return;
 		}
 		if (get().connecting) return;
+		if (vaultFillBusy()) {
+			set({ toast: FILL_IN_PROGRESS_TOAST });
+			return;
+		}
 		set({ connecting: true, folderAccessLost: false });
 		cancelVaultModuleState();
 		const gen = vaultGen;
@@ -2284,6 +2391,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		resetAndSeedNav(get().activeNoteId);
 	},
 	openFolderAsVault: async () => {
+		if (vaultFillBusy()) {
+			set({ toast: FILL_IN_PROGRESS_TOAST });
+			return;
+		}
+		if (get().connecting) return;
 		set({
 			connecting: true,
 			folderAccessLost: false
@@ -2381,6 +2493,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	createMemoryVault: (name) => {
+		if (vaultFillBusy()) {
+			set({ toast: FILL_IN_PROGRESS_TOAST });
+			return;
+		}
 		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
 		get().openLocalVault(vaultName, buildBlankVault(vaultName));
 		get().setToast(
@@ -2388,6 +2504,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		);
 	},
 	createNewVault: async (name) => {
+		if (vaultFillBusy()) {
+			set({ toast: FILL_IN_PROGRESS_TOAST });
+			return;
+		}
 		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
 		const welcome = [
 			"# Welcome",
@@ -2646,6 +2766,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	closeVault: async () => {
+		if (vaultFillBusy()) {
+			set({ toast: FILL_IN_PROGRESS_TOAST });
+			return;
+		}
 		flushActiveEditors();
 		flushStageNow(set);
 		const mode = get().mode;
@@ -2690,6 +2814,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			expandedFolders: [],
 			pendingDelete: null,
 			connecting: false,
+			indexFillBusy: false,
 			...GRAPH_SCOPE_DEFAULTS,
 			conflictStudioOpen: false,
 			conflictStudioFocus: null,
@@ -4873,6 +4998,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			vaultName: s.vaultName,
 			mode: s.mode,
 			connecting: s.connecting,
+			indexFillBusy: s.indexFillBusy,
 			notes,
 			folders,
 			bodiesLoaded,

@@ -22,6 +22,9 @@ const {
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
   isInFlightFillError,
+  isIndexFillProgressPhase,
+  shouldJoinDesktopFill,
+  shouldBlockDesktopOpen,
 } = await import("../src/lib/vault/sqlite-fill-progress.ts");
 
 assert.equal(
@@ -88,6 +91,64 @@ assert.equal(
   isInFlightFillError(new Error("SQLite FTS fill failed: disk I/O")),
   false,
   "real fill failures stay fatal",
+);
+
+assert.equal(isIndexFillProgressPhase("walking"), true);
+assert.equal(isIndexFillProgressPhase("indexing"), true);
+assert.equal(isIndexFillProgressPhase("ready"), false);
+assert.equal(isIndexFillProgressPhase("error"), false);
+
+assert.equal(
+  shouldJoinDesktopFill({
+    currentRoot: "/vault/Notes/",
+    nextRoot: "/vault/Notes",
+    fillInFlight: true,
+  }),
+  true,
+  "same folder Open during fill joins",
+);
+assert.equal(
+  shouldJoinDesktopFill({
+    currentRoot: "/vault/Notes",
+    nextRoot: "/vault/Other",
+    fillInFlight: true,
+  }),
+  false,
+);
+assert.equal(
+  shouldJoinDesktopFill({
+    currentRoot: "/vault/Notes",
+    nextRoot: "/vault/Notes",
+    fillInFlight: false,
+  }),
+  false,
+  "no join when fill is idle",
+);
+assert.equal(
+  shouldBlockDesktopOpen({
+    currentRoot: "/vault/Notes",
+    nextRoot: "/vault/Other",
+    fillInFlight: true,
+  }),
+  true,
+  "different folder Open during fill is blocked",
+);
+assert.equal(
+  shouldBlockDesktopOpen({
+    currentRoot: "/vault/Notes",
+    nextRoot: "/vault/Notes",
+    fillInFlight: true,
+  }),
+  false,
+);
+assert.equal(
+  shouldBlockDesktopOpen({
+    currentRoot: null,
+    nextRoot: "/vault/Notes",
+    fillInFlight: true,
+  }),
+  true,
+  "no current root + fill still blocks a second Open",
 );
 
 {

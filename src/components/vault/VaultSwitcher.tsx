@@ -40,6 +40,8 @@ export function VaultSwitcher() {
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const closeVault = useVaultStore((s) => s.closeVault);
   const connecting = useVaultStore((s) => s.connecting);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  const openLocked = connecting || indexFillBusy;
 
   const [open, setOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -85,7 +87,7 @@ export function VaultSwitcher() {
   const canReveal = Boolean(vaultId && mode === "desktop" && vaultPath);
 
   const openRecent = (id: string, rMode: string) => {
-    if (connecting) return;
+    if (openLocked) return;
     const r = recentVaults.find((x) => x.id === id);
     if (rMode === "demo") openDemoVault();
     else if (
@@ -100,7 +102,7 @@ export function VaultSwitcher() {
   };
 
   const submitCreate = (onDisk = false) => {
-    if (connecting) return;
+    if (openLocked) return;
     const name = createName.trim() || "Nexus Vault";
     setCreateOpen(false);
     setOpen(false);
@@ -126,7 +128,7 @@ export function VaultSwitcher() {
             {vaultName || "Select vault"}
           </div>
           <div className="truncate text-[11px] text-[var(--text-muted)]">
-            {connecting ? "Working…" : subtitle}
+            {connecting ? "Working…" : indexFillBusy ? "Indexing…" : subtitle}
           </div>
         </div>
         <ChevronDown
@@ -152,7 +154,7 @@ export function VaultSwitcher() {
                   <button
                     key={r.id}
                     type="button"
-                    disabled={connecting}
+                    disabled={openLocked}
                     className={cn(
                       "flex w-full items-start gap-2 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-40",
                       active && "bg-[rgba(0,200,255,0.08)]",
@@ -181,9 +183,9 @@ export function VaultSwitcher() {
             icon={<FolderOpen size={15} className="text-[var(--accent)]" />}
             label="Open…"
             hint={desktop ? formatShortcut("O") : undefined}
-            disabled={connecting}
+            disabled={openLocked}
             onClick={() => {
-              if (connecting) return;
+              if (openLocked) return;
               void openFolderAsVault();
               setOpen(false);
             }}
@@ -191,9 +193,9 @@ export function VaultSwitcher() {
           <MenuRow
             icon={<FolderPlus size={15} className="text-[var(--accent)]" />}
             label="New Vault…"
-            disabled={connecting}
+            disabled={openLocked}
             onClick={() => {
-              if (connecting) return;
+              if (openLocked) return;
               setCreateName("Nexus Vault");
               setCreateOpen(true);
             }}
@@ -239,7 +241,7 @@ export function VaultSwitcher() {
             icon={<X size={15} />}
             label="Close"
             muted
-            disabled={!vaultId || connecting}
+            disabled={!vaultId || openLocked}
             onClick={() => {
               closeVault();
               setOpen(false);
@@ -272,9 +274,9 @@ export function VaultSwitcher() {
                   />
                 }
                 label="Open demo vault"
-                disabled={connecting}
+                disabled={openLocked}
                 onClick={() => {
-                  if (connecting) return;
+                  if (openLocked) return;
                   openDemoVault();
                   setOpen(false);
                   setMoreOpen(false);
@@ -285,9 +287,9 @@ export function VaultSwitcher() {
                   <MenuRow
                     icon={<HardDrive size={15} />}
                     label="Open 45k test vault"
-                    disabled={connecting}
+                    disabled={openLocked}
                     onClick={() => {
-                      if (connecting) return;
+                      if (openLocked) return;
                       void openLargeTestVault();
                       setOpen(false);
                       setMoreOpen(false);
@@ -298,9 +300,9 @@ export function VaultSwitcher() {
                       key={n}
                       icon={<HardDrive size={15} />}
                       label={`Open soak ${n / 1000}k`}
-                      disabled={connecting}
+                      disabled={openLocked}
                       onClick={() => {
-                        if (connecting) return;
+                        if (openLocked) return;
                         void openSyntheticVault(n);
                         setOpen(false);
                         setMoreOpen(false);
@@ -313,7 +315,7 @@ export function VaultSwitcher() {
                 <MenuRow
                   icon={<Sparkles size={15} className="text-[var(--accent)]" />}
                   label="Simulate agent write"
-                  disabled={connecting}
+                  disabled={openLocked}
                   onClick={() => {
                     useVaultStore.getState().simulateHermesWrite();
                     useVaultStore.getState().openPulseRail?.();
@@ -326,7 +328,7 @@ export function VaultSwitcher() {
                 <MenuRow
                   icon={<Sparkles size={15} className="text-[var(--accent-violet)]" />}
                   label="Practice agent conflict"
-                  disabled={connecting}
+                  disabled={openLocked}
                   onClick={() => {
                     useVaultStore.getState().practiceAgentConflict();
                     useVaultStore.getState().openPulseRail?.();
@@ -388,7 +390,7 @@ export function VaultSwitcher() {
               <button
                 type="button"
                 className="ghost-btn"
-                disabled={connecting}
+                disabled={openLocked}
                 onClick={() => submitCreate(true)}
               >
                 On disk…
@@ -396,7 +398,7 @@ export function VaultSwitcher() {
               <button
                 type="button"
                 className="primary-btn"
-                disabled={connecting}
+                disabled={openLocked}
                 onClick={() => submitCreate(false)}
               >
                 Create

@@ -61,3 +61,33 @@ export function isInFlightFillError(err: unknown): boolean {
     msg,
   );
 }
+
+export function isIndexFillProgressPhase(phase: string): boolean {
+  return phase === "walking" || phase === "indexing";
+}
+
+export function normalizeVaultRoot(root: string): string {
+  return root.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/** Same-folder Open during fill must join, not remount. */
+export function shouldJoinDesktopFill(args: {
+  currentRoot: string | null | undefined;
+  nextRoot: string;
+  fillInFlight: boolean;
+}): boolean {
+  if (!args.fillInFlight || !args.currentRoot) return false;
+  return normalizeVaultRoot(args.currentRoot) === normalizeVaultRoot(args.nextRoot);
+}
+
+/** Opening a different folder while fill is healthy — block, do not start a second writer. */
+export function shouldBlockDesktopOpen(args: {
+  currentRoot: string | null | undefined;
+  nextRoot: string;
+  fillInFlight: boolean;
+}): boolean {
+  return args.fillInFlight && !shouldJoinDesktopFill(args);
+}
+
+export const FILL_IN_PROGRESS_TOAST =
+  "Still indexing this vault — wait until Ready to open another.";

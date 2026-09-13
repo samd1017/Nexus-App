@@ -38,6 +38,11 @@ type FillProgressFn = (p: {
 const fillInflightByDb = new Map<string, Promise<FillResult>>();
 const fillProgressByDb = new Map<string, Set<FillProgressFn>>();
 
+export function isNativeFillInFlight(dbPath?: string): boolean {
+  if (dbPath) return fillInflightByDb.has(dbPath);
+  return fillInflightByDb.size > 0;
+}
+
 function addFillProgress(dbPath: string, fn?: FillProgressFn): () => void {
   if (!fn) return () => {};
   let set = fillProgressByDb.get(dbPath);

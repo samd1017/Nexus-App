@@ -20,6 +20,7 @@ import {
   setDesktopWatchAck,
   setWatcherAck,
   useVaultStore,
+  vaultOpenLocked,
 } from "@/lib/vault/store";
 import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
 import { startDesktopWatch } from "@/lib/vault/tauri-adapter";
@@ -182,6 +183,7 @@ function ChromeFsaLimitBanner() {
 function LargeVaultOverlayBanner({ vaultId }: { vaultId: string | null }) {
   if (!isLargeMemoryVault(vaultId)) return null;
   const openFolder = () => {
+    if (vaultOpenLocked()) return;
     if (!canOpenLocalVaultFolder()) {
       useVaultStore
         .getState()
@@ -273,7 +275,6 @@ export function AppShell() {
     let un: (() => void) | undefined;
     void bindDesktopMenu({
       openVault: () => {
-        if (useVaultStore.getState().connecting) return;
         void useVaultStore.getState().openFolderAsVault();
       },
       openDemo: () => {

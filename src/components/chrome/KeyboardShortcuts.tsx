@@ -90,7 +90,6 @@ function runHotkey(id: HotkeyId): boolean {
       if (!isDesktopShell()) store.openDemoVault();
       return true;
     case "openVault":
-      if (useVaultStore.getState().connecting) return true;
       void store.openFolderAsVault();
       return true;
     case "toggleEditor":
