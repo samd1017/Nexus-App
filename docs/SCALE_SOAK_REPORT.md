@@ -1,7 +1,7 @@
 # Scale soak report
 
-**SHA under test:** `edca326` (this branch), vs baseline **`907d8ea`**.
-**Verdict: not SCALE READY.** Core path-patch is fixed. 45k tree / search / create / editor / exact count are under 1s app-ready. Note-switch p95 is ~1.07s on this VM; cold open is ~3s with progress. Desktop 300–500k remains a north star; this VM proved in-process + disk-file generation through 300k, not a Tauri/FSA mount.
+**SHA under test:** `cfc74f1` (this branch), vs baseline **`907d8ea`**.
+**Verdict: not SCALE READY.** Core path-patch is fixed. 45k tree / search / graph chrome / create / editor type / note-switch are under 1s app-ready on this VM (`stress-ui-multisize` PASS). Cold open is ~2.8s with progress (WARN). Desktop 300–500k remains a north star; this VM proved in-process + disk-file generation through 300k, not a Tauri/FSA mount.
 
 Sam’s bar: do not PASS 45k UI on the absence of crashes. Common ops target **<1s app-ready**. Cold open may exceed 1s if progress is visible and the UI stays responsive.
 
@@ -67,7 +67,10 @@ Re-measurement on this SHA uses **app-ready** (probe / option / canvas) vs wait.
 | `persist-policy.ts` | Skip `Object.keys` when vault is already large/disk |
 | `fs-adapter.ts` | Do not copy 100k signature objects for a path patch |
 | Editor / graph / palette | Select one note; skip tag walk unless color-by-tag; recents-only empty query |
-| Playwright | Exact `notes === 45000` / `45001`; `editorTyped`; `switchNotesCount > 0`; search options; app-ready vs wait; fail >1s common ops |
+| Playwright | Exact `notes === 45000` / `45001`; `editorTyped` via `[data-testid=nexus-editor]`; real switches (skip active); search options; app-ready vs wait; fail >1s common ops |
+| Editor | One TipTap instance across notes; `setContent` instead of remount |
+| Wikilink / backlinks | Index cached on `structureGeneration`; no O(n) reverse scan or fuzzy resolve at ≥400 notes |
+| Graph exit | Esc returns to backlinks so ForceGraph3D does not remount in the panel |
 | Disk | `generate-synthetic-vault.mjs` + `bench-disk-vault.mjs` |
 
 ---
@@ -103,31 +106,33 @@ Not a Tauri/FSA open. Real files on disk + the same generate / structural / path
 
 ## 45k UI (this SHA, Playwright, app-ready)
 
-Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on **`edca326`**.
+Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on **`cfc74f1`**. Raw log: `/opt/cursor/artifacts/stress/ui-multisize.json`.
 
-| Op | 907d8ea wall | After app-ready | Budget | Result |
-|----|--------------|-----------------|--------|--------|
-| open (cold) | 2593ms | **2988ms** (store **1726ms**) | <30s progressive | WARN (progress OK) |
-| tree | 3842ms | **828ms** | <1s | PASS |
-| search | 2501ms | **426ms** | <1s | PASS |
-| graph chrome | 3836ms | **209ms** | <1s | PASS |
-| new note | 3826ms | **877ms** | <1s | PASS |
-| switch notes | count=0 | **6 switches**: 348, 727, 1074, 916, 926, 1017 (max **1074**) | <1s | FAIL (2/6 >1s) |
-| editorTyped | n/a | **true** | must be true | PASS |
-| notes after create | toast | **45001** exact, 8 bodies | 45001 | PASS |
-| page errors | none | none | none | PASS |
+| Op | 907d8ea wall | `edca326` | **`cfc74f1`** | Budget | Result |
+|----|--------------|-----------|---------------|--------|--------|
+| open (cold) | 2593ms | 2988ms (store 1726) | **2760ms** (store **1686ms**) | <30s progressive | WARN (progress OK) |
+| tree | 3842ms | 828ms | **310ms** | <1s | PASS |
+| search | 2501ms | 426ms | **266ms** | <1s | PASS |
+| graph chrome | 3836ms | 209ms | **75ms** | <1s | PASS |
+| new note | 3826ms | 877ms | **282ms** | <1s | PASS |
+| switch notes | count=0 | max 1074 (2/6 >1s) | **6 switches**: 187, 906, 623, 689, 681, 655 (max **906**) | <1s | PASS |
+| editorTyped | n/a | true | **true** | must be true | PASS |
+| notes after create | toast | 45001 / 8 bodies | **45001** exact, 8 bodies | 45001 | PASS |
+| page errors | none | none | none | none | PASS |
 
-Demo same run: search **89ms**, graph chrome **21ms**, editorTyped still false (Welcome editor not visible to the harness), newNote **1135ms**.
+Demo same run: editorTyped **true**, search **82ms**, graph chrome **36ms**, newNote **148ms**. Suite **PASS**.
 
-**Still not SCALE READY.** Do not treat “no errors” as a pass. Switch needs to stay under 1s (TipTap remount + body hydrate on this VM). Desktop FSA/Tauri open of the generated 100k/300k folder is unproven here.
+Mid-flight on `ec1a4bb` (TipTap reuse, before graph-exit fix): demo editorTyped true, demo newNote **1178ms FAIL**, 45k switch max **1006ms FAIL**. Esc was remounting ForceGraph3D in the side panel and blocking the next create/switch.
+
+**Still not SCALE READY.** Do not treat “no errors” as a pass. Switch max **906ms** has little headroom; cold open is still ~3s. Desktop FSA/Tauri open of the generated 100k/300k folder is unproven here.
 
 ---
 
 ## What is still not proven
 
-- Browser 45k common-op app-ready <1s on this SHA (run in progress / pending).
 - Tauri/FSA open of the generated 100k/300k folder on a Mac (Wave E).
 - 300k FTS query ≤50ms (measured 205ms in-process memory FTS).
-- Reload remount of soak vaults under UI (harness covers it in `scale-soak.mjs`; not yet green-at-size).
+- Reload remount of soak vaults under UI at 45k+ (`scale-soak.mjs` covers the path; not green-at-size here).
+- Switch staying under 1s when the graph **panel** stays mounted (this soak leaves graph on Esc).
 
-**Do not ship this as the only vault at 45k+ until the UI table above is green.**
+**Largest green N on this VM:** browser 45k common-ops (cold open WARN). In-process + on-disk generate through 300k. Do not ship as the only vault at 45k+ on the strength of one Playwright box.
