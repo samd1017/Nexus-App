@@ -39,5 +39,14 @@ assert.equal(m.isSyntheticSoakVault("soak-vault-1"), true);
 assert.equal(m.isSyntheticSoakVault("demo-vault"), false);
 const hub = Object.values(a.nodes).find((n) => n.kind === "note" && n.name.startsWith("Hub"));
 assert.ok(hub, "hub notes exist");
+assert.equal(m.noteTitleForIndex(0), "Hub 0");
+assert.equal(m.noteTitleForIndex(200), "Hub 200");
+assert.equal(m.noteTitleForIndex(1), "Topic 1");
+assert.match(m.notePathForIndex(0), /Hub 0\.md$/);
+assert.equal(
+  [...Array(3200)].filter((_, i) => m.noteTitleForIndex(i).startsWith("Hub ")).length,
+  16,
+  "official 3200-note vault has 16 Hub titles (every 200)",
+);
 rmSync(outDir, { recursive: true, force: true });
 console.log("synthetic-vault.contract: PASS");

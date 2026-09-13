@@ -65,6 +65,12 @@ import {
   getOpenProgress,
   subscribeOpenProgress,
 } from "@/lib/vault/native-index";
+import {
+  getSearchIndexState,
+  isNoteHeadSearchLive,
+  isTitleSearchLive,
+  searchEmptyStateMessage,
+} from "@/lib/vault/sqlite-fill-progress";
 import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
@@ -205,8 +211,11 @@ export function CommandPalette() {
 function CommandPaletteOpen() {
   const [openProgress, setOpenProgressUi] = useState(getOpenProgress);
   useEffect(() => subscribeOpenProgress(setOpenProgressUi), []);
+  const searchIndexState = getSearchIndexState();
+  const titleSearchLive = isTitleSearchLive(searchIndexState);
   const searchIndexing =
-    openProgress.phase === "indexing" || openProgress.phase === "walking";
+    !titleSearchLive &&
+    (openProgress.phase === "indexing" || openProgress.phase === "walking");
   const open = useVaultStore((s) => s.commandOpen);
   const vaultId = useVaultStore((s) => s.vaultId);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
@@ -1406,9 +1415,10 @@ function CommandPaletteOpen() {
                 >
                   <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
                   <span>
-                    {searchIndexing
-                      ? "Search is still reading files — try again when Ready."
-                      : "No matches in the current search index."}
+                    {searchEmptyStateMessage({
+                      titleSearchLive,
+                      headsReady: isNoteHeadSearchLive(searchIndexState),
+                    })}
                   </span>
                 </Command.Item>
               ) : null}

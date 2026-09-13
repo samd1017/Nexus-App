@@ -1306,6 +1306,44 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         fts_has(&open_reader(db), query)
     }
 
+    fn fts_match_count_at(db: &Path, query: &str) -> i64 {
+        open_reader(db)
+            .query_row(
+                "SELECT COUNT(*) FROM note_fts WHERE note_fts MATCH ?1",
+                params![query],
+                |r| r.get(0),
+            )
+            .unwrap_or(0)
+    }
+
+    /// Same titles/paths as `noteTitleForIndex` / `notePathForIndex` in
+    /// `src/lib/vault/synthetic-vault.ts` (official soak / SOAK-MANIFEST).
+    fn write_official_shaped(vault: &Path, n: usize) {
+        const ROOTS: [&str; 7] = [
+            "00-Inbox",
+            "10-Projects",
+            "20-Areas",
+            "30-Resources",
+            "40-Archive",
+            "50-Daily",
+            "60-Systems",
+        ];
+        for i in 0..n {
+            let title = if i % 200 == 0 {
+                format!("Hub {i}")
+            } else {
+                format!("Topic {i}")
+            };
+            let root = ROOTS[i % ROOTS.len()];
+            let bucket = format!("{:02}", (i / ROOTS.len()) % 20);
+            write_note(
+                vault,
+                &format!("{root}/{bucket}/{title}.md"),
+                &format!("# {title}\n\nCluster hub retrieval\n"),
+            );
+        }
+    }
+
     fn note_count(conn: &Connection) -> i64 {
         conn.query_row(
             "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND deleted=0",
@@ -1499,6 +1537,51 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert!(fts_has(&conn, "cluster"));
         assert!(fts_has(&conn, "secretbodytoken"));
         assert_eq!(note_count(&conn), 2_501);
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn official_hub_titles_searchable_at_ready_meta() {
+        let (vault, db) = temp_pair("official-hub");
+        // 16 official Hub titles (every 200) plus enough Topics to exceed the seed.
+        write_official_shaped(&vault, 3_200);
+        let mut conn = open_test_conn(&db);
+        let mut hub_hits_at_ready: Option<i64> = None;
+        let mut seeded: Option<i64> = None;
+        let result = fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Partial,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && hub_hits_at_ready.is_none() {
+                    seeded = Some(fts_row_count_at(&db));
+                    hub_hits_at_ready = Some(fts_match_count_at(&db, "hub"));
+                }
+            },
+        )
+        .unwrap();
+
+        let hits = hub_hits_at_ready.expect("ready-meta must emit");
+        let seed = seeded.expect("seeded FTS count");
+        assert!(
+            seed > 0 && seed <= TITLE_FTS_SEED as i64,
+            "official ready-meta FTS rows {seed} should be the title seed"
+        );
+        assert!(
+            hits >= 16,
+            "official Hub N.md titles must be MATCH 'hub' ≥16 at ready-meta, got {hits}"
+        );
+        assert_eq!(result.search_state, "ready-fts-partial");
+        assert!(fts_has(&conn, "cluster"));
 
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }

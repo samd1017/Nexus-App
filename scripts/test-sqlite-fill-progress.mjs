@@ -23,6 +23,9 @@ const {
   isFillSettlePhase,
   sqliteEngineShortLabel,
   sqliteFillPhaseMessage,
+  isTitleSearchLive,
+  isNoteHeadSearchLive,
+  searchEmptyStateMessage,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
   isInFlightFillError,
@@ -194,6 +197,33 @@ assert.equal(advanceSearchIndexState("ready-fts", "meta"), "ready-fts");
 assert.equal(sqliteEngineShortLabel("ready-meta"), "SQLite FTS5 BM25 · titles");
 assert.equal(sqliteEngineShortLabel("ready-fts-partial"), "SQLite FTS5 BM25 · heads");
 assert.equal(sqliteEngineShortLabel("ready-fts"), "SQLite FTS5 BM25");
+
+assert.equal(isTitleSearchLive("idle"), false);
+assert.equal(isTitleSearchLive("ready-meta"), true);
+assert.equal(isTitleSearchLive("ready-fts-partial"), true);
+assert.equal(isTitleSearchLive("ready-fts"), true);
+assert.equal(isNoteHeadSearchLive("ready-meta"), false);
+assert.equal(isNoteHeadSearchLive("ready-fts-partial"), true);
+assert.match(
+  searchEmptyStateMessage({ titleSearchLive: false, headsReady: false }),
+  /still reading files/,
+);
+assert.match(
+  searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }),
+  /title matches|Note-head/,
+  "after title seed, empty hub must not say wait until Ready",
+);
+assert.equal(
+  searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }).includes(
+    "try again when Ready",
+  ),
+  false,
+  "palette must not gate title search on the note-head / Ready phase",
+);
+assert.match(
+  searchEmptyStateMessage({ titleSearchLive: true, headsReady: true }),
+  /current search index/,
+);
 
 {
   const { NativeSqliteDurableIndex } = await import(

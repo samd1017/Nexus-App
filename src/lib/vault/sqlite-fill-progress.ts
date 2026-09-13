@@ -188,3 +188,29 @@ export function sqliteEngineShortLabel(state: SearchIndexState): string {
   if (state === "ready-fts-partial") return "SQLite FTS5 BM25 · heads";
   return "SQLite FTS5 BM25";
 }
+
+/** Title/path FTS is queryable — palette must not wait for note heads. */
+export function isTitleSearchLive(state: SearchIndexState): boolean {
+  return STATE_RANK[state] >= STATE_RANK["ready-meta"] && state !== "error";
+}
+
+export function isNoteHeadSearchLive(state: SearchIndexState): boolean {
+  return state === "ready-fts-partial" || state === "ready-fts";
+}
+
+/**
+ * Empty palette row after a query. After ready-meta, title search is live —
+ * do not tell the user to wait until Ready (that is full deep FTS).
+ */
+export function searchEmptyStateMessage(args: {
+  titleSearchLive: boolean;
+  headsReady: boolean;
+}): string {
+  if (!args.titleSearchLive) {
+    return "Search is still reading files — try again when Ready.";
+  }
+  if (!args.headsReady) {
+    return "No title matches. Note-head search is still filling.";
+  }
+  return "No matches in the current search index.";
+}

@@ -56,6 +56,9 @@ console.log("  Desktop Partial/Deep: ready-meta after ~2k title FTS rows (Hub-na
 console.log("    then short heads — do not catalog 100k empty bodies first.");
 console.log("  Cold 100k retest: tree/editor immediate; search hub useful in seconds–tens of seconds;");
 console.log("    banner should leave Cataloging… and start note heads without a 20+ min monopoly.");
+console.log("  Official vault only (SOAK-MANIFEST / npm run gen:soak-vault). Unofficial Meeting-*");
+console.log("    folders with hub_files=0 are a false alarm — probe those with cluster only.");
+console.log("  After ready-meta, palette title search is live (not “try again when Ready”).");
 console.log("  Windows 100k (Tower): tree/editor <3s; usable title search with ready-meta;");
 console.log("    usable body search (hub/cluster) <15s via short-head FTS; full 8k FTS background");
 console.log("first-open: PASS");
