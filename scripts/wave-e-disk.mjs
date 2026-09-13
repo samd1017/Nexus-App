@@ -81,7 +81,7 @@ const report = {
   bench: benchJson,
   tauriSteps,
   honestFloor:
-    "Browser / FSA / this VM: memory inverted index. 300k search is capped-candidate JS scoring, not SQLite BM25. Desktop Tauri is the ≤50ms architecture.",
+    "Browser / FSA / this VM: memory inverted index. After candidate-cap intersection, 300k 'retrieval hub' measured ~2.5ms (was ~205ms when the full posting list was copied). That is not SQLite BM25 quality. Desktop Tauri remains the ranked ≤50ms architecture. This VM cannot FSA-pick or Tauri-open the generated folders.",
 };
 const outFile = join(outRoot, "WAVE_E_REPORT.json");
 writeFileSync(outFile, JSON.stringify(report, null, 2));
