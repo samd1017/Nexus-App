@@ -4028,7 +4028,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			try {
 				const content = mockDiskBodies?.has(path)
 					? mockDiskBodies.get(path)!
-					: await backend!.readNote(path);
+					: backend?.readNote
+						? await backend.readNote(path)
+						: null;
+				if (content == null) return null;
 				if (genAtStart !== vaultGen) return null;
 				const cur = get().nodes[id];
 				if (!cur || cur.kind !== "note") return null;
