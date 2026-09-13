@@ -885,7 +885,19 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   }
 
   return (
-    <div className="fade-in flex h-full min-h-0 flex-col" data-note-id={noteId}>
+    <div
+      className="fade-in flex h-full min-h-0 flex-col"
+      data-note-id={noteId}
+      onClickCapture={(e) => {
+        const a = (e.target as HTMLElement).closest("a[href]");
+        if (!(a instanceof HTMLAnchorElement)) return;
+        const href = a.getAttribute("href") || "";
+        if (!isVaultAttachmentHref(href)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        useVaultStore.getState().openAttachmentsRail();
+      }}
+    >
       <EditorToolbar editor={editor} />
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6">
         <div className={cn("mx-auto max-w-[720px]", isDaily && "daily-visual")}>

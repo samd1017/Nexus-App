@@ -84,6 +84,18 @@ export function SourcePreview({ content }: { content: string }) {
             blockId: parts.blockId,
             pane: e.altKey ? "secondary" : "primary",
           });
+          return;
+        }
+        const title = (parts.noteTarget || "").trim();
+        if (!title) return;
+        const created = state.createNote(null, title, { activate: false });
+        if (created) {
+          state.setToast(`Created “${title}”`);
+          state.setActiveNote(created, {
+            heading: parts.heading,
+            blockId: parts.blockId,
+            pane: e.altKey ? "secondary" : "primary",
+          });
         }
       }}
     />
