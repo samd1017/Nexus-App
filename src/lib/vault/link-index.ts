@@ -2,6 +2,8 @@
  * Wave 1e — outgoing / reverse wikilink maps (patched on save).
  * Graph and backlinks can use these without scanning all bodies (Wave 2+).
  * Wave A: reverse keys are always normalizeLinkTarget() for case/path match.
+ * Desktop: native fill persists link_edge; seedOutgoing hydrates this map
+ * without loading note bodies into the UI.
  */
 
 import {
@@ -14,6 +16,12 @@ export type LinkIndexStats = {
   noteCount: number;
   edgeCount: number;
   generation: number;
+  ready: boolean;
+};
+
+export type LinkGroup = {
+  sourceId: string;
+  targets: string[];
 };
 
 class VaultLinkIndex {
@@ -22,6 +30,8 @@ class VaultLinkIndex {
   /** normalized target → source note ids */
   reverse = new Map<string, Set<string>>();
   generation = 0;
+  /** False until rebuild (hydrated bodies) or native seed. */
+  ready = false;
   private sigOf = new Map<string, string>();
 
   stats(): LinkIndexStats {
@@ -31,6 +41,7 @@ class VaultLinkIndex {
       noteCount: this.outgoing.size,
       edgeCount,
       generation: this.generation,
+      ready: this.ready,
     };
   }
 
@@ -39,6 +50,16 @@ class VaultLinkIndex {
     this.reverse.clear();
     this.sigOf.clear();
     this.generation = 0;
+    this.ready = false;
+  }
+
+  markPending(): void {
+    if (!this.ready && this.outgoing.size === 0) {
+      this.generation += 1;
+      return;
+    }
+    this.ready = false;
+    this.generation += 1;
   }
 
   private unlink(noteId: string): void {
@@ -55,18 +76,8 @@ class VaultLinkIndex {
     this.sigOf.delete(noteId);
   }
 
-  /** Patch one note from loaded content. No-op if content signature unchanged. */
-  setNoteLinks(noteId: string, content: string | undefined): void {
-    if (content === undefined) {
-      // Unloaded — leave existing map entry (Wave 2 cold open)
-      return;
-    }
-    const sig = `${content.length}\0${content.slice(0, 64)}\0${content.slice(-64)}`;
-    if (this.sigOf.get(noteId) === sig) return;
-    this.unlink(noteId);
-    const targets = extractWikilinkTargets(content);
+  private linkTargets(noteId: string, targets: string[]): void {
     this.outgoing.set(noteId, targets);
-    this.sigOf.set(noteId, sig);
     for (const t of targets) {
       const key = normalizeLinkTarget(t);
       if (!key) continue;
@@ -77,7 +88,22 @@ class VaultLinkIndex {
       }
       set.add(noteId);
     }
+  }
+
+  /** Patch one note from loaded content. No-op if content signature unchanged. */
+  setNoteLinks(noteId: string, content: string | undefined): void {
+    if (content === undefined) {
+      // Unloaded — leave existing map entry (Wave 2 cold open / native seed)
+      return;
+    }
+    const sig = `${content.length}\0${content.slice(0, 64)}\0${content.slice(-64)}`;
+    if (this.sigOf.get(noteId) === sig) return;
+    this.unlink(noteId);
+    const targets = extractWikilinkTargets(content);
+    this.linkTargets(noteId, targets);
+    this.sigOf.set(noteId, sig);
     this.generation += 1;
+    this.ready = true;
   }
 
   removeNote(noteId: string): void {
@@ -86,16 +112,44 @@ class VaultLinkIndex {
     this.generation += 1;
   }
 
-  /** Full rebuild from nodes that have loaded bodies. */
+  /**
+   * Patch from persisted / extracted outgoing targets (no body required).
+   * Replaces the whole map — used after native fill / link_edge list.
+   */
+  seedOutgoing(groups: LinkGroup[]): void {
+    this.outgoing.clear();
+    this.reverse.clear();
+    this.sigOf.clear();
+    for (const g of groups) {
+      if (!g?.sourceId) continue;
+      const targets = Array.isArray(g.targets) ? g.targets.filter(Boolean) : [];
+      this.linkTargets(g.sourceId, targets);
+    }
+    this.ready = true;
+    this.generation += 1;
+  }
+
+  /**
+   * Rebuild from nodes that have loaded bodies.
+   * Keeps seeded entries for notes whose bodies are still lazy.
+   */
   rebuild(nodes: Record<string, VaultNode>): void {
-    this.clear();
+    const live = new Set<string>();
+    for (const n of Object.values(nodes)) {
+      if (n.kind === "note") live.add(n.id);
+    }
+    for (const id of [...this.outgoing.keys()]) {
+      if (!live.has(id)) this.unlink(id);
+    }
+    let sawLoaded = false;
     for (const n of Object.values(nodes)) {
       if (n.kind !== "note") continue;
       if (n.content === undefined) continue;
+      sawLoaded = true;
       this.setNoteLinks(n.id, n.content);
     }
-    // setNoteLinks bumps gen per note; normalize
-    this.generation = 1;
+    if (sawLoaded) this.ready = true;
+    this.generation += 1;
   }
 
   getOutgoing(noteId: string): string[] {
@@ -124,4 +178,9 @@ export function rebuildLinkIndex(nodes: Record<string, VaultNode>): void {
 
 export function resetLinkIndex(): void {
   vaultLinkIndex.clear();
+}
+
+export function seedLinkIndex(groups: LinkGroup[]): LinkIndexStats {
+  vaultLinkIndex.seedOutgoing(groups);
+  return vaultLinkIndex.stats();
 }

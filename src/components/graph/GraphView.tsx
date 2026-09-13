@@ -46,6 +46,7 @@ import {
   tagFilterOptions,
   type GraphFilterState,
 } from "@/lib/graph/graph-filters";
+import { graphEmptyCopy } from "@/lib/graph/graph-empty";
 
 interface Props {
   mode: "panel" | "fullscreen";
@@ -2287,15 +2288,21 @@ export function GraphView({ mode, className }: Props) {
         <>
           <span className="text-[var(--accent)] opacity-90">Near active</span>
           <span className="mx-1.5 opacity-40">·</span>
-          {realNoteCount} notes
-          <span className="mx-1.5 opacity-40">·</span>
-          {realLinkCount} links
-          {vaultNoteCount > realNoteCount ? (
+          {vaultLinkIndex.ready ? (
             <>
+              {realNoteCount} note{realNoteCount === 1 ? "" : "s"}
               <span className="mx-1.5 opacity-40">·</span>
-              of {vaultNoteCount.toLocaleString()}
+              {realLinkCount} link{realLinkCount === 1 ? "" : "s"}
+              {vaultNoteCount > realNoteCount ? (
+                <>
+                  <span className="mx-1.5 opacity-40">·</span>
+                  of {vaultNoteCount.toLocaleString()}
+                </>
+              ) : null}
             </>
-          ) : null}
+          ) : (
+            "Indexing links…"
+          )}
         </>
       ) : (
         <>
@@ -2313,37 +2320,18 @@ export function GraphView({ mode, className }: Props) {
     </>
   );
 
-  const emptyTitle =
-    graphModeResolved === "folder"
-      ? !(stats.levelPath || graphBrowsePath)
-        ? vaultNoteCount > 0
-          ? "Nothing on this level"
-          : "Empty vault"
-        : "Empty folder"
-      : graphModeResolved === "ego"
-        ? activeNoteId
-          ? "No links in range"
-          : "Pick a note"
-        : vaultNoteCount === 0
-          ? "No notes yet"
-          : graphQuery || tagFilter || folderFilter || orphansOnly
-            ? "Nothing matches these filters"
-            : "No graph nodes";
-
-  const emptyDescription =
-    graphModeResolved === "folder"
-      ? vaultNoteCount > 0
-        ? "Open a folder orb, or switch to Links to see [[wikilinks]] near the active note."
-        : "Add a folder or note — the map stays honest at any vault size."
-      : graphModeResolved === "ego"
-        ? activeNoteId
-          ? "This note has no resolved [[wikilinks]] within two hops. Add a link, or return to the folder map."
-          : "Open a note to see its neighborhood. The map never draws the whole vault."
-        : vaultNoteCount === 0
-          ? "Create a note to begin the constellation."
-          : graphQuery || tagFilter || folderFilter || orphansOnly
-            ? "Clear filters to see the current view again."
-            : "Add [[wikilinks]] between notes to map structure.";
+  const empty = graphEmptyCopy({
+    viewMode: graphModeResolved,
+    vaultNoteCount,
+    drawnNodeCount: displayData.nodes.length,
+    activeNoteId,
+    linkIndexReady: vaultLinkIndex.ready,
+    linkEdgeCount: vaultLinkIndex.stats().edgeCount,
+    hasFilters: Boolean(graphQuery || tagFilter || folderFilter || orphansOnly),
+    folderHasPath: Boolean(stats.levelPath || graphBrowsePath),
+  });
+  const emptyTitle = empty.title;
+  const emptyDescription = empty.description;
 
   const emptyActions = (
     <>
@@ -2445,7 +2433,7 @@ export function GraphView({ mode, className }: Props) {
       onExport={exportPng}
       onExpand={() => setGraphMode("fullscreen")}
       empty={{
-        show: displayData.nodes.length === 0,
+        show: empty.show,
         title: emptyTitle,
         description: emptyDescription,
         actions: emptyActions,

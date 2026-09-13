@@ -123,10 +123,10 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 
 | Layer | What |
 |--------|------|
-| Rust | `vault_index_fill_from_disk` is **async** (blocking pool). Incremental: skip notes whose path+mtime+size already match `note_meta`. Emits `vault-index-progress` every 64 notes or 250ms. Dedicated writer connection so the UI/search mutex is not held. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. |
-| JS | `NativeSqliteDurableIndex.fillFromDisk` listens for progress and can resolve on the `done` event if the invoke is still finalizing. Banner shows live `scanned / total`. Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
+| Rust | `vault_index_fill_from_disk` is **async** (blocking pool). Incremental: skip notes whose path+mtime+size already match `note_meta`. While indexing a head it also extracts `[[wikilinks]]` into `link_edge`. A warm FTS index filled before that path gets a one-shot backfill from `note_fts` bodies (no JS hydrate). Emits `vault-index-progress` every 64 notes or 250ms. Dedicated writer connection so the UI/search mutex is not held. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. `vault_index_list_links` returns grouped edges for the JS link index. |
+| JS | `NativeSqliteDurableIndex.fillFromDisk` listens for progress and can resolve on the `done` event if the invoke is still finalizing. After fill, `listLinkGroups` seeds `vaultLinkIndex` so Graph → Links works without opening every note. Banner shows live `scanned / total`. Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
 | Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `runWaveE(path, { forceRebuild: true })` re-reads every head. Waits for `searchReady`; throws if fill errors. |
-| Tests | `npm run test:sqlite-fill` (banner/success rules). `npm run test:sqlite-fill-rust` (incremental skip / force rebuild / progress; GTK-free crate). |
+| Tests | `npm run test:sqlite-fill` (banner/success rules). `npm run test:sqlite-fill-rust` (incremental skip / force rebuild / progress / wikilink `link_edge`; GTK-free crate). `npm run test:link-index` + `test:graph-empty` + `test:tree-expand`. |
 
 **Fill expectations (not SCALE READY):**
 

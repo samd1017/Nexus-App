@@ -172,7 +172,8 @@ import {
   removeDurableNote,
   rebuildDurableIndexFromNodesAsync,
 } from "./durable-index";
-import { vaultLinkIndex, resetLinkIndex, rebuildLinkIndex } from "./link-index";
+import { vaultLinkIndex, resetLinkIndex, rebuildLinkIndex, seedLinkIndex } from "./link-index";
+import { smartExpandedFolders, expandPathToNote, sameExpandedFolders } from "./tree-expand";
 import { invalidateSearchCache } from "@/lib/search/fuse-search";
 import { invalidateIndexedSearch, upsertIndexedNote } from "@/lib/search/indexed-search";
 import {
@@ -690,6 +691,9 @@ function prepareMountedNodes(
 ) {
 	if (!isLargeMemoryVault(opts?.vaultId) && !opts?.metaOnly) {
 		rebuildLinkIndex(nodes);
+	} else if (opts?.metaOnly) {
+		resetLinkIndex();
+		vaultLinkIndex.markPending();
 	}
 	clearBodyTouches();
 	const keep = new Set(keepIds.filter(Boolean));
@@ -798,6 +802,24 @@ function canReadDiskSearchHeads(): boolean {
 	return Boolean(mockDiskBodies || fsaRoot || desktopRoot);
 }
 
+/** Seed vaultLinkIndex from persisted link_edge. Returns edge count. */
+async function seedLinkIndexFromDurable(
+	index: {
+		listLinkGroups?: () => Promise<Array<{ sourceId: string; targets: string[] }>>;
+	} | null,
+	opts?: { allowEmpty?: boolean },
+): Promise<number> {
+	if (!index?.listLinkGroups) return 0;
+	try {
+		const groups = await index.listLinkGroups();
+		if (!groups.length && !opts?.allowEmpty) return 0;
+		return seedLinkIndex(groups).edgeCount;
+	} catch (err) {
+		console.warn("[nexus] seed link index failed", err);
+		return 0;
+	}
+}
+
 /**
  * After meta-only disk mount: index file heads into DurableIndex, then Ready.
  * Tree can already be interactive. Search is not Ready until this finishes.
@@ -840,6 +862,8 @@ async function completeDiskSearchIndex(opts?: {
 		});
 		await yieldToUi(true);
 		try {
+			const seededBefore = await seedLinkIndexFromDurable(sqlite);
+			if (!seededBefore) vaultLinkIndex.markPending();
 			const native = await sqlite.fillFromDisk(8000, {
 				forceRebuild: opts?.forceRebuild === true,
 				onProgress: (p) => {
@@ -862,6 +886,9 @@ async function completeDiskSearchIndex(opts?: {
 			const indexed = Number(native?.indexed ?? 0);
 			const notes = Number(native?.notes ?? 0);
 			const skipped = Number(native?.skipped ?? 0);
+			const linkStats = await seedLinkIndexFromDurable(sqlite, {
+				allowEmpty: true,
+			});
 			if (
 				isEmptyNativeFillFailure({
 					noteCount,
@@ -889,6 +916,8 @@ async function completeDiskSearchIndex(opts?: {
 					searchIndexSkipped: skipped,
 					searchIndexErrors: Number(native?.errors ?? 0),
 					searchReady: true,
+					linkEdges: linkStats,
+					linkIndexReady: vaultLinkIndex.ready,
 				};
 			}
 			setOpenProgress({
@@ -1229,20 +1258,6 @@ function sampleHeap(reason: string): void {
 	}
 }
 
-function smartExpandedFolders(
-	nodes: Record<string, VaultNode>,
-	activeId: string | null,
-) {
-	const out = new Set<string>();
-	const journal = dailyFolder();
-	for (const n of Object.values(nodes)) if (n.kind === "folder" && n.path === journal && n.parentId == null) out.add(n.id);
-	let cur = activeId ? nodes[activeId] : null;
-	while (cur?.parentId) {
-		out.add(cur.parentId);
-		cur = nodes[cur.parentId] ?? null;
-	}
-	return Array.from(out);
-}
 function stableId(path: string) {
 	return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
 }
@@ -1291,20 +1306,6 @@ async function persistNoteIfFsa(
 	if (!fsaRoot) return;
 	await writeNoteFile(fsaRoot, path, content);
 	if (ack && watcherAck) await watcherAck(fsaRoot);
-}
-/** Expand folder ancestors so the note is visible in the tree. */
-function expandPathToNote(
-	nodes: Record<string, VaultNode>,
-	noteId: string | null,
-) {
-	if (!noteId) return [];
-	const out = [];
-	let cur = nodes[noteId]?.parentId ?? null;
-	while (cur) {
-		out.push(cur);
-		cur = nodes[cur]?.parentId ?? null;
-	}
-	return out;
 }
 function pushRecent(entry: RecentVault) {
 	const list = (loadRecents() as RecentVault[]).filter((r) => r.id !== entry.id);
@@ -2762,7 +2763,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const accordion = noteCount >= 400;
 		const nextExpanded = accordion
-			? smartExpandedFolders(get().nodes, id)
+			? (() => {
+					const smart = smartExpandedFolders(get().nodes, id);
+					return sameExpandedFolders(curExpanded, smart) ? null : smart;
+				})()
 			: needsExpand
 				? Array.from(new Set([...curExpanded, ...pathExpand]))
 				: null;

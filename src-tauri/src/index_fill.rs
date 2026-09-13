@@ -29,6 +29,8 @@ pub struct IndexFillResult {
     pub skipped: i64,
     pub errors: i64,
     pub notes: i64,
+    #[serde(default)]
+    pub edges: i64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -67,6 +69,7 @@ struct FillNote {
     size: i64,
     title: String,
     body: String,
+    links: Vec<String>,
 }
 
 /// Must match TS `deskNodeId` in `src/lib/vault/tauri-adapter.ts`.
@@ -86,6 +89,172 @@ pub fn desk_node_id(path: &str) -> String {
         }
     }
     out
+}
+
+/// Match TS `normalizeLinkTarget` so reverse maps resolve the same keys.
+pub fn normalize_link_target(target: &str) -> String {
+    let trimmed = target.trim();
+    let without_md = if trimmed.len() >= 3
+        && trimmed[trimmed.len().saturating_sub(3)..].eq_ignore_ascii_case(".md")
+    {
+        &trimmed[..trimmed.len() - 3]
+    } else {
+        trimmed
+    };
+    without_md.replace('\\', "/").to_ascii_lowercase()
+}
+
+fn note_target_from_inner(inner: &str) -> String {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return String::new();
+    }
+    let raw = if let Some(pipe) = inner.find('|') {
+        inner[..pipe].trim()
+    } else {
+        inner
+    };
+    if let Some(block) = raw.find("#^") {
+        return raw[..block].trim().to_string();
+    }
+    if raw.starts_with('^') && !raw.contains('#') {
+        return String::new();
+    }
+    if let Some(hash) = raw.find('#') {
+        return raw[..hash].trim().to_string();
+    }
+    raw.trim().to_string()
+}
+
+fn strip_code_for_link_scan(markdown: &str) -> String {
+    let chars: Vec<char> = markdown.chars().collect();
+    let mut out = String::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 2 < chars.len() && chars[i] == '`' && chars[i + 1] == '`' && chars[i + 2] == '`' {
+            let start = i;
+            i += 3;
+            while i + 2 < chars.len()
+                && !(chars[i] == '`' && chars[i + 1] == '`' && chars[i + 2] == '`')
+            {
+                i += 1;
+            }
+            if i + 2 < chars.len() {
+                i += 3;
+            } else {
+                i = chars.len();
+            }
+            out.extend(std::iter::repeat(' ').take(i - start));
+            continue;
+        }
+        if chars[i] == '`' {
+            let start = i;
+            i += 1;
+            while i < chars.len() && chars[i] != '`' && chars[i] != '\n' {
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == '`' {
+                i += 1;
+            }
+            out.extend(std::iter::repeat(' ').take(i - start));
+            continue;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Extract unique `[[note]]` targets from a file head. Skips code fences / inline
+/// code. Same note-target rules as TS `extractWikilinkTargets`.
+pub fn extract_wikilink_targets(markdown: &str) -> Vec<String> {
+    let stripped = strip_code_for_link_scan(markdown);
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut rest = stripped.as_str();
+    while let Some(start) = rest.find("[[") {
+        let after = &rest[start + 2..];
+        if let Some(end) = after.find("]]") {
+            let note = note_target_from_inner(&after[..end]);
+            if !note.is_empty() && seen.insert(note.clone()) {
+                out.push(note);
+            }
+            rest = &after[end + 2..];
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+pub fn replace_source_links(
+    conn: &Connection,
+    source_id: &str,
+    targets: &[String],
+) -> Result<i64, String> {
+    conn.execute("DELETE FROM link_edge WHERE source_id = ?1", params![source_id])
+        .map_err(|e| e.to_string())?;
+    let mut written = 0i64;
+    for raw in targets {
+        let norm = normalize_link_target(raw);
+        if norm.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO link_edge(source_id, target_raw, target_norm, target_id)
+             VALUES (?1,?2,?3,NULL)",
+            params![source_id, raw, norm],
+        )
+        .map_err(|e| e.to_string())?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+fn count_link_edges(conn: &Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM link_edge", [], |r| r.get(0))
+        .unwrap_or(0)
+}
+
+fn links_indexed_flag(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT value FROM meta_kv WHERE key = 'links_indexed'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .map(|v| v == "1")
+    .unwrap_or(false)
+}
+
+fn set_links_indexed_flag(conn: &Connection) {
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES ('links_indexed', '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [],
+    );
+}
+
+/// One-shot: persist `link_edge` from already-indexed FTS bodies.
+/// Used when a warm FTS index was filled before this path existed.
+pub fn backfill_links_from_fts(conn: &mut Connection) -> Result<i64, String> {
+    let rows: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT note_id, body FROM note_fts")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        mapped.flatten().collect()
+    };
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let _ = tx.execute("DELETE FROM link_edge", []);
+    let mut edges = 0i64;
+    for (id, body) in rows {
+        edges += replace_source_links(&tx, &id, &extract_wikilink_targets(&body))?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(edges)
 }
 
 /// First `head_chars` Unicode scalars. ASCII markdown takes the byte-fast path
@@ -225,6 +394,15 @@ fn flush_note_batch(
                 "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)",
             )
             .map_err(|e| e.to_string())?;
+        let mut link_del = tx
+            .prepare_cached("DELETE FROM link_edge WHERE source_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let mut link_ins = tx
+            .prepare_cached(
+                "INSERT OR IGNORE INTO link_edge(source_id, target_raw, target_norm, target_id)
+                 VALUES (?1,?2,?3,NULL)",
+            )
+            .map_err(|e| e.to_string())?;
         for note in batch.iter() {
             if meta
                 .execute(params![
@@ -248,6 +426,19 @@ fn flush_note_batch(
             {
                 *errors += 1;
                 continue;
+            }
+            if link_del.execute(params![note.id]).is_err() {
+                *errors += 1;
+                continue;
+            }
+            for raw in &note.links {
+                let norm = normalize_link_target(raw);
+                if norm.is_empty() {
+                    continue;
+                }
+                if link_ins.execute(params![note.id, raw, norm]).is_err() {
+                    *errors += 1;
+                }
             }
             *indexed += 1;
         }
@@ -278,6 +469,8 @@ fn remove_stale_notes(
     };
     let mut removed = 0i64;
     for id in &stale {
+        let _ = tx.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id]);
+        let _ = tx.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id]);
         let ok = tx
             .execute("DELETE FROM note_fts WHERE note_id = ?1", params![id])
             .is_ok()
@@ -372,6 +565,7 @@ pub fn fill_from_disk_on_conn(
             mtime: disk.mtime,
             size: disk.size,
             title: disk.name.trim_end_matches(".md").to_string(),
+            links: extract_wikilink_targets(&body),
             body,
         });
         if batch.len() >= 512 {
@@ -390,6 +584,19 @@ pub fn fill_from_disk_on_conn(
     flush_note_batch(conn, &mut batch, &mut indexed, &mut errors);
     let _ = remove_stale_notes(conn, &existing, &seen);
 
+    if !links_indexed_flag(conn) {
+        // Cold fill already wrote link_edge in flush. Incremental skip of a
+        // pre-patch FTS index (or a mixed fill) still needs a one-shot
+        // extract from existing note_fts heads — no JS body hydrate.
+        if skipped > 0 || indexed == 0 {
+            if let Err(err) = backfill_links_from_fts(conn) {
+                progress.message = Some(format!("link backfill failed: {err}"));
+            }
+        }
+        set_links_indexed_flag(conn);
+    }
+    let edges = count_link_edges(conn);
+
     // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
@@ -398,6 +605,7 @@ pub fn fill_from_disk_on_conn(
         skipped,
         errors,
         notes: total,
+        edges,
     };
     progress.scanned = total;
     progress.indexed = indexed;
@@ -417,6 +625,10 @@ mod tests {
     use std::path::PathBuf;
 
     const TEST_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS meta_kv (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS note_meta (
   id TEXT PRIMARY KEY,
   path TEXT UNIQUE NOT NULL,
@@ -428,6 +640,19 @@ CREATE TABLE IF NOT EXISTS note_meta (
   content_hash TEXT,
   title TEXT,
   deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS link_edge (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id TEXT NOT NULL,
+  target_raw TEXT NOT NULL,
+  target_norm TEXT NOT NULL,
+  target_id TEXT,
+  UNIQUE (source_id, target_norm)
+);
+CREATE TABLE IF NOT EXISTS tag_map (
+  tag TEXT NOT NULL,
+  note_id TEXT NOT NULL,
+  PRIMARY KEY (tag, note_id)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
   note_id UNINDEXED,
@@ -521,6 +746,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     }
 
     #[test]
+    fn extract_wikilinks_skips_code_and_parses_aliases() {
+        let body = "# Hub\nSee [[Topic 1]] and [[Folder/Note.md|Alias]].\n`[[code]]`\n```\n[[fenced]]\n```\n[[Topic 1#Overview]]\n";
+        let got = extract_wikilink_targets(body);
+        assert_eq!(got, vec!["Topic 1".to_string(), "Folder/Note.md".to_string()]);
+        assert_eq!(normalize_link_target("Folder/Note.md"), "folder/note");
+        assert_eq!(normalize_link_target("Topic 1"), "topic 1");
+    }
+
+    #[test]
     fn incremental_skips_unchanged_and_reindexes_mtime() {
         let (vault, db) = temp_pair("incr");
         write_note(&vault, "Hub.md", "retrieval hub body\n");
@@ -593,6 +827,75 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert_eq!(second.skipped, 80);
         assert_eq!(second.indexed, 0);
         assert!(ticks2.iter().any(|p| p.skipped >= 64 || p.phase == "done"));
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    fn edge_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM link_edge", [], |r| r.get(0))
+            .unwrap_or(0)
+    }
+
+    fn has_edge(conn: &Connection, source: &str, norm: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM link_edge WHERE source_id = ?1 AND target_norm = ?2",
+            params![source, norm],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            > 0
+    }
+
+    #[test]
+    fn fill_persists_wikilink_edges_without_js_bodies() {
+        let (vault, db) = temp_pair("links");
+        write_note(
+            &vault,
+            "Hub.md",
+            "See [[Topic 1]] and [[cluster]].\n`[[ignored]]`\n",
+        );
+        write_note(&vault, "Topic 1.md", "Back to [[Hub]].\n");
+        write_note(&vault, "cluster.md", "plain\n");
+        let mut conn = open_test_conn(&db);
+
+        let (first, _) = fill(&mut conn, &vault, false);
+        assert_eq!(first.notes, 3);
+        assert!(first.edges >= 3, "cold fill must persist resolvable edges");
+        assert!(has_edge(&conn, "desk_Hub.md", "topic 1"));
+        assert!(has_edge(&conn, "desk_Hub.md", "cluster"));
+        assert_eq!(desk_node_id("Topic 1.md"), "desk_Topic_1.md");
+        assert!(has_edge(&conn, "desk_Topic_1.md", "hub"));
+
+        let (second, _) = fill(&mut conn, &vault, false);
+        assert_eq!(second.indexed, 0);
+        assert_eq!(second.skipped, 3);
+        assert_eq!(second.edges, first.edges, "incremental skip must keep edges");
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn warm_fts_without_edges_is_backfilled() {
+        let (vault, db) = temp_pair("backfill");
+        write_note(&vault, "A.md", "See [[B]].\n");
+        write_note(&vault, "B.md", "See [[A]].\n");
+        let mut conn = open_test_conn(&db);
+        let (first, _) = fill(&mut conn, &vault, false);
+        assert!(first.edges >= 2);
+
+        // Simulate a pre-patch index: FTS present, link_edge empty, flag missing.
+        conn.execute_batch("DELETE FROM link_edge; DELETE FROM meta_kv WHERE key = 'links_indexed';")
+            .unwrap();
+        assert_eq!(edge_count(&conn), 0);
+
+        let (second, _) = fill(&mut conn, &vault, false);
+        assert_eq!(second.indexed, 0, "unchanged files stay skipped");
+        assert!(
+            second.edges >= 2,
+            "one-shot FTS backfill must seed link_edge"
+        );
+        assert!(has_edge(&conn, "desk_A.md", "b"));
+        assert!(has_edge(&conn, "desk_B.md", "a"));
 
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }

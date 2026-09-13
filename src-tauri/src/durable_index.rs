@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use crate::index_fill::{fill_from_disk_on_conn, IndexFillProgress, IndexFillResult};
+use crate::index_fill::{
+    fill_from_disk_on_conn, replace_source_links, IndexFillProgress, IndexFillResult,
+};
 
 pub const SCHEMA_VERSION: i32 = 3;
 
@@ -339,23 +341,8 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
     }
 
     // Only replace links/tags when caller supplies them (None = leave previous)
-    if note.link_targets.is_some() {
-        conn.execute("DELETE FROM link_edge WHERE source_id = ?1", params![note.id])
-            .map_err(|e| e.to_string())?;
-        if let Some(links) = &note.link_targets {
-            for raw in links {
-                let norm = raw.trim().to_lowercase();
-                if norm.is_empty() {
-                    continue;
-                }
-                conn.execute(
-                    "INSERT OR IGNORE INTO link_edge(source_id, target_raw, target_norm, target_id)
-                     VALUES (?1,?2,?3,NULL)",
-                    params![note.id, raw, norm],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
+    if let Some(links) = &note.link_targets {
+        replace_source_links(conn, &note.id, links)?;
     }
 
     if note.tags.is_some() {
@@ -688,6 +675,48 @@ pub fn vault_index_search(
         .get(&db_path)
         .ok_or_else(|| "index not open".to_string())?;
     search_tx(conn, &query, limit.unwrap_or(40))
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkGroupDto {
+    pub source_id: String,
+    pub targets: Vec<String>,
+}
+
+/// Seed the JS link index from persisted `link_edge` (no note bodies).
+#[tauri::command]
+pub fn vault_index_list_links(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+) -> Result<Vec<LinkGroupDto>, String> {
+    let guard = state.lock().map_err(|e| e.to_string())?;
+    let conn = guard
+        .conns
+        .get(&db_path)
+        .ok_or_else(|| "index not open".to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT source_id, target_raw FROM link_edge ORDER BY source_id, id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    let mut groups: Vec<LinkGroupDto> = Vec::new();
+    for row in rows.flatten() {
+        if let Some(last) = groups.last_mut() {
+            if last.source_id == row.0 {
+                last.targets.push(row.1);
+                continue;
+            }
+        }
+        groups.push(LinkGroupDto {
+            source_id: row.0,
+            targets: vec![row.1],
+        });
+    }
+    Ok(groups)
 }
 
 #[tauri::command]

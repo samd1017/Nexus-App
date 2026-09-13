@@ -146,6 +146,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     skipped: number;
     errors: number;
     notes: number;
+    edges: number;
   }> {
     type FillPayload = {
       dbPath?: string;
@@ -155,6 +156,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       skipped?: number;
       errors?: number;
       notes?: number;
+      edges?: number;
       phase?: string;
       message?: string | null;
     };
@@ -163,6 +165,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       skipped: Number(r?.skipped ?? 0),
       errors: Number(r?.errors ?? 0),
       notes: Number(r?.notes ?? r?.total ?? r?.scanned ?? 0),
+      edges: Number(r?.edges ?? 0),
     });
 
     let unlisten: (() => void) | undefined;
@@ -412,6 +415,22 @@ export class NativeSqliteDurableIndex implements DurableIndex {
 
   getDbPath(): string {
     return this.dbPath;
+  }
+
+  async listLinkGroups(): Promise<Array<{ sourceId: string; targets: string[] }>> {
+    try {
+      const rows = await this.invoke<
+        Array<{ sourceId?: string; source_id?: string; targets?: string[] }>
+      >("vault_index_list_links", { dbPath: this.dbPath });
+      if (!Array.isArray(rows)) return [];
+      return rows.map((r) => ({
+        sourceId: String(r.sourceId ?? r.source_id ?? ""),
+        targets: Array.isArray(r.targets) ? r.targets.map(String) : [],
+      })).filter((g) => g.sourceId);
+    } catch (err) {
+      console.warn("[nexus] vault_index_list_links failed", err);
+      return [];
+    }
   }
 }
 
