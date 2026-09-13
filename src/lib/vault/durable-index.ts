@@ -114,7 +114,25 @@ export interface DurableIndex {
   /** Desktop: Rust walks the vault folder into SQLite FTS5 (no per-note JS IPC). */
   fillFromDisk?(
     headChars?: number,
-  ): Promise<{ indexed: number; errors: number; notes: number }>;
+    opts?: {
+      forceRebuild?: boolean;
+      onProgress?: (p: {
+        dbPath?: string;
+        scanned: number;
+        total: number;
+        indexed: number;
+        skipped: number;
+        errors: number;
+        phase: string;
+        message?: string | null;
+      }) => void;
+    },
+  ): Promise<{
+    indexed: number;
+    skipped?: number;
+    errors: number;
+    notes: number;
+  }>;
   /** Drop title-only postings before a file-head fill so we do not hold two indexes. */
   beginSlimDiskFill?(): void;
   /** Prune unique tokens after a 100k fill so Chrome can keep the tab. */

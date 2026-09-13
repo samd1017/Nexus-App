@@ -3,9 +3,10 @@
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub const SCHEMA_VERSION: i32 = 3;
 
@@ -754,8 +755,385 @@ pub fn vault_index_list(
 #[serde(rename_all = "camelCase")]
 pub struct IndexFillResult {
     pub indexed: i64,
+    pub skipped: i64,
     pub errors: i64,
     pub notes: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexFillProgress {
+    pub db_path: String,
+    pub scanned: i64,
+    pub total: i64,
+    pub indexed: i64,
+    pub skipped: i64,
+    pub errors: i64,
+    pub phase: String,
+    pub message: Option<String>,
+}
+
+struct ExistingNote {
+    id: String,
+    mtime: i64,
+    size: Option<i64>,
+}
+
+struct DiskNote {
+    abs: PathBuf,
+    rel: String,
+    name: String,
+    mtime: i64,
+    size: i64,
+}
+
+fn fill_inflight() -> &'static Mutex<HashSet<String>> {
+    static LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+struct FillGuard(String);
+
+impl FillGuard {
+    fn acquire(db_path: &str) -> Result<Self, String> {
+        let mut g = fill_inflight().lock().map_err(|e| e.to_string())?;
+        if !g.insert(db_path.to_string()) {
+            return Err("index fill already running for this vault".into());
+        }
+        Ok(Self(db_path.to_string()))
+    }
+}
+
+impl Drop for FillGuard {
+    fn drop(&mut self) {
+        if let Ok(mut g) = fill_inflight().lock() {
+            g.remove(&self.0);
+        }
+    }
+}
+
+/// First `head_chars` Unicode scalars. ASCII markdown takes the byte-fast path
+/// so 100k heads do not pay `chars().take` per file.
+fn take_head(bytes: &[u8], head_chars: usize) -> String {
+    if bytes.is_empty() || head_chars == 0 {
+        return String::new();
+    }
+    if bytes.iter().all(|b| *b < 0x80) {
+        let n = bytes.len().min(head_chars);
+        return String::from_utf8_lossy(&bytes[..n]).into_owned();
+    }
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .take(head_chars)
+        .collect()
+}
+
+fn load_existing_notes(conn: &Connection) -> HashMap<String, ExistingNote> {
+    let mut map = HashMap::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, path, mtime, size FROM note_meta WHERE kind='note' AND deleted=0",
+    ) else {
+        return map;
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(1)?,
+            ExistingNote {
+                id: r.get(0)?,
+                mtime: r.get(2)?,
+                size: r.get(3)?,
+            },
+        ))
+    }) else {
+        return map;
+    };
+    for row in rows.flatten() {
+        map.insert(row.0, row.1);
+    }
+    map
+}
+
+fn collect_md_notes(root: &Path) -> Vec<DiskNote> {
+    use std::time::SystemTime;
+    let mut out = Vec::new();
+    let mut stack: Vec<(PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
+    while let Some((dir, rel)) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let mut dirs: Vec<(PathBuf, String)> = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
+                continue;
+            }
+            let ft = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let child_rel = if rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel}/{name}")
+            };
+            if ft.is_dir() {
+                dirs.push((entry.path(), child_rel));
+                continue;
+            }
+            if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
+                continue;
+            }
+            let meta = entry.metadata().ok();
+            let mtime = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let size = meta.map(|m| m.len() as i64).unwrap_or(0);
+            out.push(DiskNote {
+                abs: entry.path(),
+                rel: child_rel,
+                name,
+                mtime,
+                size,
+            });
+        }
+        stack.extend(dirs);
+    }
+    out
+}
+
+fn note_unchanged(existing: &ExistingNote, disk: &DiskNote) -> bool {
+    existing.mtime == disk.mtime && existing.size == Some(disk.size)
+}
+
+fn should_emit_progress(last_at: Instant, last_scanned: i64, scanned: i64) -> bool {
+    scanned.saturating_sub(last_scanned) >= 64 || last_at.elapsed() >= Duration::from_millis(250)
+}
+
+fn flush_note_batch(
+    conn: &mut Connection,
+    batch: &mut Vec<NoteMetaDto>,
+    indexed: &mut i64,
+    errors: &mut i64,
+) {
+    if batch.is_empty() {
+        return;
+    }
+    let tx = match conn.unchecked_transaction() {
+        Ok(t) => t,
+        Err(_) => {
+            *errors += batch.len() as i64;
+            batch.clear();
+            return;
+        }
+    };
+    let flush_err = (|| -> Result<(), String> {
+        let mut meta = tx
+            .prepare_cached(
+                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted)
+                 VALUES (?1,?2,?3,'note',?4,?5,?6,NULL,?7,0)
+                 ON CONFLICT(id) DO UPDATE SET
+                   path=excluded.path, name=excluded.name, parent_id=excluded.parent_id,
+                   mtime=excluded.mtime, size=excluded.size,
+                   title=excluded.title, deleted=0",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut fts_del = tx
+            .prepare_cached("DELETE FROM note_fts WHERE note_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let mut fts_ins = tx
+            .prepare_cached(
+                "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)",
+            )
+            .map_err(|e| e.to_string())?;
+        for note in batch.iter() {
+            let title = note
+                .title
+                .as_deref()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| note.name.trim_end_matches(".md").to_string());
+            let body = note.body_snippet.as_deref().unwrap_or("");
+            if meta
+                .execute(params![
+                    note.id,
+                    note.path,
+                    note.name,
+                    note.parent_id,
+                    note.mtime,
+                    note.size,
+                    title,
+                ])
+                .is_err()
+            {
+                *errors += 1;
+                continue;
+            }
+            if fts_del.execute(params![note.id]).is_err()
+                || fts_ins
+                    .execute(params![note.id, title, note.path, body])
+                    .is_err()
+            {
+                *errors += 1;
+                continue;
+            }
+            *indexed += 1;
+        }
+        Ok(())
+    })();
+    if flush_err.is_err() || tx.commit().is_err() {
+        *errors += batch.len() as i64;
+        *indexed = (*indexed - batch.len() as i64).max(0);
+    }
+    batch.clear();
+}
+
+fn remove_stale_notes(
+    conn: &mut Connection,
+    existing: &HashMap<String, ExistingNote>,
+    seen: &HashSet<String>,
+) -> i64 {
+    let stale: Vec<String> = existing
+        .iter()
+        .filter(|(path, _)| !seen.contains(*path))
+        .map(|(_, e)| e.id.clone())
+        .collect();
+    if stale.is_empty() {
+        return 0;
+    }
+    let Ok(tx) = conn.unchecked_transaction() else {
+        return 0;
+    };
+    let mut removed = 0i64;
+    for id in &stale {
+        if remove_note_tx(&tx, id).is_ok() {
+            removed += 1;
+        }
+    }
+    if tx.commit().is_ok() {
+        removed
+    } else {
+        0
+    }
+}
+
+/// Incremental disk → FTS5 fill. Skips path+mtime+size matches. Emits progress
+/// at least every 64 notes or 250ms. Does not TRUNCATE-checkpoint WAL.
+pub(crate) fn fill_from_disk_on_conn(
+    conn: &mut Connection,
+    vault_root: &Path,
+    head_chars: usize,
+    force_rebuild: bool,
+    db_path: &str,
+    mut on_progress: impl FnMut(&IndexFillProgress),
+) -> Result<IndexFillResult, String> {
+    use std::fs::File;
+    use std::io::Read;
+
+    let existing = load_existing_notes(conn);
+    let files = collect_md_notes(vault_root);
+    let total = files.len() as i64;
+    let mut progress = IndexFillProgress {
+        db_path: db_path.to_string(),
+        scanned: 0,
+        total,
+        indexed: 0,
+        skipped: 0,
+        errors: 0,
+        phase: "indexing".into(),
+        message: None,
+    };
+    on_progress(&progress);
+
+    let mut indexed: i64 = 0;
+    let mut skipped: i64 = 0;
+    let mut errors: i64 = 0;
+    let mut batch: Vec<NoteMetaDto> = Vec::with_capacity(512);
+    let mut seen: HashSet<String> = HashSet::with_capacity(files.len());
+    let mut buf = vec![0u8; head_chars.saturating_mul(4).clamp(256, 128_000)];
+    let mut last_emit = Instant::now();
+    let mut last_emitted_scanned: i64 = 0;
+
+    for (i, disk) in files.iter().enumerate() {
+        seen.insert(disk.rel.clone());
+        let scanned = (i as i64) + 1;
+        if !force_rebuild {
+            if let Some(prev) = existing.get(&disk.rel) {
+                if note_unchanged(prev, disk) {
+                    skipped += 1;
+                    if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
+                        progress.scanned = scanned;
+                        progress.indexed = indexed;
+                        progress.skipped = skipped;
+                        progress.errors = errors;
+                        on_progress(&progress);
+                        last_emit = Instant::now();
+                        last_emitted_scanned = scanned;
+                    }
+                    continue;
+                }
+            }
+        }
+
+        let body = match File::open(&disk.abs) {
+            Ok(mut f) => {
+                let n = f.read(&mut buf).unwrap_or(0);
+                take_head(&buf[..n], head_chars)
+            }
+            Err(_) => {
+                errors += 1;
+                String::new()
+            }
+        };
+        let parent_path = disk.rel.rsplit_once('/').map(|(p, _)| p.to_string());
+        batch.push(NoteMetaDto {
+            id: desk_node_id(&disk.rel),
+            path: disk.rel.clone(),
+            name: disk.name.clone(),
+            kind: "note".into(),
+            parent_id: parent_path.map(|p| desk_node_id(&p)),
+            mtime: disk.mtime,
+            size: Some(disk.size),
+            content_hash: None,
+            title: None,
+            body_snippet: Some(body),
+            tags: None,
+            link_targets: None,
+        });
+        if batch.len() >= 512 {
+            flush_note_batch(conn, &mut batch, &mut indexed, &mut errors);
+        }
+        if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
+            progress.scanned = scanned;
+            progress.indexed = indexed;
+            progress.skipped = skipped;
+            progress.errors = errors;
+            on_progress(&progress);
+            last_emit = Instant::now();
+            last_emitted_scanned = scanned;
+        }
+    }
+    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors);
+    let _ = remove_stale_notes(conn, &existing, &seen);
+
+    // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+
+    let result = IndexFillResult {
+        indexed,
+        skipped,
+        errors,
+        notes: total,
+    };
+    progress.scanned = total;
+    progress.indexed = indexed;
+    progress.skipped = skipped;
+    progress.errors = errors;
+    progress.phase = "done".into();
+    on_progress(&progress);
+    Ok(result)
 }
 
 /// Must match TS `deskNodeId` in `src/lib/vault/tauri-adapter.ts`.
@@ -790,6 +1168,146 @@ mod desk_id_tests {
     }
 }
 
+#[cfg(test)]
+mod fill_tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    fn temp_pair(label: &str) -> (PathBuf, PathBuf) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!(
+            "nexus-fill-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        let vault = base.join("vault");
+        let db = base.join("index.sqlite");
+        fs::create_dir_all(&vault).unwrap();
+        (vault, db)
+    }
+
+    fn write_note(vault: &Path, rel: &str, body: &str) {
+        let path = vault.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let mut f = fs::File::create(path).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        f.flush().unwrap();
+    }
+
+    fn open_test_conn(db: &Path, vault: &Path) -> Connection {
+        let conn = open_conn(&db.to_string_lossy()).unwrap();
+        ensure_schema(&conn, "test", Some(&vault.to_string_lossy())).unwrap();
+        let _ = conn.busy_timeout(Duration::from_millis(2_000));
+        conn
+    }
+
+    fn fill(
+        conn: &mut Connection,
+        vault: &Path,
+        force: bool,
+    ) -> (IndexFillResult, Vec<IndexFillProgress>) {
+        let mut ticks = Vec::new();
+        let result = fill_from_disk_on_conn(conn, vault, 8000, force, "test.sqlite", |p| {
+            ticks.push(p.clone());
+        })
+        .unwrap();
+        (result, ticks)
+    }
+
+    #[test]
+    fn take_head_ascii_and_unicode() {
+        assert_eq!(take_head(b"hello world", 5), "hello");
+        assert_eq!(take_head("café extra".as_bytes(), 4), "café");
+        assert_eq!(take_head(b"", 8), "");
+    }
+
+    #[test]
+    fn incremental_skips_unchanged_and_reindexes_mtime() {
+        let (vault, db) = temp_pair("incr");
+        write_note(&vault, "Hub.md", "retrieval hub body\n");
+        write_note(&vault, "cluster.md", "cluster token\n");
+        write_note(&vault, "other.md", "plain note\n");
+        let mut conn = open_test_conn(&db, &vault);
+
+        let (first, ticks) = fill(&mut conn, &vault, false);
+        assert_eq!(first.notes, 3);
+        assert_eq!(first.indexed, 3);
+        assert_eq!(first.skipped, 0);
+        assert!(ticks.iter().any(|p| p.phase == "indexing" && p.total == 3));
+        assert_eq!(ticks.last().map(|p| p.phase.as_str()), Some("done"));
+        let hits = search_tx(&conn, "retrieval hub", 8).unwrap();
+        assert!(
+            hits.iter().any(|h| h.path.contains("Hub")),
+            "cold fill must FTS index heads"
+        );
+
+        let (second, _) = fill(&mut conn, &vault, false);
+        assert_eq!(second.notes, 3);
+        assert_eq!(second.indexed, 0, "reopen must skip unchanged path+mtime+size");
+        assert_eq!(second.skipped, 3);
+        let hits2 = search_tx(&conn, "retrieval hub", 8).unwrap();
+        assert!(hits2.iter().any(|h| h.path.contains("Hub")));
+
+        write_note(&vault, "cluster.md", "cluster token plus new unique-xyz\n");
+        let (third, _) = fill(&mut conn, &vault, false);
+        assert_eq!(third.indexed, 1);
+        assert_eq!(third.skipped, 2);
+        let hits3 = search_tx(&conn, "unique-xyz", 8).unwrap();
+        assert!(hits3.iter().any(|h| h.path.contains("cluster")));
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn force_rebuild_reupserts_and_stale_paths_are_removed() {
+        let (vault, db) = temp_pair("force");
+        write_note(&vault, "keep.md", "keep body\n");
+        write_note(&vault, "gone.md", "gone body\n");
+        let mut conn = open_test_conn(&db, &vault);
+        let (first, _) = fill(&mut conn, &vault, false);
+        assert_eq!(first.indexed, 2);
+
+        fs::remove_file(vault.join("gone.md")).unwrap();
+        let (forced, _) = fill(&mut conn, &vault, true);
+        assert_eq!(forced.notes, 1);
+        assert_eq!(forced.indexed, 1);
+        assert_eq!(forced.skipped, 0);
+        let stats = stats_tx(&conn).unwrap();
+        assert_eq!(stats.notes, 1);
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn progress_ticks_cover_large_skip_batches() {
+        let (vault, db) = temp_pair("prog");
+        for i in 0..80 {
+            write_note(
+                &vault,
+                &format!("n{i:03}.md"),
+                &format!("note {i} cluster\n"),
+            );
+        }
+        let mut conn = open_test_conn(&db, &vault);
+        let (first, ticks) = fill(&mut conn, &vault, false);
+        assert_eq!(first.indexed, 80);
+        assert!(ticks.len() >= 2, "start + done at minimum, got {}", ticks.len());
+        assert!(ticks.iter().any(|p| p.scanned > 0 && p.phase == "indexing"));
+        let (second, ticks2) = fill(&mut conn, &vault, false);
+        assert_eq!(second.skipped, 80);
+        assert_eq!(second.indexed, 0);
+        assert!(ticks2.iter().any(|p| p.skipped >= 64 || p.phase == "done"));
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+}
+
 const FILL_SKIP_DIRS: &[&str] = &[
     ".git",
     ".noteapp",
@@ -805,139 +1323,111 @@ const FILL_SKIP_DIRS: &[&str] = &[
     ".nexus",
 ];
 
+fn emit_fill_progress(app: &tauri::AppHandle, progress: &IndexFillProgress) {
+    use tauri::Emitter;
+    let _ = app.emit("vault-index-progress", progress);
+}
+
+fn fill_from_disk_job(
+    app: &tauri::AppHandle,
+    db_path: &str,
+    vault_root: &str,
+    head: usize,
+    force_rebuild: bool,
+) -> Result<IndexFillResult, String> {
+    let root_path = Path::new(vault_root);
+    if !root_path.is_dir() {
+        let err = format!("not a directory: {vault_root}");
+        emit_fill_progress(
+            app,
+            &IndexFillProgress {
+                db_path: db_path.to_string(),
+                scanned: 0,
+                total: 0,
+                indexed: 0,
+                skipped: 0,
+                errors: 1,
+                phase: "error".into(),
+                message: Some(err.clone()),
+            },
+        );
+        return Err(err);
+    }
+
+    let mut conn = open_conn(db_path)?;
+    let _ = conn.busy_timeout(Duration::from_millis(8_000));
+    let vault_id: String = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'vault_id'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| "fill".into());
+    ensure_schema(&conn, &vault_id, Some(vault_root))?;
+
+    let app_emit = app.clone();
+    fill_from_disk_on_conn(
+        &mut conn,
+        root_path,
+        head,
+        force_rebuild,
+        db_path,
+        |p| emit_fill_progress(&app_emit, p),
+    )
+}
+
 /// Walk the vault on disk and write FTS5 heads in one process.
-/// JS must not upsert 100k–300k notes over IPC (Wave E).
+/// Runs on the blocking pool so the WebView stays responsive; emits
+/// `vault-index-progress` at least ~4 Hz. Incremental: skip unchanged
+/// path+mtime+size. JS must not upsert 100k–300k notes over IPC (Wave E).
 #[tauri::command]
-pub fn vault_index_fill_from_disk(
+pub async fn vault_index_fill_from_disk(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
     vault_root: String,
     head_chars: Option<u32>,
+    force_rebuild: Option<bool>,
 ) -> Result<IndexFillResult, String> {
-    use std::fs::File;
-    use std::io::Read;
-    use std::time::SystemTime;
-
     crate::vault_scope::register_and_grant(&app, &vault_root)?;
     if !crate::vault_scope::is_allowed_vault_root(&vault_root) {
         return Err("vault root not allowed".into());
     }
+    {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        if !guard.conns.contains_key(&db_path) {
+            return Err("index not open".into());
+        }
+    }
 
     let head = head_chars.unwrap_or(8000).clamp(256, 32_000) as usize;
-    let root_path = Path::new(&vault_root);
-    if !root_path.is_dir() {
-        return Err(format!("not a directory: {vault_root}"));
-    }
+    let force = force_rebuild.unwrap_or(false);
+    let _fill_guard = FillGuard::acquire(&db_path)?;
+    let app2 = app.clone();
+    let db2 = db_path.clone();
+    let root2 = vault_root.clone();
 
-    let mut guard = state.lock().map_err(|e| e.to_string())?;
-    let conn = guard
-        .conns
-        .get_mut(&db_path)
-        .ok_or_else(|| "index not open".to_string())?;
-
-    let mut indexed: i64 = 0;
-    let mut errors: i64 = 0;
-    let mut notes: i64 = 0;
-    let mut stack: Vec<(PathBuf, String)> = vec![(root_path.to_path_buf(), String::new())];
-    let mut batch: Vec<NoteMetaDto> = Vec::with_capacity(256);
-
-    let flush = |conn: &mut Connection, batch: &mut Vec<NoteMetaDto>, indexed: &mut i64, errors: &mut i64| {
-        if batch.is_empty() {
-            return;
-        }
-        match conn.unchecked_transaction() {
-            Ok(tx) => {
-                for note in batch.iter() {
-                    if upsert_note_tx(&tx, note).is_err() {
-                        *errors += 1;
-                    } else {
-                        *indexed += 1;
-                    }
-                }
-                if tx.commit().is_err() {
-                    *errors += batch.len() as i64;
-                    *indexed = (*indexed - batch.len() as i64).max(0);
-                }
-            }
-            Err(_) => *errors += batch.len() as i64,
-        }
-        batch.clear();
-    };
-
-    while let Some((dir, rel)) = stack.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let mut dirs: Vec<(PathBuf, String)> = Vec::new();
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
-                continue;
-            }
-            let ft = match entry.file_type() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let child_rel = if rel.is_empty() {
-                name.clone()
-            } else {
-                format!("{rel}/{name}")
-            };
-            if ft.is_dir() {
-                dirs.push((entry.path(), child_rel));
-                continue;
-            }
-            if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
-                continue;
-            }
-            notes += 1;
-            let meta = entry.metadata().ok();
-            let mtime = meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            let size = meta.map(|m| m.len() as i64);
-            let mut buf = vec![0u8; head * 4];
-            let body = match File::open(entry.path()) {
-                Ok(mut f) => {
-                    let n = f.read(&mut buf).unwrap_or(0);
-                    let text = String::from_utf8_lossy(&buf[..n]);
-                    text.chars().take(head).collect::<String>()
-                }
-                Err(_) => {
-                    errors += 1;
-                    String::new()
-                }
-            };
-            let parent_path = child_rel.rsplit_once('/').map(|(p, _)| p.to_string());
-            batch.push(NoteMetaDto {
-                id: desk_node_id(&child_rel),
-                path: child_rel,
-                name,
-                kind: "note".into(),
-                parent_id: parent_path.map(|p| desk_node_id(&p)),
-                mtime,
-                size,
-                content_hash: None,
-                title: None,
-                body_snippet: Some(body),
-                tags: None,
-                link_targets: None,
-            });
-            if batch.len() >= 256 {
-                flush(conn, &mut batch, &mut indexed, &mut errors);
+    tauri::async_runtime::spawn_blocking(move || {
+        match fill_from_disk_job(&app2, &db2, &root2, head, force) {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                emit_fill_progress(
+                    &app2,
+                    &IndexFillProgress {
+                        db_path: db2,
+                        scanned: 0,
+                        total: 0,
+                        indexed: 0,
+                        skipped: 0,
+                        errors: 1,
+                        phase: "error".into(),
+                        message: Some(e.clone()),
+                    },
+                );
+                Err(e)
             }
         }
-        stack.extend(dirs);
-    }
-    flush(conn, &mut batch, &mut indexed, &mut errors);
-    Ok(IndexFillResult {
-        indexed,
-        errors,
-        notes,
     })
+    .await
+    .map_err(|e| format!("SQLite FTS fill task failed: {e}"))?
 }

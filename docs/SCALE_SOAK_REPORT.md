@@ -22,7 +22,7 @@ That is **not** SCALE READY and **not** a 100k desktop proof. Later tips (`2f202
 
 **Refuse (Chrome ≥25k):** Welcome card `data-chrome-fsa-refused` — Chrome will kill the tab; Desktop is required; Chrome max is ~20k, not a lifetime Obsidian archive. Saved handle is cleared. Walk aborts so we do not allocate 100k nodes first. `?forceLargeFsa` / `nexus-force-large-fsa=1` works **only in DEV** and pops a scary `window.confirm`. Production ignores both.
 
-**Desktop north star:** `~/Documents/nexus-soak-100k` then `~/Documents/nexus-soak-300k` via `npm run tauri:dev`. Native `vault_index_fill_from_disk` walks files in Rust (no 100k JS IPC). Programmatic Wave E open registers the folder with plugin-fs persisted-scope (same as dialog). Not proven on this Linux VM.
+**Desktop north star:** `~/Documents/nexus-soak-100k` then `~/Documents/nexus-soak-300k` via `npm run tauri:dev`. Native `vault_index_fill_from_disk` walks files in Rust (no 100k JS IPC), **incremental** on reopen, and emits live progress so the UI is not wedged at `scanned: 0`. Programmatic Wave E open registers the folder with plugin-fs persisted-scope (same as dialog). Not proven on this Linux VM.
 
 Real Chrome FSA of a 100k folder:
 
@@ -214,6 +214,7 @@ Closed on this SHA (needs a Mac/Windows Tauri run to prove):
 | Gap | Fix |
 |-----|-----|
 | JS `fillDurableIndexFromReader` + per-note `vault_index_upsert` at 100k–300k | Desktop skips JS fill when SQLite is open; **`vault_index_fill_from_disk`** walks `.md` heads in Rust |
+| Sync fill froze WebView ~1h at `scanned: 0` (100k already in SQLite) | Async blocking-pool fill + `vault-index-progress`; incremental path+mtime+size skip; no JS fallback on native failure |
 | `vault_index_list` hydrated 300k FTS rows into the JS mirror | `openNative` no longer hydrates the mirror; palette uses `searchFtsAsync` |
 | `maybeSyncDurableIndex` reconciled every meta row over IPC | Skipped when `getDurableIndex().kind === "sqlite"` |
 | Desktop watch safety poll re-walked 100k signatures | No signature poll above 10k when native OS notify is live |
@@ -229,7 +230,7 @@ Still unproven / remaining:
 |-----|-------|
 | Real Tauri open of 100k then 300k with `describeSearchEngine().id === sqlite-fts5-bm25` | Human / desktop agent on Mac or Windows |
 | `cargo check` / Rust fill compile on this Linux VM | Missing crates (`bitflags` / notify). Compile on the desktop machine. |
-| First-open fill wall at 300k (Rust walk + FTS insert) | Measure; target progressive &lt;8s |
+| First-open fill wall at 300k (Rust walk + FTS insert) | Still minutes on HDD possible; UI must stay responsive with live scanned/total. Reopen of an unchanged vault should be seconds (incremental skip). Not SCALE READY. |
 | Windows path separators vs POSIX rel paths | Contract test exists; confirm on a real NTFS vault |
 | Signed / notarized install (Wave D) | Release ops |
 

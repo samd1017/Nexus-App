@@ -66,6 +66,8 @@ const steps = {
   prove: [
     "Welcome → Open folder → pick the generated vault (or DevTools: await __NEXUS_SOAK__.runWaveE(absPath))",
     "Title bar: On disk / Desktop — never Test · this browser",
+    "Cold fill: banner must show live scanned/total (not stuck at 0). Window Responding=True. Tree/editor usable.",
+    "Re-open the same vault: fill should be seconds (unchanged skip), banner Ready · SQLite FTS5 BM25.",
     "Banner: Ready · SQLite FTS5 BM25",
     "⌘K / Ctrl+K  retrieval hub  — heading must be SQLite FTS5 BM25, not Memory FTS (capped)",
     "Search cluster (every official soak body has Cluster hub)",

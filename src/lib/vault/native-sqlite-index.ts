@@ -126,25 +126,116 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     this.ready = true;
   }
 
-  async fillFromDisk(headChars = 8000): Promise<{
+  async fillFromDisk(
+    headChars = 8000,
+    opts?: {
+      forceRebuild?: boolean;
+      onProgress?: (p: {
+        dbPath?: string;
+        scanned: number;
+        total: number;
+        indexed: number;
+        skipped: number;
+        errors: number;
+        phase: string;
+        message?: string | null;
+      }) => void;
+    },
+  ): Promise<{
     indexed: number;
+    skipped: number;
     errors: number;
     notes: number;
   }> {
-    const r = await this.invoke<{
-      indexed: number;
-      errors: number;
-      notes: number;
-    }>("vault_index_fill_from_disk", {
-      dbPath: this.dbPath,
-      vaultRoot: this.vaultRoot,
-      headChars,
-    });
-    return {
-      indexed: Number(r?.indexed ?? 0),
-      errors: Number(r?.errors ?? 0),
-      notes: Number(r?.notes ?? 0),
+    type FillPayload = {
+      dbPath?: string;
+      scanned?: number;
+      total?: number;
+      indexed?: number;
+      skipped?: number;
+      errors?: number;
+      notes?: number;
+      phase?: string;
+      message?: string | null;
     };
+    const toResult = (r: FillPayload | null | undefined) => ({
+      indexed: Number(r?.indexed ?? 0),
+      skipped: Number(r?.skipped ?? 0),
+      errors: Number(r?.errors ?? 0),
+      notes: Number(r?.notes ?? r?.total ?? r?.scanned ?? 0),
+    });
+
+    let unlisten: (() => void) | undefined;
+    let settled = false;
+    const finish = (
+      resolve: (v: ReturnType<typeof toResult>) => void,
+      value: ReturnType<typeof toResult>,
+    ) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    try {
+      return await new Promise((resolve, reject) => {
+        void (async () => {
+          try {
+            const { listen } = await import("@tauri-apps/api/event");
+            unlisten = await listen<FillPayload>(
+              "vault-index-progress",
+              (ev) => {
+                const p = ev.payload;
+                if (p?.dbPath && p.dbPath !== this.dbPath) return;
+                opts?.onProgress?.({
+                  dbPath: p?.dbPath,
+                  scanned: Number(p?.scanned ?? 0),
+                  total: Number(p?.total ?? 0),
+                  indexed: Number(p?.indexed ?? 0),
+                  skipped: Number(p?.skipped ?? 0),
+                  errors: Number(p?.errors ?? 0),
+                  phase: String(p?.phase ?? ""),
+                  message: p?.message ?? null,
+                });
+                if (p?.phase === "done") {
+                  finish(resolve, toResult(p));
+                }
+                if (p?.phase === "error") {
+                  if (!settled) {
+                    settled = true;
+                    reject(
+                      new Error(
+                        String(p?.message || "SQLite FTS fill failed"),
+                      ),
+                    );
+                  }
+                }
+              },
+            );
+          } catch {
+            /* web / missing event plugin — invoke result is enough */
+          }
+          try {
+            const r = await this.invoke<FillPayload>(
+              "vault_index_fill_from_disk",
+              {
+                dbPath: this.dbPath,
+                vaultRoot: this.vaultRoot,
+                headChars,
+                forceRebuild: opts?.forceRebuild === true,
+              },
+            );
+            finish(resolve, toResult(r));
+          } catch (err) {
+            if (!settled) {
+              settled = true;
+              reject(err);
+            }
+          }
+        })();
+      });
+    } finally {
+      unlisten?.();
+    }
   }
 
   close(): void {

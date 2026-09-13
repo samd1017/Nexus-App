@@ -123,9 +123,15 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 
 | Layer | What |
 |--------|------|
-| Rust | `vault_index_fill_from_disk` walks `.md` heads and batch-upserts FTS5. IDs via `desk_node_id`. |
-| JS | `NativeSqliteDurableIndex.fillFromDisk`. No 100k-row JS hydrate. |
-| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan |
+| Rust | `vault_index_fill_from_disk` is **async** (blocking pool). Incremental: skip notes whose path+mtime+size already match `note_meta`. Emits `vault-index-progress` every 64 notes or 250ms. Dedicated writer connection so the UI/search mutex is not held. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. |
+| JS | `NativeSqliteDurableIndex.fillFromDisk` listens for progress and can resolve on the `done` event if the invoke is still finalizing. Banner shows live `scanned / total`. Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
+| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `runWaveE(path, { forceRebuild: true })` re-reads every head. Waits for `searchReady`; throws if fill errors. |
+
+**Fill expectations (not SCALE READY):**
+
+- Cold 100k on HDD: minutes is possible; the window must keep `Responding=True` and the banner must move at least ~1/sec. SSD is typically faster.
+- Re-open of the same unchanged 100k vault: **seconds** (stat + skip), not another hour.
+- Do not claim SCALE READY from this fill/UX fix alone.
 | FS scope | Production capabilities allow Documents / Desktop / Downloads + app data. Programmatic path open grants that folder only (not `$HOME/**`). Forbidden reads fail the progress banner — they do not spin at scanned:0. |
 
 Outputs (typical paths):

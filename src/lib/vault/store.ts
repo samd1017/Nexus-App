@@ -146,6 +146,11 @@ import {
   fillDurableIndexFromReader,
   nodesFromFileMap,
 } from "./disk-fts-fill";
+import {
+  isEmptyNativeFillFailure,
+  sqliteFillProgressMessage,
+  sqliteFillReadyMessage,
+} from "./sqlite-fill-progress";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
   CHROME_FSA_GETFILE_MAX,
@@ -797,7 +802,9 @@ function canReadDiskSearchHeads(): boolean {
  * After meta-only disk mount: index file heads into DurableIndex, then Ready.
  * Tree can already be interactive. Search is not Ready until this finishes.
  */
-async function completeDiskSearchIndex(): Promise<{
+async function completeDiskSearchIndex(opts?: {
+	forceRebuild?: boolean;
+}): Promise<{
 	indexed: number;
 	errors: number;
 	skipped: boolean;
@@ -831,24 +838,67 @@ async function completeDiskSearchIndex(): Promise<{
 			totalHint: noteCount,
 			message: "Workspace ready — indexing SQLite FTS5 from disk…",
 		});
+		await yieldToUi(true);
 		try {
-			const native = await sqlite.fillFromDisk(8000);
+			const native = await sqlite.fillFromDisk(8000, {
+				forceRebuild: opts?.forceRebuild === true,
+				onProgress: (p) => {
+					if (gen !== vaultGen) return;
+					const total = p.total > 0 ? p.total : noteCount;
+					setOpenProgress({
+						phase: "indexing",
+						scanned: p.scanned,
+						totalHint: total || noteCount,
+						message: sqliteFillProgressMessage({
+							scanned: p.scanned,
+							total: total || noteCount,
+							skipped: p.skipped,
+							indexed: p.indexed,
+						}),
+					});
+				},
+			});
 			if (gen !== vaultGen) return { indexed: 0, errors: 0, skipped: true };
 			const indexed = Number(native?.indexed ?? 0);
 			const notes = Number(native?.notes ?? 0);
-			if (noteCount > 0 && indexed === 0 && notes === 0) {
+			const skipped = Number(native?.skipped ?? 0);
+			if (
+				isEmptyNativeFillFailure({
+					noteCount,
+					indexed,
+					notes,
+					skipped,
+				})
+			) {
 				const root = desktopRoot || st.vaultPath || "vault";
 				throw new DesktopFsForbiddenError(root);
 			}
 			diskSearchReady = true;
+			if (typeof window !== "undefined") {
+				const prev =
+					(
+						window as unknown as {
+							__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+						}
+					).__NEXUS_SOAK_LAST__ ?? {};
+				(
+					window as unknown as { __NEXUS_SOAK_LAST__?: Record<string, unknown> }
+				).__NEXUS_SOAK_LAST__ = {
+					...prev,
+					searchIndexed: indexed || noteCount,
+					searchIndexSkipped: skipped,
+					searchIndexErrors: Number(native?.errors ?? 0),
+					searchReady: true,
+				};
+			}
 			setOpenProgress({
 				phase: "ready",
 				scanned: noteCount,
 				totalHint: noteCount,
-				message: "Ready · SQLite FTS5 BM25",
+				message: sqliteFillReadyMessage(skipped, notes || noteCount),
 			});
 			return {
-				indexed: indexed || noteCount,
+				indexed: indexed || skipped || noteCount,
 				errors: Number(native?.errors ?? 0),
 				skipped: false,
 			};
@@ -864,7 +914,18 @@ async function completeDiskSearchIndex(): Promise<{
 				});
 				throw err instanceof Error ? err : new Error(message);
 			}
-			console.warn("[nexus] native FTS fill failed; falling back to JS heads", err);
+			const message =
+				err instanceof Error
+					? `SQLite FTS fill failed: ${err.message}`
+					: "SQLite FTS fill failed";
+			console.error("[nexus] native FTS fill failed (no JS 100k fallback)", err);
+			setOpenProgress({
+				phase: "error",
+				scanned: 0,
+				totalHint: noteCount,
+				message,
+			});
+			throw err instanceof Error ? err : new Error(message);
 		}
 	}
 	setOpenProgress({
@@ -1323,7 +1384,7 @@ async function mountDesktopVaultAt(
 	get: StoreGet,
 	set: StoreSet,
 	root: string,
-	opts?: { vaultId?: string; toast?: string },
+	opts?: { vaultId?: string; toast?: string; forceRebuild?: boolean },
 ): Promise<{
 	notes: number;
 	vaultId: string;
@@ -1409,7 +1470,7 @@ async function mountDesktopVaultAt(
 		await prepareDurableIndex(st.vaultId, st.mode);
 		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 		try {
-			await completeDiskSearchIndex();
+			await completeDiskSearchIndex({ forceRebuild: opts?.forceRebuild === true });
 		} catch (e) {
 			const message =
 				e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
@@ -4850,12 +4911,15 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				openNotes: (limit?: number) => Promise<number>;
 				heapTrend: (opens?: number) => Promise<Record<string, unknown>>;
 				probe: () => Record<string, unknown> | undefined;
-				openDesktop: (absPath: string) => Promise<Record<string, unknown>>;
+				openDesktop: (
+					absPath: string,
+					opts?: { forceRebuild?: boolean },
+				) => Promise<Record<string, unknown>>;
 				reloadDesktop: () => Promise<Record<string, unknown>>;
 				flushDirty: () => Promise<void>;
 				runWaveE: (
 					absPath: string,
-					opts?: { opens?: number },
+					opts?: { opens?: number; forceRebuild?: boolean },
 				) => Promise<Record<string, unknown>>;
 			};
 		}
@@ -5061,7 +5125,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			(
 				window as unknown as { __NEXUS_STRESS__?: () => Record<string, unknown> }
 			).__NEXUS_STRESS__?.(),
-		openDesktop: async (absPath: string) => {
+		openDesktop: async (absPath: string, opts?: { forceRebuild?: boolean }) => {
 			if (!import.meta.env.DEV) throw new Error("openDesktop is DEV-only");
 			if (!(await confirmDesktopShell())) {
 				throw new Error("openDesktop requires Nexus Desktop (Tauri)");
@@ -5074,6 +5138,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				root,
 				{
 					toast: `Wave E open: ${root.split(/[/\\]/).filter(Boolean).pop() || "vault"}`,
+					forceRebuild: opts?.forceRebuild === true,
 				},
 			);
 		},
@@ -5090,11 +5155,14 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			);
 		},
 		flushDirty: () => useVaultStore.getState().flushDirty(),
-		runWaveE: async (absPath: string, opts?: { opens?: number }) => {
+		runWaveE: async (absPath: string, opts?: { opens?: number; forceRebuild?: boolean }) => {
 			const soak = (
 				window as unknown as {
 					__NEXUS_SOAK__?: {
-						openDesktop: (p: string) => Promise<Record<string, unknown>>;
+						openDesktop: (
+							p: string,
+							o?: { forceRebuild?: boolean },
+						) => Promise<Record<string, unknown>>;
 						reloadDesktop: () => Promise<Record<string, unknown>>;
 						search: (q: string, n?: number) => Promise<{ hits?: unknown[] }>;
 						openNotes: (n?: number) => Promise<number>;
@@ -5106,8 +5174,15 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			).__NEXUS_SOAK__;
 			if (!soak) throw new Error("soak hook missing");
 			const t0 = performance.now();
-			const open = await soak.openDesktop(absPath);
+			const open = await soak.openDesktop(absPath, {
+				forceRebuild: opts?.forceRebuild === true,
+			});
 			const openMs = Math.round(performance.now() - t0);
+			if (!open?.searchReady) {
+				throw new Error(
+					"Wave E: searchReady is false after open — SQLite FTS fill did not finish",
+				);
+			}
 			const hub = await soak.search("retrieval hub", 16);
 			const cluster = await soak.search("cluster", 16);
 			const opened = await soak.openNotes(opts?.opens ?? 20);
