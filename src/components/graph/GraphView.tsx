@@ -1025,10 +1025,11 @@ export function GraphView({ mode, className }: Props) {
   const displayData = useMemo(() => {
     let base: { nodes: GNode[]; links: GLink[] } = data;
     if (graphModeResolved === "folder") {
-      // Builder already capped; skip LOD that would cull degree-0 folders
+      // Builder already capped; skip LOD that would cull degree-0 folders.
+      // Return `data` so note-switch does not new-wrap and re-feed ForceGraph3D.
       hopKeepRef.current = null;
       lowDetailRef.current = false;
-      return { nodes: base.nodes, links: base.links };
+      return data;
     }
     if (!showGhosts) {
       base = {
@@ -1743,8 +1744,16 @@ export function GraphView({ mode, className }: Props) {
     accentCustom,
   ]);
 
+  const lastGraphDataRef = useRef<{ nodes: GNode[]; links: GLink[] } | null>(
+    null,
+  );
   useEffect(() => {
     if (!graphRef.current) return;
+    const prev = lastGraphDataRef.current;
+    if (prev && prev.nodes === displayData.nodes && prev.links === displayData.links) {
+      return;
+    }
+    lastGraphDataRef.current = displayData;
     graphRef.current.graphData(displayData);
   }, [displayData]);
 

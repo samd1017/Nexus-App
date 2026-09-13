@@ -58,6 +58,9 @@ export function toggleGraphForViewport(): void {
 export function exitGraphForViewport(): void {
   const s = useVaultStore.getState();
   s.setGraphMode(isPhoneViewport() ? "hidden" : "panel");
+  // Leave the graph surface — do not remount ForceGraph3D in the side panel
+  // (that 3D init was stealing the next note-create / note-switch frame).
+  if (s.rightTab === "graph") s.setRightTab("backlinks");
 }
 
 /** Phone: open/close the backlinks drawer. */
