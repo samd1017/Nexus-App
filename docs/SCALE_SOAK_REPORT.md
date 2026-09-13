@@ -214,14 +214,14 @@ Fix on this branch: `completeDiskSearchIndex()` reads a 2k file head, tokens it,
 
 Prove (this SHA):
 
-| Run | Notes | Fill | Search `hub`/`cluster` | Engine | RSS | Result |
-|-----|-------|------|------------------------|--------|-----|--------|
-| `npm run test:disk-fts` | 400 | 13ms | 16 / 16 (`cluster` empty before fill) | memory-fts-capped | — | PASS |
-| `npm run soak:disk-fts -- --notes 2000` | 2000 | 50ms | 16 / 16 | memory-fts-capped | 107MB | PASS |
-| `npm run soak:disk-fts -- --notes 10000` | 10000 | 196ms | 16 / 16 | memory-fts-capped | 175MB | PASS |
-| `npm run soak:fsa` Playwright mock FSA | 800 | open 58ms | 16 / 16 | `memory-fts-capped` | bodiesLoaded **1** | PASS |
+| Run | Notes | Fill | Search `hub`/`cluster` | Engine | Memory | Result |
+|-----|-------|------|------------------------|--------|--------|--------|
+| `npm run test:disk-fts` | 400 + 1200 cap | 9ms | 16 / 16; rare token 16; `largestPosting=800`, `noteTokenSets=0` | memory-fts-capped | — | PASS |
+| `npm run soak:disk-fts -- --notes 2000` | 2000 | 44ms | 16 / 16 | memory-fts-capped | RSS **95MB** (was 107) | PASS |
+| `npm run soak:disk-fts -- --notes 10000` | 10000 | 165ms | 16 / 16 | memory-fts-capped | RSS **142MB** (was 175); posting 800; slim 10000 | PASS |
+| `npm run soak:fsa` Playwright mock FSA | 800 | open 55ms | 16 / 16 after **20 note opens** | `memory-fts-capped` | heap **42MB** / 4096; bodies **20**; tab not discarded | PASS |
 
-`cluster` is body-only. Before fill it is 0 hits; after file-head fill it hits. Store keeps one body (the open note). That is the memory path 100k FSA must use.
+`cluster` is body-only. Before fill it is 0 hits; after file-head fill it hits. Store keeps LRU bodies only (20 after the mock open-20 probe). That is the memory path 100k FSA must use.
 
 ```bash
 npm run test:disk-fts
@@ -265,7 +265,8 @@ Opening one note after Ready was the last straw. Baseline heap was already huge:
 
 - **UI:** browser 45k common-ops (store open 1.15s / interactive 0.41s; wall 1.79s WARN; overlay remount keeps Soak Created; no ≥1s freeze).
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
-- **Disk file-head FTS (`86a745f`):** 10k fill 196ms / search 3ms / RSS 175MB; Playwright mock FSA 800 notes, `hub`+`cluster` hit, `bodiesLoaded=1`.
-- **Real 100k FSA on `86a745f`:** `cluster` 16 hits, Ready 100,002 — then **tab discard on note open**. Not PASS.
+- **Disk file-head FTS (this SHA):** 10k fill 165ms / search 3ms / RSS **142MB** (was 175); slim fill `noteTokenSets=0`, `largestPosting=800`.
+- **Playwright mock FSA 800:** `hub`+`cluster` 16, open 20 notes, heap 42MB, bodiesLoaded 20, no discard. Not a 100k Chrome picker.
+- **Real 100k FSA on `86a745f`:** `cluster` 16 hits, Ready 100,002 — then **tab discard on note open**. Not re-run on this SHA (no `/workspace/nexus-soak-100k` + no picker on this VM). Not PASS.
 
 Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a real 100k FSA (or Mac Tauri 300k) stays in memory and search hits the documented tokens.

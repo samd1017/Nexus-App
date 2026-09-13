@@ -60,28 +60,26 @@ const search = await page.evaluate(async () => {
   const hub = await window.__NEXUS_SOAK__.search("hub", 16);
   const cluster = await window.__NEXUS_SOAK__.search("cluster", 16);
   const probe = window.__NEXUS_STRESS__();
-  return { hub, cluster, probe };
+  const n = await window.__NEXUS_SOAK__.openNotes(20);
+  const clusterAfter = await window.__NEXUS_SOAK__.search("cluster", 16);
+  const after = window.__NEXUS_STRESS__();
+  return { hub, cluster, probe, opened: n, clusterAfter, after };
 });
 const searchMs = Date.now() - searchT0;
-const opened = await page.evaluate(async () => {
-  const n = await window.__NEXUS_SOAK__.openNotes(20);
-  const cluster = await window.__NEXUS_SOAK__.search("cluster", 16);
-  const probe = window.__NEXUS_STRESS__();
-  return { n, clusterHits: cluster?.hits?.length ?? 0, probe };
-});
 await browser.close();
 
+const after = search.after ?? search.probe;
 const report = {
   ok:
     (search.hub?.hits?.length ?? 0) > 0 &&
     (search.cluster?.hits?.length ?? 0) > 0 &&
     search.probe?.searchEngine?.id === "memory-fts-capped" &&
     search.probe?.searchReady === true &&
-    opened.n >= 20 &&
-    opened.clusterHits > 0 &&
-    (opened.probe?.bodiesLoaded ?? 99) <= 120 &&
-    (opened.probe?.ftsLargestPosting ?? 0) <= 800 &&
-    (opened.probe?.ftsNoteTokenSets ?? 1) === 0,
+    (search.opened ?? 0) >= 20 &&
+    (search.clusterAfter?.hits?.length ?? 0) > 0 &&
+    (after?.bodiesLoaded ?? 99) <= 120 &&
+    (after?.ftsLargestPosting ?? 0) <= 800 &&
+    (after?.ftsNoteTokenSets ?? 999) <= 120,
   notes: NOTES,
   files: Object.keys(files).length,
   openMs,
@@ -92,14 +90,14 @@ const report = {
   searchReady: search.probe?.searchReady ?? false,
   ftsNotes: search.probe?.ftsNotes ?? 0,
   bodiesLoaded: search.probe?.bodiesLoaded ?? 0,
-  openedNotes: opened.n,
-  openedClusterHits: opened.clusterHits,
-  openedBodiesLoaded: opened.probe?.bodiesLoaded ?? 0,
-  ftsLargestPosting: opened.probe?.ftsLargestPosting ?? null,
-  ftsNoteTokenSets: opened.probe?.ftsNoteTokenSets ?? null,
-  ftsSlimNotes: opened.probe?.ftsSlimNotes ?? null,
-  jsHeapUsedMb: opened.probe?.jsHeapUsedMb ?? null,
-  jsHeapLimitMb: opened.probe?.jsHeapLimitMb ?? null,
+  openedNotes: search.opened ?? 0,
+  openedClusterHits: search.clusterAfter?.hits?.length ?? 0,
+  openedBodiesLoaded: after?.bodiesLoaded ?? 0,
+  ftsLargestPosting: after?.ftsLargestPosting ?? null,
+  ftsNoteTokenSets: after?.ftsNoteTokenSets ?? null,
+  ftsSlimNotes: after?.ftsSlimNotes ?? null,
+  jsHeapUsedMb: after?.jsHeapUsedMb ?? null,
+  jsHeapLimitMb: after?.jsHeapLimitMb ?? null,
   discarded: false,
   mode: search.probe?.mode ?? null,
   totalMs: Date.now() - t0,

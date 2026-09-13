@@ -4662,16 +4662,26 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		},
 		openNotes: async (limit = 20) => {
 			const st = useVaultStore.getState();
+			const active = st.activeNoteId;
 			const ids: string[] = [];
-			for (const id in st.nodes) {
-				if (st.nodes[id]?.kind === "note") {
-					ids.push(id);
-					if (ids.length >= limit) break;
+			if (active && st.nodes[active]?.kind === "note") ids.push(active);
+			for (const id of (
+				window as unknown as { __NEXUS_SOAK__?: { noteIds: (n?: number) => string[] } }
+			).__NEXUS_SOAK__?.noteIds(limit) ?? []) {
+				if (!ids.includes(id)) ids.push(id);
+				if (ids.length >= limit) break;
+			}
+			if (ids.length < limit) {
+				for (const id in st.nodes) {
+					if (st.nodes[id]?.kind === "note" && !ids.includes(id)) {
+						ids.push(id);
+						if (ids.length >= limit) break;
+					}
 				}
 			}
 			for (const id of ids) {
-				st.setActiveNote(id, { silent: true });
-				await st.ensureNoteBody(id);
+				useVaultStore.getState().setActiveNote(id, { silent: true });
+				await useVaultStore.getState().ensureNoteBody(id);
 			}
 			return ids.length;
 		},
