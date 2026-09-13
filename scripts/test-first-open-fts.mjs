@@ -10,6 +10,19 @@
  */
 import assert from "node:assert/strict";
 
+if (!process.env.NEXUS_TSX) {
+  const { spawnSync } = await import("node:child_process");
+  const r = spawnSync("npx", ["--yes", "tsx", "scripts/test-first-open-fts.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 30_000,
+    env: { ...process.env, NEXUS_TSX: "1" },
+  });
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  process.exit(r.status ?? 1);
+}
+
 const {
   advanceSearchIndexState,
   isFillSettlePhase,

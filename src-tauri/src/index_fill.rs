@@ -1096,7 +1096,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let (meta, _) = fill_until(&mut conn, &vault, false, FillUntil::Meta, &[]);
         let meta_ms = t0.elapsed().as_millis();
         assert_eq!(meta.notes, 1000);
-        assert!(fts_has(&conn, "Note"));
+        assert!(
+            fts_has(&conn, "n00000"),
+            "meta pass must FTS-index the filename/path"
+        );
         assert!(
             meta_ms < 2_500,
             "1k meta catalog {meta_ms}ms exceeds 2500ms CI budget"

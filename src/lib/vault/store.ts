@@ -820,8 +820,8 @@ function diskFillPriorityPaths(): string[] {
 	for (const id of st.expandedFolders.slice(0, 8)) {
 		push(st.nodes[id]?.path);
 	}
-	for (const visit of st.recentNoteVisits.slice(0, 8)) {
-		push(visit.path);
+	for (const id of st.recentNoteVisits.slice(0, 8)) {
+		push(st.nodes[id]?.path);
 	}
 	return out;
 }
