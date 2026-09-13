@@ -219,7 +219,10 @@ async function soakSize(browser, notes) {
   return result;
 }
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: process.env.CHROME_PATH || "/opt/google/chrome/chrome",
+});
 const report = {
   when: new Date().toISOString(),
   base: BASE,

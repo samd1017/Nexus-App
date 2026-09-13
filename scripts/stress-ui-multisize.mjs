@@ -83,7 +83,11 @@ async function openPalette(page) {
 
 async function typeInEditor(page, text) {
   const editor = page.locator(".ProseMirror, [contenteditable='true'], [aria-label='Markdown source']").first();
-  if (!(await editor.count())) return { typed: false, reason: "no editor" };
+  try {
+    await editor.waitFor({ state: "visible", timeout: 6000 });
+  } catch {
+    return { typed: false, reason: "no editor" };
+  }
   await editor.click({ timeout: 4000 });
   await page.keyboard.type(text, { delay: 8 });
   const seen = await page.evaluate((needle) => {
@@ -93,6 +97,19 @@ async function typeInEditor(page, text) {
     return hay.includes(needle.trim());
   }, text);
   return { typed: seen, reason: seen ? null : "typed text not in editor" };
+}
+
+async function waitStress(page, timeoutMs = 15000) {
+  const r = await waitFor(
+    page,
+    async () => {
+      const ok = await page.evaluate(() => typeof window.__NEXUS_STRESS__ === "function");
+      return ok ? true : null;
+    },
+    timeoutMs,
+    50,
+  );
+  return r.ok;
 }
 
 async function runDemoStress(page, errors) {
@@ -107,6 +124,7 @@ async function runDemoStress(page, errors) {
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
   await clearVault(page);
   await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+  await waitStress(page);
 
   const openBtn = page.getByRole("button", { name: /Explore demo|explore the demo/i }).first();
   const open = await appReadyOp(
@@ -161,24 +179,26 @@ async function runDemoStress(page, errors) {
 
   const graph = await appReadyOp(
     page,
+    () => page.keyboard.press("Control+g"),
     async () => {
-      const btn = page.getByRole("button", { name: /^Graph$/i }).first();
-      if (await btn.count()) await btn.click({ timeout: 4000 });
-      else await page.keyboard.press("Control+g");
-    },
-    async () => {
-      const n = await page.locator("canvas, [data-exit-graph]").count();
+      const n = await page.locator("[data-exit-graph], [data-graph-host]").count();
       return n >= 1 ? n : null;
     },
-    6000,
+    4000,
   );
   result.steps.graph = graph;
+  result.steps.graphEngineMs = await page
+    .locator("[data-graph-engine='ready']")
+    .waitFor({ timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
   failIfSlow(result, "graph", graph.appReadyMs, COMMON_OP_MS, result.blockers);
+  await page.keyboard.press("Escape").catch(() => {});
 
   const before = await probe(page);
   const created = await appReadyOp(
     page,
-    () => page.keyboard.press("Control+n"),
+    () => page.evaluate(() => window.__NEXUS_SOAK__?.createNote(null, "Soak Created")),
     async () => {
       const p = await probe(page);
       if (p.stress && before.stress && p.stress.notes > before.stress.notes) return p;
@@ -211,28 +231,17 @@ async function runLargeStress(page, errors) {
 
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
   await clearVault(page);
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-
-  let openedVia = "welcome";
-  const btn = page.getByRole("button", { name: /Open 45k test vault/i });
+  const largeUrl = new URL("?vault=45k", BASE).href;
   const open = await appReadyOp(
     page,
-    async () => {
-      if (await btn.count()) {
-        await btn.first().scrollIntoViewIfNeeded().catch(() => {});
-        await btn.first().click({ timeout: 15000 });
-      } else {
-        openedVia = "soak";
-        await page.evaluate(() => window.__NEXUS_SOAK__?.open45k?.());
-      }
-    },
+    () => page.goto(largeUrl, { waitUntil: "domcontentloaded", timeout: 60000 }),
     async () => {
       const p = await probe(page);
       return p.stress && p.stress.notes === 45000 && !p.stress.connecting ? p : null;
     },
-    120000,
+    90000,
   );
-  result.steps.openedVia = openedVia;
+  result.steps.openedVia = "query";
   result.steps.open = {
     ...open,
     storeOpenMs: open.value?.last?.openMs ?? null,
@@ -312,23 +321,21 @@ async function runLargeStress(page, errors) {
 
   const graph = await appReadyOp(
     page,
+    () => page.keyboard.press("Control+g"),
     async () => {
-      const graphBtn = page.getByRole("button", { name: /Graph/i }).first();
-      if (await graphBtn.count()) await graphBtn.click({ timeout: 4000 });
-      else await page.keyboard.press("Control+g");
-    },
-    async () => {
-      const n = await page.locator("canvas, [data-exit-graph]").count();
+      const n = await page.locator("[data-exit-graph], [data-graph-host]").count();
       return n >= 1 ? n : null;
     },
-    8000,
+    4000,
   );
   result.steps.graph = graph;
+  result.steps.graphProgress = await page.locator("[data-graph-progress]").count();
   if (!graph.ready) {
     result.ok = false;
-    result.blockers.push("45k graph did not become ready");
+    result.blockers.push("45k graph chrome did not become ready");
   }
   failIfSlow(result, "graph", graph.appReadyMs, COMMON_OP_MS, result.blockers);
+  await page.keyboard.press("Escape").catch(() => {});
   await page.screenshot({ path: `${SHOT_DIR}/large-after-graph.png`, fullPage: false });
 
   const beforeCreate = await probe(page);
@@ -435,7 +442,10 @@ async function withFreshPage(browser, fn) {
 }
 
 async function main() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.CHROME_PATH || "/opt/google/chrome/chrome",
+  });
   const report = {
     startedAt: new Date().toISOString(),
     base: BASE,

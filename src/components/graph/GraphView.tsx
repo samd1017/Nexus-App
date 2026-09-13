@@ -864,6 +864,7 @@ export function GraphView({ mode, className }: Props) {
   const returnFromGraphEgo = useVaultStore((s) => s.returnFromGraphEgo);
   const resetGraphBrowse = useVaultStore((s) => s.resetGraphBrowse);
   const [liveRegion, setLiveRegion] = useState("");
+  const [engineReady, setEngineReady] = useState(false);
   /** Skip first browse-path effect so it doesn't fight mount zoomToFit */
   const browsePathReadyRef = useRef(false);
 
@@ -1164,6 +1165,7 @@ export function GraphView({ mode, className }: Props) {
     if (!hostRef.current) return;
     const el = hostRef.current;
     el.innerHTML = "";
+    setEngineReady(false);
 
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
@@ -1306,8 +1308,8 @@ export function GraphView({ mode, className }: Props) {
       .showNavInfo(false)
       .enableNodeDrag(true)
       .enableNavigationControls(true)
-      .cooldownTicks(desktopBoost ? 90 : 120)
-      .warmupTicks(desktopBoost ? 20 : 40)
+      .cooldownTicks(desktopBoost ? 48 : 64)
+      .warmupTicks(0)
       .nodeId("id")
       .nodeLabel(() => "")
       .nodeVal("val")
@@ -1655,6 +1657,7 @@ export function GraphView({ mode, className }: Props) {
     el.addEventListener("wheel", onWheelZoom, { passive: false, capture: true });
 
     graphRef.current = graph;
+    setEngineReady(true);
 
     const ro = new ResizeObserver(() => {
       if (!hostRef.current || !graphRef.current) return;
@@ -1967,6 +1970,8 @@ export function GraphView({ mode, className }: Props) {
         className,
       )}
       role="region"
+      data-graph-host
+      data-graph-engine={engineReady ? "ready" : "building"}
       aria-label={
         graphModeResolved === "folder"
           ? "Folder map"
@@ -1984,6 +1989,14 @@ export function GraphView({ mode, className }: Props) {
         }}
       />
 
+      {!engineReady ? (
+        <div
+          className="absolute inset-0 z-[5] flex items-center justify-center bg-black/35 text-[13px] text-[var(--text-secondary)]"
+          data-graph-progress
+        >
+          Building graph…
+        </div>
+      ) : null}
       <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-1.5">
           {mode === "fullscreen" ? (

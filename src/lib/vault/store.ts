@@ -1004,9 +1004,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			folderAccessLost: false
 		});
 		if (import.meta.env.DEV && typeof window !== "undefined") {
-			const soak = Number(new URLSearchParams(window.location.search).get("soak"));
+			const params = new URLSearchParams(window.location.search);
+			const soak = Number(params.get("soak"));
 			if (Number.isFinite(soak) && soak > 0) {
 				await get().openSyntheticVault(soak);
+				return;
+			}
+			const vaultQ = (params.get("vault") || "").toLowerCase();
+			if (vaultQ === "45k" || vaultQ === "large") {
+				await get().openLargeTestVault();
 				return;
 			}
 		}
