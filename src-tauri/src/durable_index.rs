@@ -749,3 +749,180 @@ pub fn vault_index_list(
     }
     Ok(out)
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexFillResult {
+    pub indexed: i64,
+    pub errors: i64,
+    pub notes: i64,
+}
+
+fn desk_node_id(path: &str) -> String {
+    let mut out = String::from("desk_");
+    let mut prev_us = false;
+    for c in path.chars() {
+        let ok = c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-');
+        if ok {
+            out.push(c);
+            prev_us = false;
+        } else if !prev_us {
+            out.push('_');
+            prev_us = true;
+        }
+    }
+    out
+}
+
+const FILL_SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".noteapp",
+    "node_modules",
+    ".trash",
+    ".obsidian",
+    ".vscode",
+    ".idea",
+    "src-tauri",
+    "dist",
+    "dist-desktop",
+    "target",
+    ".nexus",
+];
+
+/// Walk the vault on disk and write FTS5 heads in one process.
+/// JS must not upsert 100k–300k notes over IPC (Wave E).
+#[tauri::command]
+pub fn vault_index_fill_from_disk(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    vault_root: String,
+    head_chars: Option<u32>,
+) -> Result<IndexFillResult, String> {
+    use std::fs::File;
+    use std::io::Read;
+    use std::time::SystemTime;
+
+    if !crate::vault_scope::is_allowed_vault_root(&vault_root) {
+        crate::vault_scope::register_root(&vault_root)?;
+    }
+    if !crate::vault_scope::is_allowed_vault_root(&vault_root) {
+        return Err("vault root not allowed".into());
+    }
+
+    let head = head_chars.unwrap_or(8000).clamp(256, 32_000) as usize;
+    let root_path = Path::new(&vault_root);
+    if !root_path.is_dir() {
+        return Err(format!("not a directory: {vault_root}"));
+    }
+
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let conn = guard
+        .conns
+        .get_mut(&db_path)
+        .ok_or_else(|| "index not open".to_string())?;
+
+    let mut indexed: i64 = 0;
+    let mut errors: i64 = 0;
+    let mut notes: i64 = 0;
+    let mut stack: Vec<(PathBuf, String)> = vec![(root_path.to_path_buf(), String::new())];
+    let mut batch: Vec<NoteMetaDto> = Vec::with_capacity(256);
+
+    let flush = |conn: &mut Connection, batch: &mut Vec<NoteMetaDto>, indexed: &mut i64, errors: &mut i64| {
+        if batch.is_empty() {
+            return;
+        }
+        match conn.unchecked_transaction() {
+            Ok(tx) => {
+                for note in batch.iter() {
+                    if upsert_note_tx(&tx, note).is_err() {
+                        *errors += 1;
+                    } else {
+                        *indexed += 1;
+                    }
+                }
+                if tx.commit().is_err() {
+                    *errors += batch.len() as i64;
+                    *indexed = (*indexed - batch.len() as i64).max(0);
+                }
+            }
+            Err(_) => *errors += batch.len() as i64,
+        }
+        batch.clear();
+    };
+
+    while let Some((dir, rel)) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let mut dirs: Vec<(PathBuf, String)> = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
+                continue;
+            }
+            let ft = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let child_rel = if rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel}/{name}")
+            };
+            if ft.is_dir() {
+                dirs.push((entry.path(), child_rel));
+                continue;
+            }
+            if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
+                continue;
+            }
+            notes += 1;
+            let meta = entry.metadata().ok();
+            let mtime = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let size = meta.map(|m| m.len() as i64);
+            let mut buf = vec![0u8; head * 4];
+            let body = match File::open(entry.path()) {
+                Ok(mut f) => {
+                    let n = f.read(&mut buf).unwrap_or(0);
+                    let text = String::from_utf8_lossy(&buf[..n]);
+                    text.chars().take(head).collect::<String>()
+                }
+                Err(_) => {
+                    errors += 1;
+                    String::new()
+                }
+            };
+            let parent_path = child_rel.rsplit_once('/').map(|(p, _)| p.to_string());
+            batch.push(NoteMetaDto {
+                id: desk_node_id(&child_rel),
+                path: child_rel,
+                name,
+                kind: "note".into(),
+                parent_id: parent_path.map(|p| desk_node_id(&p)),
+                mtime,
+                size,
+                content_hash: None,
+                title: None,
+                body_snippet: Some(body),
+                tags: None,
+                link_targets: None,
+            });
+            if batch.len() >= 256 {
+                flush(conn, &mut batch, &mut indexed, &mut errors);
+            }
+        }
+        stack.extend(dirs);
+    }
+    flush(conn, &mut batch, &mut indexed, &mut errors);
+    Ok(IndexFillResult {
+        indexed,
+        errors,
+        notes,
+    })
+}

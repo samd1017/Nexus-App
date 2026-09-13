@@ -748,6 +748,9 @@ function maybeSyncDurableIndex(
 	nodes: Record<string, VaultNode>,
 ) {
 	try {
+		// Desktop SQLite is filled from disk in Rust. Reconciling 100k–300k
+		// meta rows from JS is an IPC storm and is not the Wave E path.
+		if (getDurableIndex()?.kind === "sqlite") return;
 		syncDurableIndexFromNodes(vaultId, nodes, shouldUseDurableIndex(mode, vaultId));
 	} catch {}
 }
@@ -810,6 +813,37 @@ async function completeDiskSearchIndex(): Promise<{
 	let noteCount = 0;
 	for (const id in st.nodes) if (st.nodes[id]?.kind === "note") noteCount += 1;
 	setBodyCacheNoteCount(noteCount);
+	const sqlite = getDurableIndex();
+	if (
+		st.mode === "desktop" &&
+		sqlite?.kind === "sqlite" &&
+		typeof sqlite.fillFromDisk === "function"
+	) {
+		setOpenProgress({
+			phase: "indexing",
+			scanned: 0,
+			totalHint: noteCount,
+			message: "Workspace ready — indexing SQLite FTS5 from disk…",
+		});
+		try {
+			const native = await sqlite.fillFromDisk(8000);
+			if (gen !== vaultGen) return { indexed: 0, errors: 0, skipped: true };
+			diskSearchReady = true;
+			setOpenProgress({
+				phase: "ready",
+				scanned: noteCount,
+				totalHint: noteCount,
+				message: "Ready · SQLite FTS5 BM25",
+			});
+			return {
+				indexed: Number(native?.indexed ?? noteCount),
+				errors: Number(native?.errors ?? 0),
+				skipped: false,
+			};
+		} catch (err) {
+			console.warn("[nexus] native FTS fill failed; falling back to JS heads", err);
+		}
+	}
 	setOpenProgress({
 		phase: "indexing",
 		scanned: 0,
@@ -1029,6 +1063,33 @@ function applyChromeFsaGuard(
 function fsaChromeScaleSettings(noteCount: number): Partial<VaultSettings> {
 	if (noteCount < 400) return {};
 	return { graphMode: "hidden", rightOpen: false };
+}
+
+/** Drop LRU victims from the live node map so ≤20k FSA does not keep every opened body. */
+function evictBodiesKeeping(keepIds: Iterable<string>): void {
+	const s = useVaultStore.getState();
+	const protectedIds = new Set(keepIds);
+	if (s.activeNoteId) protectedIds.add(s.activeNoteId);
+	if (s.secondaryNoteId) protectedIds.add(s.secondaryNoteId);
+	const victims = pickEvictions(protectedIds).filter((id) => !protectedIds.has(id));
+	if (!victims.length) return;
+	const live = s.nodes;
+	for (const v of victims) {
+		const n = live[v];
+		if (n?.kind === "note" && n.content !== undefined) {
+			if (hasBodyArchive()) setBodyInArchive(n.path, n.content);
+			live[v] = {
+				id: n.id,
+				path: n.path,
+				name: n.name,
+				kind: n.kind,
+				parentId: n.parentId,
+				mtime: n.mtime,
+			};
+		}
+	}
+	patchVaultIndex(live, victims);
+	useVaultStore.setState({ nodes: live });
 }
 
 function sampleHeap(reason: string): void {
@@ -1356,6 +1417,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 							recentVaults: recents2,
 							connecting: false,
 							dirtyNoteIds: [],
+							chromeFsaLimit: get().chromeFsaLimit,
 							...GRAPH_SCOPE_DEFAULTS,
 							settings: {
 								...get().settings,
@@ -2081,6 +2143,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				recentVaults: recents,
 				connecting: false,
 				toast: `Opened vault: ${handle.name}`,
+				chromeFsaLimit: get().chromeFsaLimit,
 				...GRAPH_SCOPE_DEFAULTS,
 				settings: {
 					...get().settings,
@@ -2427,6 +2490,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				recentVaults: recents,
 				connecting: false,
 				toast: `Reopened vault: ${handle.name}`,
+				chromeFsaLimit: get().chromeFsaLimit,
 				...GRAPH_SCOPE_DEFAULTS,
 				settings: {
 					...get().settings,
@@ -2606,7 +2670,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				: {}),
 		});
 		if (id && note?.kind === "note" && note.content === undefined) get().ensureNoteBody(id);
-		else if (id) touchBody(id);
+		else if (id) {
+			touchBody(id);
+			evictBodiesKeeping([id, ...get().dirtyNoteIds, get().activeNoteId].filter(Boolean) as string[]);
+		}
 		sampleHeap(id ? `open:${note?.path ?? id}` : "close");
 	},
 	openNoteInPane: (pane, id) => {
@@ -4710,6 +4777,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			jsHeapTotalMb: heap ? Math.round(heap.totalJSHeapSize / 1048576) : null,
 			jsHeapLimitMb: heap ? Math.round(heap.jsHeapSizeLimit / 1048576) : null,
 			bodiesLoadedOnStore: bodiesLoaded,
+			bodiesOnStore: (() => {
+				let n = 0;
+				for (const id in s.nodes) {
+					if (s.nodes[id]?.kind === "note" && s.nodes[id]?.content !== undefined) n += 1;
+				}
+				return n;
+			})(),
 		};
 	};
 	(
@@ -4784,6 +4858,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			});
 			const mockNotes = countVaultNotes(raw);
 			if (applyChromeFsaGuardFromCount(mockNotes, "Mock FSA") === "refused") return;
+			const chromeLimit = useVaultStore.getState().chromeFsaLimit;
 			useVaultStore.setState({
 				vaultId,
 				vaultName: "Mock FSA",
@@ -4795,6 +4870,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				expandedFolders: smartExpandedFolders(raw, firstId),
 				dirtyNoteIds: [],
 				connecting: false,
+				chromeFsaLimit: chromeLimit,
 				...GRAPH_SCOPE_DEFAULTS,
 				settings: {
 					...useVaultStore.getState().settings,
@@ -4869,6 +4945,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 					jsHeapTotalMb: p.jsHeapTotalMb ?? null,
 					jsHeapLimitMb: p.jsHeapLimitMb ?? null,
 					bodiesLoaded: p.bodiesLoaded ?? 0,
+					bodiesOnStore: p.bodiesOnStore ?? 0,
 					bodyLruMax: p.bodyLruMax ?? null,
 					ftsNoteTokenSets: p.ftsNoteTokenSets ?? 0,
 					ftsInvTokens: p.ftsInvTokens ?? 0,

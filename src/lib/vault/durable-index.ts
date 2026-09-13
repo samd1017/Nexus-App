@@ -111,6 +111,10 @@ export interface DurableIndex {
     noteTokenSets?: number;
     slimNotes?: number;
   };
+  /** Desktop: Rust walks the vault folder into SQLite FTS5 (no per-note JS IPC). */
+  fillFromDisk?(
+    headChars?: number,
+  ): Promise<{ indexed: number; errors: number; notes: number }>;
   /** Drop title-only postings before a file-head fill so we do not hold two indexes. */
   beginSlimDiskFill?(): void;
   /** Prune unique tokens after a 100k fill so Chrome can keep the tab. */

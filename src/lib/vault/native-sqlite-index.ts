@@ -120,20 +120,31 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       vaultRoot: this.vaultRoot,
     });
     this.mirror.open(this.vaultId);
-    // Wave B: hydrate mirror from on-disk SQLite (no wipe)
-    try {
-      const rows = await this.invoke<NativeNoteDto[]>("vault_index_list", {
-        dbPath: this.dbPath,
-        limit: 500_000,
-      });
-      for (const row of rows ?? []) {
-        if (row.kind === "folder") continue;
-        this.mirror.upsertNote(dtoToMeta(row));
-      }
-    } catch (err) {
-      console.warn("[nexus] vault_index_list hydrate failed", err);
-    }
+    // Do not pull 100k–300k FTS rows into the JS heap. Desktop search is
+    // searchFtsAsync → SQLite BM25. Hydrating the mirror discarded the
+    // "metadata-only" budget on large vaults.
     this.ready = true;
+  }
+
+  async fillFromDisk(headChars = 8000): Promise<{
+    indexed: number;
+    errors: number;
+    notes: number;
+  }> {
+    const r = await this.invoke<{
+      indexed: number;
+      errors: number;
+      notes: number;
+    }>("vault_index_fill_from_disk", {
+      dbPath: this.dbPath,
+      vaultRoot: this.vaultRoot,
+      headChars,
+    });
+    return {
+      indexed: Number(r?.indexed ?? 0),
+      errors: Number(r?.errors ?? 0),
+      notes: Number(r?.notes ?? 0),
+    };
   }
 
   close(): void {

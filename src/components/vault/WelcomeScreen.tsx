@@ -24,6 +24,13 @@ import {
 } from "@/components/brand/NexusLogo";
 import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
 import { ThemeToggle } from "@/components/chrome/ThemeToggle";
+import {
+  chromeFsaRefuseChrome,
+  chromeFsaRefuseDesktop,
+  chromeFsaRefuseLead,
+  chromeFsaRefuseTitle,
+  chromeFsaWarnMessage,
+} from "@/lib/vault/chrome-fsa-cap";
 
 type PendingAction =
   | null
@@ -187,7 +194,10 @@ export function WelcomeScreen() {
             style={{ animation: "welcomeFadeUp 520ms ease-out 80ms both" }}
           >
             A writing surface that stays fast
-            <span className="text-[var(--text-muted)]"> — even huge.</span>
+            <span className="text-[var(--text-muted)]">
+              {" "}
+              — Desktop for large vaults.
+            </span>
           </h1>
           <p
             className="mt-4 max-w-lg text-[15.5px] leading-relaxed text-[var(--text-secondary)]"
@@ -218,20 +228,37 @@ export function WelcomeScreen() {
             </div>
           ) : null}
 
+          {chromeFsaLimit?.kind === "warn" ? (
+            <div
+              className="mt-6 rounded-[14px] border border-[color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[var(--warning-dim)] px-4 py-3 text-[13px] leading-relaxed text-[var(--text-secondary)]"
+              data-chrome-fsa-limit="warn"
+              role="status"
+            >
+              <strong className="text-[var(--text-primary)]">
+                Large folder for Chrome
+              </strong>
+              <p className="mt-1">{chromeFsaWarnMessage(chromeFsaLimit.notes)}</p>
+            </div>
+          ) : null}
+
           {chromeFsaLimit?.kind === "refuse" ? (
             <div
               className="mt-6 rounded-[14px] border border-[color-mix(in_srgb,#ff453a_40%,transparent)] bg-[rgba(255,69,58,0.08)] px-4 py-3 text-[13px] leading-relaxed text-[var(--text-secondary)]"
               data-chrome-fsa-refused
+              data-chrome-fsa-desktop-required
               role="alert"
             >
               <strong className="text-[var(--text-primary)]">
-                {chromeFsaLimit.name} is too large for Chrome
+                {chromeFsaRefuseTitle(chromeFsaLimit.name)}
               </strong>
-              <p className="mt-1">
-                {chromeFsaLimit.notes.toLocaleString()} notes (limit{" "}
-                {chromeFsaLimit.cap.toLocaleString()}). Opening it here discards
-                the tab. Use the Nexus desktop app for 25k+ vaults. Chrome is
-                reliable up to about 20,000 notes.
+              <p className="mt-1" data-chrome-fsa-refuse-lead>
+                {chromeFsaRefuseLead(chromeFsaLimit.notes)}
+              </p>
+              <p className="mt-2" data-chrome-fsa-refuse-desktop>
+                {chromeFsaRefuseDesktop()}
+              </p>
+              <p className="mt-2" data-chrome-fsa-refuse-chrome>
+                {chromeFsaRefuseChrome()}
               </p>
             </div>
           ) : null}
@@ -408,7 +435,7 @@ export function WelcomeScreen() {
               {
                 icon: Search,
                 title: "Find",
-                body: "Indexed search that stays snappy at huge scale.",
+                body: "Chrome: about 20,000 notes. Desktop: SQLite FTS5 for 100k+.",
               },
               {
                 icon: Network,
@@ -437,8 +464,10 @@ export function WelcomeScreen() {
           </div>
 
           <div className="mt-6 rounded-[16px] border border-[var(--border)] bg-[var(--fill-subtle)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-            Scale: metadata-first index, lazy note bodies, virtualized tree.
-            Opening a 300k-note vault does not load 300k files into memory.
+            Chrome in the browser: about 20,000 notes. A lifetime
+            Obsidian-sized vault (100k–300k) needs Nexus Desktop — same
+            markdown folder, SQLite search, no tab discard. We will not open
+            25,000+ notes in Chrome.
           </div>
 
           <p className="mt-8 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">

@@ -16,7 +16,12 @@ import {
   CHROME_FSA_WATCH_MAX,
   ChromeFsaCapError,
   chromeFsaLimitKind,
+  chromeFsaRefuseChrome,
+  chromeFsaRefuseDesktop,
+  chromeFsaRefuseLead,
   chromeFsaRefuseMessage,
+  chromeFsaRefuseTitle,
+  chromeFsaWarnMessage,
   countVaultNotes,
   isChromeFsaCapError,
 } from "./src/lib/vault/chrome-fsa-cap.ts";
@@ -30,7 +35,15 @@ assert.equal(chromeFsaLimitKind(15000), "warn");
 assert.equal(chromeFsaLimitKind(25000), "refuse");
 assert.equal(chromeFsaLimitKind(100002), "refuse");
 assert.equal(countVaultNotes({ a: { kind: "note" }, b: { kind: "folder" } }), 1);
-assert.ok(chromeFsaRefuseMessage(100002).includes("desktop"));
+assert.ok(chromeFsaRefuseMessage(100002).toLowerCase().includes("desktop"));
+assert.ok(chromeFsaRefuseMessage(100002).includes("will discard"));
+assert.ok(chromeFsaRefuseTitle("MyVault").includes("too large for Chrome"));
+assert.ok(chromeFsaRefuseLead(100002).includes("will kill the tab"));
+assert.ok(chromeFsaRefuseDesktop().includes("Obsidian"));
+assert.ok(chromeFsaRefuseDesktop().includes("SQLite FTS5"));
+assert.ok(chromeFsaRefuseChrome().includes("20,000"));
+assert.ok(chromeFsaWarnMessage(18000).includes("Nexus Desktop"));
+assert.ok(chromeFsaWarnMessage(18000).includes("discarded"));
 assert.equal(shouldPollFsaWatch(3999), true);
 assert.equal(shouldPollFsaWatch(4000), false);
 assert.equal(shouldPollFsaWatch(100002), false);

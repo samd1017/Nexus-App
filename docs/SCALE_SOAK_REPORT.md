@@ -1,7 +1,19 @@
 # Scale soak report
 
-**SHA under test:** this branch (Chrome honesty gate + FSA watch kill + tree cap + heap log), vs baseline **`907d8ea`**.
-**Verdict: not SCALE READY. Not 100k FSA PASS.** Chrome’s product bar is **≤20k FSA, 20 opens, no discard**. 25k+ must refuse in Chrome.
+**SHA under test:** this branch (Chrome honesty copy + ≤20k FSA LRU + desktop native FTS fill), vs baseline **`907d8ea`**.
+**Verdict: not SCALE READY.** No desktop 100k+ SQLite proof yet. Do not claim SCALE READY until that exists.
+
+### Supported N (honest)
+
+| Surface | Max N | Behavior |
+|---------|-------|----------|
+| **Chrome / Edge (File System Access)** | **20,000 notes** | Supported daily-driver bar: 20 opens + search, no tab discard. **Warn at 15,000.** **Refuse at 25,000** — we will not open it. Same markdown folder belongs in **Nexus Desktop**. |
+| In-browser 45k test vault | 45,000 (overlay) | QA only. Title bar: `Test · this browser`. Not files. |
+| **Nexus Desktop (Tauri)** | **100k then 300k** (north star 300–500k) | SQLite FTS5 BM25. Palette must say **SQLite FTS5 BM25**. Same folder as Obsidian. |
+
+**Refuse (Chrome ≥25k):** Welcome card `data-chrome-fsa-refused` — Chrome will kill the tab; Desktop is required; Chrome max is ~20k, not a lifetime Obsidian archive. Saved handle is cleared. Walk aborts so we do not allocate 100k nodes first. Override only `?forceLargeFsa` / `nexus-force-large-fsa=1` (soak).
+
+**Desktop north star:** `~/nexus-soak-100k` then `~/nexus-soak-300k` via `npm run tauri:dev`. Native `vault_index_fill_from_disk` walks files in Rust (no 100k JS IPC). Not proven on this Linux VM.
 
 Real Chrome FSA of a 100k folder:
 
@@ -172,6 +184,28 @@ Confirm `SOAK-MANIFEST.json` in the folder: `notes` equals 100000 / 300000.
 
 Run 100k first. Only then 300k. If 100k search is still `memory-fts-capped`, fix desktop wiring before touching 300k.
 
+### Wave E code path (desktop open / index)
+
+Closed on this SHA (needs a Mac/Windows Tauri run to prove):
+
+| Gap | Fix |
+|-----|-----|
+| JS `fillDurableIndexFromReader` + per-note `vault_index_upsert` at 100k–300k | Desktop skips JS fill when SQLite is open; **`vault_index_fill_from_disk`** walks `.md` heads in Rust |
+| `vault_index_list` hydrated 300k FTS rows into the JS mirror | `openNative` no longer hydrates the mirror; palette uses `searchFtsAsync` |
+| `maybeSyncDurableIndex` reconciled every meta row over IPC | Skipped when `getDurableIndex().kind === "sqlite"` |
+| Desktop watch safety poll re-walked 100k signatures | No signature poll above 10k when native OS notify is live |
+| Progress banner said “not SQLite” on desktop | “indexing SQLite FTS5 from disk” → **Ready · SQLite FTS5 BM25** |
+
+Still unproven / remaining:
+
+| Gap | Owner |
+|-----|-------|
+| Real Tauri open of 100k then 300k with `describeSearchEngine().id === sqlite-fts5-bm25` | Human / desktop agent |
+| `desk_node_id` must match TS `deskNodeId` for soak filenames (alphanumeric + `-` / `_`) | Verify on first 100k desktop search |
+| First-open fill wall at 300k (Rust walk + FTS insert) | Measure; target progressive &lt;8s |
+| Windows path separators vs POSIX rel paths | Confirm `vault_meta_walk` + fill |
+| Signed / notarized install (Wave D) | Release ops |
+
 ---
 
 ## Hard ceilings (unchanged product limits)
@@ -191,6 +225,7 @@ Run 100k first. Only then 300k. If 100k search is still `memory-fts-capped`, fix
 | FSA watch full `lastScan` | `WATCH_RETAIN_SCAN_MAX` | **10_000** (above: signatures only) |
 | Chrome FSA watch poll | `CHROME_FSA_WATCH_MAX` | **4_000** (no signature poll / observer rescan) |
 | Chrome FSA getFile during meta | `CHROME_FSA_GETFILE_MAX` | **4_000** |
+| Chrome FSA supported max | `CHROME_FSA_SUPPORTED_MAX` | **20_000** |
 | Chrome FSA warn / refuse | `CHROME_FSA_NOTE_WARN` / `CAP` | **15_000** / **25_000** |
 | File-tree flatten | `TREE_FLAT_CAP` | **2_400** (virtualizer mounts ~30) |
 | TipTap undo | `StarterKit.undoRedo.depth` | **2** |
@@ -295,8 +330,9 @@ Opening one note after Ready was the last straw. Baseline heap was already huge:
 
 ## What is still not proven
 
-- Real Chrome FSA open of 100k **after this memory pass** (must not discard the tab; documented tokens must hit; **20+ notes + repeated search**).
-- Tauri open of `~/nexus-soak-300k` with SQLite FTS5 BM25.
+- Chrome **refuse card** on a real ≥25k / 100k folder (Grok Bot on the Linux box).
+- Real Chrome FSA **≤20k** folder: 20 opens, no discard, `cluster` hits (Grok Bot).
+- Tauri open of `~/nexus-soak-100k` then `~/nexus-soak-300k` with SQLite FTS5 BM25. **Required for SCALE READY.**
 - Overlay surviving a different browser / machine (it will not — by design).
 - Desktop 300–500k as a daily driver.
 
@@ -306,10 +342,10 @@ Opening one note after Ready was the last straw. Baseline heap was already huge:
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
 - **Disk file-head FTS (this SHA):** 10k fill 165ms / search 3ms / RSS **142MB** (was 175); slim fill `noteTokenSets=0`, `largestPosting=800`.
 - **Playwright mock FSA 800:** `soak:fsa-open` 20 opens. Not a 100k picker. Do not treat as PASS.
-- **Playwright mock FSA 20k (`a583711`, `npm run soak:fsa-20k`):** 20 opens, no discard, `cluster` 16 every step, heap **110→89MB** (max 121), LRU max **8**, `ftsNoteTokenSets=0`, `ftsInvTokens=42`, `ftsSlimNotes=20000`, graph **hidden**, tree flatten **170** (cap 2400), chromeFsaLimit **warn**. In-page mock (in-memory heads). **Not a real directory picker. Not 100k PASS.**
+- **Playwright mock FSA 20k (`npm run soak:fsa-20k`):** 20 opens, no discard, `cluster` 16 every step, heap **90→85MB** (max 116), LRU **bodiesLoaded plateau 8**, graph **hidden**, tree flatten **170**, chromeFsaLimit **warn**. In-page mock (in-memory heads). **Not a real directory picker. Not 100k PASS.**
 - **CDP real FSA:** `soak:fsa-cdp` skipped here (nothing on :9222). Still required for a real-folder verdict.
 - **Real 100k FSA on `d68b055`:** `cluster` 16, Ready 100,002, **11 notes then discard on 12th search**. Not PASS.
 - **Real 100k FSA on `024c28a`:** opened **7**, discard on note **8**. Not PASS. Worse/flaky.
 - **Real 100k FSA after this SHA:** Chrome must **refuse** at ≥25k unless forced. Forced 100k is still not a daily driver. Not PASS.
 
-Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a real 100k FSA (or Mac Tauri 300k) stays in memory and search hits the documented tokens.
+Do not ship as the only vault at 45k+ on the strength of one Playwright box. **Do not claim SCALE READY without a desktop Tauri 100k+ open whose palette heading is SQLite FTS5 BM25.** Chrome 100k is refused, not supported.

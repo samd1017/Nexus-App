@@ -37,7 +37,11 @@ import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import { canOpenLocalVaultFolder } from "@/lib/platform";
-import { CHROME_FSA_WATCH_MAX } from "@/lib/vault/chrome-fsa-cap";
+import {
+  CHROME_FSA_WATCH_MAX,
+  chromeFsaRefuseBanner,
+  chromeFsaWarnMessage,
+} from "@/lib/vault/chrome-fsa-cap";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
 
 function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
@@ -161,15 +165,15 @@ function ChromeFsaLimitBanner() {
       className={
         refuse
           ? "flex shrink-0 items-center gap-2 border-b border-[rgba(255,69,58,0.35)] bg-[rgba(255,69,58,0.1)] px-3 py-1.5 text-[12px] text-[var(--text-primary)]"
-          : "flex shrink-0 items-center gap-2 border-b border-[rgba(255,159,10,0.22)] bg-[rgba(255,159,10,0.07)] px-3 py-1 text-[11px] text-[var(--warning)]"
+          : "flex shrink-0 items-center gap-2 border-b border-[rgba(255,159,10,0.35)] bg-[rgba(255,159,10,0.12)] px-3 py-2 text-[12px] leading-snug text-[var(--warning)]"
       }
       data-chrome-fsa-limit={limit.kind}
       role={refuse ? "alert" : "status"}
     >
       <span className="min-w-0 flex-1">
         {refuse
-          ? `${limit.name} has ${limit.notes.toLocaleString()} notes. Chrome cannot hold this vault — the tab will discard. Use the Nexus desktop app. Chrome is for about 20,000 notes or fewer.`
-          : `Large folder (${limit.notes.toLocaleString()} notes). Chrome may discard the tab. Prefer the desktop app above 20k.`}
+          ? chromeFsaRefuseBanner(limit.notes, limit.name)
+          : chromeFsaWarnMessage(limit.notes)}
       </span>
     </div>
   );
@@ -406,6 +410,7 @@ export function AppShell() {
         </a>
         <TitleBar />
         <OpenProgressBanner progress={openProgress} />
+        <ChromeFsaLimitBanner />
         <main id="main-content" tabIndex={-1} className="min-h-0 flex-1 outline-none">
           <WelcomeScreen />
         </main>

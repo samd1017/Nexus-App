@@ -3,9 +3,9 @@ mod vault_scope;
 mod vault_watch;
 
 use durable_index::{
-    vault_index_close, vault_index_list, vault_index_open, vault_index_path, vault_index_rebuild,
-    vault_index_remove, vault_index_search, vault_index_stats, vault_index_upsert,
-    vault_index_wipe, IndexState,
+    vault_index_close, vault_index_fill_from_disk, vault_index_list, vault_index_open,
+    vault_index_path, vault_index_rebuild, vault_index_remove, vault_index_search,
+    vault_index_stats, vault_index_upsert, vault_index_wipe, IndexState,
 };
 use vault_scope::{
     is_allowed_vault_root, register_root, vault_clear_roots, vault_register_root,
@@ -177,6 +177,7 @@ pub fn run() {
             vault_index_search,
             vault_index_stats,
             vault_index_list,
+            vault_index_fill_from_disk,
             vault_watch_start,
             vault_watch_stop,
             vault_watch_ack,

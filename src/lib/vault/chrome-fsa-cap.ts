@@ -4,10 +4,13 @@
  * opening notes then discards the tab (seen at 8–12 notes on 15GB boxes).
  *
  * Desktop / Tauri is the large-vault path. Chrome FSA is for ≤20k.
+ * Copy is written for someone leaving Obsidian — no soft-pedal.
  */
 
 export const CHROME_FSA_NOTE_WARN = 15_000;
 export const CHROME_FSA_NOTE_CAP = 25_000;
+/** Product bar: Chrome in the browser is supported up to this many notes. */
+export const CHROME_FSA_SUPPORTED_MAX = 20_000;
 /** Stop FSA signature poll / getFile walks — they re-walk the vault on every note open. */
 export const CHROME_FSA_WATCH_MAX = 4_000;
 /** After this many files, meta scan skips getFile() (Chrome retains native File blobs). */
@@ -64,10 +67,31 @@ export function chromeFsaLimitKind(
   return null;
 }
 
+export function chromeFsaRefuseTitle(folder = "This folder"): string {
+  return `${folder} is too large for Chrome`;
+}
+
+export function chromeFsaRefuseLead(notes: number): string {
+  return `This folder has ${notes.toLocaleString()} notes. Chrome will kill the tab if we open it — we have watched it discard after a handful of notes on a 15GB machine. We will not open it here.`;
+}
+
+export function chromeFsaRefuseDesktop(): string {
+  return `Use Nexus Desktop. Same markdown folder you already have (Obsidian-compatible files on disk). Search is SQLite FTS5, not an in-tab index. Desktop is required for 25,000+ notes and for a lifetime vault.`;
+}
+
+export function chromeFsaRefuseChrome(): string {
+  return `Chrome in the browser is for about 20,000 notes or fewer — a large personal vault, not a lifetime Obsidian archive.`;
+}
+
+/** Toast / one-line refuse. */
 export function chromeFsaRefuseMessage(notes: number, folder = "This folder"): string {
-  return `${folder} has ${notes.toLocaleString()} notes. Chrome cannot keep a vault this large in memory (tab discard). Use the Nexus desktop app for 25k+ notes. Chrome is reliable up to about 20,000 notes.`;
+  return `${folder} has ${notes.toLocaleString()} notes. Chrome will discard this tab. Use Nexus Desktop — same markdown folder; required for 25k+ vaults. Chrome max is about 20,000 notes.`;
+}
+
+export function chromeFsaRefuseBanner(notes: number, folder: string): string {
+  return `${folder} has ${notes.toLocaleString()} notes. Chrome will discard this tab. Use Nexus Desktop (same markdown folder). Chrome max is about 20,000 notes.`;
 }
 
 export function chromeFsaWarnMessage(notes: number): string {
-  return `Large folder (${notes.toLocaleString()} notes). Chrome may get slow or discard the tab. Prefer the desktop app above 20k.`;
+  return `This folder has ${notes.toLocaleString()} notes — already large for Chrome. Chrome has discarded tabs at this size. If this vault will keep growing, open it in Nexus Desktop now. Same files. Browser max is about 20,000 notes.`;
 }

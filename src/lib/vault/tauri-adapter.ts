@@ -755,8 +755,11 @@ export function startDesktopWatch(
             }
             void runIncremental();
           });
-          // Slow safety-net poll (missed events / network FS)
-          startPoll(Math.max(intervalMs * 20, 15000));
+          // Safety-net poll walks every file. Above 10k that is a 100k–300k
+          // signature scan — skip it when native OS notify is live.
+          if (shouldRetainWatchScan(sigCount)) {
+            startPoll(Math.max(intervalMs * 20, 15000));
+          }
           return;
         }
       }

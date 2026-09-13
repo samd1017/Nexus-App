@@ -155,7 +155,7 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 ## Decision log
 
 1. **Markdown-on-disk remains canonical** (Hermes-compatible).
-2. **Desktop is the 500k primary path**; browser aims for solid 20–50k with progressive limits.
+2. **Desktop is the 100k–500k primary path** (SQLite FTS5). Chrome in the browser is **≤20,000 notes** (warn 15k, refuse 25k). Not 50k.
 3. **One scale-safe path** — no user Large Vault Mode toggle.
 4. **Indexes are derived** — safe to wipe and rebuild from files.
 5. **Conflict policy** — keep local on diverge; shelf disk as `.conflict-*`; Studio resolves after the fact.
