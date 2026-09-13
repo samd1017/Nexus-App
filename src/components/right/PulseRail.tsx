@@ -108,6 +108,8 @@ export function PulseRail() {
   const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
   const resolveConflictKeepMine = useVaultStore((s) => s.resolveConflictKeepMine);
   const dismissConflictFromList = useVaultStore((s) => s.dismissConflictFromList);
+  const clearConflictDismissals = useVaultStore((s) => s.clearConflictDismissals);
+  const dismissedConflictKeys = useVaultStore((s) => s.dismissedConflictKeys);
   const openConflictPair = useVaultStore((s) => s.openConflictPair);
   const listTrash = useVaultStore((s) => s.listTrash);
   const restoreTrash = useVaultStore((s) => s.restoreTrash);
@@ -247,6 +249,19 @@ export function PulseRail() {
         </div>
       ) : null}
 
+      {dismissedConflictKeys.length > 0 ? (
+        <div className="mb-2">
+          <button
+            type="button"
+            className="chip-btn text-[11px]"
+            onClick={() => clearConflictDismissals()}
+          >
+            Show {dismissedConflictKeys.length} snoozed conflict
+            {dismissedConflictKeys.length === 1 ? "" : "s"}
+          </button>
+        </div>
+      ) : null}
+
       {/* Wave C — live conflict pairs */}
       {(filter === "conflict" || filter === "inbox") && conflictItems.length > 0 ? (
         <div className="flex flex-col gap-1.5">
@@ -318,7 +333,7 @@ export function PulseRail() {
                           )
                         }
                       >
-                        Dismiss
+                        Snooze
                       </button>
                     </div>
                   </div>
@@ -435,7 +450,22 @@ export function PulseRail() {
                       <button
                         type="button"
                         className="chip-btn"
-                        onClick={() => openConflictStudio()}
+                        onClick={() => {
+                          const items = useVaultStore.getState().getConflictItems();
+                          const hit = items.find(
+                            (i) =>
+                              i.sibling.path === ev.path ||
+                              i.primaryPath === ev.path,
+                          );
+                          if (hit) {
+                            openConflictStudio({
+                              primaryPath: hit.primaryPath,
+                              siblingPath: hit.sibling.path,
+                            });
+                          } else {
+                            openConflictStudio();
+                          }
+                        }}
                       >
                         Review
                       </button>

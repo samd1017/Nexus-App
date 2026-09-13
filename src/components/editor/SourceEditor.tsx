@@ -70,6 +70,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
   const valueRef = useRef(seed);
   const noteIdRef = useRef(noteId);
   const dirtyRef = useRef(false);
+  const lastSavedRef = useRef(seed);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const morningFocusedFor = useRef<string | null>(null);
@@ -207,12 +208,17 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
     if (noteChanged) {
       noteIdRef.current = noteId;
       dirtyRef.current = false;
+      lastSavedRef.current = live;
       setValue(live);
       valueRef.current = live;
       setSuggestOpen(false);
       return;
     }
-    if (dirtyRef.current) return;
+    if (dirtyRef.current) {
+      const external = live !== valueRef.current && live !== lastSavedRef.current;
+      if (!external) return;
+      dirtyRef.current = false;
+    }
     if (live === valueRef.current) return;
     setValue(live);
     valueRef.current = live;
@@ -253,19 +259,20 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
       dirtyRef.current = false;
       const prev = useVaultStore.getState().nodes[id]?.content ?? "";
       const next = normalizeLineEndings(val);
+      lastSavedRef.current = next;
       if (next !== prev) updateNoteContent(id, next, { source: true });
     };
 
-    registerSourceFlush(flushNow);
+    registerSourceFlush(flushNow, pane);
     return () => {
       flushNow();
-      registerSourceFlush(null);
+      registerSourceFlush(null, pane);
       if (timer.current) {
         clearTimeout(timer.current);
         timer.current = null;
       }
     };
-  }, [updateNoteContent, noteId]);
+  }, [updateNoteContent, noteId, pane]);
 
   // Find-in-note adapter for Source mode
   useEffect(() => {

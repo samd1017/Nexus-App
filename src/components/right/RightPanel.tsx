@@ -58,6 +58,7 @@ export function RightPanel() {
   const setToast = useVaultStore((s) => s.setToast);
   const createNote = useVaultStore((s) => s.createNote);
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
+  const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const tab = useVaultStore((s) => s.rightTab);
   const setRightTab = useVaultStore((s) => s.setRightTab);
@@ -368,15 +369,21 @@ export function RightPanel() {
                             title={`Link “${u.title}” in ${u.fromTitle}`}
                             aria-label={`Create wikilink in ${u.fromTitle}`}
                             onClick={() => {
-                              const src = nodes[u.fromId];
-                              if (!src || src.kind !== "note" || src.content == null) return;
-                              const { next, did } = wrapUnlinkedMention(src.content, u.title);
-                              if (!did) {
-                                setToast("Could not wrap that mention");
-                                return;
-                              }
-                              updateNoteContent(u.fromId, next, { source: true });
-                              setToast(`Linked [[${u.title}]] in ${u.fromTitle}`);
+                              void (async () => {
+                                await ensureNoteBody(u.fromId);
+                                const src = useVaultStore.getState().nodes[u.fromId];
+                                if (!src || src.kind !== "note" || src.content == null) {
+                                  setToast("Could not load that note to link");
+                                  return;
+                                }
+                                const { next, did } = wrapUnlinkedMention(src.content, u.title);
+                                if (!did) {
+                                  setToast("Could not wrap that mention");
+                                  return;
+                                }
+                                updateNoteContent(u.fromId, next, { source: true });
+                                setToast(`Linked [[${u.title}]] in ${u.fromTitle}`);
+                              })();
                             }}
                           >
                             Link

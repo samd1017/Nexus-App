@@ -9,7 +9,7 @@ import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { markdownToHtml, previewSnippet } from "@/lib/markdown/serialize";
 
-export function EmbedView({ node }: NodeViewProps) {
+export function EmbedView({ node, editor }: NodeViewProps) {
   const target = String(node.attrs.target || "").trim();
   const parts = useMemo(() => parseWikilinkInner(target), [target]);
   const nodes = useVaultStore((s) => s.nodes);
@@ -17,15 +17,22 @@ export function EmbedView({ node }: NodeViewProps) {
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const [body, setBody] = useState("");
+  let hostNoteId = activeNoteId;
+  try {
+    hostNoteId =
+      editor.view.dom.getAttribute("data-note-id") || activeNoteId;
+  } catch {
+    /* editor not mounted */
+  }
 
   const hit = useMemo(() => {
     if (parts.noteTarget) return resolveWikilink(parts.noteTarget, nodes);
-    if (activeNoteId) {
-      const self = nodes[activeNoteId];
+    if (hostNoteId) {
+      const self = nodes[hostNoteId];
       return self?.kind === "note" ? self : null;
     }
     return null;
-  }, [parts.noteTarget, nodes, activeNoteId]);
+  }, [parts.noteTarget, nodes, hostNoteId]);
   const note = hit?.kind === "note" ? hit : null;
 
   useEffect(() => {
@@ -53,7 +60,7 @@ export function EmbedView({ node }: NodeViewProps) {
   );
 
   const isSelfFull =
-    Boolean(note && note.id === activeNoteId && !parts.heading && !parts.blockId);
+    Boolean(note && note.id === hostNoteId && !parts.heading && !parts.blockId);
 
   const html = useMemo(() => {
     if (isSelfFull) return "";

@@ -7,7 +7,13 @@ import { usePrefsStore } from "@/lib/prefs/preferences";
 import { hydratePreviewSpecials } from "@/lib/editor/hydrate-preview";
 import { isVaultAttachmentHref } from "@/lib/vault/attachments";
 
-export function SourcePreview({ content }: { content: string }) {
+export function SourcePreview({
+  content,
+  noteId,
+}: {
+  content: string;
+  noteId?: string | null;
+}) {
   const theme = usePrefsStore((s) => s.theme);
   const html = useMemo(() => {
     try {
@@ -30,7 +36,7 @@ export function SourcePreview({ content }: { content: string }) {
         hostRef.current,
         theme,
         state.nodes,
-        state.activeNoteId,
+        noteId ?? state.activeNoteId,
         () => cancelled,
       );
     });
@@ -38,7 +44,7 @@ export function SourcePreview({ content }: { content: string }) {
       cancelled = true;
       window.cancelAnimationFrame(frame);
     };
-  }, [html, theme]);
+  }, [html, theme, noteId]);
 
   return (
     <div
@@ -73,10 +79,11 @@ export function SourcePreview({ content }: { content: string }) {
         const target = el.getAttribute("data-wikilink") || "";
         const parts = parseWikilinkInner(target);
         const state = useVaultStore.getState();
+        const hostId = noteId || state.activeNoteId;
         const hit = parts.noteTarget
           ? resolveWikilink(parts.noteTarget, state.nodes)
-          : state.activeNoteId
-            ? state.nodes[state.activeNoteId]
+          : hostId
+            ? state.nodes[hostId]
             : null;
         if (hit?.kind === "note") {
           state.setActiveNote(hit.id, {

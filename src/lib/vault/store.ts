@@ -2611,13 +2611,20 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				Object.values(nodes).find((n) => n.kind === "note")?.id ??
 				null
 			: get().activeNoteId;
+		const droppedSecondary = toDelete.has(get().secondaryNoteId ?? "");
+		const nextSecondary = droppedSecondary ? null : get().secondaryNoteId;
 		set({
 			nodes,
 			rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
 			activeNoteId: nextActive,
+			secondaryNoteId: nextSecondary,
 			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
 			dirtyNoteIds: get().dirtyNoteIds.filter((x) => !toDelete.has(x)),
 			trashTick: get().trashTick + 1,
+			settings: {
+				...get().settings,
+				workspaceSplit: nextSecondary ? get().settings.workspaceSplit : false,
+			},
 		});
 		if (nextActive) {
 			const n = nodes[nextActive];
@@ -2864,8 +2871,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			memoryTrash.find((t) => t.trashPath === trashPath) ??
 			(entry
 				? memoryTrash.find((t) => t.originalPath === entry.originalPath)
-				: undefined) ??
-			memoryTrash[0];
+				: undefined);
 		let body: string | undefined;
 		if (isDiskVault(mode) && (desktopRoot || fsaRoot)) {
 			try {

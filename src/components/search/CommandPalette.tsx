@@ -615,13 +615,7 @@ function CommandPaletteOpen() {
           icon: <RotateCcw size={15} />,
           shortcut: undefined as string | undefined,
           run: wrapRun("recently-deleted", () => {
-            useVaultStore.getState().setLeftOpen(true);
-            setCommandOpen(false);
-            setToast(
-              trashItems.length
-                ? `${trashItems.length} note${trashItems.length === 1 ? "" : "s"} in trash — Restore in the sidebar`
-                : "Trash is empty",
-            );
+            openCommandPalette("is:deleted");
           }),
         },
         {
@@ -918,7 +912,7 @@ function CommandPaletteOpen() {
         label: "Help & shortcuts",
         icon: <CircleHelp size={15} />,
         run: wrapRun("help", () => {
-          usePrefsStore.getState().setSettingsOpen(true);
+          window.dispatchEvent(new Event("nexus:open-shortcuts"));
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),

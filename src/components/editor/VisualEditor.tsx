@@ -96,7 +96,7 @@ function lostSpecialMarkdown(prev: string, next: string): boolean {
   return false;
 }
 
-function openWikilinkTarget(target: string, event?: Event) {
+function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) {
   const state = useVaultStore.getState();
   // Persist current editor first so graph/backlinks update immediately
   try {
@@ -115,10 +115,11 @@ function openWikilinkTarget(target: string, event?: Event) {
     blockId: parts.blockId,
     pane,
   };
+  const hostId = hostNoteId || state.activeNoteId;
   const hit = parts.noteTarget
     ? resolveWikilink(parts.noteTarget, state.nodes)
-    : state.activeNoteId
-      ? state.nodes[state.activeNoteId]
+    : hostId
+      ? state.nodes[hostId]
       : null;
   const activateNote = (id: string) => {
     const noteCount = Object.values(state.nodes).filter(
@@ -221,6 +222,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const applying = useRef(false);
   const userEdited = useRef(false);
   const baselineMd = useRef(upgradeSparseDailySkeleton(content || ""));
+  const lastWrittenRef = useRef(baselineMd.current);
   const noteIdRef = useRef(noteId);
   const contentRef = useRef(content);
   /** Morning autofocus: once per note id open */
@@ -413,6 +415,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         return;
       }
       baselineMd.current = md;
+      lastWrittenRef.current = md;
       userEdited.current = false;
       updateNoteContent(id, md);
     },
@@ -474,7 +477,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         TableHeader,
         TableCell,
         Wikilink.configure({
-          onOpen: (target, event) => openWikilinkTarget(target, event),
+          onOpen: (target, event) => openWikilinkTarget(target, event, noteId),
         }),
         HighlightMark,
         Callout,
@@ -736,10 +739,17 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       updateNoteContent(noteId, incoming, { source: true });
     }
     if (!editor || editor.isDestroyed) return;
-    if (userEdited.current) return;
+    if (userEdited.current) {
+      const external =
+        incoming !== lastWrittenRef.current &&
+        !isOnlySerializationNoise(incoming, lastWrittenRef.current);
+      if (!external) return;
+      userEdited.current = false;
+    }
     if (isOnlySerializationNoise(baselineMd.current, incoming)) return;
     applying.current = true;
     baselineMd.current = incoming;
+    lastWrittenRef.current = incoming;
     contentRef.current = incoming;
     const html = markdownWithWikilinksToHtml(incoming);
     editor.commands.setContent(html, { emitUpdate: false });
@@ -784,16 +794,16 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         /* destroyed */
       }
     };
-    registerVisualFlush(flushNow);
+    registerVisualFlush(flushNow, pane);
     return () => {
       flushNow();
-      registerVisualFlush(null);
+      registerVisualFlush(null, pane);
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
     };
-  }, [editor, commit]);
+  }, [editor, commit, pane]);
 
   // Keep suggest handleKeyDown closure fresh — rebind via editor prop is static;
   // use DOM keyup on the editor root for Mac reliability

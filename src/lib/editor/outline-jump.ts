@@ -25,7 +25,7 @@ export function jumpToOutlineHeading(
   const root = paneRoot(pane);
 
   // Visual mode: TipTap headings
-  const editor = root.querySelector(".note-editor");
+  const editor = root.querySelector(".note-editor:not(.nexus-source-preview)");
   if (editor) {
     const headings = editor.querySelectorAll("h1,h2,h3,h4,h5,h6");
     for (const h of Array.from(headings)) {
@@ -89,7 +89,7 @@ export function jumpToBlockRef(
   const root = paneRoot(pane);
   const needle = `^${id}`;
 
-  const editor = root.querySelector(".note-editor");
+  const editor = root.querySelector(".note-editor:not(.nexus-source-preview)");
   if (editor) {
     const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
     let node: Node | null;
