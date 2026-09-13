@@ -12,6 +12,7 @@ pub struct JoinedFill {
     pub errors: i64,
     pub notes: i64,
     pub edges: i64,
+    pub search_state: String,
 }
 
 struct FillSlot {
@@ -135,6 +136,7 @@ mod tests {
             errors: 0,
             notes: n,
             edges: n * 2,
+            search_state: "ready-fts".into(),
         }
     }
 

@@ -14,7 +14,7 @@ import {
   type DurableNoteMeta,
   DURABLE_INDEX_SCHEMA_VERSION,
 } from "./durable-index";
-import { isInFlightFillError } from "./sqlite-fill-progress";
+import { isFillSettlePhase, isInFlightFillError } from "./sqlite-fill-progress";
 
 type FillResult = {
   indexed: number;
@@ -22,6 +22,7 @@ type FillResult = {
   errors: number;
   notes: number;
   edges: number;
+  searchState?: string;
 };
 
 type FillProgressFn = (p: {
@@ -33,6 +34,7 @@ type FillProgressFn = (p: {
   errors: number;
   phase: string;
   message?: string | null;
+  searchState?: string | null;
 }) => void;
 
 const fillInflightByDb = new Map<string, Promise<FillResult>>();
@@ -187,10 +189,21 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     this.ready = true;
   }
 
+  async cancelFill(): Promise<void> {
+    try {
+      await this.invoke("vault_index_fill_cancel", { dbPath: this.dbPath });
+    } catch {
+      /* ignore */
+    }
+  }
+
   async fillFromDisk(
     headChars = 8000,
     opts?: {
       forceRebuild?: boolean;
+      settleAtPhase?: "meta" | "fts-partial" | "done";
+      priorityPaths?: string[];
+      shortHeadChars?: number;
       onProgress?: FillProgressFn;
     },
   ): Promise<FillResult> {
@@ -203,21 +216,70 @@ export class NativeSqliteDurableIndex implements DurableIndex {
         detach();
       }
     }
-    const run = this.runFillFromDisk(headChars, opts?.forceRebuild === true)
-      .finally(() => {
-        fillInflightByDb.delete(this.dbPath);
-      });
-    fillInflightByDb.set(this.dbPath, run);
-    try {
-      return await run;
-    } finally {
+    const run = this.runFillFromDisk(headChars, {
+      forceRebuild: opts?.forceRebuild === true,
+      shortHeadChars: opts?.shortHeadChars,
+      priorityPaths: opts?.priorityPaths,
+    }).finally(() => {
+      fillInflightByDb.delete(this.dbPath);
       detach();
-    }
+    });
+    fillInflightByDb.set(this.dbPath, run);
+    return this.settleFill(run, opts?.settleAtPhase ?? "done");
+  }
+
+  private async settleFill(
+    run: Promise<FillResult>,
+    settleAt: "meta" | "fts-partial" | "done",
+  ): Promise<FillResult> {
+    if (settleAt === "done") return run;
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const stop = addFillProgress(this.dbPath, (p) => {
+        if (settled) return;
+        if (p.phase === "error") {
+          settled = true;
+          stop();
+          reject(new Error(String(p.message || "SQLite FTS fill failed")));
+          return;
+        }
+        if (isFillSettlePhase(p.phase, settleAt)) {
+          settled = true;
+          stop();
+          resolve({
+            indexed: p.indexed,
+            skipped: p.skipped,
+            errors: p.errors,
+            notes: p.total || p.indexed,
+            edges: 0,
+            searchState: p.searchState ?? undefined,
+          });
+        }
+      });
+      void run.then(
+        (r) => {
+          if (settled) return;
+          settled = true;
+          stop();
+          resolve(r);
+        },
+        (err) => {
+          if (settled) return;
+          settled = true;
+          stop();
+          reject(err);
+        },
+      );
+    });
   }
 
   private async runFillFromDisk(
     headChars: number,
-    forceRebuild: boolean,
+    opts: {
+      forceRebuild: boolean;
+      shortHeadChars?: number;
+      priorityPaths?: string[];
+    },
   ): Promise<FillResult> {
     type FillPayload = {
       dbPath?: string;
@@ -230,20 +292,22 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       edges?: number;
       phase?: string;
       message?: string | null;
+      searchState?: string | null;
     };
-    const toResult = (r: FillPayload | null | undefined) => ({
+    const toResult = (r: FillPayload | null | undefined): FillResult => ({
       indexed: Number(r?.indexed ?? 0),
       skipped: Number(r?.skipped ?? 0),
       errors: Number(r?.errors ?? 0),
       notes: Number(r?.notes ?? r?.total ?? r?.scanned ?? 0),
       edges: Number(r?.edges ?? 0),
+      searchState: String(r?.searchState ?? ""),
     });
 
     let unlisten: (() => void) | undefined;
     let settled = false;
     const finish = (
-      resolve: (v: ReturnType<typeof toResult>) => void,
-      value: ReturnType<typeof toResult>,
+      resolve: (v: FillResult) => void,
+      value: FillResult,
     ) => {
       if (settled) return;
       settled = true;
@@ -260,6 +324,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
               (ev) => {
                 const p = ev.payload;
                 if (p?.dbPath && p.dbPath !== this.dbPath) return;
+                const phase = String(p?.phase ?? "");
                 emitFillProgress(this.dbPath, {
                   dbPath: p?.dbPath,
                   scanned: Number(p?.scanned ?? 0),
@@ -267,21 +332,21 @@ export class NativeSqliteDurableIndex implements DurableIndex {
                   indexed: Number(p?.indexed ?? 0),
                   skipped: Number(p?.skipped ?? 0),
                   errors: Number(p?.errors ?? 0),
-                  phase: String(p?.phase ?? ""),
+                  phase,
                   message: p?.message ?? null,
+                  searchState: p?.searchState ?? null,
                 });
-                if (p?.phase === "done") {
-                  finish(resolve, toResult(p));
-                }
-                if (p?.phase === "error") {
+                if (phase === "error") {
                   if (!settled) {
                     settled = true;
                     reject(
-                      new Error(
-                        String(p?.message || "SQLite FTS fill failed"),
-                      ),
+                      new Error(String(p?.message || "SQLite FTS fill failed")),
                     );
                   }
+                  return;
+                }
+                if (phase === "done") {
+                  finish(resolve, toResult(p));
                 }
               },
             );
@@ -295,7 +360,9 @@ export class NativeSqliteDurableIndex implements DurableIndex {
                 dbPath: this.dbPath,
                 vaultRoot: this.vaultRoot,
                 headChars,
-                forceRebuild,
+                shortHeadChars: opts.shortHeadChars ?? 768,
+                forceRebuild: opts.forceRebuild,
+                priorityPaths: opts.priorityPaths ?? [],
               },
             );
             finish(resolve, toResult(r));

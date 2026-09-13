@@ -117,6 +117,9 @@ export interface DurableIndex {
     headChars?: number,
     opts?: {
       forceRebuild?: boolean;
+      settleAtPhase?: "meta" | "fts-partial" | "done";
+      priorityPaths?: string[];
+      shortHeadChars?: number;
       onProgress?: (p: {
         dbPath?: string;
         scanned: number;
@@ -126,6 +129,7 @@ export interface DurableIndex {
         errors: number;
         phase: string;
         message?: string | null;
+        searchState?: string | null;
       }) => void;
     },
   ): Promise<{
@@ -134,9 +138,11 @@ export interface DurableIndex {
     errors: number;
     notes: number;
     edges?: number;
+    searchState?: string;
   }>;
   /** Persisted wikilink groups — desktop seeds the JS link index without bodies. */
   listLinkGroups?(): Promise<Array<{ sourceId: string; targets: string[] }>>;
+  cancelFill?(): Promise<void>;
   /** Drop title-only postings before a file-head fill so we do not hold two indexes. */
   beginSlimDiskFill?(): void;
   /** Prune unique tokens after a 100k fill so Chrome can keep the tab. */

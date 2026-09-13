@@ -3,14 +3,15 @@
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::fill_join::{fill_is_inflight, start_or_join, FillRole, JoinedFill};
 use crate::index_fill::{
-    fill_from_disk_on_conn, replace_source_links, IndexFillProgress, IndexFillResult,
+    fill_from_disk_with_opts, replace_source_links, FillOpts, FillUntil, IndexFillProgress,
+    IndexFillResult, DEFAULT_DEEP_HEAD, DEFAULT_SHORT_HEAD,
 };
 
 pub const SCHEMA_VERSION: i32 = 3;
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS note_meta (
   size INTEGER,
   content_hash TEXT,
   title TEXT,
-  deleted INTEGER NOT NULL DEFAULT 0
+  deleted INTEGER NOT NULL DEFAULT 0,
+  fill_depth INTEGER
 );
 CREATE INDEX IF NOT EXISTS note_meta_parent ON note_meta(parent_id);
 CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);
@@ -798,6 +800,30 @@ pub fn vault_index_list(
     Ok(out)
 }
 
+fn fill_cancel_set() -> &'static Mutex<HashSet<String>> {
+    static LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn request_fill_cancel(db_path: &str) {
+    if let Ok(mut g) = fill_cancel_set().lock() {
+        g.insert(db_path.to_string());
+    }
+}
+
+fn fill_is_cancelled(db_path: &str) -> bool {
+    fill_cancel_set()
+        .lock()
+        .map(|g| g.contains(db_path))
+        .unwrap_or(false)
+}
+
+fn clear_fill_cancel(db_path: &str) {
+    if let Ok(mut g) = fill_cancel_set().lock() {
+        g.remove(db_path);
+    }
+}
+
 fn joined_from_fill(r: IndexFillResult) -> JoinedFill {
     JoinedFill {
         indexed: r.indexed,
@@ -805,6 +831,7 @@ fn joined_from_fill(r: IndexFillResult) -> JoinedFill {
         errors: r.errors,
         notes: r.notes,
         edges: r.edges,
+        search_state: r.search_state,
     }
 }
 
@@ -815,6 +842,7 @@ fn fill_from_joined(j: JoinedFill) -> IndexFillResult {
         errors: j.errors,
         notes: j.notes,
         edges: j.edges,
+        search_state: j.search_state,
     }
 }
 
@@ -828,7 +856,9 @@ fn fill_from_disk_job(
     db_path: &str,
     vault_root: &str,
     head: usize,
+    short_head: usize,
     force_rebuild: bool,
+    priority_rels: &[String],
 ) -> Result<IndexFillResult, String> {
     let root_path = Path::new(vault_root);
     if !root_path.is_dir() {
@@ -844,6 +874,7 @@ fn fill_from_disk_job(
                 errors: 1,
                 phase: "error".into(),
                 message: Some(err.clone()),
+                search_state: String::new(),
             },
         );
         return Err(err);
@@ -873,20 +904,27 @@ fn fill_from_disk_job(
     }
 
     let app_emit = app.clone();
-    fill_from_disk_on_conn(
+    let db_cancel = db_path.to_string();
+    fill_from_disk_with_opts(
         &mut conn,
         root_path,
-        head,
-        force_rebuild,
-        db_path,
+        FillOpts {
+            deep_head_chars: head,
+            short_head_chars: short_head,
+            force_rebuild,
+            db_path,
+            priority_rels,
+            until: FillUntil::Deep,
+        },
+        || fill_is_cancelled(&db_cancel),
         |p| emit_fill_progress(&app_emit, p),
     )
 }
 
-/// Walk the vault on disk and write FTS5 heads in one process.
-/// Runs on the blocking pool so the WebView stays responsive; emits
-/// `vault-index-progress` at least ~4 Hz. Incremental: skip unchanged
-/// path+mtime+size. JS must not upsert 100k–300k notes over IPC (Wave E).
+/// Walk the vault on disk in phases: title/path catalog, short heads, then
+/// deeper heads. Runs on the blocking pool so the WebView stays responsive.
+/// Emits `vault-index-progress` (`ready-meta` / `ready-fts-partial` / `done`).
+/// Incremental: skip unchanged path+mtime+size at the already-reached depth.
 #[tauri::command]
 pub async fn vault_index_fill_from_disk(
     app: tauri::AppHandle,
@@ -894,7 +932,9 @@ pub async fn vault_index_fill_from_disk(
     db_path: String,
     vault_root: String,
     head_chars: Option<u32>,
+    short_head_chars: Option<u32>,
     force_rebuild: Option<bool>,
+    priority_paths: Option<Vec<String>>,
 ) -> Result<IndexFillResult, String> {
     crate::vault_scope::register_and_grant(&app, &vault_root)?;
     if !crate::vault_scope::is_allowed_vault_root(&vault_root) {
@@ -907,8 +947,13 @@ pub async fn vault_index_fill_from_disk(
         }
     }
 
-    let head = head_chars.unwrap_or(8000).clamp(256, 32_000) as usize;
+    let head = head_chars.unwrap_or(DEFAULT_DEEP_HEAD as u32).clamp(256, 32_000) as usize;
+    let short_head = short_head_chars
+        .unwrap_or(DEFAULT_SHORT_HEAD as u32)
+        .clamp(256, 4_096) as usize;
     let force = force_rebuild.unwrap_or(false);
+    let priority = priority_paths.unwrap_or_default();
+    clear_fill_cancel(&db_path);
     match start_or_join(&db_path) {
         FillRole::Joiner(joiner) => {
             // Idempotent: await the in-flight writer. Progress events already
@@ -916,14 +961,15 @@ pub async fn vault_index_fill_from_disk(
             let joined = tauri::async_runtime::spawn_blocking(move || joiner.wait())
                 .await
                 .map_err(|e| format!("SQLite FTS fill join failed: {e}"))?;
-            return Ok(fill_from_joined(joined?));
+            Ok(fill_from_joined(joined?))
         }
         FillRole::Leader(leader) => {
             let app2 = app.clone();
             let db2 = db_path.clone();
             let root2 = vault_root.clone();
             let result = tauri::async_runtime::spawn_blocking(move || {
-                match fill_from_disk_job(&app2, &db2, &root2, head, force) {
+                match fill_from_disk_job(&app2, &db2, &root2, head, short_head, force, &priority)
+                {
                     Ok(r) => Ok(r),
                     Err(e) => {
                         emit_fill_progress(
@@ -937,6 +983,7 @@ pub async fn vault_index_fill_from_disk(
                                 errors: 1,
                                 phase: "error".into(),
                                 message: Some(e.clone()),
+                                search_state: String::new(),
                             },
                         );
                         Err(e)
@@ -949,4 +996,10 @@ pub async fn vault_index_fill_from_disk(
             Ok(fill_from_joined(leader.finish(mapped)?))
         }
     }
+}
+
+#[tauri::command]
+pub fn vault_index_fill_cancel(db_path: String) -> Result<OkResult, String> {
+    request_fill_cancel(&db_path);
+    Ok(OkResult { ok: true })
 }

@@ -18,7 +18,11 @@ if (!process.env.NEXUS_TSX) {
 }
 
 const {
+  advanceSearchIndexState,
   isEmptyNativeFillFailure,
+  isFillSettlePhase,
+  sqliteEngineShortLabel,
+  sqliteFillPhaseMessage,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
   isInFlightFillError,
@@ -95,6 +99,8 @@ assert.equal(
 
 assert.equal(isIndexFillProgressPhase("walking"), true);
 assert.equal(isIndexFillProgressPhase("indexing"), true);
+assert.equal(isIndexFillProgressPhase("meta"), true);
+assert.equal(isIndexFillProgressPhase("fts-partial"), true);
 assert.equal(isIndexFillProgressPhase("ready"), false);
 assert.equal(isIndexFillProgressPhase("error"), false);
 
@@ -150,6 +156,40 @@ assert.equal(
   true,
   "no current root + fill still blocks a second Open",
 );
+
+assert.match(
+  sqliteFillPhaseMessage({
+    phase: "meta",
+    scanned: 100000,
+    total: 100000,
+    skipped: 0,
+    indexed: 100000,
+  }),
+  /title search on/,
+);
+assert.match(
+  sqliteFillPhaseMessage({
+    phase: "fts-partial",
+    scanned: 12800,
+    total: 100000,
+    skipped: 0,
+    indexed: 12800,
+  }),
+  /note heads/,
+);
+assert.equal(isFillSettlePhase("ready-meta", "meta"), true);
+assert.equal(isFillSettlePhase("fts-partial", "meta"), false);
+assert.equal(isFillSettlePhase("done", "meta"), true);
+assert.equal(isFillSettlePhase("ready-fts-partial", "fts-partial"), true);
+assert.equal(
+  advanceSearchIndexState("ready-meta", "fts"),
+  "ready-fts-partial",
+);
+assert.equal(advanceSearchIndexState("ready-fts-partial", "done"), "ready-fts");
+assert.equal(advanceSearchIndexState("ready-fts", "meta"), "ready-fts");
+assert.equal(sqliteEngineShortLabel("ready-meta"), "SQLite FTS5 BM25 · titles");
+assert.equal(sqliteEngineShortLabel("ready-fts-partial"), "SQLite FTS5 BM25 · heads");
+assert.equal(sqliteEngineShortLabel("ready-fts"), "SQLite FTS5 BM25");
 
 {
   const { NativeSqliteDurableIndex } = await import(

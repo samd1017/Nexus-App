@@ -3,7 +3,7 @@ name = "nexus-fill-test"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "GTK-free tests for incremental SQLite FTS fill"
+description = "GTK-free tests for phased / incremental SQLite FTS fill"
 
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
