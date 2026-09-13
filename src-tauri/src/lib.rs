@@ -8,7 +8,7 @@ use durable_index::{
     vault_index_stats, vault_index_upsert, vault_index_wipe, IndexState,
 };
 use vault_scope::{
-    is_allowed_vault_root, register_root, vault_clear_roots, vault_register_root,
+    is_allowed_vault_root, register_and_grant, vault_clear_roots, vault_register_root,
 };
 use vault_watch::{
     vault_watch_ack, vault_watch_start, vault_watch_stop, WatchState,
@@ -49,17 +49,15 @@ fn should_skip_dir(name: &str) -> bool {
 }
 
 /// Bulk folder + `.md` meta listing. Paths are vault-relative POSIX.
-/// Wave A: root is registered (absolute, no `..`) before walk.
+/// Wave A: root is registered (absolute, no `..`) and granted plugin-fs
+/// persisted-scope before walk — dialog *and* programmatic path opens.
 #[tauri::command]
-fn vault_meta_walk(root: String) -> Result<Vec<NodeMetaDto>, String> {
+fn vault_meta_walk(app: tauri::AppHandle, root: String) -> Result<Vec<NodeMetaDto>, String> {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::SystemTime;
 
-    // Register-on-open after OS dialog; still rejects non-absolute / `..` paths.
-    if !is_allowed_vault_root(&root) {
-        register_root(&root)?;
-    }
+    register_and_grant(&app, &root)?;
     if !is_allowed_vault_root(&root) {
         return Err("vault root not allowed".into());
     }

@@ -132,3 +132,28 @@ console.log(
     clusterHits: meetCluster.length,
   }),
 );
+
+// Forbidden FS reads must abort — do not spin through the vault.
+closeDurableIndex();
+const forbidNodes = nodesFromFileMap({
+  "a.md": "# A\n",
+  "b.md": "# B\n",
+  "c.md": "# C\n",
+}).nodes;
+openMemoryDurableIndex("disk-fts-forbidden");
+getDurableIndex()?.reconcileFromNodes(forbidNodes);
+let reads = 0;
+await assert.rejects(
+  () =>
+    fillDurableIndexFromReader(
+      forbidNodes,
+      async () => {
+        reads += 1;
+        throw new Error("forbidden path: C:\\\\Users\\\\samd1\\\\nexus-soak-100k");
+      },
+      { concurrency: 1 },
+    ),
+  /forbidden path/i,
+);
+assert.ok(reads <= 2, `must fail fast on forbidden reads (got ${reads} attempts)`);
+closeDurableIndex();

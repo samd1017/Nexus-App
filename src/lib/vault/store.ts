@@ -52,6 +52,7 @@ import {
   createDesktopFolder,
   createNewDesktopVault,
   deleteDesktopPath,
+  ensureDesktopVaultFsScope,
   getDesktopVaultRoot,
   openDesktopVaultAt,
   pickDesktopVaultFolder,
@@ -63,6 +64,11 @@ import {
   listDesktopTrash,
   deskNodeId,
 } from "./tauri-adapter";
+import {
+  DesktopFsForbiddenError,
+  desktopFsForbiddenMessage,
+  isForbiddenFsError,
+} from "./desktop-fs-scope";
 import { isDesktopShell, canOpenLocalVaultFolder, confirmDesktopShell } from "@/lib/platform";
 import type { CloudProvider, CloudSession } from "@/lib/cloud/oauth";
 import {
@@ -828,6 +834,12 @@ async function completeDiskSearchIndex(): Promise<{
 		try {
 			const native = await sqlite.fillFromDisk(8000);
 			if (gen !== vaultGen) return { indexed: 0, errors: 0, skipped: true };
+			const indexed = Number(native?.indexed ?? 0);
+			const notes = Number(native?.notes ?? 0);
+			if (noteCount > 0 && indexed === 0 && notes === 0) {
+				const root = desktopRoot || st.vaultPath || "vault";
+				throw new DesktopFsForbiddenError(root);
+			}
 			diskSearchReady = true;
 			setOpenProgress({
 				phase: "ready",
@@ -836,11 +848,22 @@ async function completeDiskSearchIndex(): Promise<{
 				message: "Ready · SQLite FTS5 BM25",
 			});
 			return {
-				indexed: Number(native?.indexed ?? noteCount),
+				indexed: indexed || noteCount,
 				errors: Number(native?.errors ?? 0),
 				skipped: false,
 			};
 		} catch (err) {
+			if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
+				const message =
+					err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
+				setOpenProgress({
+					phase: "error",
+					scanned: 0,
+					totalHint: noteCount,
+					message,
+				});
+				throw err instanceof Error ? err : new Error(message);
+			}
 			console.warn("[nexus] native FTS fill failed; falling back to JS heads", err);
 		}
 	}
@@ -850,20 +873,47 @@ async function completeDiskSearchIndex(): Promise<{
 		totalHint: noteCount,
 		message: "Workspace ready — indexing search from files (not SQLite)…",
 	});
-	const result = await fillDurableIndexFromReader(st.nodes, readDiskSearchHead, {
-		concurrency: 8,
-		isCancelled: () => gen !== vaultGen,
-		onProgress: (done, total) => {
-			if (gen !== vaultGen) return;
+	let result: { indexed: number; errors: number };
+	try {
+		result = await fillDurableIndexFromReader(st.nodes, readDiskSearchHead, {
+			concurrency: 8,
+			isCancelled: () => gen !== vaultGen,
+			onProgress: (done, total) => {
+				if (gen !== vaultGen) return;
+				setOpenProgress({
+					phase: "indexing",
+					scanned: done,
+					totalHint: total,
+					message: `Workspace ready — indexing search from files (not SQLite)… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+				});
+			},
+		});
+	} catch (err) {
+		if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
+			const message =
+				err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
 			setOpenProgress({
-				phase: "indexing",
-				scanned: done,
-				totalHint: total,
-				message: `Workspace ready — indexing search from files (not SQLite)… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+				phase: "error",
+				scanned: 0,
+				totalHint: noteCount,
+				message,
 			});
-		},
-	});
+			throw err instanceof Error ? err : new Error(message);
+		}
+		throw err;
+	}
 	if (gen !== vaultGen) return { ...result, skipped: true };
+	if (noteCount > 0 && result.indexed === 0 && result.errors > 0) {
+		const root = desktopRoot || st.vaultPath || "vault";
+		const message = desktopFsForbiddenMessage(root);
+		setOpenProgress({
+			phase: "error",
+			scanned: 0,
+			totalHint: noteCount,
+			message,
+		});
+		throw new DesktopFsForbiddenError(root);
+	}
 	diskSearchReady = true;
 	if (typeof window !== "undefined") {
 		const prev =
@@ -921,6 +971,7 @@ async function loadDiskVaultScan(mode: VaultMode) {
 	try {
 		if (mode === "desktop") {
 			if (!desktopRoot) throw new Error("No desktop vault root");
+			await ensureDesktopVaultFsScope(desktopRoot);
 			if (metaOnly) {
 				const native = await nativeMetaWalk(desktopRoot);
 				if (native && native.length > 0) {
@@ -1290,7 +1341,30 @@ async function mountDesktopVaultAt(
 		folderAccessLost: false,
 		chromeFsaLimit: null,
 	});
-	const { scan, metaOnly } = await loadDiskVaultScan("desktop");
+	let scan: Awaited<ReturnType<typeof loadDiskVaultScan>>["scan"];
+	let metaOnly: boolean;
+	try {
+		const loaded = await loadDiskVaultScan("desktop");
+		scan = loaded.scan;
+		metaOnly = loaded.metaOnly;
+	} catch (e) {
+		desktopRoot = null;
+		const message =
+			e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
+		set({
+			connecting: false,
+			toast: message,
+		});
+		if (getOpenProgress().phase !== "error") {
+			setOpenProgress({
+				phase: "error",
+				scanned: 0,
+				totalHint: null,
+				message,
+			});
+		}
+		throw e;
+	}
 	const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
 	const vaultId =
 		opts?.vaultId ||
@@ -1334,7 +1408,22 @@ async function mountDesktopVaultAt(
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 		await prepareDurableIndex(st.vaultId, st.mode);
 		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-		await completeDiskSearchIndex();
+		try {
+			await completeDiskSearchIndex();
+		} catch (e) {
+			const message =
+				e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
+			set({ toast: message });
+			if (getOpenProgress().phase !== "error") {
+				setOpenProgress({
+					phase: "error",
+					scanned: 0,
+					totalHint: null,
+					message,
+				});
+			}
+			throw e;
+		}
 	}
 	applyLaunchNotePreference();
 	set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });

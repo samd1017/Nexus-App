@@ -5,7 +5,10 @@
  * every 200 notes). `retrieval` is a rotating topic, not every file.
  *
  *   node scripts/generate-synthetic-vault.mjs --notes 10000 --out /tmp/nexus-soak-10k
- *   node scripts/gen-soak-vault.mjs --notes 100000 --out ~/nexus-soak-100k
+ *   node scripts/gen-soak-vault.mjs --notes 100000 --out ~/Documents/nexus-soak-100k
+ *
+ * Default `--out` (when omitted) is ~/Documents/nexus-soak-{n} so Tauri
+ * capabilities can read it. Override with --out or NEXUS_SOAK_VAULT.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,6 +17,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultSoakVaultPath } from "./soak-vault-path.mjs";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -23,7 +27,7 @@ function parseArgs() {
     if (args[i] === "--notes" && args[i + 1]) notes = Number(args[++i]);
     else if (args[i] === "--out" && args[i + 1]) out = args[++i];
   }
-  if (!out) out = `/tmp/nexus-soak-${notes}`;
+  if (!out) out = defaultSoakVaultPath(Number.isFinite(notes) ? notes : 10000);
   return { notes: Number.isFinite(notes) ? notes : 10000, out };
 }
 

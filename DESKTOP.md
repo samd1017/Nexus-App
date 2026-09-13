@@ -94,14 +94,14 @@ npm run soak:wave-e-desktop -- --notes 100000
 npm run soak:wave-e-desktop -- --notes 300000
 ```
 
-That writes `~/nexus-soak-100k` / `~/nexus-soak-300k` (or `%USERPROFILE%\…` on Windows) if missing, then prints the prove steps. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
+That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\…`) if missing, then prints the prove steps. Documents is inside the production `fs:scope` allow-list; a home-dir folder like `%USERPROFILE%\nexus-soak-100k` still works if you open it programmatically — Wave E registers that path with plugin-fs persisted-scope the same way **Open folder** does. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
 
 ### Prove (must all hold)
 
 1. Open the folder in `tauri:dev` (Welcome → Open folder), **or** DevTools:
 
    ```js
-   await __NEXUS_SOAK__.runWaveE("/Users/you/nexus-soak-100k")
+   await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")
    ```
 
 2. Banner: **Ready · SQLite FTS5 BM25**. Palette heading the same — never `Memory FTS (capped)`.
@@ -114,7 +114,7 @@ That writes `~/nexus-soak-100k` / `~/nexus-soak-300k` (or `%USERPROFILE%\…` on
 ```bat
 set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223
 npm run tauri:dev
-npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\nexus-soak-100k
+npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\Documents\nexus-soak-100k
 ```
 
 `pass: true` is one automated run. Do **not** claim SCALE READY until a human watches a 100k+ session stay responsive.
@@ -125,7 +125,8 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 |--------|------|
 | Rust | `vault_index_fill_from_disk` walks `.md` heads and batch-upserts FTS5. IDs via `desk_node_id`. |
 | JS | `NativeSqliteDurableIndex.fillFromDisk`. No 100k-row JS hydrate. |
-| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` |
+| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan |
+| FS scope | Production capabilities allow Documents / Desktop / Downloads + app data. Programmatic path open grants that folder only (not `$HOME/**`). Forbidden reads fail the progress banner — they do not spin at scanned:0. |
 
 Outputs (typical paths):
 

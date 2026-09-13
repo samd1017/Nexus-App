@@ -4,7 +4,7 @@
  * Probe words (every official vault): `hub`, `cluster`, `retrieval`.
  * Hub titles every 200 notes; every note body contains "Cluster hub".
  *
- *   npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k
+ *   npm run gen:soak-vault -- --notes 100000 --out ~/Documents/nexus-soak-100k
  *   node scripts/gen-soak-vault.mjs --notes 100000 --out ./nexus-soak-100k
  *
  * Do not use a one-off generator that omits `hub`. The unofficial

@@ -115,8 +115,8 @@ pub fn vault_watch_start(
     root: String,
     _meta_only: Option<bool>,
 ) -> Result<WatchStartResult, String> {
-    // Wave A: only watch registered absolute vault roots
-    crate::vault_scope::register_root(&root)?;
+    // Wave A: only watch registered absolute vault roots (also grant plugin-fs).
+    crate::vault_scope::register_and_grant(&app, &root)?;
     if !crate::vault_scope::is_allowed_vault_root(&root) {
         return Err("vault root not allowed".into());
     }

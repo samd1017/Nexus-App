@@ -6,7 +6,7 @@
  *
  *   npm run soak:wave-e-desktop -- --notes 100000
  *   npm run soak:wave-e-desktop -- --notes 300000
- *   npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault ~/nexus-soak-100k
+ *   npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault ~/Documents/nexus-soak-100k
  *
  * Windows WebView2 CDP:
  *   set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223
@@ -29,6 +29,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultSoakVaultPath } from "./soak-vault-path.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -41,10 +42,7 @@ function arg(name, fallback = "") {
 const NOTES = Math.max(1000, Number(arg("--notes", process.env.NEXUS_SOAK_NOTES || "100000")) || 100000);
 const CDP = arg("--cdp", process.env.NEXUS_TAURI_CDP || "");
 const URL = arg("--url", process.env.NEXUS_TAURI_URL || "");
-const home = os.homedir();
-const defaultVault =
-  process.env.NEXUS_SOAK_VAULT ||
-  path.join(home, `nexus-soak-${NOTES}`);
+const defaultVault = defaultSoakVaultPath(NOTES);
 const VAULT = path.resolve(arg("--vault", defaultVault));
 const OUT_DIR =
   process.env.NEXUS_WAVE_E_OUT ||

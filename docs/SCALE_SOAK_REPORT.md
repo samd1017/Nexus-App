@@ -22,7 +22,7 @@ That is **not** SCALE READY and **not** a 100k desktop proof. Later tips (`2f202
 
 **Refuse (Chrome ≥25k):** Welcome card `data-chrome-fsa-refused` — Chrome will kill the tab; Desktop is required; Chrome max is ~20k, not a lifetime Obsidian archive. Saved handle is cleared. Walk aborts so we do not allocate 100k nodes first. `?forceLargeFsa` / `nexus-force-large-fsa=1` works **only in DEV** and pops a scary `window.confirm`. Production ignores both.
 
-**Desktop north star:** `~/nexus-soak-100k` then `~/nexus-soak-300k` via `npm run tauri:dev`. Native `vault_index_fill_from_disk` walks files in Rust (no 100k JS IPC). Not proven on this Linux VM.
+**Desktop north star:** `~/Documents/nexus-soak-100k` then `~/Documents/nexus-soak-300k` via `npm run tauri:dev`. Native `vault_index_fill_from_disk` walks files in Rust (no 100k JS IPC). Programmatic Wave E open registers the folder with plugin-fs persisted-scope (same as dialog). Not proven on this Linux VM.
 
 Real Chrome FSA of a 100k folder:
 
@@ -161,12 +161,12 @@ Do **not** call this SCALE READY until a human or desktop agent completes the 10
 
 ```bash
 # macOS
-npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k
-npm run gen:soak-vault -- --notes 300000 --out ~/nexus-soak-300k
+npm run gen:soak-vault -- --notes 100000 --out ~/Documents/nexus-soak-100k
+npm run gen:soak-vault -- --notes 300000 --out ~/Documents/nexus-soak-300k
 
 # Windows (PowerShell)
-npm run gen:soak-vault -- --notes 100000 --out $env:USERPROFILE\nexus-soak-100k
-npm run gen:soak-vault -- --notes 300000 --out $env:USERPROFILE\nexus-soak-300k
+npm run gen:soak-vault -- --notes 100000 --out $env:USERPROFILE\Documents\nexus-soak-100k
+npm run gen:soak-vault -- --notes 300000 --out $env:USERPROFILE\Documents\nexus-soak-300k
 ```
 
 Confirm `SOAK-MANIFEST.json` in the folder: `notes` equals 100000 / 300000.
@@ -174,7 +174,7 @@ Confirm `SOAK-MANIFEST.json` in the folder: `notes` equals 100000 / 300000.
 **Open (or automate)**
 
 ```bash
-# Generates ~/nexus-soak-100k if needed and prints Mac/Windows steps.
+# Generates ~/Documents/nexus-soak-100k if needed and prints Mac/Windows steps.
 # Exit 2 unless a Tauri CDP session actually ran — this is not SCALE READY.
 npm run soak:wave-e-desktop -- --notes 100000
 npm run soak:wave-e-desktop -- --notes 300000
@@ -182,12 +182,13 @@ npm run soak:wave-e-desktop -- --notes 300000
 # Windows: drive the live Tauri webview
 set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223
 npm run tauri:dev
-npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\nexus-soak-100k
+npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\Documents\nexus-soak-100k
 ```
 
 1. `npm run tauri:dev` (signed install is also fine).
-2. Welcome → **Open folder** → pick `~/nexus-soak-100k` first, then `~/nexus-soak-300k` (Windows: `%USERPROFILE%\nexus-soak-300k`).
-   Or DevTools (DEV build): `await __NEXUS_SOAK__.runWaveE("/Users/you/nexus-soak-100k")`.
+2. Welcome → **Open folder** → pick `~/Documents/nexus-soak-100k` first, then `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\nexus-soak-300k`).
+   Or DevTools (DEV build): `await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")`.
+   A home-dir path such as `C:\Users\you\nexus-soak-100k` is still valid: programmatic open grants that folder on persisted-scope before scan. Forbidden reads fail the progress banner.
 3. Title bar must say **On disk** / **Desktop vault**, never `Test · this browser`.
 4. Command palette (`⌘K` / `Ctrl+K`) → type `retrieval hub`. Group heading must include **SQLite FTS5 BM25**. If it says `Memory FTS (capped)`, the native index failed — stop and file that, do not pass Wave E.
 
@@ -218,6 +219,7 @@ Closed on this SHA (needs a Mac/Windows Tauri run to prove):
 | Desktop watch safety poll re-walked 100k signatures | No signature poll above 10k when native OS notify is live |
 | Progress banner said “not SQLite” on desktop | “indexing SQLite FTS5 from disk” → **Ready · SQLite FTS5 BM25** |
 | No desktop soak hook / Mac-Windows runner | `__NEXUS_SOAK__.openDesktop` / `runWaveE` (DEV+Tauri) + `npm run soak:wave-e-desktop` |
+| Programmatic path open skipped plugin-fs persisted-scope (`$HOME/nexus-soak-N` forbidden) | `vault_register_root` calls `fs_scope.allow_directory` (dialog-equivalent) before scan/index; soak default is `Documents/nexus-soak-N`; forbidden reads fail the progress banner |
 | `desk_node_id` vs TS `deskNodeId` (Windows `\\`) | Shared `desk-node-id.ts`; Rust normalizes `\\` → `/`; `npm run test:desk-node-id` |
 | `?forceLargeFsa` in production | DEV-only + scary confirm. Production ignores query and localStorage |
 
@@ -331,7 +333,7 @@ node scripts/stress-fsa-cdp.mjs http://127.0.0.1:9222 --opens 20
 | Official (`SOAK-MANIFEST.json` from this repo) | `npm run gen:soak-vault` → `scripts/generate-synthetic-vault.mjs` (alias `scripts/gen-soak-vault.mjs`) | **`hub`**, **`cluster`** (every body has `Cluster hub`; Hub titles every 200 notes). `retrieval` is a rotating topic. Wave E desktop query: `retrieval hub`. |
 | One-off `/workspace/nexus-soak-100k` on the Grok box | `/workspace/gen-soak-vault.mjs` (**not in repo**); names like `Meeting-10949-1oo` | **`cluster` only.** `rg` hub_files=0. Do not treat a `hub` miss as an engine bug. |
 
-Regenerate unofficial folders with `npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k` so `hub` and `cluster` both hit.
+Regenerate unofficial folders with `npm run gen:soak-vault -- --notes 100000 --out ~/Documents/nexus-soak-100k` so `hub` and `cluster` both hit.
 
 ## 100k FSA memory (why the tab discarded)
 
@@ -357,7 +359,7 @@ Opening one note after Ready was the last straw. Baseline heap was already huge:
 
 - Chrome **refuse card** on a real ≥25k / 100k folder (Grok Bot on the Linux box).
 - Real Chrome FSA **≤20k** folder: 20 opens, no discard, `cluster` hits (Grok Bot).
-- Tauri open of `~/nexus-soak-100k` then `~/nexus-soak-300k` with SQLite FTS5 BM25. **Required for SCALE READY.**
+- Tauri open of `~/Documents/nexus-soak-100k` then `~/Documents/nexus-soak-300k` with SQLite FTS5 BM25. **Required for SCALE READY.**
 - Overlay surviving a different browser / machine (it will not — by design).
 - Desktop 300–500k as a daily driver.
 

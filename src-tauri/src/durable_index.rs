@@ -809,6 +809,7 @@ const FILL_SKIP_DIRS: &[&str] = &[
 /// JS must not upsert 100k–300k notes over IPC (Wave E).
 #[tauri::command]
 pub fn vault_index_fill_from_disk(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
     vault_root: String,
@@ -818,9 +819,7 @@ pub fn vault_index_fill_from_disk(
     use std::io::Read;
     use std::time::SystemTime;
 
-    if !crate::vault_scope::is_allowed_vault_root(&vault_root) {
-        crate::vault_scope::register_root(&vault_root)?;
-    }
+    crate::vault_scope::register_and_grant(&app, &vault_root)?;
     if !crate::vault_scope::is_allowed_vault_root(&vault_root) {
         return Err("vault root not allowed".into());
     }

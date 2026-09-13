@@ -16,6 +16,7 @@ import {
   type DurableNoteMeta,
 } from "./durable-index";
 import { yieldToUi } from "./yield-ui";
+import { DesktopFsForbiddenError, isForbiddenFsError } from "./desktop-fs-scope";
 
 /** Read this many chars from each file for tokens. Do not keep on the node. */
 export const DISK_FTS_HEAD_CHARS = 2000;
@@ -66,7 +67,12 @@ export async function fillDurableIndexFromReader(
         if (opts?.isCancelled?.()) return;
         upsertDiskFtsHead(n, head);
         indexed += 1;
-      } catch {
+      } catch (err) {
+        if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
+          throw err instanceof Error
+            ? err
+            : new DesktopFsForbiddenError(n.path, err);
+        }
         // Title/path already reconciled — keep going.
         errors += 1;
       }
