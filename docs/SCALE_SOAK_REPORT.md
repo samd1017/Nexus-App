@@ -233,5 +233,6 @@ npm run soak:fsa -- http://127.0.0.1:8080/ --notes 800
 
 - **UI:** browser 45k common-ops (store open 1.15s / interactive 0.41s; wall 1.79s WARN; overlay remount keeps Soak Created; no ≥1s freeze).
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
+- **Disk file-head FTS (this SHA):** 10k fill 196ms / search 3ms / RSS 175MB; Playwright mock FSA 800 notes, `hub`+`cluster` hit, `bodiesLoaded=1`.
 
 Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a Mac Tauri open of the 300k folder stays responsive end-to-end.
