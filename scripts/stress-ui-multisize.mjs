@@ -493,6 +493,14 @@ async function runLargeStress(page, errors) {
     result.blockers.push(`create did not reach 45001 (notes=${created.value?.stress?.notes})`);
   }
   failIfSlow(result, "newNote", created.appReadyMs, COMMON_OP_MS, result.blockers);
+  const createdPath =
+    created.value?.stress?.lastNotePath || created.value?.stress?.activeNotePath;
+  if (!createdPath || !/Soak Created/i.test(String(createdPath))) {
+    result.ok = false;
+    result.blockers.push(
+      `createNote lastNotePath=${createdPath} (expected Soak Created)`,
+    );
+  }
 
   const typed = await typeInEditor(page, " 45k editor type");
   result.steps.editorTyped = typed.typed;
@@ -589,16 +597,6 @@ async function runLargeStress(page, errors) {
   if (postCreate.stress?.notes !== 45001) {
     result.ok = false;
     result.blockers.push(`post-create notes ${postCreate.stress?.notes} !== 45001`);
-  }
-
-  if (
-    !postCreate.stress?.lastNotePath ||
-    !/Soak Created/i.test(String(postCreate.stress.lastNotePath))
-  ) {
-    result.ok = false;
-    result.blockers.push(
-      `createNote lastNotePath=${postCreate.stress?.lastNotePath} (expected Soak Created)`,
-    );
   }
 
   const seedPair = await page.evaluate(() => {
