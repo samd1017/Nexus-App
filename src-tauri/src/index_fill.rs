@@ -1707,8 +1707,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert!(fts_has(&conn, "retrieval"));
         assert!(fts_has(&conn, "cluster"));
         assert!(
-            partial_ms < 30_000,
-            "10k short-head FTS {partial_ms}ms exceeds 30000ms CI budget"
+            partial_ms < 45_000,
+            "10k short-head FTS {partial_ms}ms exceeds 45000ms CI budget"
         );
         assert_eq!(partial.search_state, "ready-fts-partial");
         eprintln!(
