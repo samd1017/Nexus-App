@@ -1100,6 +1100,102 @@
   display: block;
 }
 
+.graph-chrome:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.graph-loading-ring {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  animation: graphSpin 0.85s linear infinite;
+}
+:root[data-reduced-motion="true"] .graph-loading-ring {
+  animation: none;
+  border-top-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+@keyframes graphSpin {
+  to { transform: rotate(360deg); }
+}
+
+.graph-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(12px);
+}
+.graph-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--text-primary);
+}
+.graph-chip.is-on {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, rgba(0, 0, 0, 0.45));
+  color: var(--accent);
+}
+.graph-chip-select {
+  padding-right: 4px;
+}
+.graph-chip-select select {
+  max-width: 7.5rem;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  font: inherit;
+  outline: none;
+}
+.graph-inspector {
+  position: absolute;
+  z-index: 20;
+  left: 10px;
+  bottom: 36px;
+  width: min(280px, calc(100% - 20px));
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(8, 10, 14, 0.88);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.06));
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 0 28px color-mix(in srgb, var(--accent) 12%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.graph-chrome--panel .graph-inspector {
+  width: min(240px, calc(100% - 16px));
+  left: 8px;
+  bottom: 32px;
+  padding: 8px 10px;
+}
+.graph-link-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 8px;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.graph-link-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+
 
 /* —— Elevation pass: denser chrome, tighter glass, SpaceX precision —— */
 @layer components {

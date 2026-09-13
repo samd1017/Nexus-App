@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type KeyboardEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import SpriteText from "three-spritetext";
@@ -24,30 +24,28 @@ import {
 } from "@/lib/graph/graph-select";
 import type { VaultNode } from "@/lib/vault/types";
 import {
-  Maximize2,
-  Minimize2,
-  Network,
-  Download,
-  Focus,
   Globe2,
-  Ghost,
-  Hash,
   Link2,
-  Scan,
   FilePlus2,
-  Search,
-  Filter,
 } from "lucide-react";
 import { collectVaultTags } from "@/lib/vault/tags";
-import { cn } from "@/lib/utils";
 import { usePrefsStore, type PhysicsIntensity } from "@/lib/prefs/preferences";
-import { isDesktopShell, formatShortcut } from "@/lib/platform";
+import { isDesktopShell } from "@/lib/platform";
 import {
   closeDrawersIfNarrow,
   exitGraphForViewport,
   isPhoneViewport,
 } from "@/lib/layout/viewport";
-import { EmptyState } from "@/components/ui/EmptyState";
+import { GraphChrome } from "@/components/graph/GraphChrome";
+import { inspectGraphNote } from "@/lib/graph/graph-inspect";
+import {
+  applyGraphFilters,
+  filtersAreIdle,
+  folderFilterOptions,
+  scaleParticlesEnabled,
+  tagFilterOptions,
+  type GraphFilterState,
+} from "@/lib/graph/graph-filters";
 
 interface Props {
   mode: "panel" | "fullscreen";
@@ -903,12 +901,17 @@ export function GraphView({ mode, className }: Props) {
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const [hoverName, setHoverName] = useState<string | null>(null);
   const [hoverTip, setHoverTip] = useState<{
+    id: string;
     name: string;
     path: string;
     degree: number;
     kind: string;
     preview: string;
   } | null>(null);
+  const [orphansOnly, setOrphansOnly] = useState(false);
+  const [tagFilter, setTagFilter] = useState("");
+  const [folderFilter, setFolderFilter] = useState("");
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const [hintVisible, setHintVisible] = useState(true);
   const [neighborhood, setNeighborhood] = useState<NeighborhoodMode>("all");
   const [isolateHops, setIsolateHops] = useState(false);
@@ -985,6 +988,12 @@ export function GraphView({ mode, className }: Props) {
     return idx.folderCount;
   }, [deferredNodes]);
 
+  const particlesLive = scaleParticlesEnabled(
+    vaultNoteCount,
+    graphParticles,
+    reducedMotion,
+  );
+
 
   // Mode-gated fingerprint — folder uses O(level) child signature (not O(N) links,
   // and not structureGeneration which can bump on content-only body evicts).
@@ -1044,11 +1053,12 @@ export function GraphView({ mode, className }: Props) {
 
   const graphModeResolved: GraphViewMode = resolved.mode;
 
-  const tagColorNodes = colorBy === "tag" ? deferredNodes : null;
+  const tagColorNodes =
+    colorBy === "tag" || tagFilter ? deferredNodes : null;
   const data = useMemo(() => {
     const tagByNote = new Map<string, string>();
     // Folder/ego color-by-folder must not walk 45k tag metas.
-    if (colorBy === "tag" && tagColorNodes) {
+    if (tagColorNodes) {
       const visible = new Set(resolved.nodes.map((n) => n.id));
       for (const t of collectVaultTags(tagColorNodes as Record<string, VaultNode>)) {
         for (const id of t.noteIds) {
@@ -1132,20 +1142,38 @@ export function GraphView({ mode, className }: Props) {
 
   // Folder hues live on the orbs only — no multi-chip legend (clutters large vaults).
 
+  const graphFilter: GraphFilterState = useMemo(
+    () => ({
+      query: graphQuery,
+      showGhosts,
+      orphansOnly: graphModeResolved === "folder" ? false : orphansOnly,
+      tag: tagFilter,
+      folderPrefix: folderFilter,
+    }),
+    [
+      graphQuery,
+      showGhosts,
+      graphModeResolved,
+      orphansOnly,
+      tagFilter,
+      folderFilter,
+    ],
+  );
+  const filtersIdle = filtersAreIdle(graphFilter);
+
   const lodActiveId =
     graphModeResolved === "folder" ||
-    (neighborhood === "all" && !isolateHops && !graphQuery)
+    (neighborhood === "all" && !isolateHops && filtersIdle)
       ? null
       : activeNoteId;
 
   const displayData = useMemo(() => {
     let base: { nodes: GNode[]; links: GLink[] } = data;
     if (graphModeResolved === "folder") {
-      // Builder already capped; skip LOD that would cull degree-0 folders.
-      // Return `data` so note-switch does not new-wrap and re-feed ForceGraph3D.
       hopKeepRef.current = null;
       lowDetailRef.current = false;
-      return data;
+      if (filtersIdle) return data;
+      return applyGraphFilters(data, graphFilter, activeNoteId);
     }
     if (!showGhosts) {
       base = {
@@ -1166,42 +1194,22 @@ export function GraphView({ mode, className }: Props) {
       neighborMapRef.current,
     );
     hopKeepRef.current = soft.hopKeep;
-    let nodes = soft.nodes;
-    let links = soft.links;
-    const q = graphQuery.trim().toLowerCase();
-    if (q) {
-      const keep = new Set(
-        nodes
-          .filter(
-            (n) =>
-              n.name.toLowerCase().includes(q) ||
-              n.path.toLowerCase().includes(q) ||
-              (n.tag && n.tag.includes(q)),
-          )
-          .map((n) => n.id),
-      );
-      if (lodActiveId) keep.add(lodActiveId);
-      nodes = nodes.filter((n) => keep.has(n.id));
-      links = links.filter((l) => {
-        const [s, t] = linkIds(l);
-        return keep.has(s) && keep.has(t);
-      });
-    }
-    return { nodes, links };
+    return applyGraphFilters(
+      { nodes: soft.nodes, links: soft.links },
+      { ...graphFilter, showGhosts: true },
+      lodActiveId ?? activeNoteId,
+    );
   }, [
     data,
     neighborhood,
     isolateHops,
-    graphQuery,
     lodActiveId,
     showGhosts,
     graphModeResolved,
+    filtersIdle,
+    graphFilter,
+    activeNoteId,
   ]);
-
-  const shownNoteCount = useMemo(
-    () => displayData.nodes.filter((n) => !n.ghost).length,
-    [displayData.nodes],
-  );
 
   /** G1: 2x export with footer */
   const exportPng = useCallback(() => {
@@ -1298,12 +1306,11 @@ export function GraphView({ mode, className }: Props) {
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
     const phys = physicsParams(physicsIntensity);
-    const particleCount =
-      graphParticles && !usePrefsStore.getState().reducedMotion
-        ? mode === "panel"
-          ? 1
-          : 3
-        : 0;
+    const particleCount = particlesLive
+      ? mode === "panel"
+        ? 1
+        : 3
+      : 0;
 
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
@@ -1526,6 +1533,7 @@ export function GraphView({ mode, className }: Props) {
         setHoverName(node?.name ?? null);
         if (node) {
           setHoverTip({
+            id: node.id,
             name: node.name,
             path: node.path || "",
             degree: node.degree ?? 0,
@@ -1888,7 +1896,7 @@ export function GraphView({ mode, className }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     mode,
-    graphParticles,
+    particlesLive,
     physicsIntensity,
     accentPreset,
     accentCustom,
@@ -2026,12 +2034,11 @@ export function GraphView({ mode, className }: Props) {
     if (!graphRef.current) return;
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
-    const particleCount =
-      graphParticles && !usePrefsStore.getState().reducedMotion
-        ? mode === "panel"
-          ? 1
-          : 3
-        : 0;
+    const particleCount = particlesLive
+      ? mode === "panel"
+        ? 1
+        : 3
+      : 0;
 
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
@@ -2146,7 +2153,7 @@ export function GraphView({ mode, className }: Props) {
       .linkWidth((link) => edgeStyle(link as GLink).width)
       .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles)
       .refresh();
-  }, [mode, accentPreset, accentCustom, graphParticles, desktopBoost, neighborhood, isolateHops, colorBy, showGhosts]);
+  }, [mode, accentPreset, accentCustom, particlesLive, desktopBoost, neighborhood, isolateHops, colorBy, showGhosts]);
 
   const prevActiveTintRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2167,502 +2174,293 @@ export function GraphView({ mode, className }: Props) {
     }
   }, [activeNoteId]);
 
-  return (
-    <div
-      className={cn(
-        "graph-host relative flex min-h-0 flex-col overflow-hidden bg-[var(--graph-void,#03050a)]",
-        className,
-      )}
-      role="region"
-      data-graph-host
-      data-graph-engine={engineReady ? "ready" : "building"}
-      aria-label={
-        graphModeResolved === "folder"
-          ? "Folder map"
-          : graphModeResolved === "ego"
-            ? "Link neighborhood graph"
-            : "Note graph"
-      }
-    >
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: `
-            radial-gradient(ellipse 90% 75% at 50% 40%, color-mix(in srgb, var(--accent) 6%, #0e1622) 0%, #0a1018 40%, #05080e 68%, var(--graph-void, #03050a) 100%)
-          `,
-        }}
-      />
+  const inspectId = hoverTip?.id || activeNoteId;
+  const inspect = useMemo(
+    () => inspectGraphNote(useVaultStore.getState().nodes, inspectId, 6),
+    [inspectId, graphTick],
+  );
+  const tagOptions = useMemo(
+    () => tagFilterOptions(displayData.nodes),
+    [displayData.nodes],
+  );
+  const folderOptions = useMemo(
+    () => folderFilterOptions(displayData.nodes),
+    [displayData.nodes],
+  );
 
-      {!engineReady ? (
-        <div
-          className="absolute inset-0 z-[5] flex items-center justify-center bg-black/35 text-[13px] text-[var(--text-secondary)]"
-          data-graph-progress
-        >
-          Building graph…
-        </div>
-      ) : null}
-      <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          {mode === "fullscreen" ? (
-            <button
-              type="button"
-              data-exit-graph
-              className="pointer-events-auto flex h-9 w-fit shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[var(--accent)] px-3 text-[13px] font-semibold text-black shadow-[0_0_24px_rgba(0,200,255,0.28)] hover:brightness-110"
-              title="Exit fullscreen graph (Esc or Ctrl+G)"
-              aria-label="Exit graph"
-              onClick={() => exitGraphForViewport()}
-            >
-              <Minimize2 size={15} />
-              <span>Exit graph</span>
-              <kbd className="ml-0.5 rounded border border-black/20 bg-black/15 px-1 py-px text-[10px] font-medium text-black/80">
-                Esc
-              </kbd>
-            </button>
-          ) : null}
-          <div className="flex min-w-0 items-center gap-2 rounded-full border border-white/[0.06] bg-black/40 px-3 py-1.5 backdrop-blur-sm">
-            <Network
-              size={12}
-              className="shrink-0 text-[var(--accent)] opacity-70"
-            />
-            <span className="truncate text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
-              {graphModeResolved === "folder" ? (
-                <>
-                  <span className="text-[var(--accent)] opacity-90">Folder map</span>
-                  <span className="mx-1.5 opacity-50">·</span>
-                  {badgeFolderCount} folder{badgeFolderCount === 1 ? "" : "s"}
-                  <span className="mx-1.5 opacity-50">·</span>
-                  {badgeNoteCount} note{badgeNoteCount === 1 ? "" : "s"}
-                  <span className="mx-1.5 opacity-50">·</span>
-                  <span className="opacity-80">
-                    {stats.levelPath
-                      ? `in ${stats.levelPath.split("/").pop()}`
-                      : "this level"}
-                  </span>
-                  {stats.capped ? (
-                    <>
-                      <span className="mx-1.5 opacity-50">·</span>
-                      <span className="opacity-70" title="Large levels are capped for performance">
-                        capped view
-                      </span>
-                    </>
-                  ) : null}
-                </>
-              ) : graphModeResolved === "ego" || isPartialVaultGraph ? (
-                <>
-                  <span className="text-[var(--accent)] opacity-90">Near active</span>
-                  <span className="mx-1.5 opacity-50">·</span>
-                  {realNoteCount} note{realNoteCount === 1 ? "" : "s"}
-                  <span className="mx-1.5 opacity-50">·</span>
-                  {realLinkCount} link{realLinkCount === 1 ? "" : "s"}
-                  {vaultNoteCount > realNoteCount ? (
-                    <>
-                      <span className="mx-1.5 opacity-50">·</span>
-                      <span
-                        className="opacity-70"
-                        title={`${vaultNoteCount.toLocaleString()} notes in vault — showing links near the active note`}
-                      >
-                        of {vaultNoteCount.toLocaleString()} in vault
-                      </span>
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  {vaultNoteCount || realNoteCount} notes
-                  {vaultFolderCount > 0 ? (
-                    <>
-                      <span className="mx-1.5 opacity-50">·</span>
-                      {vaultFolderCount} folder
-                      {vaultFolderCount === 1 ? "" : "s"}
-                    </>
-                  ) : null}
-                  <span className="mx-1.5 opacity-50">·</span>
-                  {realLinkCount} link{realLinkCount === 1 ? "" : "s"}
-                  {ghostCount > 0 ? (
-                    <>
-                      <span className="mx-1.5 opacity-50">·</span>
-                      <span className="opacity-70">
-                        {showGhosts ? ghostCount : 0}/{ghostCount} missing
-                      </span>
-                    </>
-                  ) : null}
-                </>
-              )}
-              {neighborhood !== "all" && graphModeResolved !== "folder" ? (
-                <>
-                  <span className="mx-1.5 opacity-50">·</span>
-                  <span className="text-[var(--accent)] opacity-80">
-                    {hopCount(neighborhood)}-hop{isolateHops ? " isolate" : ""}
-                  </span>
-                </>
-              ) : null}
-              {hoverName ? (
-                <>
-                  <span className="mx-1.5 opacity-50">·</span>
-                  <span className="text-[var(--text-secondary)] transition-opacity duration-200">
-                    {hoverName}
-                  </span>
-                </>
-              ) : null}
-            </span>
-          </div>
-          {folderCrumbs.length > 0 || graphModeResolved === "folder" ? (
-            <nav
-              data-graph-breadcrumb
-              className="pointer-events-auto flex min-w-0 flex-wrap items-center gap-1 rounded-full border border-white/[0.06] bg-black/40 px-2.5 py-1 backdrop-blur-sm"
-              aria-label="Folder map path"
-            >
-              <button
-                type="button"
-                className="rounded px-1.5 text-[10px] font-medium tracking-wide text-[var(--accent)] hover:bg-white/5"
-                onClick={() => resetGraphBrowse?.()}
-              >
-                Vault
-              </button>
-              {folderCrumbs.map((seg, i) => {
-                const path = folderCrumbs.slice(0, i + 1).join("/");
-                return (
-                  <span key={path} className="flex items-center gap-1">
-                    <span className="opacity-40">·</span>
-                    <button
-                      type="button"
-                      className="max-w-[88px] truncate rounded px-1.5 text-[10px] font-medium tracking-wide text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]"
-                      onClick={() => enterGraphFolder?.(path)}
-                    >
-                      {seg}
-                    </button>
-                  </span>
-                );
-              })}
-              {activeNoteId ? (
-                <>
-                  <span className="opacity-40">·</span>
-                  <button
-                    type="button"
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium tracking-wide",
-                      activeNoteMissingFromFolderMap
-                        ? "border-[var(--accent)]/40 bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25"
-                        : "border-[rgba(0,200,255,0.35)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)] hover:bg-[rgba(0,200,255,0.2)]",
-                    )}
-                    title="Show wikilink neighborhood for the active note"
-                    aria-label="Show links near active note"
-                    onClick={handleShowLinks}
-                  >
-                    <Link2 size={11} className="shrink-0 opacity-90" />
-                    Show links
-                  </button>
-                </>
-              ) : null}
-            </nav>
-          ) : null}
-          {realNoteCount > LOD_CAP && graphModeResolved !== "folder" ? (
-            <div className="pointer-events-none px-1 text-[10px] tracking-wide text-[var(--text-muted)] opacity-70">
-              Drawing {shownNoteCount.toLocaleString()} of{" "}
-              {realNoteCount.toLocaleString()} linked notes
-            </div>
-          ) : null}
-        </div>
-        <div className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded-full border border-white/[0.08] bg-black/45 p-1 shadow-[0_8px_28px_rgba(0,0,0,0.35)] backdrop-blur-md">
-          {graphModeResolved === "ego" ? (
-            <button
-              type="button"
-              className="icon-btn h-8 w-8 text-[var(--accent)]"
-              title="Vault folder map"
-              aria-label="Vault folder map"
-              onClick={() => {
-                if (returnFromGraphEgo) returnFromGraphEgo();
-                else resetGraphBrowse?.();
-              }}
-            >
-              <Globe2 size={14} />
-            </button>
-          ) : null}
-          {ghostCount > 0 && graphModeResolved !== "folder" ? (
-            <button
-              type="button"
-              className={cn(
-                "icon-btn h-8 w-8",
-                showGhosts ? "is-active" : "opacity-70",
-              )}
-              title={showGhosts ? "Hide missing (ghost) nodes" : "Show missing (ghost) nodes"}
-              aria-label={showGhosts ? "Hide missing (ghost) nodes" : "Show missing (ghost) nodes"}
-              aria-pressed={showGhosts}
-              onClick={() => setShowGhosts((v) => !v)}
-            >
-              <Ghost size={14} />
-            </button>
-          ) : null}
-          {graphModeResolved !== "folder" ? (
+  const cycleVisibleNote = useCallback(
+    (dir: 1 | -1) => {
+      const notes = displayData.nodes.filter(
+        (n) => n.kind !== "folder" && n.kind !== "aggregate" && !n.ghost,
+      );
+      if (!notes.length) return;
+      const ids = notes.map((n) => n.id);
+      const cur = activeNoteId ? ids.indexOf(activeNoteId) : -1;
+      const next = cur < 0 ? 0 : (cur + dir + ids.length) % ids.length;
+      setActiveNote(ids[next]);
+    },
+    [displayData.nodes, activeNoteId, setActiveNote],
+  );
+
+  const fitView = useCallback(() => {
+    try {
+      graphRef.current?.zoomToFit(
+        reducedMotion ? 0 : 420,
+        mode === "fullscreen" ? 70 : 48,
+      );
+    } catch {
+      /* ok */
+    }
+  }, [reducedMotion, mode]);
+
+  const onGraphKey = useCallback(
+    (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (
+        t.tagName === "INPUT" ||
+        t.tagName === "SELECT" ||
+        t.tagName === "TEXTAREA"
+      ) {
+        if (e.key === "Escape") (t as HTMLInputElement).blur();
+        return;
+      }
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        filterInputRef.current?.focus();
+        return;
+      }
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        cycleVisibleNote(1);
+        return;
+      }
+      if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        cycleVisibleNote(-1);
+        return;
+      }
+      if (e.key === "1") setNeighborhood("1hop");
+      if (e.key === "2") setNeighborhood("2hop");
+      if (e.key === "3") setNeighborhood("3hop");
+      if (e.key === "0") setNeighborhood("all");
+      if (e.key === "f" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        fitView();
+      }
+      if (e.key === "m") {
+        if (returnFromGraphEgo) returnFromGraphEgo();
+        else resetGraphBrowse?.();
+      }
+      if (e.key === "l") handleShowLinks();
+    },
+    [cycleVisibleNote, fitView, handleShowLinks, returnFromGraphEgo, resetGraphBrowse],
+  );
+
+  const badge = (
+    <>
+      {graphModeResolved === "folder" ? (
+        <>
+          <span className="text-[var(--accent)] opacity-90">Folder map</span>
+          <span className="mx-1.5 opacity-40">·</span>
+          {badgeFolderCount} folder{badgeFolderCount === 1 ? "" : "s"}
+          <span className="mx-1.5 opacity-40">·</span>
+          {badgeNoteCount} note{badgeNoteCount === 1 ? "" : "s"}
+          {stats.levelPath ? (
             <>
-              <label className="relative mr-0.5 hidden items-center md:flex">
-                <Search size={12} className="pointer-events-none absolute left-2 text-[var(--text-muted)]" />
-                <input
-                  value={graphQuery}
-                  onChange={(e) => setGraphQuery(e.target.value)}
-                  placeholder="Filter"
-                  className="h-8 w-[7.5rem] rounded-full border border-white/[0.08] bg-black/30 pl-6 pr-2 text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
-                  aria-label="Filter graph notes"
-                />
-              </label>
-              <button
-                type="button"
-                className={cn("icon-btn h-8 w-8", neighborhood !== "all" && "is-active")}
-                title={
-                  neighborhood === "all"
-                    ? "Neighborhood: 1-hop (dim outsiders)"
-                    : `Neighborhood: ${hopCount(neighborhood)}-hop — click to cycle`
-                }
-                aria-label="Cycle hop depth"
-                aria-pressed={neighborhood !== "all"}
-                onClick={() => setNeighborhood(cycleNeighborhood)}
-              >
-                {neighborhood === "all" ? <Globe2 size={14} /> : <Focus size={14} />}
-              </button>
-              {neighborhood !== "all" ? (
-                <button
-                  type="button"
-                  className={cn("icon-btn h-8 w-8", isolateHops && "is-active")}
-                  title={isolateHops ? "Dim outsiders" : "Isolate neighborhood"}
-                  aria-pressed={isolateHops}
-                  onClick={() => setIsolateHops((v) => !v)}
-                >
-                  <Filter size={14} />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className={cn("icon-btn h-8 w-8", colorBy === "tag" && "is-active")}
-                title={colorBy === "tag" ? "Color by folder" : "Color by tag"}
-                aria-pressed={colorBy === "tag"}
-                onClick={() => setColorBy((v) => (v === "tag" ? "folder" : "tag"))}
-              >
-                <Hash size={14} />
-              </button>
+              <span className="mx-1.5 opacity-40">·</span>
+              {stats.levelPath.split("/").pop()}
+            </>
+          ) : (
+            <>
+              <span className="mx-1.5 opacity-40">·</span>
+              this level
+            </>
+          )}
+          {stats.capped ? (
+            <>
+              <span className="mx-1.5 opacity-40">·</span>
+              capped
             </>
           ) : null}
-          <button
-            type="button"
-            className="icon-btn h-8 w-8"
-            title="Fit graph in view"
-            aria-label="Fit graph in view"
-            onClick={() => {
-              try {
-                graphRef.current?.zoomToFit(
-                  reducedMotion ? 0 : 420,
-                  mode === "fullscreen" ? 70 : 48,
-                );
-              } catch {
-                /* ok */
-              }
-            }}
-          >
-            <Scan size={14} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn h-8 w-8"
-            title="Export graph PNG"
-            aria-label="Export graph PNG"
-            onClick={exportPng}
-          >
-            <Download size={14} />
-          </button>
-          {mode === "fullscreen" ? (
-            <button
-              type="button"
-              data-exit-graph
-              className="ml-0.5 flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[var(--accent)] px-3 text-[13px] font-semibold text-black shadow-[0_0_24px_rgba(0,200,255,0.28)] hover:brightness-110"
-              title="Exit fullscreen graph (Esc or Ctrl+G)"
-              aria-label="Exit graph"
-              onClick={() => exitGraphForViewport()}
-            >
-              <Minimize2 size={15} />
-              <span>Exit graph</span>
-              <kbd className="ml-0.5 rounded border border-black/20 bg-black/15 px-1 py-px text-[10px] font-medium text-black/80">
-                Esc
-              </kbd>
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="icon-btn h-8 w-8"
-              title="Expand graph"
-              aria-label="Expand graph"
-              onClick={() => setGraphMode("fullscreen")}
-            >
-              <Maximize2 size={14} />
-            </button>
-          )}
-        </div>
-      </div>
+        </>
+      ) : graphModeResolved === "ego" || isPartialVaultGraph ? (
+        <>
+          <span className="text-[var(--accent)] opacity-90">Near active</span>
+          <span className="mx-1.5 opacity-40">·</span>
+          {realNoteCount} notes
+          <span className="mx-1.5 opacity-40">·</span>
+          {realLinkCount} links
+          {vaultNoteCount > realNoteCount ? (
+            <>
+              <span className="mx-1.5 opacity-40">·</span>
+              of {vaultNoteCount.toLocaleString()}
+            </>
+          ) : null}
+        </>
+      ) : (
+        <>
+          {vaultNoteCount || realNoteCount} notes
+          <span className="mx-1.5 opacity-40">·</span>
+          {realLinkCount} links
+        </>
+      )}
+      {hoverName ? (
+        <>
+          <span className="mx-1.5 opacity-40">·</span>
+          {hoverName}
+        </>
+      ) : null}
+    </>
+  );
 
+  const emptyTitle =
+    graphModeResolved === "folder"
+      ? !(stats.levelPath || graphBrowsePath)
+        ? vaultNoteCount > 0
+          ? "Nothing on this level"
+          : "Empty vault"
+        : "Empty folder"
+      : graphModeResolved === "ego"
+        ? activeNoteId
+          ? "No links in range"
+          : "Pick a note"
+        : vaultNoteCount === 0
+          ? "No notes yet"
+          : graphQuery || tagFilter || folderFilter || orphansOnly
+            ? "Nothing matches these filters"
+            : "No graph nodes";
+
+  const emptyDescription =
+    graphModeResolved === "folder"
+      ? vaultNoteCount > 0
+        ? "Open a folder orb, or switch to Links to see [[wikilinks]] near the active note."
+        : "Add a folder or note — the map stays honest at any vault size."
+      : graphModeResolved === "ego"
+        ? activeNoteId
+          ? "This note has no resolved [[wikilinks]] within two hops. Add a link, or return to the folder map."
+          : "Open a note to see its neighborhood. The map never draws the whole vault."
+        : vaultNoteCount === 0
+          ? "Create a note to begin the constellation."
+          : graphQuery || tagFilter || folderFilter || orphansOnly
+            ? "Clear filters to see the current view again."
+            : "Add [[wikilinks]] between notes to map structure.";
+
+  const emptyActions = (
+    <>
+      {vaultNoteCount === 0 ? (
+        <button
+          type="button"
+          className="primary-btn min-h-8 px-3 text-[12px]"
+          onClick={() => createNote(null, "Untitled")}
+        >
+          <FilePlus2 size={13} />
+          New note
+        </button>
+      ) : null}
+      {graphModeResolved === "folder" && activeNoteId && vaultNoteCount > 0 ? (
+        <button
+          type="button"
+          className="primary-btn min-h-8 px-3 text-[12px]"
+          onClick={handleShowLinks}
+        >
+          <Link2 size={13} />
+          Show links
+        </button>
+      ) : null}
+      {graphModeResolved === "ego" ? (
+        <button
+          type="button"
+          className="ghost-btn min-h-8 px-3 text-[12px]"
+          onClick={() => {
+            if (returnFromGraphEgo) returnFromGraphEgo();
+            else resetGraphBrowse?.();
+          }}
+        >
+          <Globe2 size={13} />
+          Folder map
+        </button>
+      ) : null}
+      {(graphQuery || tagFilter || folderFilter || orphansOnly) &&
+      displayData.nodes.length === 0 ? (
+        <button
+          type="button"
+          className="ghost-btn min-h-8 px-3 text-[12px]"
+          onClick={() => {
+            setGraphQuery("");
+            setTagFilter("");
+            setFolderFilter("");
+            setOrphansOnly(false);
+            setShowGhosts(true);
+          }}
+        >
+          Clear filters
+        </button>
+      ) : null}
+    </>
+  );
+
+  return (
+    <GraphChrome
+      className={className}
+      mode={mode}
+      viewMode={graphModeResolved}
+      engineReady={engineReady}
+      largeVault={shouldUseFolderGraph(vaultNoteCount)}
+      badge={badge}
+      crumbs={folderCrumbs}
+      query={graphQuery}
+      onQuery={setGraphQuery}
+      showGhosts={showGhosts}
+      onToggleGhosts={() => setShowGhosts((v) => !v)}
+      ghostCount={ghostCount}
+      orphansOnly={orphansOnly}
+      onToggleOrphans={() => setOrphansOnly((v) => !v)}
+      orphansAvailable={graphModeResolved !== "folder"}
+      tag={tagFilter}
+      tagOptions={tagOptions}
+      onTag={setTagFilter}
+      folderPrefix={folderFilter}
+      folderOptions={folderOptions}
+      onFolder={setFolderFilter}
+      colorBy={colorBy}
+      onColorBy={setColorBy}
+      hopsLabel={
+        neighborhood === "all" || graphModeResolved === "folder"
+          ? null
+          : `${hopCount(neighborhood)}-hop${isolateHops ? " iso" : ""}`
+      }
+      onCycleHops={() => setNeighborhood(cycleNeighborhood)}
+      isolateHops={isolateHops}
+      onToggleIsolate={() => setIsolateHops((v) => !v)}
+      hopsAvailable={graphModeResolved !== "folder"}
+      inspect={inspect}
+      onOpenInspectLink={(id) => setActiveNote(id)}
+      onShowLinks={handleShowLinks}
+      onVaultMap={() => {
+        if (returnFromGraphEgo) returnFromGraphEgo();
+        else resetGraphBrowse?.();
+      }}
+      onEnterFolder={(path) => enterGraphFolder?.(path)}
+      onFit={fitView}
+      onExport={exportPng}
+      onExpand={() => setGraphMode("fullscreen")}
+      empty={{
+        show: displayData.nodes.length === 0,
+        title: emptyTitle,
+        description: emptyDescription,
+        actions: emptyActions,
+      }}
+      hint={graphHintText(mode, graphModeResolved)}
+      hintVisible={hintVisible}
+      liveRegion={liveRegion}
+      filterInputRef={filterInputRef}
+      onKeyDown={onGraphKey}
+    >
       <div
         ref={hostRef}
-        className="relative z-[1] min-h-0 flex-1 touch-none"
+        className="relative z-[1] min-h-0 flex-1 touch-none outline-none"
         aria-hidden="true"
       />
-
-      <div className="sr-only" role="status" aria-live="polite">
-        {liveRegion}
-      </div>
-
-      {hintVisible ? (
-        <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-white/[0.08] bg-black/50 px-3 py-1.5 text-[10px] tracking-wide text-[var(--text-muted)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md">
-            {graphHintText(mode, graphModeResolved)}
-          </div>
-        </div>
-      ) : mode === "fullscreen" ? (
-        <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-black/60 px-3 py-1.5 text-[11px] text-[var(--text-primary)] backdrop-blur-md">
-            Esc or <span className="font-semibold text-[var(--accent)]">Exit graph</span>{" "}
-            to leave fullscreen
-          </div>
-        </div>
-      ) : null}
-
-      {hoverTip && displayData.nodes.length > 0 ? (
-        <div
-          className="graph-tooltip pointer-events-none absolute bottom-12 left-1/2 z-20 w-[min(260px,70vw)] -translate-x-1/2"
-          role="tooltip"
-        >
-          <div className="text-[12px] font-semibold tracking-wide text-[var(--text-primary)]">
-            {hoverTip.name}
-          </div>
-          {hoverTip.path ? (
-            <div className="mt-0.5 truncate text-[10.5px] text-[var(--text-muted)]">
-              {hoverTip.path}
-            </div>
-          ) : null}
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-secondary)]">
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-px capitalize">
-              {hoverTip.kind}
-            </span>
-            {hoverTip.kind === "note" || hoverTip.kind === "missing" ? (
-              <span>
-                {hoverTip.degree} link{hoverTip.degree === 1 ? "" : "s"}
-              </span>
-            ) : null}
-          </div>
-          {hoverTip.preview ? (
-            <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-[var(--text-muted)]">
-              {hoverTip.preview}
-            </p>
-          ) : null}
-          <p className="mt-2 text-[10px] text-[var(--accent)]/80">
-            Click to open
-          </p>
-        </div>
-      ) : null}
-
-      {displayData.nodes.length === 0 ? (
-        <div className="absolute inset-0 z-10 flex items-center justify-center px-6">
-          <EmptyState
-            icon={<Network size={16} />}
-            title={
-              graphModeResolved === "folder"
-                ? !(stats.levelPath || graphBrowsePath)
-                  ? vaultNoteCount > 0
-                    ? "Folder map ready"
-                    : "Empty vault"
-                  : "Empty folder"
-                : graphModeResolved === "ego"
-                  ? "No neighborhood"
-                  : vaultNoteCount === 0
-                    ? "No notes yet"
-                    : "No graph nodes"
-            }
-            description={
-              graphModeResolved === "folder"
-                ? !(stats.levelPath || graphBrowsePath)
-                  ? vaultNoteCount > 0
-                    ? "Open a folder orb to drill in, or show links near your active note."
-                    : "Add folders or notes to map structure."
-                  : "This level has no notes or subfolders yet."
-                : graphModeResolved === "ego"
-                  ? activeNoteId
-                    ? "This note has no resolved [[wikilinks]] in range."
-                    : "Open a note to see links near it."
-                  : vaultNoteCount === 0
-                    ? "Create a note to begin."
-                    : "Add [[wikilinks]] between notes to map structure."
-            }
-            className="pointer-events-auto max-w-[300px] border-[var(--border)] bg-[var(--glass-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-md"
-          >
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              {vaultNoteCount === 0 ||
-              (graphModeResolved === "folder" &&
-                !(stats.levelPath || graphBrowsePath) &&
-                vaultNoteCount === 0) ? (
-                <button
-                  type="button"
-                  className="primary-btn min-h-8 px-3 text-[12px]"
-                  onClick={() => createNote(null, "Untitled")}
-                >
-                  <FilePlus2 size={13} />
-                  New note
-                </button>
-              ) : null}
-              {graphModeResolved === "folder" &&
-              activeNoteId &&
-              vaultNoteCount > 0 ? (
-                <button
-                  type="button"
-                  className="primary-btn min-h-8 px-3 text-[12px]"
-                  onClick={handleShowLinks}
-                >
-                  <Link2 size={13} />
-                  Show links
-                </button>
-              ) : null}
-              {graphModeResolved === "ego" && activeNoteId ? (
-                <button
-                  type="button"
-                  className="ghost-btn min-h-8 px-3 text-[12px]"
-                  onClick={() => resetGraphBrowse?.()}
-                >
-                  <Globe2 size={13} />
-                  Vault map
-                </button>
-              ) : null}
-              {graphModeResolved === "ego" && !activeNoteId ? (
-                <button
-                  type="button"
-                  className="primary-btn min-h-8 px-3 text-[12px]"
-                  onClick={() => setCommandOpen(true)}
-                >
-                  <Search size={13} />
-                  Find a note
-                </button>
-              ) : null}
-              {graphModeResolved !== "ego" &&
-              graphModeResolved !== "folder" &&
-              vaultNoteCount > 0 ? (
-                <button
-                  type="button"
-                  className="ghost-btn min-h-8 px-3 text-[12px]"
-                  onClick={() => setCommandOpen(true)}
-                >
-                  <Search size={13} />
-                  Search notes
-                </button>
-              ) : null}
-              {graphModeResolved === "folder" &&
-              (stats.levelPath || graphBrowsePath) ? (
-                <button
-                  type="button"
-                  className="ghost-btn min-h-8 px-3 text-[12px]"
-                  onClick={() => resetGraphBrowse?.()}
-                >
-                  <Globe2 size={13} />
-                  Back to vault
-                </button>
-              ) : null}
-            </div>
-          </EmptyState>
-        </div>
-      ) : null}
-    </div>
+    </GraphChrome>
   );
 }
