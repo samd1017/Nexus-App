@@ -3,6 +3,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle } from "@/lib/vault/types";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { previewSnippet } from "@/lib/markdown/serialize";
+import { shouldSkipBackgroundBodyHydrate } from "@/lib/vault/fill-interaction";
 
 type Props = {
   target: string;
@@ -13,6 +14,7 @@ type Props = {
 export function WikilinkHoverCard({ target, x, y }: Props) {
   const nodes = useVaultStore((s) => s.nodes);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const hit = resolveWikilink(target, nodes);
   const note = hit?.kind === "note" ? hit : null;
   const [body, setBody] = useState(note?.content ?? "");
@@ -26,6 +28,10 @@ export function WikilinkHoverCard({ target, x, y }: Props) {
       setBody(note.content);
       return;
     }
+    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
+      setBody("");
+      return;
+    }
     let cancelled = false;
     void ensureNoteBody(note.id).then((md: string | null) => {
       if (!cancelled) setBody(md ?? "");
@@ -33,7 +39,7 @@ export function WikilinkHoverCard({ target, x, y }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [note, ensureNoteBody]);
+  }, [note, ensureNoteBody, indexFillBusy]);
 
   const left = Math.min(Math.max(8, x + 12), window.innerWidth - 360);
   const top = Math.min(Math.max(8, y + 16), window.innerHeight - 220);

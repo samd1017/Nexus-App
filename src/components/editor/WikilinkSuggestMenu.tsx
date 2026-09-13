@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { FilePlus2, FileText, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { WikilinkSuggestItem } from "@/lib/editor/wikilink-suggest";
@@ -38,7 +39,7 @@ export function WikilinkSuggestMenu({
     el?.scrollIntoView({ block: "nearest" });
   }, [selected, open]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const maxH = 280;
   const spaceBelow = window.innerHeight - rect.bottom - 12;
@@ -49,9 +50,9 @@ export function WikilinkSuggestMenu({
   const left = Math.min(Math.max(8, rect.left), window.innerWidth - 320);
   const createTitle = query.trim();
 
-  return (
+  return createPortal(
     <div
-      className="fixed z-[95] w-[min(320px,calc(100vw-16px))] overflow-hidden rounded-xl border border-[var(--border-strong)] bg-[rgba(12,12,15,0.97)] shadow-[0_20px_60px_rgba(0,0,0,0.55)] backdrop-blur-xl"
+      className="fixed z-[120] w-[min(320px,calc(100vw-16px))] overflow-hidden rounded-xl border border-[var(--border-strong)] bg-[rgba(12,12,15,0.97)] shadow-[0_20px_60px_rgba(0,0,0,0.55)] backdrop-blur-xl"
       style={{ left, top, maxHeight: maxH }}
       role="listbox"
       aria-label="Link to note or folder"
@@ -147,6 +148,7 @@ export function WikilinkSuggestMenu({
           Esc
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

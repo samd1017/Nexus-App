@@ -62,6 +62,7 @@ export async function buildLargeTestVault(opts?: {
   rootIds: string[];
   vaultName: string;
   noteCount: number;
+  firstNoteId: string | null;
 }> {
   const onProgress = opts?.onProgress;
   onProgress?.(0, 1, "manifest");
@@ -84,38 +85,55 @@ export async function buildLargeTestVault(opts?: {
   }
 
   let loaded = 0;
+  let firstNoteId: string | null = null;
   const now = Date.now();
-  for (let c = 0; c < manifest.chunks; c++) {
-    const chunk = await fetchJson<NoteSeed[]>(`/large-test-vault/notes-${c}.json`);
-    for (const n of chunk) {
-      const parentId = n.f ? folderIdByPath.get(n.f) ?? null : null;
-      const node = note(n.p, n.n, parentId, n.c, now - (manifest.total - loaded));
-      nodes[node.id] = node;
-      loaded++;
+  // 18 chunks × 2500 notes; 6-wide fetch is 3 waves instead of 6.
+  const CONCURRENCY = 6;
+  for (let c = 0; c < manifest.chunks; ) {
+    const batch: Promise<NoteSeed[]>[] = [];
+    for (let k = 0; k < CONCURRENCY && c + k < manifest.chunks; k++) {
+      batch.push(fetchJson<NoteSeed[]>(`/large-test-vault/notes-${c + k}.json`));
     }
+    const chunks = await Promise.all(batch);
+    for (const chunk of chunks) {
+      for (const n of chunk) {
+        const parentId = n.f ? folderIdByPath.get(n.f) ?? null : null;
+        const node = note(n.p, n.n, parentId, n.c, now - (manifest.total - loaded));
+        nodes[node.id] = node;
+        if (!firstNoteId && (n.p.startsWith("00-Inbox/") || n.p === "README.md")) {
+          firstNoteId = node.id;
+        }
+        loaded++;
+      }
+    }
+    c += batch.length;
     onProgress?.(loaded, manifest.total, "notes");
-    // yield to UI between chunks
-    await new Promise((r) => setTimeout(r, 0));
+    if (c < manifest.chunks) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
   // Root: top-level folders only (PARA roots)
+  if (!firstNoteId) {
+    for (const id in nodes) {
+      if (nodes[id]?.kind === "note") {
+        firstNoteId = id;
+        break;
+      }
+    }
+  }
+
   const rootIds = sortedFolders
     .filter((f) => !f.parent)
     .map((f) => folderIdByPath.get(f.p)!)
     .filter(Boolean);
-
-  // Prefer opening README-like intro if present, else first inbox note, else first note
-  const readme = Object.values(nodes).find((n) => n.kind === "note" && n.path === "README.md");
-  if (readme) {
-    // ensure README is a root-level note id in rootIds? demo has Welcome at root
-    // keep folders as rootIds only; active note separate
-  }
 
   return {
     nodes,
     rootIds,
     vaultName: manifest.vaultName || "Large Test Vault",
     noteCount: loaded,
+    firstNoteId,
   };
 }
 

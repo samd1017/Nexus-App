@@ -1,9 +1,18 @@
 //! Wave A — registered vault roots for native walk / watch.
-//! Frontend must register a root (after OS folder dialog) before meta walk or watch.
+//! Frontend must register a root (after OS folder dialog **or** programmatic
+//! path open) before meta walk, watch, or plugin-fs reads.
+//!
+//! Dialog-picked folders are added to `tauri-plugin-fs` persisted-scope
+//! automatically. Path opens (Wave E / soak / reopen) must call
+//! `vault_register_root` so `readDir` / `readTextFile` get the same grant.
+//! Production capabilities still do not allow all of `$HOME`.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
+
+use tauri::AppHandle;
+use tauri_plugin_fs::FsExt;
 
 static ALLOWED_ROOTS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
@@ -26,6 +35,31 @@ fn normalize_root(root: &str) -> Result<PathBuf, String> {
 
 fn key_for(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+/// Strip Windows `\\?\` prefix so plugin-fs glob matching sees a normal path.
+fn for_scope_path(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+pub fn is_entire_home_dir(path: &Path) -> bool {
+    let candidates = [std::env::var("HOME").ok(), std::env::var("USERPROFILE").ok()];
+    for home in candidates.into_iter().flatten() {
+        if home.is_empty() {
+            continue;
+        }
+        let hp = PathBuf::from(home);
+        let hc = std::fs::canonicalize(&hp).unwrap_or(hp);
+        if key_for(&for_scope_path(path)) == key_for(&for_scope_path(&hc)) {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn is_allowed_vault_root(root: &str) -> bool {
@@ -57,6 +91,47 @@ pub fn register_root(root: &str) -> Result<String, String> {
     let mut guard = ALLOWED_ROOTS.lock().map_err(|e| e.to_string())?;
     let set = guard.get_or_insert_with(HashSet::new);
     set.insert(key.clone());
+    Ok(key)
+}
+
+/// Grant plugin-fs (+ persisted-scope) for a vault folder — same as dialog `recursive: true`.
+/// Refuses the entire home directory so Wave E cannot unlock `$HOME/**`.
+pub fn grant_plugin_fs_scope(app: &AppHandle, root: &str) -> Result<(), String> {
+    let raw = PathBuf::from(root);
+    let norm = normalize_root(root)?;
+    if is_entire_home_dir(&norm) || is_entire_home_dir(&raw) {
+        return Err(
+            "refusing to grant desktop FS scope for the entire home folder — open a vault subfolder (Documents/nexus-soak-N is the Wave E default)"
+                .into(),
+        );
+    }
+    let scope = app.fs_scope();
+    let mut last_err: Option<String> = None;
+    let mut granted = false;
+    for p in [raw, norm] {
+        let p = for_scope_path(&p);
+        // Directory itself (readDir on the root) + descendants (recursive).
+        match scope.allow_directory(&p, false) {
+            Ok(()) => granted = true,
+            Err(e) => last_err = Some(e.to_string()),
+        }
+        match scope.allow_directory(&p, true) {
+            Ok(()) => granted = true,
+            Err(e) => last_err = Some(e.to_string()),
+        }
+    }
+    if granted {
+        return Ok(());
+    }
+    Err(format!(
+        "cannot allow vault folder for desktop FS: {}",
+        last_err.unwrap_or_else(|| "unknown scope error".into())
+    ))
+}
+
+pub fn register_and_grant(app: &AppHandle, root: &str) -> Result<String, String> {
+    let key = register_root(root)?;
+    grant_plugin_fs_scope(app, root)?;
     Ok(key)
 }
 
@@ -106,12 +181,56 @@ pub fn assert_index_db_path(app_data: &Path, db_path: &str) -> Result<PathBuf, S
 }
 
 #[tauri::command]
-pub fn vault_register_root(root: String) -> Result<String, String> {
-    register_root(&root)
+pub fn vault_register_root(app: AppHandle, root: String) -> Result<String, String> {
+    register_and_grant(&app, &root)
 }
 
 #[tauri::command]
 pub fn vault_clear_roots() -> Result<bool, String> {
     clear_roots();
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn rejects_relative() {
+        assert!(normalize_root("foo/bar").is_err());
+        assert!(register_root("foo/bar").is_err());
+    }
+
+    #[test]
+    fn rejects_dotdot() {
+        assert!(normalize_root("/tmp/foo/../bar").is_err());
+    }
+
+    #[test]
+    fn registers_temp_dir() {
+        clear_roots();
+        let dir = std::env::temp_dir().join(format!("nexus-scope-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let key = register_root(dir.to_str().unwrap()).expect("register temp");
+        assert!(is_allowed_vault_root(dir.to_str().unwrap()));
+        assert!(key.to_lowercase().contains("nexus-scope"));
+        let _ = fs::remove_dir_all(&dir);
+        clear_roots();
+    }
+
+    #[test]
+    fn entire_home_is_detected() {
+        let home = std::env::var("HOME")
+            .ok()
+            .or_else(|| std::env::var("USERPROFILE").ok());
+        let Some(home) = home else {
+            return;
+        };
+        assert!(is_entire_home_dir(Path::new(&home)));
+        assert!(!is_entire_home_dir(&PathBuf::from(&home).join("Documents")));
+        assert!(!is_entire_home_dir(
+            &PathBuf::from(&home).join("Documents").join("nexus-soak-100k")
+        ));
+    }
 }

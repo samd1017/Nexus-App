@@ -93,6 +93,7 @@ export function SettingsPanel() {
   const connectCloud = useVaultStore((s) => s.connectCloud);
   const disconnectCloud = useVaultStore((s) => s.disconnectCloud);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
+  const openLocked = useVaultStore((s) => s.connecting || s.indexFillBusy);
   const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
   const getConflictItems = useVaultStore((s) => s.getConflictItems);
   const conflictCount = useSyncExternalStore(
@@ -565,6 +566,62 @@ export function SettingsPanel() {
             </div>
           </Section>
 
+          <Section title="Agents & Grok">
+            <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+              Humans and agents share the same folder of Markdown. Point Grok,
+              Cursor, or any script at this vault. Nexus watches the disk,
+              shows writes in Pulse, and opens Conflict Studio when you and an
+              agent edit the same note at once.
+            </p>
+            <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+              <li>Open a real folder (or stay in the demo vault).</li>
+              <li>
+                Have an agent write a <span className="font-mono">.md</span> file
+                — or run <strong>Simulate agent write</strong> from the vault
+                menu / command palette.
+              </li>
+              <li>
+                Open Pulse. To practice a conflict, edit{" "}
+                <span className="font-mono">Systems/Hermes Pulse.md</span> then
+                simulate again — Keep mine / Take theirs.
+              </li>
+            </ol>
+            {vaultId ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  onClick={() => {
+                    useVaultStore.getState().simulateHermesWrite();
+                    useVaultStore.getState().openPulseRail?.();
+                    usePrefsStore.getState().setSettingsOpen(false);
+                  }}
+                >
+                  Simulate agent write
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  onClick={() => {
+                    useVaultStore.getState().practiceAgentConflict();
+                    useVaultStore.getState().openPulseRail?.();
+                    usePrefsStore.getState().setSettingsOpen(false);
+                  }}
+                >
+                  Practice conflict
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-[12px] text-[var(--text-muted)]">
+                Open a vault to run the agent demo.
+              </p>
+            )}
+            <p className="mt-3 text-[11.5px] leading-snug text-[var(--text-muted)]">
+              No API keys live in Nexus. Grok Bot and external agents write
+              files on disk. Keep notes in clean Markdown so diffs stay honest.
+            </p>
+          </Section>
+
           {/* Sync */}
           <Section title="Sync">
             <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
@@ -642,8 +699,11 @@ export function SettingsPanel() {
             <button
               type="button"
               className="ghost-btn mt-3 min-h-9 w-full justify-center"
-              disabled={!canOpenLocalVaultFolder()}
-              onClick={() => void openFolderAsVault()}
+              disabled={!canOpenLocalVaultFolder() || openLocked}
+              onClick={() => {
+                if (openLocked) return;
+                void openFolderAsVault();
+              }}
             >
               Open a synced folder…
             </button>
@@ -723,11 +783,15 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Editing"
-                body="Visual is the rich editor. Source shows clean Markdown. They stay in sync. Type [[ to link notes or folders."
+                body={`Visual is the rich editor. Source is clean Markdown. Preview is Source + live render. ${formatShortcut("E")} cycles them. Type [[ to link, ${formatShortcut("L", { shift: true })} to insert a link, ${formatShortcut("F")} to find in the focused pane.`}
               />
               <HelpItem
                 title="Daily notes & templates"
                 body={`${formatShortcut("D")} opens today's daily page. Create Meeting, Idea, or Project notes from the command palette or file tree context menu.`}
+              />
+              <HelpItem
+                title="Search & Ask"
+                body={`${formatShortcut("K")} opens search. Prefix ask: or ?  for a grounded answer with citations. Operators: path: folder: file: #tag -exclude is:orphan. Trash restore is in the sidebar, the delete toast, and ${formatShortcut("K")} trash / is:deleted.`}
               />
               <HelpItem
                 title="Graph"
@@ -738,16 +802,20 @@ export function SettingsPanel() {
                 body="Built-in sync watches your vault folder. Put it in Dropbox, Drive, OneDrive, iCloud, or Syncthing — no Nexus account. Conflicts open in Conflict Studio."
               />
               <HelpItem
-                title="Hermes & agents"
-                body="External apps can edit .md files on disk. Changes appear live. Keep Markdown clean — no proprietary formats."
+                title="Hermes, Grok & agents"
+                body={`External apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Practice agent conflict from the vault menu, Pulse, Settings → Agents, or ${formatShortcut("K")}.`}
               />
               <HelpItem
                 title="Desktop"
                 body={
                   isAppleModPlatform()
-                    ? `Reveal in Finder shows the vault folder. Open Settings anytime with ${formatShortcut(",")}.`
-                    : `Reveal in file manager shows the vault folder. Open Settings anytime with ${formatShortcut(",")}.`
+                    ? `The desktop app (Tauri) opens a real folder and watches it. Reveal in Finder shows that folder. Open Settings with ${formatShortcut(",")}.`
+                    : `The desktop app (Tauri) opens a real folder and watches it. Reveal in your file manager shows that folder. Open Settings with ${formatShortcut(",")}.`
                 }
+              />
+              <HelpItem
+                title="Local folder (browser)"
+                body="Chrome or Edge: Open… uses the File System Access API and remembers the directory handle in IndexedDB. After a reload the browser still asks you to re-grant access — that is a browser permission gate, not a Nexus account. This Cloud Agent VM does not exercise FSA or Tauri; on your machine, Open… (Chromium) or the desktop build is the local-folder path."
               />
             </div>
             <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">

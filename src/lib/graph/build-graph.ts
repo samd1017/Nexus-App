@@ -5,8 +5,11 @@ import type {
   VaultNode,
 } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
-import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
-import { normalizeLinkTarget } from "@/lib/markdown/wikilinks";
+import {
+  extractWikilinkTargets,
+  normalizeLinkTarget,
+  parseWikilinkInner,
+} from "@/lib/markdown/wikilinks";
 import { previewSnippet } from "@/lib/markdown/serialize";
 import { vaultLinkIndex } from "@/lib/vault/link-index";
 import {
@@ -14,6 +17,12 @@ import {
   shouldUseFolderGraph,
   getScaleFlags,
 } from "@/lib/vault/scale-flags";
+import {
+  EGO_MAX_HOPS,
+  EGO_MAX_NODES,
+  clampEgoHops,
+  clampEgoNodeCap,
+} from "@/lib/graph/graph-select";
 import {
   buildFolderGraph,
   folderIdFromBrowsePath,
@@ -24,19 +33,36 @@ import {
   type VaultStructuralIndex,
 } from "@/lib/vault/indexes";
 
+export { EGO_MAX_HOPS, EGO_MAX_NODES } from "@/lib/graph/graph-select";
+
 export function parentFolderOf(path: string): string {
   const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
   parts.pop();
   return parts.join("/");
 }
 
+let wikilinkIndexCache: {
+  nodes: Record<string, VaultNode>;
+  structureGeneration: number;
+  map: Map<string, string>;
+} | null = null;
+
 /**
  * Map-based wikilink index: normalized title / name / path → node id.
- * Built once per resolve pass so graph builds stay O(links) not O(links × notes).
+ * Cached on structural generation — content-only hydrates must not rebuild 45k maps.
  */
 export function buildWikilinkIndex(
   nodes: Record<string, VaultNode>,
 ): Map<string, string> {
+  const structGen = ensureVaultIndex(nodes).structureGeneration;
+  if (
+    wikilinkIndexCache &&
+    wikilinkIndexCache.nodes === nodes &&
+    wikilinkIndexCache.structureGeneration === structGen
+  ) {
+    return wikilinkIndexCache.map;
+  }
+
   const index = new Map<string, string>();
   const setIfAbsent = (key: string, id: string) => {
     if (key && !index.has(key)) index.set(key, id);
@@ -60,6 +86,11 @@ export function buildWikilinkIndex(
     setIfAbsent(normalizeLinkTarget(f.path), f.id);
   }
 
+  wikilinkIndexCache = {
+    nodes,
+    structureGeneration: structGen,
+    map: index,
+  };
   return index;
 }
 
@@ -112,16 +143,20 @@ export function buildResolvedAdjacency(
 /**
  * Wave 2 — Ego subgraph from link maps only (2 hops default).
  * BFS from center using vaultLinkIndex; does NOT build full-vault adjacency.
+ * Hops and node count are hard-capped so hub notes cannot explode the draw list.
  */
 export function buildEgoGraph(
   nodes: Record<string, VaultNode>,
   centerId: string,
-  hops = 2,
+  hops = EGO_MAX_HOPS,
+  maxNodes = EGO_MAX_NODES,
 ): {
   nodes: GraphNode[];
   edges: GraphEdge[];
   ego: true;
 } {
+  const hopLimit = clampEgoHops(hops);
+  const nodeCap = clampEgoNodeCap(maxNodes);
   const widx = buildWikilinkIndex(nodes);
   const resolveOut = (id: string): string[] => {
     const targets = targetsForNote(nodes[id] ?? ({} as VaultNode));
@@ -154,19 +189,22 @@ export function buildEgoGraph(
   const keep = new Set<string>([centerId]);
   let frontier = [centerId];
   const outLocal = new Map<string, string[]>();
-  for (let h = 0; h < hops; h++) {
+  for (let h = 0; h < hopLimit; h++) {
+    if (keep.size >= nodeCap) break;
     const next: string[] = [];
     for (const id of frontier) {
       if (!nodes[id]) continue;
       const outs = resolveOut(id);
       outLocal.set(id, outs);
       for (const x of outs) {
+        if (keep.size >= nodeCap) break;
         if (!keep.has(x)) {
           keep.add(x);
           next.push(x);
         }
       }
       for (const x of reverseFor(id)) {
+        if (keep.size >= nodeCap) break;
         if (!keep.has(x)) {
           keep.add(x);
           next.push(x);
@@ -251,7 +289,7 @@ export function buildGraph(
 
   // Wave B: map-first ego — never materialize all vault edges first
   if (useEgo && center && nodes[center]) {
-    return buildEgoGraph(nodes, center, 2);
+    return buildEgoGraph(nodes, center, EGO_MAX_HOPS);
   }
 
   const degree = new Map<string, number>();
@@ -418,7 +456,7 @@ export function resolveGraphData(
     opts.activeNoteId &&
     nodes[opts.activeNoteId]?.kind === "note"
   ) {
-    const g = buildEgoGraph(nodes, opts.activeNoteId, 2);
+    const g = buildEgoGraph(nodes, opts.activeNoteId, EGO_MAX_HOPS);
     return {
       mode: "ego",
       nodes: g.nodes,
@@ -492,7 +530,7 @@ export function resolveGraphData(
     center = best?.id ?? null;
   }
   if (center && nodes[center]) {
-    const g = buildEgoGraph(nodes, center, 2);
+    const g = buildEgoGraph(nodes, center, EGO_MAX_HOPS);
     return {
       mode: "ego",
       nodes: g.nodes,
@@ -546,13 +584,19 @@ export function resolveWikilink(
   nodes: Record<string, VaultNode>,
   index?: Map<string, string>,
 ): VaultNode | null {
-  const norm = normalizeLinkTarget(target);
+  const parts = parseWikilinkInner(target);
+  // Same-note `[[#Heading]]` / `[[#^block]]` have no note target — caller supplies the note.
+  if (!parts.noteTarget) return null;
+  const norm = normalizeLinkTarget(parts.noteTarget);
   if (!norm) return null;
 
   const idx = index ?? buildWikilinkIndex(nodes);
 
   const exactId = idx.get(norm);
   if (exactId && nodes[exactId]) return nodes[exactId];
+
+  // Fuzzy suffix/partial scan is O(n). Large vaults keep exact title/path only.
+  if (shouldUseEgoGraph(ensureVaultIndex(nodes).noteCount)) return null;
 
   const notes = Object.values(nodes).filter((n) => n.kind === "note");
   const folders = Object.values(nodes).filter((n) => n.kind === "folder");

@@ -76,6 +76,73 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
+## Wave E — 100k then 300k (SQLite FTS5 BM25)
+
+Chrome in the browser is **not** this path. Chrome refuses ≥25k. SCALE READY is a **desktop** claim only.
+
+### Build from source (Mac / Windows)
+
+1. Install [Rust](https://rustup.rs/) and Node **22+**.
+2. macOS: `xcode-select --install`. Windows: MSVC toolchain + WebView2.
+3. `npm install && npm run tauri:dev`
+4. Confirm the window is the Tauri shell (not `npm run dev` in Chrome).
+
+### Generate soak vaults
+
+```bash
+npm run soak:wave-e-desktop -- --notes 100000
+npm run soak:wave-e-desktop -- --notes 300000
+```
+
+That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\…`) if missing, then prints the prove steps. Documents is inside the production `fs:scope` allow-list; a home-dir folder like `%USERPROFILE%\nexus-soak-100k` still works if you open it programmatically — Wave E registers that path with plugin-fs persisted-scope the same way **Open folder** does. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
+
+### Prove (must all hold) — honest phases
+
+Cold 100k must **not** wait for every note body to enter FTS before the vault is usable. Obsidian-class first open: tree/editor in seconds; search becomes useful while heads fill in the background.
+
+| Phase | What works | Browse blocked? |
+|--------|------------|-----------------|
+| `ready-meta` | Tree, open notes, title/path FTS | No — this is “vault usable” |
+| `ready-fts-partial` | Short-head body search (768 chars; hub/cluster probes) | No |
+| `ready-fts` | Deep 8k-head FTS | No — background only |
+
+1. Open the folder in `tauri:dev` (Welcome → Open folder), **or** DevTools:
+
+   ```js
+   await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")
+   ```
+
+2. First paint: tree/editor interactive in seconds. Banner may still say heads are filling. Palette heading includes **SQLite FTS5 BM25** (may append `· titles` / `· heads` until deep FTS finishes). Never `Memory FTS (capped)`.
+3. Search `hub` after the banner leaves “Cataloging notes…” — **16 Hub titles** should appear from the title seed (seconds), without waiting for note heads. Palette must not say “try again when Ready” once title search is on. Then `cluster` / `retrieval hub` once short heads start (Wave E polls; it does not wait for full 100k 8k-head fill). **Official vault only** (`npm run gen:soak-vault` / `SOAK-MANIFEST.json`). Unofficial Meeting-* folders with `hub_files=0` are a false alarm.
+4. Open 20 notes. UI stays responsive.
+5. Create a note, reload (or `await __NEXUS_SOAK__.reloadDesktop()`), confirm it is still on disk.
+
+### Drive from the script (Windows WebView2)
+
+```bat
+set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223
+npm run tauri:dev
+npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\Documents\nexus-soak-100k
+```
+
+`pass: true` is one automated run. Do **not** claim SCALE READY until a human watches a 100k+ session stay responsive.
+
+### Code path
+
+| Layer | What |
+|--------|------|
+| Rust | `vault_index_fill_from_disk` is **async** (blocking pool) and **phased**: walk → **title/path FTS seed** (priority folder + Hub-named files first, ~2k rows) → **`ready-meta` immediately** → parallel 768-char heads (remaining titles ride along) → deferred 8k heads. It does **not** write 100k empty-body FTS rows before search is live. Incremental: skip notes whose path+mtime+size already match at that `fill_depth`. While writing a head it extracts `[[wikilinks]]` into `link_edge`. A warm FTS index filled before that path gets a one-shot backfill from `note_fts` bodies (no JS hydrate). Emits `ready-meta` / `ready-fts-partial` / `done`. Dedicated writer connection so the UI/search mutex is not held. A second fill for the same DB **joins** the in-flight job (never `already running` as a user-visible failure). UI connections use a 15s busy timeout; close/wipe/rebuild wait out an in-flight fill. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. `vault_index_list_links` returns grouped edges for the JS link index. |
+| JS | `fillFromDisk({ settleAtPhase: "meta" })` returns when the title seed is live (`ready-meta`), not after a full catalog. Tree/editor do not wait for body FTS. Command palette treats `ready-meta` as title search live — empty results are not “try again when Ready” while heads fill. The invoke stays single-flight per DB — a remount joins the leader instead of painting a red banner. Banner keeps live `scanned / total` through later phases. After heads land, `listLinkGroups` seeds `vaultLinkIndex` so Graph → Links works without opening every note. Reopening the same desktop root reuses the live SQLite adapter (does not close mid-fill). Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
+| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `searchReady` means **ready-meta** (vault usable), not “100k bodies indexed”. `runWaveE` polls hub/cluster until short-head FTS is useful. `forceRebuild: true` re-reads heads in the background. Throws if fill errors. `__NEXUS_SOAK_LAST__.linkEdges` reports persisted wikilink count. |
+| Tests | `npm run test:sqlite-fill` (banner/phase/settle + join/Open-gate rules). `npm run test:sqlite-fill-rust` (phased fill + 1k/10k timing + wikilink `link_edge` + in-flight join; GTK-free crate). `npm run test:first-open`. `npm run test:link-index` + `test:graph-empty` + `test:tree-expand`. |
+
+**Fill expectations (not SCALE READY):**
+
+- Cold 100k: tree/editor in **seconds**. Title/Hub search should be useful after the title seed (`ready-meta` — seconds to low tens of seconds, not a 20+ minute empty catalog). Short-head `cluster` / `retrieval hub` should follow as soon as the first head batches commit (Tower target under 15s). Full 8k-head FTS may still take minutes on HDD — **background only**, never a browse gate. Do **not** claim SCALE READY from one soak.
+- Re-open of the same unchanged 100k vault: **seconds** (stat + skip), not another hour.
+- Do not claim SCALE READY from this first-open architecture alone.
+| FS scope | Production capabilities allow Documents / Desktop / Downloads + app data. Programmatic path open grants that folder only (not `$HOME/**`). Forbidden reads fail the progress banner — they do not spin at scanned:0. |
+
 Outputs (typical paths):
 
 - macOS: `src-tauri/target/release/bundle/macos/Nexus.app` and `.../dmg/*.dmg`

@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
-import type { ReactNodeViewProps } from "@tiptap/react";
-import { usePrefsStore, resolveTheme } from "@/lib/prefs/preferences";
+import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
 
 export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewProps) {
   const source = String(node.attrs.source ?? "");
@@ -23,18 +24,8 @@ export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewP
     }
     let cancelled = false;
     setErr(null);
-    void import("mermaid")
-      .then(async (mod) => {
-        const mermaid = mod.default;
-        const resolved = resolveTheme(theme);
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          theme: resolved === "light" ? "default" : "dark",
-          fontFamily: "inherit",
-        });
-        const id = `nexus-mmd-${uid}-${Math.abs(hash(source))}`;
-        const { svg } = await mermaid.render(id, source);
+    void renderMermaidSvg(source, theme, `nexus-mmd-${uid}`)
+      .then((svg) => {
         if (!cancelled && hostRef.current) {
           hostRef.current.innerHTML = svg;
         }
@@ -55,12 +46,13 @@ export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewP
   };
 
   return (
-    <div
+    <NodeViewWrapper
+      as="div"
       className={`nexus-mermaid${selected ? " is-selected" : ""}`}
       contentEditable={false}
       data-type="mermaid"
       data-source={source}
-      onDoubleClick={(e) => {
+      onDoubleClick={(e: MouseEvent) => {
         e.preventDefault();
         setDraft(source);
         setEditing(true);
@@ -90,12 +82,6 @@ export function MermaidView({ node, updateAttributes, selected }: ReactNodeViewP
       ) : (
         <div ref={hostRef} className="nexus-mermaid-svg" />
       )}
-    </div>
+    </NodeViewWrapper>
   );
-}
-
-function hash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
 }

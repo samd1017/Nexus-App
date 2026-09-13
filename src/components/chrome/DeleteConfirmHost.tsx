@@ -17,12 +17,11 @@ export function DeleteConfirmHost() {
   if (pending) {
     if (pending.kind === "folder") {
       message = disk
-        ? `Move “${pending.label}” and its contents to Trash (.trash)? You can restore files from there in ${recoverWhere}.`
-        : `Delete “${pending.label}” and everything inside it? This cannot be undone.`;
+        ? `Move “${pending.label}” and its contents to Trash (.trash)? You can restore files from Pulse or ${recoverWhere}.`
+        : `Move “${pending.label}” and its notes to Trash? Undo from the toast, the sidebar Trash list, ⌘K → trash, or Pulse → Recently deleted.`;
     } else {
-      message = disk
-        ? `Move to Trash? You can restore from the Pulse panel (Recently deleted).`
-        : `Delete “${pending.label}”? This cannot be undone.`;
+      message =
+        "Move to Trash? Undo from the toast, sidebar Trash, or ⌘K → trash.";
     }
   }
 
@@ -31,7 +30,7 @@ export function DeleteConfirmHost() {
       open={Boolean(pending)}
       title={pending?.kind === "folder" ? "Delete folder?" : "Delete note?"}
       message={message}
-      confirmLabel={disk ? "Move to Trash" : "Delete"}
+      confirmLabel="Move to Trash"
       danger
       onCancel={cancelPendingDelete}
       onConfirm={confirmPendingDelete}

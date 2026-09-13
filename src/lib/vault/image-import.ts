@@ -125,11 +125,11 @@ export async function importImageFile(file: File): Promise<ImportedImage | null>
         type: file.type || mimeFromName(file.name),
       });
       const previewUrl = cachePreview(vaultPath, blob);
-      toast(`Image saved to ${vaultPath}`);
+      toast(`Saved to ${vaultPath}`);
       return { vaultPath, previewUrl, alt };
     } catch (err) {
       console.error("[nexus] desktop image import failed", err);
-      toast("Could not import image");
+      toast("Could not import file");
       return null;
     }
   }
@@ -140,11 +140,11 @@ export async function importImageFile(file: File): Promise<ImportedImage | null>
       const vaultPath = uniqueAssetPath(file.name);
       await writeBinaryFile(fsa, vaultPath, file);
       const previewUrl = cachePreview(vaultPath, file);
-      toast(`Image saved to ${vaultPath}`);
+      toast(`Saved to ${vaultPath}`);
       return { vaultPath, previewUrl, alt };
     } catch (err) {
       console.error("[nexus] fsa image import failed", err);
-      toast("Could not write image into vault folder");
+      toast("Could not write file into vault folder");
     }
   }
 
@@ -155,7 +155,7 @@ export async function importImageFile(file: File): Promise<ImportedImage | null>
     reader.readAsDataURL(file);
   });
   if (mode === "demo" || mode === "local") {
-    toast("Image embedded in note (open a folder vault to save as a file)");
+    toast("File embedded in note (open a folder vault to save as a file)");
   }
   return {
     vaultPath: dataUrl,
@@ -237,6 +237,18 @@ export async function resolveVaultImageUrl(
     } catch {
       return null;
     }
+  }
+
+  const key = src.replace(/^\.\//, "").replace(/^\/+/, "");
+  if (
+    key === "assets/agent-brief.pdf" ||
+    key === "agent-brief.pdf" ||
+    key.endsWith("/agent-brief.pdf")
+  ) {
+    return "/demo/agent-brief.pdf";
+  }
+  if (key === "favicon.svg" || key.endsWith("/favicon.svg")) {
+    return "/favicon.svg";
   }
 
   return null;

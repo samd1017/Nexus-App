@@ -16,6 +16,10 @@ import {
   expandPathsToNoteTargets,
   type NotePathOp,
 } from "./path-patch";
+import {
+  CHROME_FSA_GETFILE_MAX,
+  ChromeFsaCapError,
+} from "./chrome-fsa-cap";
 
 const IDB_NAME = "noteapp-vault-handles-v2";
 const IDB_STORE = "handles";
@@ -167,17 +171,26 @@ export interface VaultScan {
   signatures: Record<string, string>;
 }
 
+type WalkCollectOpts = {
+  /** Abort the walk once this many markdown files are seen (Chrome honesty gate). */
+  maxNotes?: number;
+  /** After this many files, skip getFile() so Chrome does not retain native File blobs. */
+  skipGetFileAfter?: number;
+};
+
 async function walkCollect(
   root: FileSystemDirectoryHandle,
   onFile: (
     path: string,
     name: string,
     parentPath: string,
-    file: File,
+    file: File | null,
     handle: FileSystemFileHandle,
   ) => Promise<void>,
   onDir: (path: string, name: string, parentPath: string) => void,
+  opts?: WalkCollectOpts,
 ) {
+  let notes = 0;
   async function walk(dir: FileSystemDirectoryHandle, relPath: string) {
     for await (const [name, handle] of dir.entries()) {
       if (name === ".DS_Store" || name === "Thumbs.db") continue;
@@ -190,9 +203,15 @@ async function walkCollect(
         handle.kind === "file" &&
         name.toLowerCase().endsWith(".md")
       ) {
+        notes += 1;
+        if (opts?.maxNotes != null && notes > opts.maxNotes) {
+          throw new ChromeFsaCapError(notes);
+        }
         const path = relPath ? pathJoin(relPath, name) : name;
         const fh = handle as FileSystemFileHandle;
-        const file = await fh.getFile();
+        const skipFile =
+          opts?.skipGetFileAfter != null && notes > opts.skipGetFileAfter;
+        const file = skipFile ? null : await fh.getFile();
         await onFile(path, name, relPath, file, fh);
       }
     }
@@ -211,6 +230,7 @@ export async function scanVault(
   await walkCollect(
     root,
     async (path, name, parentPath, file) => {
+      if (!file) return;
       const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
       const id = nodeId(path);
       const content = await file.text();
@@ -256,6 +276,7 @@ export async function scanVault(
 export async function scanVaultMeta(
   root: FileSystemDirectoryHandle,
   onProgress?: (scanned: number) => void,
+  opts?: { maxNotes?: number; skipGetFileAfter?: number },
 ): Promise<VaultScan> {
   const nodes: Record<string, VaultNode> = {};
   const rootIds: string[] = [];
@@ -274,9 +295,11 @@ export async function scanVaultMeta(
         name,
         kind: "note",
         parentId,
-        mtime: file.lastModified,
+        mtime: file?.lastModified ?? 1,
       };
-      signatures[path] = `${file.lastModified}:${file.size}`;
+      signatures[path] = file
+        ? `${file.lastModified}:${file.size}`
+        : "1";
       if (!parentPath) rootIds.push(id);
       scanned += 1;
       if (onProgress && scanned % 250 === 0) onProgress(scanned);
@@ -294,6 +317,10 @@ export async function scanVaultMeta(
         mtime: Date.now(),
       };
       if (!parentPath) rootIds.push(id);
+    },
+    {
+      maxNotes: opts?.maxNotes,
+      skipGetFileAfter: opts?.skipGetFileAfter ?? CHROME_FSA_GETFILE_MAX,
     },
   );
 
@@ -316,7 +343,9 @@ export async function scanSignatures(
   await walkCollect(
     root,
     async (path, _name, _parentPath, file) => {
-      signatures[path] = `${file.lastModified}:${file.size}`;
+      signatures[path] = file
+        ? `${file.lastModified}:${file.size}`
+        : "1";
     },
     () => {},
   );
@@ -345,6 +374,18 @@ export async function readNoteFile(
   return file.text();
 }
 
+/** First N chars only — FTS fill must not retain full 100k bodies. */
+export async function readNoteFileHead(
+  root: FileSystemDirectoryHandle,
+  path: string,
+  maxChars = 2000,
+): Promise<string> {
+  const file = await readFileAtPath(root, path);
+  const blob = file.size > maxChars * 3 ? file.slice(0, maxChars * 3) : file;
+  const text = await blob.text();
+  return text.length > maxChars ? text.slice(0, maxChars) : text;
+}
+
 /**
  * Wave C — pure path-patch: mutate prev.nodes only for changed paths.
  */
@@ -356,10 +397,10 @@ export async function patchFsaVaultPaths(
 ): Promise<{ scan: VaultScan; changedPaths: string[] }> {
   const metaOnly = !!opts?.metaOnly;
   const nextSigs = opts?.nextSigs;
-  const targets = expandPathsToNoteTargets(paths, {
-    ...prev.signatures,
-    ...(nextSigs ?? {}),
-  });
+  const targets = expandPathsToNoteTargets(
+    paths,
+    nextSigs ?? prev.signatures,
+  );
   if (nextSigs) {
     for (const p of Object.keys(nextSigs)) {
       if (prev.signatures[p] === undefined) targets.add(p);
@@ -404,10 +445,8 @@ export async function patchFsaVaultPaths(
   }
 
   const { scan, changedPaths } = applyNoteOpsToScan(prev, ops, nodeId);
-  // Prefer authoritative nextSigs when provided (complete walk)
-  const signatures = nextSigs
-    ? { ...nextSigs }
-    : scan.signatures;
+  // Prefer authoritative nextSigs when provided — do not copy 100k keys.
+  const signatures = nextSigs ?? scan.signatures;
   return {
     scan: {
       nodes: scan.nodes,

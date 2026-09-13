@@ -21,7 +21,11 @@ export type HotkeyId =
   | "rightPanel"
   | "back"
   | "forward"
-  | "demo";
+  | "demo"
+  | "splitPane"
+  | "askNotes"
+  | "pinNote"
+  | "insertWikilink";
 
 export type HotkeyChord = {
   key: string;
@@ -48,6 +52,10 @@ export const HOTKEY_IDS: HotkeyId[] = [
   "back",
   "forward",
   "demo",
+  "splitPane",
+  "askNotes",
+  "pinNote",
+  "insertWikilink",
 ];
 
 export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
@@ -67,6 +75,10 @@ export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   back: { key: "[" },
   forward: { key: "]" },
   demo: { key: "d", shift: true },
+  splitPane: { key: "2" },
+  askNotes: { key: "/", shift: true },
+  pinNote: { key: "p", shift: true },
+  insertWikilink: { key: "l", shift: true },
 };
 
 export const HOTKEY_LABELS: Record<HotkeyId, string> = {
@@ -74,8 +86,8 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   openVault: "Open vault folder",
   settings: "Open Settings",
   focusMode: "Focus / zen mode",
-  toggleEditor: "Toggle Visual / Source",
-  graph: "Toggle graph",
+  toggleEditor: "Toggle Visual / Source / Preview",
+  graph: "Fullscreen graph (Esc / Exit to leave)",
   newNote: "New note",
   daily: "Today's daily note",
   find: "Find in note",
@@ -86,6 +98,10 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   back: "Note history back",
   forward: "Note history forward",
   demo: "Explore demo vault",
+  splitPane: "Dual-note workspace",
+  askNotes: "Ask your notes",
+  pinNote: "Pin / unpin current note",
+  insertWikilink: "Insert wikilink ([[)",
 };
 
 const ID_SET = new Set<string>(HOTKEY_IDS);

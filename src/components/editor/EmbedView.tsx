@@ -5,19 +5,36 @@ import { useEffect, useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle } from "@/lib/vault/types";
 import { resolveWikilink } from "@/lib/graph/build-graph";
+import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
+import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { markdownToHtml, previewSnippet } from "@/lib/markdown/serialize";
+import { shouldSkipBackgroundBodyHydrate } from "@/lib/vault/fill-interaction";
 
-export function EmbedView({ node }: NodeViewProps) {
+export function EmbedView({ node, editor }: NodeViewProps) {
   const target = String(node.attrs.target || "").trim();
+  const parts = useMemo(() => parseWikilinkInner(target), [target]);
   const nodes = useVaultStore((s) => s.nodes);
+  const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [body, setBody] = useState("");
+  let hostNoteId = activeNoteId;
+  try {
+    hostNoteId =
+      editor.view.dom.getAttribute("data-note-id") || activeNoteId;
+  } catch {
+    /* editor not mounted */
+  }
 
-  const hit = useMemo(
-    () => (target ? resolveWikilink(target, nodes) : null),
-    [target, nodes],
-  );
+  const hit = useMemo(() => {
+    if (parts.noteTarget) return resolveWikilink(parts.noteTarget, nodes);
+    if (hostNoteId) {
+      const self = nodes[hostNoteId];
+      return self?.kind === "note" ? self : null;
+    }
+    return null;
+  }, [parts.noteTarget, nodes, hostNoteId]);
   const note = hit?.kind === "note" ? hit : null;
 
   useEffect(() => {
@@ -30,6 +47,10 @@ export function EmbedView({ node }: NodeViewProps) {
       setBody(live);
       return;
     }
+    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
+      setBody("");
+      return;
+    }
     let cancelled = false;
     void ensureNoteBody(note.id).then((md: string | null) => {
       if (!cancelled) setBody(md ?? "");
@@ -37,16 +58,40 @@ export function EmbedView({ node }: NodeViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [note, nodes, ensureNoteBody]);
+  }, [note, nodes, ensureNoteBody, indexFillBusy]);
+
+  const sliced = useMemo(
+    () => sliceEmbedBody(body, parts.heading, parts.blockId),
+    [body, parts.heading, parts.blockId],
+  );
+
+  const isSelfFull =
+    Boolean(note && note.id === hostNoteId && !parts.heading && !parts.blockId);
 
   const html = useMemo(() => {
-    if (!body) return "";
+    if (isSelfFull) return "";
+    if (!sliced.body) return "";
     try {
-      return markdownToHtml(body.replace(/!\[\[[^\]]+\]\]/g, ""));
+      return markdownToHtml(sliced.body.replace(/!\[\[[^\]]+\]\]/g, ""));
     } catch {
       return "";
     }
-  }, [body]);
+  }, [sliced.body, isSelfFull]);
+
+  const openTarget = (pane?: "primary" | "secondary") => {
+    if (!note) return;
+    setActiveNote(note.id, {
+      heading: parts.heading,
+      blockId: parts.blockId,
+      pane,
+    });
+  };
+
+  const sliceLabel = parts.blockId
+    ? `#^${parts.blockId}`
+    : parts.heading
+      ? `#${parts.heading}`
+      : "";
 
   return (
     <NodeViewWrapper className="nexus-embed" data-type="embed" data-embed-target={target}>
@@ -56,28 +101,44 @@ export function EmbedView({ node }: NodeViewProps) {
           <button
             type="button"
             className="min-w-0 truncate font-medium text-[var(--text-primary)] hover:underline"
-            onClick={() => setActiveNote(note.id)}
+            onClick={(e) => openTarget(e.altKey ? "secondary" : "primary")}
           >
             {noteTitle(note)}
+            {sliceLabel ? (
+              <span className="text-[var(--text-muted)]"> {sliceLabel}</span>
+            ) : null}
           </button>
         ) : (
           <span className="nexus-embed-missing">Missing embed ![[{target || "note"}]]</span>
         )}
-        <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">![[{target}]]</span>
+        <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">
+          ![[{target}]]
+        </span>
       </div>
       <div className="nexus-embed-body">
         {note ? (
-          html ? (
+          isSelfFull ? (
+            <p className="nexus-embed-missing">
+              This note — add #Heading or #^block to embed a slice.
+            </p>
+          ) : html ? (
             <div
               className="note-editor prose-note"
               dangerouslySetInnerHTML={{ __html: html }}
             />
           ) : (
-            <p className="text-[var(--text-muted)]">{previewSnippet(body, 280) || "Empty note"}</p>
+            <p className="text-[var(--text-muted)]">
+              {previewSnippet(sliced.body, 280) || "Empty note"}
+            </p>
           )
         ) : (
           <p className="nexus-embed-missing">Create the note or fix the wikilink target.</p>
         )}
+        {note && (parts.heading || parts.blockId) && !sliced.sliced && body ? (
+          <p className="nexus-embed-missing px-1 pt-1">
+            Section not found — showing the full note.
+          </p>
+        ) : null}
       </div>
     </NodeViewWrapper>
   );

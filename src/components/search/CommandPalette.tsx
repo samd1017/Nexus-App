@@ -25,20 +25,29 @@ import {
   ExternalLink,
   History,
   Bookmark,
+  RotateCcw,
   Focus,
   CircleHelp,
   Database,
   X,
+  Pin,
+  Paperclip,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   searchWithBackend as searchVault,
+  searchWithBackendAsync,
+  describeSearchEngine,
 } from "@/lib/search/search-backend";
 import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-ops";
+import { fuseSearchHits } from "@/lib/search/rank-fusion";
+import { buildAskAnswer, retrieveForAsk } from "@/lib/search/ask-notes";
+import { getBacklinks } from "@/lib/vault/backlinks";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
 import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
+import type { TrashEntry } from "@/lib/vault/trash";
 import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
 import type { NoteTemplateId } from "@/lib/vault/templates";
@@ -52,6 +61,16 @@ import {
   setPendingCommandQuery,
 } from "@/lib/vault/session-recents";
 import { getDurableIndex } from "@/lib/vault/durable-index";
+import {
+  getOpenProgress,
+  subscribeOpenProgress,
+} from "@/lib/vault/native-index";
+import {
+  getSearchIndexState,
+  isNoteHeadSearchLive,
+  isTitleSearchLive,
+  searchEmptyStateMessage,
+} from "@/lib/vault/sqlite-fill-progress";
 import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
@@ -108,6 +127,19 @@ const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   project: <FolderKanban size={15} />,
   canvas: <LayoutGrid size={15} />,
 };
+
+const ASK_STARTERS = [
+  { q: "ask: how do agents share this vault", label: "How do agents share this vault?" },
+  { q: "ask: what is a wikilink", label: "What is a wikilink?" },
+  { q: "ask: where are daily notes", label: "Where are daily notes?" },
+];
+
+const ASK_OPS = [
+  { fill: "ask: path:Systems ", label: "path:Systems" },
+  { fill: "ask: folder:Research ", label: "folder:Research" },
+  { fill: "ask: #agents ", label: "#agents" },
+  { fill: "ask: -welcome ", label: "−welcome" },
+];
 
 /** Open command palette, optionally with a prefilled query. */
 export function openCommandPalette(query?: string) {
@@ -166,20 +198,7 @@ function topNotesByVisitMtime(
     });
     if (out.length >= limit) return out;
   }
-  const rest = Object.values(nodes)
-    .filter((n) => n.kind === "note" && !seen.has(n.id))
-    .sort((a, b) => b.mtime - a.mtime);
-  for (const n of rest) {
-    out.push({
-      noteId: n.id,
-      path: n.path,
-      title: noteTitle(n),
-      snippet: snip(n),
-      score: 1,
-      matchType: "title",
-    });
-    if (out.length >= limit) break;
-  }
+  // Recents-only on large vaults — never sort 45k notes for an empty query.
   return out;
 }
 
@@ -190,10 +209,19 @@ export function CommandPalette() {
 }
 
 function CommandPaletteOpen() {
+  const [openProgress, setOpenProgressUi] = useState(getOpenProgress);
+  useEffect(() => subscribeOpenProgress(setOpenProgressUi), []);
+  const searchIndexState = getSearchIndexState();
+  const titleSearchLive = isTitleSearchLive(searchIndexState);
+  const searchIndexing =
+    !titleSearchLive &&
+    (openProgress.phase === "indexing" || openProgress.phase === "walking");
   const open = useVaultStore((s) => s.commandOpen);
   const vaultId = useVaultStore((s) => s.vaultId);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
-  const nodes = useVaultStore((s) => s.nodes);
+  const nodesTick = useVaultStore((s) => s.activeNoteId);
+  const nodes = useVaultStore.getState().nodes;
+  void nodesTick;
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const createNote = useVaultStore((s) => s.createNote);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
@@ -205,17 +233,24 @@ function CommandPaletteOpen() {
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
+  const openSyntheticVault = useVaultStore((s) => s.openSyntheticVault);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
-  const createNewVault = useVaultStore((s) => s.createNewVault);
+  const createMemoryVault = useVaultStore((s) => s.createMemoryVault);
   const revealVaultInFinder = useVaultStore((s) => s.revealVaultInFinder);
   const flushDirty = useVaultStore((s) => s.flushDirty);
   const setToast = useVaultStore((s) => s.setToast);
+  const openPulseRail = useVaultStore((s) => s.openPulseRail);
+  const listTrash = useVaultStore((s) => s.listTrash);
+  const restoreTrash = useVaultStore((s) => s.restoreTrash);
+  const trashTick = useVaultStore((s) => s.trashTick);
   const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
+  const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const savedSearches = usePrefsStore((s) => s.savedSearches);
   const [query, setQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [recentTick, setRecentTick] = useState(0);
+  const [trashItems, setTrashItems] = useState<TrashEntry[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -249,6 +284,17 @@ function CommandPaletteOpen() {
     return () => window.clearTimeout(t);
   }, [open, query]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void listTrash().then((rows) => {
+      if (!cancelled) setTrashItems(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, listTrash, trashTick]);
+
   const raw = query.trim();
   const isCommandMode = raw.startsWith(">");
   const q = isCommandMode ? raw.slice(1).trim() : raw;
@@ -278,14 +324,21 @@ function CommandPaletteOpen() {
     qLower === "is:broken" ||
     qLower === "broken" ||
     qLower === "broken links";
+  const wantsDeleted =
+    qLower === "is:deleted" ||
+    qLower === "is:trash" ||
+    qLower === "trash" ||
+    qLower === "deleted" ||
+    qLower === "restore";
   const hasPathFolderOp = hasSearchOps(pathFolderOps);
   const showAllActions = Boolean(raw) || isCommandMode;
   const actionQuery = isCommandMode
     ? q
     : searchText || (hasPathFolderOp ? "" : q);
   const isEmptyQuery = !raw && !isCommandMode;
+  const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
 
-  const hits = useMemo(() => {
+  const syncHits = useMemo(() => {
     if (isEmptyQuery) {
       return topNotesByVisitMtime(nodes, 10, vaultId);
     }
@@ -302,14 +355,38 @@ function CommandPaletteOpen() {
     }
     if (wantsOrphans || wantsBroken || isCommandMode) return [];
 
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const activeNode = activeNoteId ? nodes[activeNoteId] : null;
+    const neighborIds =
+      activeNode?.kind === "note"
+        ? getBacklinks(activeNode, nodes).map((b) => b.fromId)
+        : [];
+    const signals = {
+      recentIds,
+      activeNoteId,
+      neighborIds,
+      queryText: debouncedSearch.trim() || raw,
+    };
+
+    if (isAskMode) {
+      return retrieveForAsk(nodes, debouncedSearch.trim() || raw, signals, 8);
+    }
+
     if (hasPathFolderOp) {
-      return searchWithOps(nodes, debouncedSearch.trim() || raw, 16);
+      return fuseSearchHits(
+        searchWithOps(nodes, debouncedSearch.trim() || raw, 16),
+        signals,
+      );
     }
     const needle = debouncedSearch.trim() || searchText || raw;
     if (needle) {
-      return searchVault(nodes, needle, 16);
+      const idx = getDurableIndex();
+      // Durable async search owns FTS. A second sync intersect at 100k
+      // was enough extra allocation to discard Chrome on the 12th search.
+      if (idx?.ready && idx.searchFtsAsync) return [];
+      return fuseSearchHits(searchVault(nodes, needle, 16), signals);
     }
-    return searchVault(nodes, raw, 16);
+    return fuseSearchHits(searchVault(nodes, raw, 16), signals);
   }, [
     nodes,
     vaultId,
@@ -329,7 +406,73 @@ function CommandPaletteOpen() {
     pathFolderOps.fileFilter,
     pathFolderOps.tagFilter,
     pathFolderOps.excludes,
+    isAskMode,
+    activeNoteId,
   ]);
+
+  const [asyncHits, setAsyncHits] = useState<SearchHit[] | null>(null);
+  useEffect(() => {
+    setAsyncHits(null);
+    if (
+      isEmptyQuery ||
+      isCommandMode ||
+      isTagBrowse ||
+      wantsOrphans ||
+      wantsBroken ||
+      isAskMode ||
+      exactTagQuery
+    ) {
+      return;
+    }
+    const needle = hasPathFolderOp
+      ? debouncedSearch.trim() || raw
+      : debouncedSearch.trim() || searchText || raw;
+    if (!needle.trim()) return;
+    let cancelled = false;
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const activeNode = activeNoteId ? nodes[activeNoteId] : null;
+    const neighborIds =
+      activeNode?.kind === "note"
+        ? getBacklinks(activeNode, nodes).map((b) => b.fromId)
+        : [];
+    const signals = {
+      recentIds,
+      activeNoteId,
+      neighborIds,
+      queryText: needle,
+    };
+    void (hasPathFolderOp
+      ? Promise.resolve(searchWithOps(nodes, needle, 16))
+      : searchWithBackendAsync(nodes, needle, 16)
+    ).then((rows) => {
+      if (cancelled) return;
+      setAsyncHits(fuseSearchHits(rows, signals));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    nodes,
+    vaultId,
+    raw,
+    searchText,
+    debouncedSearch,
+    isEmptyQuery,
+    isTagBrowse,
+    exactTagQuery,
+    wantsOrphans,
+    wantsBroken,
+    isCommandMode,
+    hasPathFolderOp,
+    isAskMode,
+    activeNoteId,
+  ]);
+  const hits = asyncHits ?? syncHits;
+
+  const askAnswer = useMemo(() => {
+    if (!isAskMode) return null;
+    return buildAskAnswer(raw, hits, nodes);
+  }, [isAskMode, raw, hits, nodes]);
 
   const tags = useMemo(() => {
     if (!isTagBrowse) return [];
@@ -397,6 +540,20 @@ function CommandPaletteOpen() {
           shortcut: formatShortcut("D"),
           run: wrapRun("daily", () => {
             openDailyNote();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "pin-note",
+          label: activeNoteId && useVaultStore.getState().isNotePinned(activeNoteId)
+            ? "Unpin current note"
+            : "Pin current note",
+          keywords: ["pin", "star", "favorite", "bookmark"],
+          icon: <Pin size={15} />,
+          shortcut: formatShortcut("P", { shift: true }),
+          run: wrapRun("pin-note", () => {
+            const id = useVaultStore.getState().activeNoteId;
+            if (id) useVaultStore.getState().togglePinnedNote(id);
             setCommandOpen(false);
           }),
         },
@@ -537,6 +694,16 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "recently-deleted",
+          label: "Recently deleted notes",
+          keywords: ["trash", "restore", "deleted", "undelete", "recycle"],
+          icon: <RotateCcw size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("recently-deleted", () => {
+            openCommandPalette("is:deleted");
+          }),
+        },
+        {
           id: "save",
           label: "Save now",
           keywords: ["save", "flush", "write", "disk"],
@@ -548,7 +715,16 @@ function CommandPaletteOpen() {
           }),
         },
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
-    [actionQuery, activeNoteId, requestDelete, flushDirty, setToast, setCommandOpen],
+    [
+      actionQuery,
+      activeNoteId,
+      requestDelete,
+      flushDirty,
+      setToast,
+      setCommandOpen,
+      openPulseRail,
+      trashItems.length,
+    ],
   );
 
   const vaultActions = useMemo(
@@ -572,7 +748,7 @@ function CommandPaletteOpen() {
           icon: <FolderPlus size={15} />,
           shortcut: undefined as string | undefined,
           run: wrapRun("new-vault", () => {
-            void createNewVault("Nexus Vault");
+            createMemoryVault("Nexus Vault");
             setCommandOpen(false);
           }),
         },
@@ -600,41 +776,92 @@ function CommandPaletteOpen() {
             setCommandOpen(false);
           }),
         },
-        ...(import.meta.env.DEV ? [{
-          id: "large-test-vault",
-          label: "Open 45k test vault",
-          keywords: ["large", "stress", "45k", "test", "scale", "benchmark"],
-          icon: <Database size={15} />,
+        ...(import.meta.env.DEV ? [
+          {
+            id: "large-test-vault",
+            label: "Open 45k test vault",
+            keywords: ["large", "stress", "45k", "test", "scale", "benchmark"],
+            icon: <Database size={15} />,
+            shortcut: undefined as string | undefined,
+            run: wrapRun("large-test-vault", () => {
+              void openLargeTestVault();
+              setCommandOpen(false);
+            }),
+          },
+          ...([10_000, 50_000, 100_000, 200_000] as const).map((n) => ({
+            id: `soak-vault-${n}`,
+            label: `Open soak vault (${n.toLocaleString()} notes)`,
+            keywords: ["soak", "scale", "stress", "synthetic", String(n), "large"],
+            icon: <Database size={15} />,
+            shortcut: undefined as string | undefined,
+            run: wrapRun(`soak-vault-${n}`, () => {
+              void openSyntheticVault(n);
+              setCommandOpen(false);
+            }),
+          })),
+        ] : []),
+        {
+          id: "hermes-sim",
+          label: "Simulate agent write",
+          keywords: ["hermes", "agent", "external", "simulate", "grok", "pulse"],
+          icon: <Sparkles size={15} />,
           shortcut: undefined as string | undefined,
-          run: wrapRun("large-test-vault", () => {
-            void openLargeTestVault();
+          run: wrapRun("hermes-sim", () => {
+            simulateHermesWrite();
             setCommandOpen(false);
           }),
-        }] : []),
-        ...(import.meta.env.DEV
-          ? [
-              {
-                id: "hermes-sim",
-                label: "Simulate Hermes write",
-                keywords: ["hermes", "agent", "external", "simulate", "dev"],
-                icon: <Sparkles size={15} />,
-                shortcut: undefined as string | undefined,
-                run: wrapRun("hermes-sim", () => {
-                  simulateHermesWrite();
-                  setCommandOpen(false);
-                }),
-              },
-            ]
-          : []),
+        },
+        {
+          id: "hermes-conflict",
+          label: "Practice agent conflict",
+          keywords: [
+            "hermes",
+            "conflict",
+            "studio",
+            "agent",
+            "practice",
+            "grok",
+          ],
+          icon: <Sparkles size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("hermes-conflict", () => {
+            practiceAgentConflict();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "open-files",
+          label: "Open Files rail",
+          keywords: ["attachments", "pdf", "images", "files", "paperclip"],
+          icon: <Paperclip size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("open-files", () => {
+            useVaultStore.getState().openAttachmentsRail();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "split-pane",
+          label: "Toggle dual-note workspace",
+          keywords: ["split", "pane", "dual", "workspace"],
+          icon: <PanelRight size={15} />,
+          shortcut: formatShortcut("2"),
+          run: wrapRun("split-pane", () => {
+            useVaultStore.getState().toggleWorkspaceSplit();
+            setCommandOpen(false);
+          }),
+        },
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
     [
       actionQuery,
       openFolderAsVault,
-      createNewVault,
+      createMemoryVault,
       revealVaultInFinder,
       openDemoVault,
       openLargeTestVault,
+      openSyntheticVault,
       simulateHermesWrite,
+      practiceAgentConflict,
       setCommandOpen,
     ],
   );
@@ -676,6 +903,18 @@ function CommandPaletteOpen() {
           setRecentTick((t) => t + 1);
         }),
       },
+      {
+        id: "pin-note",
+        label: "Pin / unpin current note",
+        icon: <Pin size={15} />,
+        shortcut: formatShortcut("P", { shift: true }),
+        run: wrapRun("pin-note", () => {
+          const id = useVaultStore.getState().activeNoteId;
+          if (id) useVaultStore.getState().togglePinnedNote(id);
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
       ...NOTE_TEMPLATES.filter((t) => t.id !== "blank" && t.id !== "daily").map(
         (t) => ({
           id: `tpl-${t.id}`,
@@ -707,6 +946,17 @@ function CommandPaletteOpen() {
         shortcut: formatShortcut("\\", { alt: true }),
         run: wrapRun("toggle-right", () => {
           toggleRight();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-files-rail",
+        label: "Open Files rail",
+        icon: <Paperclip size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-files-rail", () => {
+          useVaultStore.getState().openAttachmentsRail();
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),
@@ -761,7 +1011,7 @@ function CommandPaletteOpen() {
         label: "Help & shortcuts",
         icon: <CircleHelp size={15} />,
         run: wrapRun("help", () => {
-          usePrefsStore.getState().setSettingsOpen(true);
+          window.dispatchEvent(new Event("nexus:open-shortcuts"));
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),
@@ -838,6 +1088,8 @@ function CommandPaletteOpen() {
     a.run();
   };
 
+  const searchEngine = describeSearchEngine();
+  const engineBit = searchEngine.shortLabel;
   const notesHeading = isEmptyQuery
     ? "Recent notes"
     : hasPathFolderOp
@@ -846,6 +1098,7 @@ function CommandPaletteOpen() {
           pathFolderOps.folderFilter
             ? `folder:${pathFolderOps.folderFilter}`
             : null,
+          engineBit,
         ]
           .filter(Boolean)
           .join(" · ")
@@ -853,8 +1106,10 @@ function CommandPaletteOpen() {
         ? isTagBrowse
           ? `Tagged #${tagPartial}`
           : hits.length > 0
-            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""}`
-            : "Notes"
+            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""} · ${engineBit}`
+            : searchIndexing
+              ? `Notes · ${engineBit} · indexing…`
+              : `Notes · ${engineBit} · no matches`
         : "Recent";
 
   return (
@@ -878,13 +1133,18 @@ function CommandPaletteOpen() {
         <div className="flex justify-center pt-2 sm:hidden" aria-hidden>
           <div className="h-1 w-10 rounded-full bg-white/15" />
         </div>
-        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]">
+        <div
+          className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]"
+          data-search-engine={searchEngine.id}
+          data-search-engine-label={searchEngine.shortLabel}
+          data-search-index-state={searchEngine.indexState}
+        >
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
             ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="Search notes…"
+            placeholder="Search, path: folder:, or ask: what links Hermes…"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
           />
@@ -906,7 +1166,9 @@ function CommandPaletteOpen() {
             <span className="font-mono text-[var(--text-secondary)]">file:</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">-exclude</span>{" "}
-            <span className="font-mono text-[var(--text-secondary)]">is:orphan</span> ·{" "}
+            <span className="font-mono text-[var(--text-secondary)]">is:orphan</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">is:deleted</span> ·{" "}
+            <span className="font-mono text-[var(--text-secondary)]">ask:</span> cited answers ·{" "}
             <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
           </div>
         ) : null}
@@ -931,6 +1193,72 @@ function CommandPaletteOpen() {
               </button>
             ) : null}
           </Command.Empty>
+
+          {askAnswer ? (
+            <Command.Group heading="Ask your notes · local" className={GROUP_HEADING}>
+              <div className="mb-1 rounded-[10px] border border-[var(--border)] bg-white/[0.02] px-3 py-2 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+                <p>{askAnswer.summary}</p>
+                <p className="mt-1.5 text-[10.5px] text-[var(--text-muted)]">
+                  Extractive citations from this vault — no cloud model.
+                </p>
+              </div>
+              {askAnswer.citations.length === 0 ? (
+                <>
+                  <div className="mb-1 flex flex-wrap gap-1 px-1 py-1">
+                    {ASK_OPS.map((op) => (
+                      <button
+                        key={op.label}
+                        type="button"
+                        className="rounded-full border border-[var(--border)] px-2 py-0.5 font-mono text-[10px] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                        onClick={() => setQuery(op.fill)}
+                      >
+                        {op.label}
+                      </button>
+                    ))}
+                  </div>
+                  {ASK_STARTERS.map((s) => (
+                    <Command.Item
+                      key={s.q}
+                      value={s.q}
+                      onSelect={() => setQuery(s.q)}
+                      className={ITEM_CLASS}
+                    >
+                      <CircleHelp size={15} className="shrink-0 text-[var(--accent)]" />
+                      <span>{s.label}</span>
+                    </Command.Item>
+                  ))}
+                </>
+              ) : (
+                askAnswer.citations.map((c) => (
+                  <Command.Item
+                    key={`ask-${c.noteId}-${c.snippet.slice(0, 24)}`}
+                    value={`ask-${c.noteId}-${c.title}`}
+                    onSelect={() => {
+                      setActiveNote(c.noteId, { heading: c.heading });
+                      setCommandOpen(false);
+                    }}
+                    className={cn(ITEM_CLASS, "items-start")}
+                  >
+                    <FileText size={15} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-[var(--text-primary)]">
+                        {c.title}
+                        {c.heading ? (
+                          <span className="font-normal text-[var(--text-muted)]">
+                            {" "}
+                            #{c.heading}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
+                        <HighlightedText text={c.snippet} query={askAnswer.question} />
+                      </div>
+                    </div>
+                  </Command.Item>
+                ))
+              )}
+            </Command.Group>
+          ) : null}
 
           {savedSearches.length > 0 && (isEmptyQuery || /^save/i.test(raw) || raw === "/") ? (
             <Command.Group heading="Saved searches" className={GROUP_HEADING}>
@@ -1074,11 +1402,26 @@ function CommandPaletteOpen() {
             </Command.Group>
           ) : null}
 
-          {hits.length > 0 && !(exactTagQuery && hits.length > 1) ? (
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) ? (
             <Command.Group
               heading={notesHeading}
               className={cn(GROUP_HEADING, tags.length > 0 && "mt-1")}
             >
+              {hits.length === 0 ? (
+                <Command.Item
+                  value="search-index-status"
+                  disabled
+                  className={ITEM_CLASS}
+                >
+                  <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+                  <span>
+                    {searchEmptyStateMessage({
+                      titleSearchLive,
+                      headsReady: isNoteHeadSearchLive(searchIndexState),
+                    })}
+                  </span>
+                </Command.Item>
+              ) : null}
               {hits.map((h) => (
                 <Command.Item
                   key={h.noteId}
@@ -1110,6 +1453,44 @@ function CommandPaletteOpen() {
                     {MATCH_TYPE_LABEL[String(h.matchType)] ??
                       String(h.matchType)}
                   </span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {wantsDeleted ? (
+            <Command.Group
+              heading="Recently deleted"
+              className={cn(GROUP_HEADING, "mt-1")}
+            >
+              {trashItems.length === 0 ? (
+                <Command.Item
+                  value="no-trash"
+                  className={ITEM_CLASS}
+                  onSelect={() => {}}
+                >
+                  <span className="text-[var(--text-muted)]">Trash is empty</span>
+                </Command.Item>
+              ) : null}
+              {trashItems.map((t) => (
+                <Command.Item
+                  key={t.trashPath}
+                  value={`trash-${t.trashPath}-${t.name}`}
+                  onSelect={() => {
+                    void restoreTrash(t.trashPath);
+                    setCommandOpen(false);
+                  }}
+                  className={ITEM_CLASS}
+                >
+                  <RotateCcw size={15} className="shrink-0 text-[var(--accent)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-[var(--text-primary)]">
+                      Restore {t.name.replace(/\.md$/i, "")}
+                    </div>
+                    <div className="truncate text-[11px] text-[var(--text-muted)]">
+                      {t.originalPath}
+                    </div>
+                  </div>
                 </Command.Item>
               ))}
             </Command.Group>

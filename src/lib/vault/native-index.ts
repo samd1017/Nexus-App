@@ -8,6 +8,8 @@ import type { VaultNode } from "./types";
 import type { VaultScan } from "./fs-adapter";
 import type { NodeMeta } from "./backend";
 import { getScaleFlags } from "./scale-flags";
+import { deskNodeId } from "./desk-node-id";
+import { isIndexFillProgressPhase } from "./sqlite-fill-progress";
 
 export type NativeIndexStatus =
   | { available: false; reason: string }
@@ -63,7 +65,7 @@ export async function nativeMetaWalk(
 }
 
 function nodeIdFromPath(path: string): string {
-  return "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_");
+  return deskNodeId(path);
 }
 
 /**
@@ -154,6 +156,11 @@ let lastProgress: OpenProgress = {
 
 export function getOpenProgress(): OpenProgress {
   return lastProgress;
+}
+
+/** Walking / FTS fill — Open must join or wait, not start a second writer. */
+export function isIndexFillInFlight(): boolean {
+  return isIndexFillProgressPhase(lastProgress.phase);
 }
 
 export function setOpenProgress(p: Partial<OpenProgress>): void {

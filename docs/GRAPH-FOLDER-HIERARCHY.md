@@ -455,6 +455,26 @@ D1–D8: full note galaxy feel, ~9–10 notes as orbs + links, ghosts/1-hop/expo
 4. **Click note** — open + near-active ego; Globe back to map
 5. **Cap** — mega-folder shows `+N more`, never freezes
 
+### Note-select at scale (graph UX — not a SCALE READY claim)
+
+Automated: `npm run test:graph-select` (synthetic 2k folder + ego cap) · `npm run test:graph-filters`.
+
+On a ~100k **desktop** vault with Graph panel or fullscreen open:
+
+**Phase 1 — lag / camera**
+1. Stay on the **folder map**. Click 10+ different notes in the tree/editor.
+2. Camera must not thrash (no stacked 750ms fly-tos). If the note is not on this level, highlight/edges only — no `graphData()` rebuild.
+3. Orbit or zoom, then click another note — fly-to must not steal the view.
+
+**Phase 2 — daily-driver vs Obsidian (Tower)**
+4. Click **20 notes**. Inspector shows title + out/in chips. Click a chip → that note opens. Tree click ↔ orb highlight stay in sync.
+5. Switch **Map / Links**. Folder empty states explain the next action (never a blank mystery).
+6. Filters: type in the filter field, toggle Ghosts / Orphans, pick a tag or folder. View updates; no full-vault rebuild.
+7. Keyboard: focus the graph, `J`/`K` cycle notes, `/` focuses filter, `M` map, `L` links, `F` fit.
+8. Particles stay off at this scale. Reduced-motion: no fly-to, no spinner spin.
+
+Success: a lifelong Obsidian user prefers this graph within minutes. Not SCALE READY.
+
 ---
 
 ## Next step

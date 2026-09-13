@@ -7,6 +7,8 @@ import {
 } from "@/lib/markdown/wikilinks";
 import { buildReverseIndex, noteTargetKeys } from "./backlink-index";
 import { vaultLinkIndex } from "./link-index";
+import { ensureVaultIndex } from "./indexes";
+import { shouldUseEgoGraph } from "./scale-flags";
 import { buildWikilinkIndex, resolveWikilink } from "@/lib/graph/build-graph";
 
 /**
@@ -41,8 +43,13 @@ export function getBacklinks(
     }
   }
 
-  // Fallback: classic reverse index when link map empty (cold open / small vault)
-  if (fromIds.size === 0 && vaultLinkIndex.stats().edgeCount === 0) {
+  // Fallback: classic reverse index when link map empty (cold open / small vault).
+  // Skip the O(n) body scan on large vaults — stripped 45k seeds have no in-memory links.
+  if (
+    fromIds.size === 0 &&
+    vaultLinkIndex.stats().edgeCount === 0 &&
+    !shouldUseEgoGraph(ensureVaultIndex(nodes).noteCount)
+  ) {
     const index = buildReverseIndex(nodes);
     for (const key of targets) {
       const list = index.get(key);

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import {
   CalendarDays,
@@ -9,7 +9,10 @@ import {
   FolderPlus,
   Hash,
   PanelLeftClose,
+  Pin,
+  RotateCcw,
   Search,
+  Trash2,
 } from "lucide-react";
 import { VaultSwitcher } from "@/components/vault/VaultSwitcher";
 import { FileTree } from "@/components/vault/FileTree";
@@ -17,6 +20,7 @@ import { NewNoteMenu } from "@/components/vault/NewNoteMenu";
 import { MonthCalendar } from "@/components/layout/MonthCalendar";
 import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle } from "@/lib/vault/types";
+import type { TrashEntry } from "@/lib/vault/trash";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   collectExistingDailyIsos,
@@ -59,8 +63,12 @@ export function LeftSidebar() {
     return n?.kind === "note" ? n.path : null;
   });
   const recentNoteVisits = useVaultStore((s) => s.recentNoteVisits);
+  const pinnedNotePaths = useVaultStore((s) => s.settings.pinnedNotePaths);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const setToast = useVaultStore((s) => s.setToast);
+  const listTrash = useVaultStore((s) => s.listTrash);
+  const restoreTrash = useVaultStore((s) => s.restoreTrash);
+  const trashTick = useVaultStore((s) => s.trashTick);
   const nodes = useVaultStore((s) => s.nodes);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const sidebarRecentOpen = usePrefsStore((s) => s.sidebarRecentOpen);
@@ -118,6 +126,30 @@ export function LeftSidebar() {
     }
     return byVisit;
   }, [recentNoteVisits]);
+
+  const pinnedNotes = useMemo(() => {
+    const paths = pinnedNotePaths ?? [];
+    if (!paths.length) return [];
+    const byPath = new Map(
+      Object.values(nodes)
+        .filter((n) => n.kind === "note")
+        .map((n) => [n.path, n]),
+    );
+    return paths
+      .map((p) => byPath.get(p))
+      .filter((n): n is NonNullable<typeof n> => Boolean(n));
+  }, [nodes, pinnedNotePaths]);
+
+  const [trashItems, setTrashItems] = useState<TrashEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void listTrash().then((rows) => {
+      if (!cancelled) setTrashItems(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [listTrash, trashTick]);
 
   // H5: true focus — no rail at all
   if (focusMode) return null;
@@ -343,6 +375,70 @@ export function LeftSidebar() {
 
         {/* Footer stack: always visible below tree (not clipped by tree scroll) */}
         <div className="flex max-h-[28%] shrink-0 flex-col overflow-y-auto border-t border-[var(--border)] bg-[var(--panel-solid)]">
+        {trashItems.length > 0 ? (
+          <div className="shrink-0 px-3 pt-1 pb-0.5">
+            <div className="sidebar-section-label flex items-center gap-1 px-1 py-1">
+              <Trash2 size={12} className="shrink-0 text-[var(--text-muted)] opacity-80" />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                Trash
+              </span>
+            </div>
+            <ul className="mt-0.5 space-y-0.5 pb-0.5">
+              {trashItems.slice(0, 6).map((t) => (
+                <li key={t.trashPath} className="flex items-center gap-1">
+                  <span className="min-w-0 flex-1 truncate px-1.5 text-[12px] text-[var(--text-secondary)]">
+                    {t.name.replace(/\.md$/i, "")}
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-btn h-6 shrink-0 px-1.5 text-[10px]"
+                    title={`Restore ${t.originalPath}`}
+                    aria-label={`Restore ${t.name}`}
+                    onClick={() => {
+                      void restoreTrash(t.trashPath);
+                    }}
+                  >
+                    <RotateCcw size={11} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {pinnedNotes.length > 0 ? (
+          <div className="shrink-0 px-3 pt-1 pb-0.5">
+            <div className="sidebar-section-label flex items-center gap-1 px-1 py-1">
+              <Pin size={12} className="shrink-0 text-[var(--accent)] opacity-80" />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                Pinned
+              </span>
+            </div>
+            <ul className="mt-0.5 space-y-0.5 pb-0.5">
+              {pinnedNotes.map((n) => (
+                <li key={n.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveNote(n.id);
+                      closeDrawersIfNarrow();
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[12px] transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--text-primary)]",
+                      activeNoteId === n.id
+                        ? "bg-white/[0.05] text-[var(--text-primary)]"
+                        : "text-[var(--text-secondary)]",
+                    )}
+                  >
+                    <FileText size={12} className="shrink-0 opacity-50" />
+                    <span className="truncate">{noteTitle(n)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {/* 5. Recent — collapsible, compact */}
         {recentNotes.length > 0 ? (
           <div className="shrink-0 px-3 pt-1 pb-0.5">

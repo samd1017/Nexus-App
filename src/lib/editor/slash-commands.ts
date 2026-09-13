@@ -9,9 +9,25 @@ export type SlashItem = {
   run: (editor: Editor, range: { from: number; to: number }) => void;
 };
 
-function replaceThen(editor: Editor, range: { from: number; to: number }, fn: () => void) {
-  editor.chain().focus().deleteRange(range).run();
-  fn();
+function clampRange(
+  editor: Editor,
+  range: { from: number; to: number },
+): { from: number; to: number } {
+  const live = detectSlashCommand(editor);
+  const raw = live ?? range;
+  const max = editor.state.doc.content.size;
+  const from = Math.max(0, Math.min(raw.from, max));
+  const to = Math.max(from, Math.min(raw.to, max));
+  return { from, to };
+}
+
+function runSlash(
+  editor: Editor,
+  range: { from: number; to: number },
+  apply: (chain: ReturnType<Editor["chain"]>) => ReturnType<Editor["chain"]>,
+): void {
+  const { from, to } = clampRange(editor, range);
+  apply(editor.chain().focus().deleteRange({ from, to })).run();
 }
 
 export const SLASH_ITEMS: SlashItem[] = [
@@ -20,48 +36,42 @@ export const SLASH_ITEMS: SlashItem[] = [
     label: "Heading 1",
     hint: "#",
     keywords: ["h1", "title", "heading"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleHeading({ level: 1 }).run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.setHeading({ level: 1 })),
   },
   {
     id: "h2",
     label: "Heading 2",
     hint: "##",
     keywords: ["h2", "heading"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleHeading({ level: 2 }).run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.setHeading({ level: 2 })),
   },
   {
     id: "h3",
     label: "Heading 3",
     hint: "###",
     keywords: ["h3", "heading"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleHeading({ level: 3 }).run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.setHeading({ level: 3 })),
   },
   {
     id: "bullet",
     label: "Bullet list",
     hint: "-",
     keywords: ["list", "ul", "bullet"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleBulletList().run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.toggleBulletList()),
   },
   {
     id: "numbered",
     label: "Numbered list",
     hint: "1.",
     keywords: ["ol", "numbered", "ordered"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleOrderedList().run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.toggleOrderedList()),
   },
   {
     id: "task",
     label: "Task list",
     hint: "[ ]",
     keywords: ["todo", "task", "check"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleTaskList().run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.toggleTaskList()),
   },
   {
     id: "callout",
@@ -69,9 +79,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     hint: "[!NOTE]",
     keywords: ["callout", "note", "info", "tip"],
     run: (ed, range) =>
-      replaceThen(ed, range, () =>
-        ed.chain().focus().setCallout("note" as CalloutKind).run(),
-      ),
+      runSlash(ed, range, (c) => c.setCallout("note" as CalloutKind)),
   },
   {
     id: "table",
@@ -79,8 +87,8 @@ export const SLASH_ITEMS: SlashItem[] = [
     hint: "grid",
     keywords: ["table", "grid"],
     run: (ed, range) =>
-      replaceThen(ed, range, () =>
-        ed.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+      runSlash(ed, range, (c) =>
+        c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
       ),
   },
   {
@@ -89,11 +97,11 @@ export const SLASH_ITEMS: SlashItem[] = [
     hint: "```mermaid",
     keywords: ["mermaid", "diagram", "chart", "flow"],
     run: (ed, range) =>
-      replaceThen(ed, range, () =>
-        ed.chain().focus().insertContent({
+      runSlash(ed, range, (c) =>
+        c.insertContent({
           type: "mermaid",
           attrs: { source: "flowchart LR\n  A --> B" },
-        }).run(),
+        }),
       ),
   },
   {
@@ -102,11 +110,11 @@ export const SLASH_ITEMS: SlashItem[] = [
     hint: "$$",
     keywords: ["math", "latex", "katex", "formula"],
     run: (ed, range) =>
-      replaceThen(ed, range, () =>
-        ed.chain().focus().insertContent({
+      runSlash(ed, range, (c) =>
+        c.insertContent({
           type: "mathBlock",
           attrs: { tex: "E = mc^2" },
-        }).run(),
+        }),
       ),
   },
   {
@@ -115,11 +123,11 @@ export const SLASH_ITEMS: SlashItem[] = [
     hint: "![[note]]",
     keywords: ["embed", "transclude", "include"],
     run: (ed, range) =>
-      replaceThen(ed, range, () =>
-        ed.chain().focus().insertContent({
+      runSlash(ed, range, (c) =>
+        c.insertContent({
           type: "embed",
           attrs: { target: "Welcome" },
-        }).run(),
+        }),
       ),
   },
   {
@@ -128,11 +136,11 @@ export const SLASH_ITEMS: SlashItem[] = [
     hint: "```query",
     keywords: ["query", "search", "dataview", "list"],
     run: (ed, range) =>
-      replaceThen(ed, range, () =>
-        ed.chain().focus().insertContent({
+      runSlash(ed, range, (c) =>
+        c.insertContent({
           type: "queryBlock",
           attrs: { query: "folder:Research" },
-        }).run(),
+        }),
       ),
   },
   {
@@ -140,24 +148,21 @@ export const SLASH_ITEMS: SlashItem[] = [
     label: "Code block",
     hint: "```",
     keywords: ["code", "fence"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleCodeBlock().run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.toggleCodeBlock()),
   },
   {
     id: "quote",
     label: "Quote",
     hint: ">",
     keywords: ["quote", "blockquote"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().toggleBlockquote().run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.toggleBlockquote()),
   },
   {
     id: "divider",
     label: "Divider",
     hint: "---",
     keywords: ["hr", "rule", "divider"],
-    run: (ed, range) =>
-      replaceThen(ed, range, () => ed.chain().focus().setHorizontalRule().run()),
+    run: (ed, range) => runSlash(ed, range, (c) => c.setHorizontalRule()),
   },
 ];
 
@@ -170,18 +175,84 @@ export function filterSlashItems(query: string): SlashItem[] {
   });
 }
 
-/** `/query` at the start of the current textblock. */
+/** True when typed text in the current block is a slash command (`/` or `/query`). */
+export function isSlashCommandText(textBefore: string): boolean {
+  const m = textBefore.match(/^\s*\/([^\n]*)$/);
+  if (!m) return false;
+  return !(m[1] ?? "").includes("\0");
+}
+
+/**
+ * After a table (or at EOF), users often land in a non-empty last paragraph.
+ * Breaking onto a new line before `/` makes slash reliable on long Visual notes.
+ */
+export function shouldBreakForSlash(editor: Editor): boolean {
+  const { state } = editor;
+  if (!state.selection.empty) return false;
+  try {
+    if (editor.isActive("table")) return false;
+  } catch {
+    /* older TipTap without table */
+  }
+  const $from = state.selection.$from;
+  if (!$from.parent.isTextblock) return false;
+  if ($from.parentOffset !== $from.parent.content.size) return false;
+  if (!$from.parent.textContent.trim()) return false;
+  const index = $from.index($from.depth - 1);
+  const parent = $from.node($from.depth - 1);
+  const next = parent.maybeChild(index + 1);
+  const prev = parent.maybeChild(index - 1);
+  const last = index === parent.childCount - 1;
+  if (prev?.type.name === "table") return true;
+  if (last) return true;
+  if (next && /^(heading|table|horizontalRule|mermaid|mathBlock|codeBlock)$/.test(next.type.name)) {
+    return true;
+  }
+  return false;
+}
+
+/** Insert an empty paragraph after every table and at the end of the doc. */
+export function ensureEditableGaps(editor: Editor): void {
+  const { doc, schema } = editor.state;
+  const para = schema.nodes.paragraph;
+  if (!para) return;
+  const inserts: number[] = [];
+  doc.forEach((node, offset) => {
+    if (node.type.name !== "table") return;
+    const after = offset + node.nodeSize;
+    const next = doc.nodeAt(after);
+    const nextIsEmptyPara =
+      next?.type.name === "paragraph" && next.content.size === 0;
+    if (!nextIsEmptyPara) inserts.push(after);
+  });
+  const last = doc.lastChild;
+  const lastEmptyPara =
+    last?.type.name === "paragraph" && last.content.size === 0;
+  if (!lastEmptyPara) inserts.push(doc.content.size);
+  if (!inserts.length) return;
+  let { tr } = editor.state;
+  for (const pos of [...inserts].sort((a, b) => b - a)) {
+    tr = tr.insert(pos, para.create());
+  }
+  editor.view.dispatch(tr);
+}
+
+/** `/query` at the start of the current textblock. Never opens inside a table. */
 export function detectSlashCommand(
   editor: Editor,
 ): { query: string; from: number; to: number } | null {
   const { state } = editor;
   if (!state.selection.empty) return null;
+  try {
+    if (editor.isActive("table")) return null;
+  } catch {
+    /* older TipTap without table */
+  }
   const $from = state.selection.$from;
   const textBefore = $from.parent.textBetween(0, $from.parentOffset, "\0", "\0");
-  const m = textBefore.match(/^\/([^\n]*)$/);
-  if (!m) return null;
-  const query = m[1] ?? "";
-  if (query.includes("\0")) return null;
+  if (!isSlashCommandText(textBefore)) return null;
+  const m = textBefore.match(/^\s*\/([^\n]*)$/);
+  const query = m?.[1] ?? "";
   return {
     query,
     from: $from.start(),

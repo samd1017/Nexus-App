@@ -35,6 +35,7 @@ import {
   Workflow,
   FileText,
   Search,
+  Slash,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -363,6 +364,17 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                 <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                   Blocks
                 </div>
+                {moreItem(
+                  false,
+                  () =>
+                    editor
+                      .chain()
+                      .focus()
+                      .insertContent("<p>/</p>")
+                      .run(),
+                  <Slash size={14} />,
+                  "Slash menu (/)",
+                )}
                 {moreItem(
                   editor.isActive("codeBlock"),
                   () => editor.chain().focus().toggleCodeBlock().run(),

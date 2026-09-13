@@ -1,7 +1,11 @@
-import { useMemo, useRef, useSyncExternalStore } from "react";
-import { Activity, Link2, ListTree, Network, Unlink, Hash, Plus, Loader2 } from "lucide-react";
+import { lazy, Suspense, useMemo, useRef, useSyncExternalStore } from "react";
+import { Activity, History, Link2, ListTree, Minimize2, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
+import {
+  getUnlinkedMentions,
+  wrapUnlinkedMention,
+} from "@/lib/vault/unlinked-mentions";
 import { getBrokenLinksForNote } from "@/lib/vault/broken-links";
 import {
   extractTagsFromMarkdown,
@@ -10,13 +14,20 @@ import {
 import { extractOutline } from "@/lib/markdown/serialize";
 import { noteTitle } from "@/lib/vault/types";
 import { jumpToOutlineHeading } from "@/lib/editor/outline-jump";
-import { GraphView } from "@/components/graph/GraphView";
 import { PulseRail } from "@/components/right/PulseRail";
+import { AttachmentsRail } from "@/components/right/AttachmentsRail";
+import { HistoryRail } from "@/components/right/HistoryRail";
 import { ErrorBoundary } from "@/components/chrome/ErrorBoundary";
+
+const GraphView = lazy(async () => {
+  const m = await import("@/components/graph/GraphView");
+  return { default: m.GraphView };
+});
 import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { exitGraphForViewport } from "@/lib/layout/viewport";
 import { isContentLoaded } from "@/lib/vault/content";
 import {
   getUnreadPulseCount,
@@ -47,6 +58,8 @@ export function RightPanel() {
   const setRightWidth = useVaultStore((s) => s.setRightWidth);
   const setToast = useVaultStore((s) => s.setToast);
   const createNote = useVaultStore((s) => s.createNote);
+  const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
+  const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const tab = useVaultStore((s) => s.rightTab);
   const setRightTab = useVaultStore((s) => s.setRightTab);
@@ -71,9 +84,9 @@ export function RightPanel() {
   const bodyReady = !note || note.kind !== "note" || isContentLoaded(note);
 
   const backlinks = useMemo(() => {
-    if (!note || note.kind !== "note") return [];
+    if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getBacklinks(note, nodes);
-  }, [note, nodes]);
+  }, [tab, note, nodes]);
 
   /** Wave 4: group multi-mentions by source note, show count */
   const groupedBacklinks = useMemo((): GroupedBacklink[] => {
@@ -101,9 +114,14 @@ export function RightPanel() {
   }, [backlinks]);
 
   const brokenLinks = useMemo(() => {
-    if (!note || note.kind !== "note") return [];
+    if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getBrokenLinksForNote(note, nodes);
-  }, [note, nodes]);
+  }, [tab, note, nodes]);
+
+  const unlinkedMentions = useMemo(() => {
+    if (tab !== "backlinks" || !note || note.kind !== "note") return [];
+    return getUnlinkedMentions(note, nodes);
+  }, [tab, note, nodes]);
 
   const tags = useMemo(() => {
     if (!note || note.kind !== "note") return [];
@@ -129,17 +147,46 @@ export function RightPanel() {
     ["outline", ListTree, "Outline"],
     ["graph", Network, "Graph"],
     ["pulse", Activity, "Pulse"],
+    ["attachments", Paperclip, "Files"],
+    ["history", History, "History"],
   ] as const;
 
   if (graphMode === "fullscreen") {
     return (
-      <div className="absolute inset-0 z-30 flex flex-col bg-[var(--bg-deepest)]">
+      <div
+        className="absolute inset-0 z-30 flex flex-col bg-[var(--bg-deepest)]"
+        data-graph-host
+      >
+        <div className="absolute left-3 top-3 z-40">
+          <button
+            type="button"
+            data-exit-graph
+            className="pointer-events-auto flex h-9 w-fit shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[var(--accent)] px-3 text-[13px] font-semibold text-black shadow-[0_0_24px_rgba(0,200,255,0.28)] hover:brightness-110"
+            title="Exit fullscreen graph (Esc or Ctrl+G)"
+            aria-label="Exit graph"
+            onClick={() => exitGraphForViewport()}
+          >
+            <Minimize2 size={15} />
+            <span>Exit graph</span>
+          </button>
+        </div>
         <ErrorBoundary
           variant="panel"
           label="Graph"
           resetKeys={[vaultId, mode, "fullscreen"]}
         >
-          <GraphView mode="fullscreen" className="h-full" />
+          <Suspense
+            fallback={
+              <div
+                className="flex h-full items-center justify-center text-[12px] text-[var(--text-muted)]"
+                data-graph-progress
+              >
+                Building graph…
+              </div>
+            }
+          >
+            <GraphView mode="fullscreen" className="h-full" />
+          </Suspense>
         </ErrorBoundary>
       </div>
     );
@@ -318,6 +365,63 @@ export function RightPanel() {
               </section>
 
               <section>
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                  Unlinked mentions
+                </div>
+                {unlinkedMentions.length === 0 ? (
+                  <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
+                    No other notes say this title in plain text.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {unlinkedMentions.map((u) => (
+                      <li key={`${u.fromId}:${u.title}`}>
+                        <div className="tree-row flex w-full items-start gap-1 rounded-[10px] px-2.5 py-2 hover:bg-white/[0.04]">
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => setActiveNote(u.fromId)}
+                          >
+                            <div className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                              {u.fromTitle}
+                            </div>
+                            <div className="mt-0.5 line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
+                              {u.context}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn mt-0.5 h-6 shrink-0 px-1.5 text-[10px]"
+                            title={`Link “${u.title}” in ${u.fromTitle}`}
+                            aria-label={`Create wikilink in ${u.fromTitle}`}
+                            onClick={() => {
+                              void (async () => {
+                                await ensureNoteBody(u.fromId);
+                                const src = useVaultStore.getState().nodes[u.fromId];
+                                if (!src || src.kind !== "note" || src.content == null) {
+                                  setToast("Could not load that note to link");
+                                  return;
+                                }
+                                const { next, did } = wrapUnlinkedMention(src.content, u.title);
+                                if (!did) {
+                                  setToast("Could not wrap that mention");
+                                  return;
+                                }
+                                updateNoteContent(u.fromId, next, { source: true });
+                                setToast(`Linked [[${u.title}]] in ${u.fromTitle}`);
+                              })();
+                            }}
+                          >
+                            Link
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section>
                 <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                   <Unlink size={11} className="opacity-70" />
                   Broken links
@@ -437,14 +541,18 @@ export function RightPanel() {
               <ErrorBoundary
                 variant="panel"
                 label="Graph"
-                resetKeys={[vaultId, mode, tab, activeNoteId]}
+                resetKeys={[vaultId, mode, tab]}
               >
-                <GraphView mode="panel" className="h-full min-h-[280px]" />
+                <Suspense fallback={<div className="flex min-h-[280px] items-center justify-center text-[12px] text-[var(--text-muted)]">Loading graph…</div>}>
+                  <GraphView mode="panel" className="h-full min-h-[280px]" />
+                </Suspense>
               </ErrorBoundary>
             </div>
           ) : null}
 
           {tab === "pulse" ? <PulseRail /> : null}
+          {tab === "attachments" ? <AttachmentsRail /> : null}
+          {tab === "history" ? <HistoryRail /> : null}
         </div>
       </aside>
     </>

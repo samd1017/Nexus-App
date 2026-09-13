@@ -3,9 +3,16 @@
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+use crate::fill_join::{fill_is_inflight, start_or_join, FillRole, JoinedFill};
+use crate::index_fill::{
+    fill_from_disk_with_opts, replace_source_links, FillOpts, FillUntil, IndexFillProgress,
+    IndexFillResult, DEFAULT_DEEP_HEAD, DEFAULT_SHORT_HEAD,
+};
 
 pub const SCHEMA_VERSION: i32 = 3;
 
@@ -24,7 +31,8 @@ CREATE TABLE IF NOT EXISTS note_meta (
   size INTEGER,
   content_hash TEXT,
   title TEXT,
-  deleted INTEGER NOT NULL DEFAULT 0
+  deleted INTEGER NOT NULL DEFAULT 0,
+  fill_depth INTEGER
 );
 CREATE INDEX IF NOT EXISTS note_meta_parent ON note_meta(parent_id);
 CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);
@@ -169,8 +177,16 @@ fn open_conn(db_path: &str) -> Result<Connection, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir index: {e}"))?;
     }
     let conn = Connection::open(db_path).map_err(|e| format!("sqlite open: {e}"))?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY;",
+    )
         .map_err(|e| format!("pragma: {e}"))?;
+    // Readers (search / list_links) and the dedicated fill writer share the
+    // file. Without a busy timeout the UI connection errors immediately and
+    // a second writer raced into malloc corruption on Linux 100k fills.
+    // Fill now yields + writes ≤128 FTS rows/tx so this 15s cap is a
+    // safety net, not the common click path.
+    let _ = conn.busy_timeout(Duration::from_millis(15_000));
     Ok(conn)
 }
 
@@ -336,23 +352,8 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
     }
 
     // Only replace links/tags when caller supplies them (None = leave previous)
-    if note.link_targets.is_some() {
-        conn.execute("DELETE FROM link_edge WHERE source_id = ?1", params![note.id])
-            .map_err(|e| e.to_string())?;
-        if let Some(links) = &note.link_targets {
-            for raw in links {
-                let norm = raw.trim().to_lowercase();
-                if norm.is_empty() {
-                    continue;
-                }
-                conn.execute(
-                    "INSERT OR IGNORE INTO link_edge(source_id, target_raw, target_norm, target_id)
-                     VALUES (?1,?2,?3,NULL)",
-                    params![note.id, raw, norm],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
+    if let Some(links) = &note.link_targets {
+        replace_source_links(conn, &note.id, links)?;
     }
 
     if note.tags.is_some() {
@@ -595,6 +596,11 @@ pub fn vault_index_close(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
 ) -> Result<OkResult, String> {
+    if fill_is_inflight(&db_path) {
+        // Keep the UI connection while the dedicated fill writer is running.
+        // Closing mid-fill opened a third handle and raced writers at 100k.
+        return Ok(OkResult { ok: true });
+    }
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     guard.conns.remove(&db_path);
     Ok(OkResult { ok: true })
@@ -606,6 +612,9 @@ pub fn vault_index_wipe(
     db_path: String,
 ) -> Result<OkResult, String> {
     let guard = state.lock().map_err(|e| e.to_string())?;
+    if fill_is_inflight(&db_path) {
+        return Err("index fill in progress".into());
+    }
     let conn = guard
         .conns
         .get(&db_path)
@@ -620,6 +629,9 @@ pub fn vault_index_rebuild(
     db_path: String,
     notes: Vec<NoteMetaDto>,
 ) -> Result<IndexStatsDto, String> {
+    if fill_is_inflight(&db_path) {
+        return Err("index fill in progress".into());
+    }
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     let conn = guard
         .conns
@@ -687,6 +699,48 @@ pub fn vault_index_search(
     search_tx(conn, &query, limit.unwrap_or(40))
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkGroupDto {
+    pub source_id: String,
+    pub targets: Vec<String>,
+}
+
+/// Seed the JS link index from persisted `link_edge` (no note bodies).
+#[tauri::command]
+pub fn vault_index_list_links(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+) -> Result<Vec<LinkGroupDto>, String> {
+    let guard = state.lock().map_err(|e| e.to_string())?;
+    let conn = guard
+        .conns
+        .get(&db_path)
+        .ok_or_else(|| "index not open".to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT source_id, target_raw FROM link_edge ORDER BY source_id, id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    let mut groups: Vec<LinkGroupDto> = Vec::new();
+    for row in rows.flatten() {
+        if let Some(last) = groups.last_mut() {
+            if last.source_id == row.0 {
+                last.targets.push(row.1);
+                continue;
+            }
+        }
+        groups.push(LinkGroupDto {
+            source_id: row.0,
+            targets: vec![row.1],
+        });
+    }
+    Ok(groups)
+}
+
 #[tauri::command]
 pub fn vault_index_stats(
     state: tauri::State<'_, SharedIndex>,
@@ -748,4 +802,210 @@ pub fn vault_index_list(
         out.push(row.map_err(|e| e.to_string())?);
     }
     Ok(out)
+}
+
+fn fill_cancel_set() -> &'static Mutex<HashSet<String>> {
+    static LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn request_fill_cancel(db_path: &str) {
+    if let Ok(mut g) = fill_cancel_set().lock() {
+        g.insert(db_path.to_string());
+    }
+}
+
+fn fill_is_cancelled(db_path: &str) -> bool {
+    fill_cancel_set()
+        .lock()
+        .map(|g| g.contains(db_path))
+        .unwrap_or(false)
+}
+
+fn clear_fill_cancel(db_path: &str) {
+    if let Ok(mut g) = fill_cancel_set().lock() {
+        g.remove(db_path);
+    }
+}
+
+fn joined_from_fill(r: IndexFillResult) -> JoinedFill {
+    JoinedFill {
+        indexed: r.indexed,
+        skipped: r.skipped,
+        errors: r.errors,
+        notes: r.notes,
+        edges: r.edges,
+        search_state: r.search_state,
+    }
+}
+
+fn fill_from_joined(j: JoinedFill) -> IndexFillResult {
+    IndexFillResult {
+        indexed: j.indexed,
+        skipped: j.skipped,
+        errors: j.errors,
+        notes: j.notes,
+        edges: j.edges,
+        search_state: j.search_state,
+    }
+}
+
+fn emit_fill_progress(app: &tauri::AppHandle, progress: &IndexFillProgress) {
+    use tauri::Emitter;
+    let _ = app.emit("vault-index-progress", progress);
+}
+
+fn fill_from_disk_job(
+    app: &tauri::AppHandle,
+    db_path: &str,
+    vault_root: &str,
+    head: usize,
+    short_head: usize,
+    force_rebuild: bool,
+    priority_rels: &[String],
+) -> Result<IndexFillResult, String> {
+    let root_path = Path::new(vault_root);
+    if !root_path.is_dir() {
+        let err = format!("not a directory: {vault_root}");
+        emit_fill_progress(
+            app,
+            &IndexFillProgress {
+                db_path: db_path.to_string(),
+                scanned: 0,
+                total: 0,
+                indexed: 0,
+                skipped: 0,
+                errors: 1,
+                phase: "error".into(),
+                message: Some(err.clone()),
+                search_state: String::new(),
+            },
+        );
+        return Err(err);
+    }
+
+    let mut conn = open_conn(db_path)?;
+    let vault_id: String = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'vault_id'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| "fill".into());
+    let schema_ver: i32 = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    // Avoid CREATE/migrate DDL while the UI connection is live — that locked
+    // the 100k writer and contributed to concurrent malloc crashes.
+    if schema_ver != SCHEMA_VERSION {
+        ensure_schema(&conn, &vault_id, Some(vault_root))?;
+    }
+
+    let app_emit = app.clone();
+    let db_cancel = db_path.to_string();
+    fill_from_disk_with_opts(
+        &mut conn,
+        root_path,
+        FillOpts {
+            deep_head_chars: head,
+            short_head_chars: short_head,
+            force_rebuild,
+            db_path,
+            priority_rels,
+            until: FillUntil::Deep,
+        },
+        || fill_is_cancelled(&db_cancel),
+        |p| emit_fill_progress(&app_emit, p),
+    )
+}
+
+/// Walk the vault on disk in phases: title/path FTS seed (`ready-meta`),
+/// short heads, then deeper heads. Desktop does not write every empty-body
+/// FTS row before title search is live. Runs on the blocking pool so the
+/// WebView stays responsive. Emits `vault-index-progress` (`ready-meta` /
+/// `ready-fts-partial` / `done`). Incremental: skip unchanged
+/// path+mtime+size at the already-reached depth.
+#[tauri::command]
+pub async fn vault_index_fill_from_disk(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    vault_root: String,
+    head_chars: Option<u32>,
+    short_head_chars: Option<u32>,
+    force_rebuild: Option<bool>,
+    priority_paths: Option<Vec<String>>,
+) -> Result<IndexFillResult, String> {
+    crate::vault_scope::register_and_grant(&app, &vault_root)?;
+    if !crate::vault_scope::is_allowed_vault_root(&vault_root) {
+        return Err("vault root not allowed".into());
+    }
+    {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        if !guard.conns.contains_key(&db_path) {
+            return Err("index not open".into());
+        }
+    }
+
+    let head = head_chars.unwrap_or(DEFAULT_DEEP_HEAD as u32).clamp(256, 32_000) as usize;
+    let short_head = short_head_chars
+        .unwrap_or(DEFAULT_SHORT_HEAD as u32)
+        .clamp(256, 4_096) as usize;
+    let force = force_rebuild.unwrap_or(false);
+    let priority = priority_paths.unwrap_or_default();
+    clear_fill_cancel(&db_path);
+    match start_or_join(&db_path) {
+        FillRole::Joiner(joiner) => {
+            // Idempotent: await the in-flight writer. Progress events already
+            // emit from the leader — JS listeners keep the banner moving.
+            let joined = tauri::async_runtime::spawn_blocking(move || joiner.wait())
+                .await
+                .map_err(|e| format!("SQLite FTS fill join failed: {e}"))?;
+            Ok(fill_from_joined(joined?))
+        }
+        FillRole::Leader(leader) => {
+            let app2 = app.clone();
+            let db2 = db_path.clone();
+            let root2 = vault_root.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                match fill_from_disk_job(&app2, &db2, &root2, head, short_head, force, &priority)
+                {
+                    Ok(r) => Ok(r),
+                    Err(e) => {
+                        emit_fill_progress(
+                            &app2,
+                            &IndexFillProgress {
+                                db_path: db2,
+                                scanned: 0,
+                                total: 0,
+                                indexed: 0,
+                                skipped: 0,
+                                errors: 1,
+                                phase: "error".into(),
+                                message: Some(e.clone()),
+                                search_state: String::new(),
+                            },
+                        );
+                        Err(e)
+                    }
+                }
+            })
+            .await
+            .map_err(|e| format!("SQLite FTS fill task failed: {e}"))?;
+            let mapped = result.map(joined_from_fill);
+            Ok(fill_from_joined(leader.finish(mapped)?))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn vault_index_fill_cancel(db_path: String) -> Result<OkResult, String> {
+    request_fill_cancel(&db_path);
+    Ok(OkResult { ok: true })
 }

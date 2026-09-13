@@ -14,9 +14,19 @@ import {
   Loader2,
   AlertCircle,
   Search,
+  X,
+  ArrowLeftRight,
+  Pin,
 } from "lucide-react";
 import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
+import { useTreeStructureTick } from "@/lib/vault/tree-tick";
+import { vaultIndex } from "@/lib/vault/indexes";
+import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
+import {
+  scheduleFillSafeHydrate,
+  shouldDeferNoteBodyHydrate,
+} from "@/lib/vault/fill-interaction";
 import { VisualEditor } from "./VisualEditor";
 import { SourceEditor } from "./SourceEditor";
 import { SourcePreview } from "./SourcePreview";
@@ -33,7 +43,7 @@ import { ConflictBanner } from "@/components/conflict/ConflictStudioHost";
 import { formatShortcut } from "@/lib/platform";
 import { FindInNoteBar } from "./FindInNoteBar";
 import { FrontmatterEditor } from "./FrontmatterEditor";
-import { setFindEditorMode } from "@/lib/editor/find-target";
+import { setFindEditorMode, setFindFocusPane, getFindFocusPane } from "@/lib/editor/find-target";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import {
   formatDateLong,
@@ -42,8 +52,13 @@ import {
   parseJournalDailyDate,
 } from "@/lib/vault/templates";
 
-export function EditorPane() {
-  const nodes = useVaultStore((s) => s.nodes);
+export function EditorPane({
+  noteId,
+  pane = "primary",
+}: {
+  noteId?: string | null;
+  pane?: "primary" | "secondary";
+} = {}) {
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
   const rightOpen = useVaultStore((s) => s.settings.rightOpen);
@@ -55,19 +70,39 @@ export function EditorPane() {
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const setEditorMode = useVaultStore((s) => s.setEditorMode);
+  const workspaceSplit = useVaultStore((s) => s.settings.workspaceSplit);
+  const toggleWorkspaceSplit = useVaultStore((s) => s.toggleWorkspaceSplit);
+  const closeSecondaryPane = useVaultStore((s) => s.closeSecondaryPane);
+  const swapWorkspacePanes = useVaultStore((s) => s.swapWorkspacePanes);
+  const pendingJump = useVaultStore((s) => s.pendingJump);
+  const togglePinnedNote = useVaultStore((s) => s.togglePinnedNote);
+  const pinnedNotePaths = useVaultStore((s) => s.settings.pinnedNotePaths);
   const focusMode = usePrefsStore((s) => s.focusMode);
   const [findOpen, setFindOpen] = useState(false);
   const [findSeed, setFindSeed] = useState("");
   const [findReplace, setFindReplace] = useState(false);
-  const note = useVaultStore((s) =>
-    s.activeNoteId ? (s.nodes[s.activeNoteId] ?? null) : null,
+  const resolvedId = useVaultStore((s) =>
+    pane === "secondary" ? (noteId ?? s.secondaryNoteId) : (noteId ?? s.activeNoteId),
   );
+  const note = useVaultStore((s) =>
+    resolvedId ? (s.nodes[resolvedId] ?? null) : null,
+  );
+  const structureTick = useTreeStructureTick();
+  const isSecondary = pane === "secondary";
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [hydrateError, setHydrateError] = useState(false);
+  const [splitLive, setSplitLive] = useState<{ id: string; text: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     setFindEditorMode(editorMode === "visual" ? "visual" : "source");
   }, [editorMode]);
+
+  useEffect(() => {
+    if (!workspaceSplit && pane === "primary") setFindFocusPane("primary");
+  }, [workspaceSplit, pane]);
 
   useEffect(() => {
     // Close find when switching notes
@@ -75,7 +110,19 @@ export function EditorPane() {
   }, [note?.id]);
 
   useEffect(() => {
+    if (!pendingJump || !note?.id || pendingJump.noteId !== note.id) return;
+    if (pendingJump.pane !== pane) return;
+    const t = window.setTimeout(() => {
+      if (pendingJump.heading) jumpToOutlineHeading(pendingJump.heading, 0, pane);
+      if (pendingJump.blockId) jumpToBlockRef(pendingJump.blockId, pane);
+      useVaultStore.getState().clearPendingJump?.();
+    }, 90);
+    return () => window.clearTimeout(t);
+  }, [pendingJump, note?.id, note?.content, pane]);
+
+  useEffect(() => {
     const onOpenFind = (e: Event) => {
+      if (getFindFocusPane() !== pane) return;
       const detail = (e as CustomEvent<{ seed?: string; replace?: boolean }>)
         .detail;
       setFindSeed(detail?.seed ?? "");
@@ -89,11 +136,11 @@ export function EditorPane() {
       window.removeEventListener("nexus:find-open", onOpenFind);
       window.removeEventListener("nexus:find-close", onCloseFind);
     };
-  }, []);
+  }, [pane]);
 
   const crumbs = useMemo(
-    () => getBreadcrumbTrail(note ?? null, nodes),
-    [note, nodes],
+    () => getBreadcrumbTrail(note ?? null, useVaultStore.getState().nodes),
+    [note],
   );
 
   const revealFolder = (id: string) => {
@@ -117,25 +164,61 @@ export function EditorPane() {
 
   useEffect(() => {
     setHydrateError(false);
-    if (note?.kind === "note" && note.content === undefined) {
-      let cancelled = false;
+    if (note?.kind !== "note" || note.content !== undefined) return;
+    let cancelled = false;
+    const start = () => {
+      if (cancelled) return;
       void ensureNoteBody(note.id).then((body: string | null) => {
         if (cancelled) return;
         if (body === null) setHydrateError(true);
       });
+    };
+    // During fill: wait for idle so tree/graph clicks paint first. Rapid
+    // selects cancel the previous idle work — only the last note reads disk.
+    if (shouldDeferNoteBodyHydrate({ fillBusy: indexFillBusy })) {
+      const stopIdle = scheduleFillSafeHydrate(() => {
+        if (!cancelled) start();
+      });
       return () => {
         cancelled = true;
+        stopIdle();
       };
     }
-  }, [note?.id, note?.content, ensureNoteBody]);
+    start();
+    return () => {
+      cancelled = true;
+    };
+  }, [note?.id, note?.content, ensureNoteBody, indexFillBusy]);
 
-  const noteCount = useMemo(
-    () => Object.values(nodes).filter((n) => n.kind === "note").length,
-    [nodes],
-  );
+  const noteCount = useMemo(() => {
+    void structureTick;
+    return vaultIndex.noteCount;
+  }, [structureTick]);
   const createNote = useVaultStore((s) => s.createNote);
 
   if (!note || note.kind !== "note") {
+    if (isSecondary) {
+      return (
+        <div
+          className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)] px-6 text-center"
+          data-editor-pane="secondary"
+        >
+          <p className="text-[14px] text-[var(--text-secondary)]">
+            Open a second note
+          </p>
+          <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+            Alt-click a file or wikilink to park it here.
+          </p>
+          <button
+            type="button"
+            className="ghost-btn mt-3"
+            onClick={() => closeSecondaryPane()}
+          >
+            Close pane
+          </button>
+        </div>
+      );
+    }
     const emptyVault = noteCount === 0;
     return (
       <div className="fade-in flex h-full flex-col items-center justify-center px-8 text-center">
@@ -230,6 +313,8 @@ export function EditorPane() {
       <div
         className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)]"
         data-active-note={note.id}
+        data-editor-pane={pane}
+        data-testid="nexus-editor"
         data-body-loading="true"
       >
         <Loader2
@@ -245,12 +330,16 @@ export function EditorPane() {
 
   const body = note.content ?? "";
   const canvasNote = isCanvasNote(body);
-  const editorKey = `${note.id}::${editorMode}::${canvasNote ? "canvas" : "note"}`;
+  const editorKey = `${editorMode}::${canvasNote ? "canvas" : "note"}`;
+  const previewBody = splitLive?.id === note.id ? splitLive.text : body;
 
   return (
     <div
       className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
       data-active-note={note.id}
+      data-editor-pane={pane}
+      data-testid="nexus-editor"
+      onPointerDownCapture={() => setFindFocusPane(pane)}
     >
       <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
         <div className="min-w-0 flex-1">
@@ -303,6 +392,30 @@ export function EditorPane() {
                 Daily
               </span>
             ) : null}
+            <button
+              type="button"
+              className={cn(
+                "icon-btn h-7 w-7 shrink-0",
+                (pinnedNotePaths ?? []).includes(note.path) && "text-[var(--accent)]",
+              )}
+              title={
+                (pinnedNotePaths ?? []).includes(note.path)
+                  ? "Unpin note"
+                  : "Pin note"
+              }
+              aria-label={
+                (pinnedNotePaths ?? []).includes(note.path)
+                  ? "Unpin note"
+                  : "Pin note"
+              }
+              aria-pressed={(pinnedNotePaths ?? []).includes(note.path)}
+              onClick={() => togglePinnedNote(note.id)}
+            >
+              <Pin
+                size={14}
+                fill={(pinnedNotePaths ?? []).includes(note.path) ? "currentColor" : "none"}
+              />
+            </button>
           </div>
         </div>
 
@@ -337,6 +450,7 @@ export function EditorPane() {
                   type="button"
                   className={cn("chip-btn !border-0", findOpen && "is-active")}
                   onClick={() => {
+                    setFindFocusPane(pane);
                     if (findOpen) setFindOpen(false);
                     else {
                       const sel = window.getSelection()?.toString()?.trim() ?? "";
@@ -362,7 +476,7 @@ export function EditorPane() {
                 >
                   <Eye size={13} />
                   <span className="hidden md:inline">
-                    {canvasNote ? "Board" : "Visual"}
+                    {canvasNote ? "Tour board" : "Visual"}
                   </span>
                 </button>
                 <button
@@ -382,17 +496,51 @@ export function EditorPane() {
                   <button
                     type="button"
                     className={cn(
-                      "chip-btn !border-0 hidden sm:inline-flex",
+                      "chip-btn !border-0",
                       editorMode === "split" && "is-active",
                     )}
                     onClick={() => setEditorMode("split")}
-                    title="Split: source + live preview"
+                    title="Source + live preview of this note"
                     aria-pressed={editorMode === "split"}
                   >
                     <Columns2 size={13} />
-                    <span className="hidden md:inline">Split</span>
+                    <span className="hidden md:inline">Preview</span>
                   </button>
                 ) : null}
+                {!isSecondary ? (
+                  <button
+                    type="button"
+                    className={cn(
+                      "chip-btn !border-0 hidden sm:inline-flex",
+                      workspaceSplit && "is-active",
+                    )}
+                    onClick={() => toggleWorkspaceSplit()}
+                    title="Dual note workspace (⌘2)"
+                    aria-pressed={workspaceSplit}
+                  >
+                    <Columns2 size={13} />
+                    <span className="hidden md:inline">Pane</span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="chip-btn !border-0 hidden sm:inline-flex"
+                      onClick={() => swapWorkspacePanes()}
+                      title="Swap panes"
+                    >
+                      <ArrowLeftRight size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="chip-btn !border-0"
+                      onClick={() => closeSecondaryPane()}
+                      title="Close pane"
+                    >
+                      <X size={13} />
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   className={cn(
@@ -404,7 +552,7 @@ export function EditorPane() {
                       "is-active",
                   )}
                   onClick={() => toggleGraphForViewport()}
-                  title={`Graph (${formatShortcut("G")})`}
+                  title={`Fullscreen graph (${formatShortcut("G")}) — Esc or Exit to leave`}
                   aria-pressed={
                     graphMode === "fullscreen" ||
                     (graphMode === "panel" && rightOpen && rightTab === "graph")
@@ -454,6 +602,7 @@ export function EditorPane() {
         onOpenChange={setFindOpen}
         seedQuery={findSeed}
         replaceMode={findReplace}
+        pane={pane}
       />
 
       <FrontmatterEditor noteId={note.id} content={body} />
@@ -465,21 +614,26 @@ export function EditorPane() {
         {editorMode === "visual" && canvasNote ? (
           <CanvasBoard noteId={note.id} content={body} />
         ) : editorMode === "visual" ? (
-          <VisualEditor noteId={note.id} content={body} />
+          <VisualEditor noteId={note.id} content={body} pane={pane} />
         ) : editorMode === "split" && !canvasNote ? (
           <div className="nexus-split">
             <div className="nexus-split-pane">
-              <SourceEditor noteId={note.id} content={body} />
+              <SourceEditor
+                noteId={note.id}
+                content={body}
+                pane={pane}
+                onLiveChange={(text) => setSplitLive({ id: note.id, text })}
+              />
             </div>
             <div className="nexus-split-pane">
               <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Live preview
               </div>
-              <SourcePreview content={body} />
+              <SourcePreview content={previewBody} noteId={note.id} />
             </div>
           </div>
         ) : (
-          <SourceEditor noteId={note.id} content={body} />
+          <SourceEditor noteId={note.id} content={body} pane={pane} />
         )}
       </div>
     </div>

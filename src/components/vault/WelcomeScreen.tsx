@@ -24,6 +24,13 @@ import {
 } from "@/components/brand/NexusLogo";
 import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
 import { ThemeToggle } from "@/components/chrome/ThemeToggle";
+import {
+  chromeFsaRefuseChrome,
+  chromeFsaRefuseDesktop,
+  chromeFsaRefuseLead,
+  chromeFsaRefuseTitle,
+  chromeFsaWarnMessage,
+} from "@/lib/vault/chrome-fsa-cap";
 
 type PendingAction =
   | null
@@ -46,12 +53,15 @@ const PENDING_LABEL: Record<Exclude<PendingAction, null>, string> = {
 export function WelcomeScreen() {
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
   const createNewVault = useVaultStore((s) => s.createNewVault);
+  const createMemoryVault = useVaultStore((s) => s.createMemoryVault);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const connecting = useVaultStore((s) => s.connecting);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const folderAccessLost = useVaultStore((s) => s.folderAccessLost);
+  const chromeFsaLimit = useVaultStore((s) => s.chromeFsaLimit);
   const setToast = useVaultStore((s) => s.setToast);
   const [createName, setCreateName] = useState("Nexus Vault");
   const [showCreate, setShowCreate] = useState(false);
@@ -63,17 +73,17 @@ export function WelcomeScreen() {
   const hasRecents = recentVaults.length > 0;
 
   useEffect(() => {
-    if (!connecting) setPending(null);
-  }, [connecting]);
+    if (!connecting && !indexFillBusy) setPending(null);
+  }, [connecting, indexFillBusy]);
 
   const run = (kind: Exclude<PendingAction, null>, fn: () => void) => {
-    if (connecting) return;
+    if (connecting || indexFillBusy) return;
     setPending(kind);
     fn();
   };
 
   const openTopRecent = () => {
-    if (connecting || !topRecent) return;
+    if (connecting || indexFillBusy || !topRecent) return;
     run("recent", () => {
       if (topRecent.mode === "demo") openDemoVault();
       else if (
@@ -93,7 +103,7 @@ export function WelcomeScreen() {
   };
 
   const onOpenFolder = () => {
-    if (connecting) return;
+    if (connecting || indexFillBusy) return;
     if (!fsaOk) {
       setToast(
         desktop
@@ -107,24 +117,32 @@ export function WelcomeScreen() {
     });
   };
 
-  const onCreateVault = () => {
-    if (connecting) return;
-    if (!fsaOk) {
+  const onCreateVault = (onDisk: boolean) => {
+    if (connecting || indexFillBusy) return;
+    const name = createName.trim() || "Nexus Vault";
+    if (onDisk && !fsaOk && !desktop) {
       setToast(
-        desktop
-          ? "Could not create vault"
-          : "Creating a vault needs Chrome or Edge — or the desktop app. Try Explore demo first.",
+        "Folder create needs Chrome or Edge — created in this browser instead.",
       );
+      run("create", () => {
+        createMemoryVault(name);
+        setShowCreate(false);
+      });
       return;
     }
     run("create", () => {
-      void createNewVault(createName.trim() || "Nexus Vault");
+      if (onDisk) void createNewVault(name);
+      else createMemoryVault(name);
       setShowCreate(false);
     });
   };
 
-  const busy = connecting;
-  const busyLabel = pending ? PENDING_LABEL[pending] : "Opening…";
+  const busy = connecting || indexFillBusy;
+  const busyLabel = pending
+    ? PENDING_LABEL[pending]
+    : indexFillBusy && !connecting
+      ? "Indexing…"
+      : "Opening…";
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]">
@@ -158,7 +176,7 @@ export function WelcomeScreen() {
           >
             <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1 text-[11px] font-medium tracking-wide text-[var(--text-secondary)]">
               <Zap size={12} className="text-[var(--accent)]" />
-              Built for 300–500k notes
+              Same Markdown folder as your agents
             </div>
             <div className="flex items-center gap-4">
               <NexusMark size={60} className="text-[var(--text-primary)]" />
@@ -181,7 +199,10 @@ export function WelcomeScreen() {
             style={{ animation: "welcomeFadeUp 520ms ease-out 80ms both" }}
           >
             A writing surface that stays fast
-            <span className="text-[var(--text-muted)]"> — even huge.</span>
+            <span className="text-[var(--text-muted)]">
+              {" "}
+              — Desktop for large vaults.
+            </span>
           </h1>
           <p
             className="mt-4 max-w-lg text-[15.5px] leading-relaxed text-[var(--text-secondary)]"
@@ -209,6 +230,41 @@ export function WelcomeScreen() {
                 </button>{" "}
                 (in-browser only).
               </div>
+            </div>
+          ) : null}
+
+          {chromeFsaLimit?.kind === "warn" ? (
+            <div
+              className="mt-6 rounded-[14px] border border-[color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[var(--warning-dim)] px-4 py-3 text-[13px] leading-relaxed text-[var(--text-secondary)]"
+              data-chrome-fsa-limit="warn"
+              role="status"
+            >
+              <strong className="text-[var(--text-primary)]">
+                Large folder for Chrome
+              </strong>
+              <p className="mt-1">{chromeFsaWarnMessage(chromeFsaLimit.notes)}</p>
+            </div>
+          ) : null}
+
+          {chromeFsaLimit?.kind === "refuse" ? (
+            <div
+              className="mt-6 rounded-[14px] border border-[color-mix(in_srgb,#ff453a_40%,transparent)] bg-[rgba(255,69,58,0.08)] px-4 py-3 text-[13px] leading-relaxed text-[var(--text-secondary)]"
+              data-chrome-fsa-refused
+              data-chrome-fsa-desktop-required
+              role="alert"
+            >
+              <strong className="text-[var(--text-primary)]">
+                {chromeFsaRefuseTitle(chromeFsaLimit.name)}
+              </strong>
+              <p className="mt-1" data-chrome-fsa-refuse-lead>
+                {chromeFsaRefuseLead(chromeFsaLimit.notes)}
+              </p>
+              <p className="mt-2" data-chrome-fsa-refuse-desktop>
+                {chromeFsaRefuseDesktop()}
+              </p>
+              <p className="mt-2" data-chrome-fsa-refuse-chrome>
+                {chromeFsaRefuseChrome()}
+              </p>
             </div>
           ) : null}
 
@@ -327,19 +383,18 @@ export function WelcomeScreen() {
             <button
               type="button"
               className="ghost-btn min-h-11 w-full justify-center sm:w-auto"
-              disabled={busy || !fsaOk}
+              disabled={busy}
               onClick={() => {
-                if (!fsaOk || busy) return;
+                if (busy) return;
                 setShowCreate((v) => !v);
               }}
-              title={!fsaOk ? "Not available in this browser" : undefined}
             >
               <FolderPlus size={16} />
               New vault
             </button>
           </div>
 
-          {showCreate && fsaOk ? (
+          {showCreate ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
               <input
                 className="min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
@@ -352,14 +407,24 @@ export function WelcomeScreen() {
               <button
                 type="button"
                 className="primary-btn min-h-9"
-                disabled={busy || !fsaOk}
-                onClick={onCreateVault}
+                disabled={busy}
+                onClick={() => onCreateVault(false)}
               >
                 {pending === "create" && busy ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : null}
                 Create
               </button>
+              {fsaOk || desktop ? (
+                <button
+                  type="button"
+                  className="ghost-btn min-h-9"
+                  disabled={busy}
+                  onClick={() => onCreateVault(true)}
+                >
+                  On disk…
+                </button>
+              ) : null}
             </div>
           ) : null}
         </section>
@@ -375,7 +440,7 @@ export function WelcomeScreen() {
               {
                 icon: Search,
                 title: "Find",
-                body: "Indexed search that stays snappy at huge scale.",
+                body: "Chrome: about 20,000 notes. Desktop: SQLite FTS5 for 100k+.",
               },
               {
                 icon: Network,
@@ -404,8 +469,10 @@ export function WelcomeScreen() {
           </div>
 
           <div className="mt-6 rounded-[16px] border border-[var(--border)] bg-[var(--fill-subtle)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-            Scale: metadata-first index, lazy note bodies, virtualized tree.
-            Opening a 300k-note vault does not load 300k files into memory.
+            Chrome in the browser: about 20,000 notes. A lifetime
+            Obsidian-sized vault (100k–300k) needs Nexus Desktop — same
+            markdown folder, SQLite search, no tab discard. We will not open
+            25,000+ notes in Chrome.
           </div>
 
           <p className="mt-8 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">

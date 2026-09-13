@@ -3,18 +3,34 @@
  * Works for Visual (ProseMirror DOM) and Source (textarea).
  */
 
-export function jumpToOutlineHeading(text: string, level: number): boolean {
+import { headingsMatch, normalizeBlockId } from "@/lib/markdown/note-slice";
+
+function paneRoot(pane?: string | null): ParentNode {
+  if (typeof document === "undefined") return { querySelector: () => null, querySelectorAll: () => [] } as unknown as ParentNode;
+  if (pane && pane !== "solo") {
+    const scoped = document.querySelector(`[data-editor-pane="${pane}"]`);
+    if (scoped) return scoped;
+  }
+  return document;
+}
+
+export function jumpToOutlineHeading(
+  text: string,
+  level: number,
+  pane?: string | null,
+): boolean {
   if (typeof document === "undefined") return false;
-  const needle = text.trim().toLowerCase();
+  const needle = text.trim();
   if (!needle) return false;
+  const root = paneRoot(pane);
 
   // Visual mode: TipTap headings
-  const editor = document.querySelector(".note-editor");
+  const editor = root.querySelector(".note-editor:not(.nexus-source-preview)");
   if (editor) {
     const headings = editor.querySelectorAll("h1,h2,h3,h4,h5,h6");
     for (const h of Array.from(headings)) {
-      const t = (h.textContent || "").trim().toLowerCase();
-      if (t === needle || t.startsWith(needle)) {
+      const t = (h.textContent || "").trim();
+      if (headingsMatch(t, needle) || t.toLowerCase().startsWith(needle.toLowerCase())) {
         h.scrollIntoView({ behavior: "smooth", block: "center" });
         h.classList.add("outline-flash");
         window.setTimeout(() => h.classList.remove("outline-flash"), 900);
@@ -24,7 +40,7 @@ export function jumpToOutlineHeading(text: string, level: number): boolean {
   }
 
   // Source mode: textarea
-  const ta = document.querySelector(
+  const ta = root.querySelector(
     'textarea[aria-label="Markdown source"]',
   ) as HTMLTextAreaElement | null;
   if (ta) {
@@ -50,20 +66,59 @@ export function jumpToOutlineHeading(text: string, level: number): boolean {
     if (
       tryJump(
         (m) =>
-          m[1].length === wantLevel && m[2].trim().toLowerCase() === needle,
+          m[1].length === wantLevel && headingsMatch(m[2].trim(), needle),
       )
     ) {
       return true;
     }
-    if (
-      tryJump((m) => {
-        const t = m[2].trim().toLowerCase();
-        return t === needle || t.startsWith(needle);
-      })
-    ) {
+    if (tryJump((m) => headingsMatch(m[2].trim(), needle))) {
       return true;
     }
   }
 
+  return false;
+}
+
+export function jumpToBlockRef(
+  blockId: string,
+  pane?: string | null,
+): boolean {
+  if (typeof document === "undefined") return false;
+  const id = normalizeBlockId(blockId);
+  if (!id) return false;
+  const root = paneRoot(pane);
+  const needle = `^${id}`;
+
+  const editor = root.querySelector(".note-editor:not(.nexus-source-preview)");
+  if (editor) {
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      if ((node.textContent || "").includes(needle)) {
+        const el =
+          (node.parentElement as HTMLElement | null) ??
+          (editor as HTMLElement);
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("outline-flash");
+        window.setTimeout(() => el.classList.remove("outline-flash"), 900);
+        return true;
+      }
+    }
+  }
+
+  const ta = root.querySelector(
+    'textarea[aria-label="Markdown source"]',
+  ) as HTMLTextAreaElement | null;
+  if (ta) {
+    const idx = ta.value.indexOf(needle);
+    if (idx >= 0) {
+      ta.focus();
+      ta.setSelectionRange(idx, idx + needle.length);
+      const lineCount = ta.value.slice(0, idx).split("\n").length;
+      const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24;
+      ta.scrollTop = Math.max(0, (lineCount - 3) * lineHeight);
+      return true;
+    }
+  }
   return false;
 }

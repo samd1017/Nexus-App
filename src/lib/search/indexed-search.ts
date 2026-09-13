@@ -84,6 +84,12 @@ function rebuild(nodes: Record<string, VaultNode>) {
 /** Incremental patch when structural gen matches */
 export function upsertIndexedNote(n: VaultNode): void {
   if (n.kind !== "note") return;
+  // DurableIndex already has tokens. Do not grow a second 100k inverted index
+  // as notes are opened on FSA / desktop.
+  if (getDurableIndex()?.ready) {
+    if (docs.size > 0) invalidateIndexedSearch();
+    return;
+  }
   const prev = docs.get(n.id);
   if (prev) removeFromInv(n.id, prev.tokens);
   const d = buildDoc(n);
@@ -99,6 +105,7 @@ export function removeIndexedNote(id: string): void {
 }
 
 function ensureIndex(nodes: Record<string, VaultNode>) {
+  if (getDurableIndex()?.ready) return;
   const gen = ensureVaultIndex(nodes).generation();
   if (gen !== cachedGen || docs.size === 0) {
     rebuild(nodes);

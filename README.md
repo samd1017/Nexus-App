@@ -34,20 +34,20 @@ Writing, the 3D graph, and visual design matter. Ranking quality and grounded re
 
 ## Download Alpha (desktop)
 
-Pre-built **Alpha** installers for **macOS (Apple Silicon)** and **Windows** are published on the [Releases](https://github.com/samd1017/Nexus-App/releases) page when a build finishes.
+Unsigned **macOS (Apple Silicon)** and **Windows** installers are attached when the desktop workflow finishes a release build. Check the [Releases](https://github.com/samd1017/Nexus-App/releases) page: **v0.1.0-alpha** has installer assets; **v0.1.1-alpha** is a source checkpoint (no DMG/EXE). If the latest tag has no assets, build from source — see [DESKTOP.md](DESKTOP.md).
 
 These builds are **unsigned** (not notarized / not code-signed). That is expected for Alpha.
 
 ### macOS (unsigned)
 
-1. Download the `.dmg` from the latest Alpha release.
+1. Download the `.dmg` from a release that lists installer assets (currently **v0.1.0-alpha** — not the latest source-only tag).
 2. Open it and drag **Nexus** into Applications.
 3. First launch: **right-click** the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
 4. macOS Gatekeeper will warn because the developer is unidentified. Confirm Open.
 
 ### Windows (unsigned)
 
-1. Download the `.exe` installer from the latest Alpha release.
+1. Download the `.exe` from a release that lists installer assets (currently **v0.1.0-alpha** — not the latest source-only tag).
 2. Run it. If **SmartScreen** appears (“Windows protected your PC”), click **More info** → **Run anyway**.
 3. That warning is normal for unsigned Alpha builds.
 
@@ -67,18 +67,23 @@ Everything else (editor, graph, command palette) supports that core loop.
 
 **What works well today**
 - Local-first Markdown vault (plain `.md` files)
-- TipTap visual editor with full Markdown round-trip
+- TipTap visual editor with Markdown round-trip (callouts, tables, nested tasks, mermaid/math)
+- `[[Note#Heading]]` / `[[Note#^block]]` navigation and heading/block embeds
+- Dual-note workspace (two notes, not just source+preview)
+- Attachments rail (images, PDFs, vault files) and per-note version history
 - Live 3D force-directed knowledge graph
 - Tauri 2 desktop shell (macOS + Windows) + web mode via File System Access API
-- Durable SQLite FTS5 index (disposable, lives outside the vault)
+- Search: desktop uses disposable SQLite FTS5 BM25 (`searchFtsAsync`); web / FSA uses an in-memory inverted index with an 800-candidate cap (not BM25). Palette heading names the live engine.
+- Grounded **Ask your notes** (`ask:` in ⌘K) with extractive citations — no cloud model
+- Pulse + Conflict Studio for humans and agents on the same folder
 - Command palette, backlinks, large-test-vault stress tooling
 - Lazy body loading + durable FTS snippets for large in-memory / disk vaults
 
 **What is still early**
-- Hybrid ranking (lexical + semantic) is the current north star, not yet production-quality
-- Grounded “Ask your notes” with reliable citations is planned, not finished
+- Semantic embeddings (vector rerank) are not shipped; lexical hybrid + Ask is the daily-driver path
 - Scale targets of 100k–500k notes are being pursued; real-disk proof at those sizes is still in progress
 - Desktop Alpha builds are unsigned (no Apple notarization / no Windows code signing yet)
+- Latest GitHub release tag may be source-only — installers exist on older tags or via `DESKTOP.md` builds
 
 Contributions and hard feedback are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -89,7 +94,7 @@ Contributions and hard feedback are welcome. See [CONTRIBUTING.md](CONTRIBUTING.
 | Layer | Role |
 |-------|------|
 | **Markdown files on disk** | Only source of truth. Hermes-compatible. No proprietary format. |
-| **DurableIndex (SQLite FTS5)** | Disposable search index. Lives outside the vault under app data. Can be wiped and rebuilt. |
+| **DurableIndex** | Desktop: SQLite FTS5 BM25 via `searchFtsAsync`. Web/FSA: in-memory FTS (800-candidate cap, not BM25). Disposable; lives outside the vault. |
 | **In-memory graph** | Backlinks, structure, 3D view. |
 | **Hybrid ranking (goal)** | Lexical (FTS5 + BM25 + title/path boosts) + semantic (local embeddings) + structural signals. |
 
@@ -104,11 +109,16 @@ See [`docs/PUBLIC-BETA.md`](docs/PUBLIC-BETA.md) for release-readiness notes.
 ## Features
 
 - **Local-first** — Zero accounts. Notes are plain files you control.
-- **Visual editor** — TipTap with Markdown fidelity.
+- **Visual editor** — TipTap with Markdown fidelity (callouts, nested tasks, tables, mermaid, math).
+- **Heading & block links** — `[[Note#Heading]]`, `[[Note#^id]]`, heading/block embeds.
+- **Dual-note workspace** — Two notes side by side; Alt-click to open beside.
+- **Attachments** — Browse images, PDFs, and vault files.
+- **Version history** — Snapshots before each edit; restore from the History rail.
 - **3D knowledge graph** — Force-directed view of notes, folders, and links.
 - **Native desktop** — Tauri 2 (macOS + Windows).
 - **Web mode** — File System Access API.
-- **Search** — SQLite FTS5 + in-memory durable index; snippets from FTS when bodies are unloaded.
+- **Search + Ask** — FTS operators, fused ranking, `ask:` answers with citations.
+- **Agents** — Pulse inbox + Conflict Studio; simulate agent write in demo.
 - **Command palette** — Fast navigation and actions.
 - **Large test vault** — Included under `public/large-test-vault/` for stress testing.
 

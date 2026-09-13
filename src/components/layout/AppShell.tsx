@@ -8,7 +8,7 @@ import { DeleteConfirmHost } from "@/components/chrome/DeleteConfirmHost";
 import { ConflictStudioHost } from "@/components/conflict/ConflictStudioHost";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
-import { EditorPane } from "@/components/editor/EditorPane";
+import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
@@ -20,6 +20,7 @@ import {
   setDesktopWatchAck,
   setWatcherAck,
   useVaultStore,
+  vaultOpenLocked,
 } from "@/lib/vault/store";
 import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
 import { startDesktopWatch } from "@/lib/vault/tauri-adapter";
@@ -35,8 +36,21 @@ import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
 import { bindWindowState } from "@/lib/desktop/window-state";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
+import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
+import { canOpenLocalVaultFolder } from "@/lib/platform";
+import {
+  CHROME_FSA_WATCH_MAX,
+  chromeFsaRefuseBanner,
+  chromeFsaWarnMessage,
+} from "@/lib/vault/chrome-fsa-cap";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
 
-function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
+function OpenProgressBanner() {
+  // Subscribe here — not in AppShell — so 400ms fill ticks do not
+  // re-render the tree / editor / 3D graph while FTS is filling.
+  const [progress, setProgress] = useState<OpenProgress>(() => getOpenProgress());
+  useEffect(() => subscribeOpenProgress(setProgress), []);
+
   // Auto-dismiss ready flash so the banner doesn't stick forever
   useEffect(() => {
     if (progress.phase !== "ready") return;
@@ -148,6 +162,65 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
   );
 }
 
+function ChromeFsaLimitBanner() {
+  const limit = useVaultStore((s) => s.chromeFsaLimit);
+  if (!limit) return null;
+  const refuse = limit.kind === "refuse";
+  return (
+    <div
+      className={
+        refuse
+          ? "flex shrink-0 items-center gap-2 border-b border-[rgba(255,69,58,0.35)] bg-[rgba(255,69,58,0.1)] px-3 py-1.5 text-[12px] text-[var(--text-primary)]"
+          : "flex shrink-0 items-center gap-2 border-b border-[rgba(255,159,10,0.35)] bg-[rgba(255,159,10,0.12)] px-3 py-2 text-[12px] leading-snug text-[var(--warning)]"
+      }
+      data-chrome-fsa-limit={limit.kind}
+      role={refuse ? "alert" : "status"}
+    >
+      <span className="min-w-0 flex-1">
+        {refuse
+          ? chromeFsaRefuseBanner(limit.notes, limit.name)
+          : chromeFsaWarnMessage(limit.notes)}
+      </span>
+    </div>
+  );
+}
+
+function LargeVaultOverlayBanner({ vaultId }: { vaultId: string | null }) {
+  if (!isLargeMemoryVault(vaultId)) return null;
+  const openFolder = () => {
+    if (vaultOpenLocked()) return;
+    if (!canOpenLocalVaultFolder()) {
+      useVaultStore
+        .getState()
+        .setToast(
+          "Open a folder in Chrome, Edge, or the desktop app for notes that live as files.",
+        );
+      return;
+    }
+    void useVaultStore.getState().openFolderAsVault();
+  };
+  return (
+    <div
+      className="flex shrink-0 items-center gap-2 border-b border-[rgba(255,159,10,0.22)] bg-[rgba(255,159,10,0.07)] px-3 py-1 text-[11px] text-[var(--warning)]"
+      data-large-vault-overlay
+      role="status"
+    >
+      <span className="min-w-0 flex-1">
+        In-browser test vault — new notes and edits stay in this browser, not as
+        files. Open a folder for a real vault that survives across machines.
+      </span>
+      <button
+        type="button"
+        className="ghost-btn shrink-0 px-2 py-0.5 text-[11px]"
+        data-large-vault-open-folder
+        onClick={openFolder}
+      >
+        Open a folder
+      </button>
+    </div>
+  );
+}
+
 export function AppShell() {
   const bootstrap = useVaultStore((s) => s.bootstrap);
   const ready = useVaultStore((s) => s.ready);
@@ -158,14 +231,6 @@ export function AppShell() {
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
   const applyExternalSnapshot = useVaultStore((s) => s.applyExternalSnapshot);
   const watcherRef = useRef<VaultWatcher | null>(null);
-  const [openProgress, setOpenProgressUi] = useState<OpenProgress>(() =>
-    getOpenProgress(),
-  );
-
-  useEffect(() => {
-    return subscribeOpenProgress(setOpenProgressUi);
-  }, []);
-
   useEffect(() => {
     applyPrefsToDom(getPrefs());
     void bootstrap();
@@ -207,7 +272,6 @@ export function AppShell() {
     let un: (() => void) | undefined;
     void bindDesktopMenu({
       openVault: () => {
-        if (useVaultStore.getState().connecting) return;
         void useVaultStore.getState().openFolderAsVault();
       },
       openDemo: () => {
@@ -267,14 +331,26 @@ export function AppShell() {
 
     if (mode === "fsa" && getFsaRoot()) {
       const dir = getFsaRoot()!;
-      setWatcherAck((d: any) => watcher.acknowledgeWrite(d));
-
-      setDesktopWatchAck(null);
-      void watcher.startFsa(dir, (ev) => {
-        if (ev.scan) {
-          applyExternalSnapshot(ev.scan.nodes, ev.scan.rootIds);
-        }
-      });
+      let notes = 0;
+      try {
+        notes = ensureVaultIndex(useVaultStore.getState().nodes).noteCount;
+      } catch {
+        /* ignore */
+      }
+      if (notes >= CHROME_FSA_WATCH_MAX) {
+        // Signature poll + FileSystemObserver re-walked 20k–100k files and
+        // discarded Chrome while opening notes 8–12.
+        setWatcherAck(null);
+        setDesktopWatchAck(null);
+      } else {
+        setWatcherAck((d: any) => watcher.acknowledgeWrite(d));
+        setDesktopWatchAck(null);
+        void watcher.startFsa(dir, (ev) => {
+          if (ev.scan) {
+            applyExternalSnapshot(ev.scan.nodes, ev.scan.rootIds);
+          }
+        });
+      }
     } else if (mode === "desktop" && getDesktopRoot()) {
       const root = getDesktopRoot()!;
       setWatcherAck(null);
@@ -331,7 +407,8 @@ export function AppShell() {
           Skip to content
         </a>
         <TitleBar />
-        <OpenProgressBanner progress={openProgress} />
+        <OpenProgressBanner />
+        <ChromeFsaLimitBanner />
         <main id="main-content" tabIndex={-1} className="min-h-0 flex-1 outline-none">
           <WelcomeScreen />
         </main>
@@ -352,14 +429,16 @@ export function AppShell() {
         Skip to content
       </a>
       <TitleBar />
-      <OpenProgressBanner progress={openProgress} />
+      <OpenProgressBanner />
+      <LargeVaultOverlayBanner vaultId={vaultId} />
+      <ChromeFsaLimitBanner />
       <main
         id="main-content"
         tabIndex={-1}
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
       >
         {graphMode !== "fullscreen" ? <LeftSidebar /> : null}
-        {graphMode !== "fullscreen" ? <EditorPane /> : null}
+        {graphMode !== "fullscreen" ? <Workspace /> : null}
         <RightPanel />
       </main>
       {graphMode !== "fullscreen" ? <MobileBottomNav /> : null}

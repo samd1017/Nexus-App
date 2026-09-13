@@ -80,11 +80,32 @@ assert.ok(
   hits[0].snippet.toLowerCase().includes("nebulium"),
   "FTS snippet includes match from durable body",
 );
+
+// Early-cap intersection: a ubiquitous token must not materialize every posting.
+const many = {};
+for (let i = 0; i < 4000; i++) {
+  many["n" + i] = {
+    id: "n" + i,
+    path: "notes/n" + i + ".md",
+    name: "n" + i + ".md",
+    kind: "note",
+    parentId: null,
+    mtime: Date.now(),
+    content: "retrieval hub cluster " + i,
+  };
+}
+idx.rebuildFromNodes(many);
+const t0 = performance.now();
+const capped = idx.searchFts("retrieval hub", 16);
+const capMs = performance.now() - t0;
+assert.ok(capped.length >= 1, "capped FTS still returns hits");
+assert.ok(capped.length <= 16, "respects search limit");
+assert.ok(capMs < 50, "4k ubiquitous-token search stays cheap (" + capMs.toFixed(2) + "ms)");
 closeDurableIndex();
 console.log("All snippet tests passed");
 `,
   ],
-  { cwd: "/workspace", encoding: "utf8", timeout: 120_000 },
+  { cwd: process.cwd(), encoding: "utf8", timeout: 120_000 },
 );
 
 if (r.stdout) process.stdout.write(r.stdout);

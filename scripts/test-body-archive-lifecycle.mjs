@@ -24,6 +24,7 @@ const r = spawnSync(
 import assert from "node:assert/strict";
 import {
   archiveBodiesFromNodes,
+  archiveAndStripBodiesInPlace,
   getBodyFromArchive,
   setBodyInArchive,
   rekeyBodyArchive,
@@ -85,6 +86,16 @@ assert.equal(shouldUseDurableIndex("local", LARGE_TEST_VAULT_ID), true);
 assert.equal(shouldUseDurableIndex("local", "other"), false);
 assert.equal(shouldUseDurableIndex("desktop", "desk-x"), true);
 
+clearBodyArchive();
+const combined = {
+  keep: { id: "keep", path: "keep.md", name: "keep.md", kind: "note", parentId: null, mtime: 1, content: "keep-body" },
+  drop: { id: "drop", path: "drop.md", name: "drop.md", kind: "note", parentId: null, mtime: 1, content: "drop-body" },
+};
+archiveAndStripBodiesInPlace(combined, ["keep"]);
+assert.equal(combined.keep.content, "keep-body");
+assert.equal(combined.drop.content, undefined);
+assert.equal(getBodyFromArchive("drop.md"), "drop-body");
+
 // clear leaves no archive (failed re-open must not clear while still mounted — tested at store level)
 clearBodyArchive();
 assert.equal(hasBodyArchive(), false);
@@ -92,7 +103,7 @@ assert.equal(hasBodyArchive(), false);
 console.log("PASS body-archive lifecycle + scale flags");
 `,
   ],
-  { cwd: "/workspace", encoding: "utf8", timeout: 60000 },
+  { cwd: process.cwd(), encoding: "utf8", timeout: 60000 },
 );
 process.stdout.write(r.stdout || "");
 process.stderr.write(r.stderr || "");

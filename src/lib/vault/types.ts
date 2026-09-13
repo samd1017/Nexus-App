@@ -44,6 +44,14 @@ export interface VaultSettings {
   editorMode: EditorMode;
   graphMode: GraphMode;
   lastNotePath: string | null;
+  /** Dual-note workspace (two notes, not source+preview) */
+  workspaceSplit: boolean;
+  /** Last companion note in the split — restored on ⌘2, not auto-opened */
+  lastSecondaryNotePath: string | null;
+  /** Vault-relative note paths the user pinned in the sidebar */
+  pinnedNotePaths: string[];
+  /** Soak vault size when remounting a synthetic in-memory vault after reload */
+  soakNoteCount: number | null;
 }
 
 export interface VaultStateSnapshot {
@@ -120,6 +128,10 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   editorMode: "visual",
   graphMode: "panel",
   lastNotePath: null,
+  workspaceSplit: false,
+  lastSecondaryNotePath: null,
+  pinnedNotePaths: [],
+  soakNoteCount: null,
 };
 
 export function noteTitle(node: VaultNode): string {

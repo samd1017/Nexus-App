@@ -8,12 +8,14 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { VaultImage } from "@/lib/editor/vault-image";
 import { resolveVaultImageUrl } from "@/lib/vault/image-import";
+import { isVaultAttachmentHref } from "@/lib/vault/attachments";
 import {
   handleVisualDrop,
   handleVisualPaste,
 } from "@/lib/editor/paste-import";
 import {
   registerVisualFindAdapter,
+  setFindFocusPane,
   type FindMatch,
 } from "@/lib/editor/find-target";
 import { findMatchesInPmDoc } from "@/lib/editor/find-pm";
@@ -26,7 +28,9 @@ import { Embed } from "@/lib/editor/embed-node";
 import { QueryBlock } from "@/lib/editor/query-node";
 import {
   detectSlashCommand,
+  ensureEditableGaps,
   filterSlashItems,
+  shouldBreakForSlash,
   type SlashItem,
 } from "@/lib/editor/slash-commands";
 import { usePrefsStore } from "@/lib/prefs/preferences";
@@ -48,7 +52,9 @@ import {
   upgradeSparseDailySkeleton,
 } from "@/lib/vault/templates";
 import { cn } from "@/lib/utils";
-import { resolveWikilink } from "@/lib/graph/build-graph";
+import { buildWikilinkIndex, resolveWikilink } from "@/lib/graph/build-graph";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import {
   isOnlySerializationNoise,
@@ -67,10 +73,12 @@ import { EditorToolbar } from "./EditorToolbar";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import { SlashMenu } from "./SlashMenu";
 import { WikilinkHoverCard } from "./WikilinkHoverCard";
+import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
 
 interface Props {
   noteId: string;
   content: string;
+  pane?: "primary" | "secondary";
 }
 
 function countFence(md: string, lang: string): number {
@@ -91,7 +99,7 @@ function lostSpecialMarkdown(prev: string, next: string): boolean {
   return false;
 }
 
-function openWikilinkTarget(target: string) {
+function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) {
   const state = useVaultStore.getState();
   // Persist current editor first so graph/backlinks update immediately
   try {
@@ -99,18 +107,43 @@ function openWikilinkTarget(target: string) {
   } catch {
     /* ignore */
   }
-  const hit = resolveWikilink(target, state.nodes);
+  const parts = parseWikilinkInner(target);
+  const ev = event as MouseEvent | undefined;
+  const pane =
+    ev && (ev.altKey || (ev.metaKey && ev.shiftKey))
+      ? ("secondary" as const)
+      : ("primary" as const);
+  const jump = {
+    heading: parts.heading,
+    blockId: parts.blockId,
+    pane,
+  };
+  const hostId = hostNoteId || state.activeNoteId;
+  const hit = parts.noteTarget
+    ? resolveWikilink(parts.noteTarget, state.nodes)
+    : hostId
+      ? state.nodes[hostId]
+      : null;
   const activateNote = (id: string) => {
-    const noteCount = Object.values(state.nodes).filter(
-      (n) => n.kind === "note",
-    ).length;
+    const noteCount = ensureVaultIndex(state.nodes).noteCount;
     // Large vaults: wikilink open → ego neighborhood (does not thrash setActiveNote scope)
-    if (shouldUseFolderGraph(noteCount)) {
+    if (shouldUseFolderGraph(noteCount) && pane !== "secondary") {
       state.enterGraphEgo?.({ returnPath: state.graphBrowsePath || "" });
     }
-    state.setActiveNote(id);
+    state.setActiveNote(id, jump);
   };
   if (!hit) {
+    const title = (parts.noteTarget || "").trim();
+    if (!title) {
+      state.setToast(`No note found for [[${target}]]`);
+      return;
+    }
+    const created = state.createNote(null, title, { activate: false });
+    if (created) {
+      state.setToast(`Created “${title}”`);
+      activateNote(created);
+      return;
+    }
     state.setToast(`No note found for [[${target}]]`);
     return;
   }
@@ -180,7 +213,7 @@ function morningAutofocusEditor(ed: Editor): void {
  * Visual view of a single note. Parent remounts via key when note/mode changes.
  * Always: Markdown store ↔ GFM HTML (tables, tasks) ↔ TipTap ↔ clean Markdown.
  */
-export function VisualEditor({ noteId, content }: Props) {
+export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const notePath = useVaultStore((s) => s.nodes[noteId]?.path ?? "");
   const isDaily = isJournalDailyPath(notePath);
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
@@ -190,11 +223,11 @@ export function VisualEditor({ noteId, content }: Props) {
   const applying = useRef(false);
   const userEdited = useRef(false);
   const baselineMd = useRef(upgradeSparseDailySkeleton(content || ""));
+  const lastWrittenRef = useRef(baselineMd.current);
   const noteIdRef = useRef(noteId);
   const contentRef = useRef(content);
   /** Morning autofocus: once per note id open */
   const morningFocusedFor = useRef<string | null>(null);
-  noteIdRef.current = noteId;
   contentRef.current = content;
 
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -261,9 +294,11 @@ export function VisualEditor({ noteId, content }: Props) {
         next.setAttribute("data-daily-meta", "1");
       }
     }
+    const nodes = useVaultStore.getState().nodes;
+    const widx = buildWikilinkIndex(nodes);
     dom.querySelectorAll("span[data-wikilink]").forEach((pill) => {
       const t = pill.getAttribute("data-wikilink") || "";
-      const hit = resolveWikilink(t, useVaultStore.getState().nodes);
+      const hit = resolveWikilink(t, nodes, widx);
       pill.classList.toggle("is-missing", !hit);
       pill.classList.add("wikilink-pill");
       (pill as HTMLElement).style.cursor = "pointer";
@@ -365,7 +400,7 @@ export function VisualEditor({ noteId, content }: Props) {
       if (noise && !edited) {
         return;
       }
-      if (!edited && lostSpecialMarkdown(prev, serialized)) {
+      if (lostSpecialMarkdown(prev, serialized)) {
         return;
       }
 
@@ -382,6 +417,7 @@ export function VisualEditor({ noteId, content }: Props) {
         return;
       }
       baselineMd.current = md;
+      lastWrittenRef.current = md;
       userEdited.current = false;
       updateNoteContent(id, md);
     },
@@ -398,6 +434,8 @@ export function VisualEditor({ noteId, content }: Props) {
           bulletList: false,
           // Link is registered separately — avoid duplicate extension warning
           link: false,
+          // Keep one PM doc. Depth 2: switch notes without retaining 24 trees.
+          undoRedo: { depth: 2 },
         }),
         StyledBulletList,
         Placeholder.configure({
@@ -443,7 +481,8 @@ export function VisualEditor({ noteId, content }: Props) {
         TableHeader,
         TableCell,
         Wikilink.configure({
-          onOpen: (target) => openWikilinkTarget(target),
+          onOpen: (target, event) =>
+            openWikilinkTarget(target, event, noteIdRef.current),
         }),
         HighlightMark,
         Callout,
@@ -463,6 +502,17 @@ export function VisualEditor({ noteId, content }: Props) {
           "data-note-id": noteId,
           spellcheck: spellCheck ? "true" : "false",
         },
+        handleDOMEvents: {
+          click: (_view, event) => {
+            const a = (event.target as HTMLElement | null)?.closest?.("a[href]");
+            if (!(a instanceof HTMLAnchorElement)) return false;
+            const href = a.getAttribute("href") || "";
+            if (!isVaultAttachmentHref(href)) return false;
+            event.preventDefault();
+            useVaultStore.getState().openAttachmentsRail();
+            return true;
+          },
+        },
         handlePaste: (view, event) => {
           const ed = editorRef.current;
           if (!ed || ed.isDestroyed) return false;
@@ -474,6 +524,52 @@ export function VisualEditor({ noteId, content }: Props) {
           return handleVisualDrop(ed, view, event, slice, moved);
         },
         handleKeyDown: (view, event) => {
+          const edLive = editorRef.current;
+          if (
+            edLive &&
+            !edLive.isDestroyed &&
+            event.key === "/" &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey &&
+            shouldBreakForSlash(edLive)
+          ) {
+            event.preventDefault();
+            edLive.chain().focus().splitBlock().insertContent("/").run();
+            refreshSlash(edLive);
+            return true;
+          }
+          if (
+            edLive &&
+            !edLive.isDestroyed &&
+            event.key === "Enter" &&
+            !event.shiftKey
+          ) {
+            try {
+              if (edLive.isActive("table") && !edLive.can().goToNextCell()) {
+                event.preventDefault();
+                const { $from } = edLive.state.selection;
+                let tableEnd: number | null = null;
+                for (let d = $from.depth; d > 0; d--) {
+                  if ($from.node(d).type.name === "table") {
+                    tableEnd = $from.after(d);
+                    break;
+                  }
+                }
+                if (tableEnd != null) {
+                  edLive
+                    .chain()
+                    .focus()
+                    .insertContentAt(tableEnd, { type: "paragraph" })
+                    .setTextSelection(tableEnd + 1)
+                    .run();
+                }
+                return true;
+              }
+            } catch {
+              /* table commands unavailable */
+            }
+          }
           if (slashOpenRef.current && !suggestOpenRef.current) {
             const items = slashItemsRef.current;
             if (event.key === "ArrowDown") {
@@ -548,6 +644,11 @@ export function VisualEditor({ noteId, content }: Props) {
         applying.current = true;
         const html = markdownWithWikilinksToHtml(contentRef.current || "");
         ed.commands.setContent(html, { emitUpdate: false });
+        try {
+          ensureEditableGaps(ed);
+        } catch {
+          /* schema without paragraph */
+        }
         baselineMd.current = contentRef.current;
         userEdited.current = false;
         requestAnimationFrame(() => {
@@ -569,8 +670,11 @@ export function VisualEditor({ noteId, content }: Props) {
         refreshSuggest(ed);
         refreshSlash(ed);
       },
+      onFocus: () => {
+        setFindFocusPane(pane);
+      },
     },
-    [noteId, spellCheck],
+    [spellCheck, pane],
   );
 
   editorRef.current = editor && !editor.isDestroyed ? editor : null;
@@ -587,10 +691,27 @@ export function VisualEditor({ noteId, content }: Props) {
     }
   }, [editor, spellCheck, editorFontSize]);
 
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    return registerInsertWikilink((focusedOnly) => {
+      if (!editor || editor.isDestroyed) return false;
+      if (focusedOnly && !editor.isFocused) return false;
+      if (
+        !focusedOnly &&
+        noteIdRef.current !== useVaultStore.getState().activeNoteId
+      ) {
+        return false;
+      }
+      editor.chain().focus().insertContent("[[").run();
+      refreshSuggest(editor);
+      return true;
+    });
+  }, [editor, refreshSuggest]);
+
   // Register find-in-note adapter for Visual mode
   useEffect(() => {
     if (!editor || editor.isDestroyed) {
-      registerVisualFindAdapter(null);
+      registerVisualFindAdapter(null, pane);
       return;
     }
     let cached: FindMatch[] = [];
@@ -662,22 +783,51 @@ export function VisualEditor({ noteId, content }: Props) {
           return 0;
         }
       },
-    });
-    return () => registerVisualFindAdapter(null);
-  }, [editor]);
+    }, pane);
+    return () => registerVisualFindAdapter(null, pane);
+  }, [editor, pane]);
 
-  // Turn leftover empty `-` Focus/Later bullets into tasks, then sync
+  // Turn leftover empty `-` Focus/Later bullets into tasks, then sync.
+  // Keep one TipTap instance across notes — remounting @45k is a 0.7–1.1s hitch.
   useEffect(() => {
+    if (noteIdRef.current !== noteId && editor && !editor.isDestroyed) {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      try {
+        commit(editor, { force: true });
+      } catch {
+        /* previous note already flushed */
+      }
+      userEdited.current = false;
+      morningFocusedFor.current = null;
+    }
+    noteIdRef.current = noteId;
+    try {
+      if (editor && !editor.isDestroyed) {
+        editor.view.dom.setAttribute("data-note-id", noteId);
+      }
+    } catch {
+      /* view gone */
+    }
     const incoming = upgradeSparseDailySkeleton(content || "");
     if (incoming !== (content || "")) {
       userEdited.current = false;
       updateNoteContent(noteId, incoming, { source: true });
     }
     if (!editor || editor.isDestroyed) return;
-    if (userEdited.current) return;
+    if (userEdited.current) {
+      const external =
+        incoming !== lastWrittenRef.current &&
+        !isOnlySerializationNoise(incoming, lastWrittenRef.current);
+      if (!external) return;
+      userEdited.current = false;
+    }
     if (isOnlySerializationNoise(baselineMd.current, incoming)) return;
     applying.current = true;
     baselineMd.current = incoming;
+    lastWrittenRef.current = incoming;
     contentRef.current = incoming;
     const html = markdownWithWikilinksToHtml(incoming);
     editor.commands.setContent(html, { emitUpdate: false });
@@ -685,7 +835,7 @@ export function VisualEditor({ noteId, content }: Props) {
       paintEditorExtras(editor);
       applying.current = false;
     });
-  }, [editor, content, noteId, updateNoteContent]);
+  }, [editor, content, noteId, updateNoteContent, commit]);
 
   // Morning autofocus: today's daily with empty Focus bullet — once per note open
   useEffect(() => {
@@ -722,16 +872,16 @@ export function VisualEditor({ noteId, content }: Props) {
         /* destroyed */
       }
     };
-    registerVisualFlush(flushNow);
+    registerVisualFlush(flushNow, pane);
     return () => {
       flushNow();
-      registerVisualFlush(null);
+      registerVisualFlush(null, pane);
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
     };
-  }, [editor, commit]);
+  }, [editor, commit, pane]);
 
   // Keep suggest handleKeyDown closure fresh — rebind via editor prop is static;
   // use DOM keyup on the editor root for Mac reliability
@@ -795,6 +945,7 @@ export function VisualEditor({ noteId, content }: Props) {
     const state = useVaultStore.getState();
     // Stay on current note — create linked note without activating
     const id = state.createNote(null, cleaned, { activate: false });
+    if (!id) return;
     const node = useVaultStore.getState().nodes[id];
     const item: WikilinkSuggestItem = {
       id,
@@ -822,7 +973,19 @@ export function VisualEditor({ noteId, content }: Props) {
   }
 
   return (
-    <div className="fade-in flex h-full min-h-0 flex-col" data-note-id={noteId}>
+    <div
+      className="fade-in flex h-full min-h-0 flex-col"
+      data-note-id={noteId}
+      onClickCapture={(e) => {
+        const a = (e.target as HTMLElement).closest("a[href]");
+        if (!(a instanceof HTMLAnchorElement)) return;
+        const href = a.getAttribute("href") || "";
+        if (!isVaultAttachmentHref(href)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        useVaultStore.getState().openAttachmentsRail();
+      }}
+    >
       <EditorToolbar editor={editor} />
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6">
         <div className={cn("mx-auto max-w-[720px]", isDaily && "daily-visual")}>

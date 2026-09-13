@@ -10,6 +10,8 @@ import {
   withHistoryNav,
 } from "@/lib/vault/nav-history";
 import { openFindInNote, closeFindInNote } from "@/components/editor/FindInNoteBar";
+import { openCommandPalette } from "@/components/search/CommandPalette";
+import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
 import {
@@ -88,7 +90,6 @@ function runHotkey(id: HotkeyId): boolean {
       if (!isDesktopShell()) store.openDemoVault();
       return true;
     case "openVault":
-      if (useVaultStore.getState().connecting) return true;
       void store.openFolderAsVault();
       return true;
     case "toggleEditor":
@@ -119,6 +120,21 @@ function runHotkey(id: HotkeyId): boolean {
       if (!hasVault || overlayOpen) return false;
       void store.flushDirty();
       return true;
+    case "splitPane":
+      if (!hasVault || overlayOpen) return false;
+      store.toggleWorkspaceSplit();
+      return true;
+    case "askNotes":
+      if (!hasVault) return false;
+      openCommandPalette("ask: ");
+      return true;
+    case "pinNote":
+      if (!hasVault || overlayOpen || !store.activeNoteId) return false;
+      store.togglePinnedNote(store.activeNoteId);
+      return true;
+    case "insertWikilink":
+      if (!hasVault || overlayOpen || !store.activeNoteId) return false;
+      return requestInsertWikilink();
     default:
       return false;
   }

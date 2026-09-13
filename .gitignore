@@ -12,6 +12,7 @@ build/
 
 # Tauri / Rust
 src-tauri/target/
+src-tauri/fill-test/target/
 src-tauri/gen/
 
 # Test / fixture data (do not ship)

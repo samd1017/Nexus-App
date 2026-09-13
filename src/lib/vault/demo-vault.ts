@@ -72,25 +72,32 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
-| Embeds | ![[Welcome]] live-transcludes a note |
-| Wikilinks | Click pills like [[Graph View]] or [[Linking Notes]] — hover to preview |
+| Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
+| Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
 | Backlinks | Right panel → see what points here |
 | Graph | Right panel → Graph, or **Ctrl/⌘G** for fullscreen |
 | Search | **Ctrl/⌘K** — find any note instantly |
 | Callouts | Open [[Callouts]] or insert from the toolbar More menu |
 | Diagrams | Open [[Diagrams & Math]] — mermaid charts and $math$ |
-| Canvas | Open [[Welcome board]] — cards on a spatial board |
+| Canvas | Open [[Welcome board]] — **tour board** (cards in this vault; not Obsidian Canvas parity) |
 | Theme | Sun/moon in the title bar — Dark, Light, or System |
 | Settings | Gear or **Ctrl/⌘,** — theme and remappable hotkeys |
-| Hermes | Vault menu → **Simulate Hermes write** |
+| Dual pane | **Pane** or **⌘2** — two notes at once. Alt-click a file to park it beside |
+| Files | Right rail → **Files** for images and PDFs |
+| History | Right rail → **History** after you edit — restore a prior version |
+| Ask | **⌘K** then \`ask: how do agents share this vault\` |
+| Unlinked | Right panel — mentions of this title that are not [[linked]] yet |
+| Pins | Pin a note (⌘⇧P) — it stays in the sidebar |
+| Trash | Delete a note — toast **Restore**, sidebar Trash, or ⌘K \`is:deleted\` |
+| Agents | Vault menu → **Practice agent conflict** → Conflict Studio (Keep mine / Take theirs) |
 
 ## Quick path
 
-1. Open [[Callouts]] to see note / tip / warning / danger blocks  
-2. Open [[Diagrams & Math]] for mermaid + formulas, or [[Welcome board]] for a canvas  
-3. Open [[Local-first Vault]] for how storage works  
-4. Edit this page, switch to **Source**, then back — content stays in sync  
-5. Press **⌘K** and type \`hermes\`
+1. Open [[Heading & Block Links]] — jump to a section, then Alt-click a link to split  
+2. Open [[Callouts]] and [[Diagrams & Math]]  
+3. Press **⌘K** and type \`ask: how do agents share this vault\`  
+4. Vault menu → **Practice agent conflict** — Conflict Studio opens  
+5. Pin this note (⌘⇧P). Stay here — right panel **Unlinked mentions** should list Agent Day. Click **Link**.
 
 ## See the graph
 
@@ -101,6 +108,10 @@ Open the right panel → **Graph**, or press **Ctrl/⌘G** for fullscreen. Orbit
 - Vault = ordinary **folder of \`.md\` files**
 - No accounts required
 - Agents can edit the same files you do
+
+![Nexus mark](/favicon.svg)
+
+Brief: [agent-brief.pdf](assets/agent-brief.pdf)
 
 ---
 
@@ -157,6 +168,9 @@ Wikilinks are the connective tissue of the vault.
 \`\`\`
 [[Note Name]]
 [[Note Name|display alias]]
+[[Note Name#Heading]]
+[[Note Name#^block-id]]
+![[Note Name#Heading]]
 \`\`\`
 
 On disk they stay plain text. In **Visual** mode they render as interactive pills.
@@ -172,6 +186,7 @@ On disk they stay plain text. In **Visual** mode they render as interactive pill
 
 - [[Welcome]]
 - [[Graph View]]
+- [[Heading & Block Links]]
 - [[Visual & Source]]
 - [[First Light]]
 `,
@@ -412,7 +427,9 @@ Creates, edits, renames, and deletes from outside the app appear in the UI withi
 
 ## Demo it now
 
-In the vault switcher menu, choose **Simulate Hermes write**. A new note lands under Systems without you typing it.
+In the vault switcher menu (More), choose **Simulate agent write**. A new note lands under Systems. Pulse opens so you can treat it like a Grok / Hermes dump.
+
+To see a conflict: **Practice agent conflict** (vault menu, Pulse, Settings → Agents, or ⌘K). Conflict Studio opens with a line diff — Keep mine or Take theirs.
 
 ## Linked
 
@@ -446,10 +463,16 @@ In the vault switcher menu, choose **Simulate Hermes write**. A new note lands u
 | Shortcut | Action |
 | --- | --- |
 | ⌘K | Search / command palette |
+| ⌘⇧? | Ask your notes |
 | ⌘, | Settings |
 | ⌘E | Toggle Visual / Source |
+| ⌘F | Find in note |
 | ⌘G | Graph fullscreen |
 | ⌘N | New note |
+| ⌘D | Today's daily note |
+| ⌘2 | Dual-note workspace (restores the last companion) |
+| ⌘⇧P | Pin / unpin this note |
+| ⌘⇧L | Insert [[ wikilink |
 | ⌘S | Save (auto-save is already on) |
 | ⌘\\\\ | Toggle left sidebar |
 | ⌘⌥\\\\ | Toggle right panel |
@@ -464,6 +487,87 @@ Basics never require shortcuts. Power users never leave the keyboard.
 - [[Welcome]]
 - [[Design Language]]
 - [[Visual & Source]]
+`,
+    ),
+  );
+
+  add(
+    note(
+      pathJoin("Projects", "Heading & Block Links.md"),
+      "Heading & Block Links.md",
+      projects.id,
+      `# Heading & Block Links
+
+Obsidian-class links. Click through — Nexus jumps to the section.
+
+## Syntax
+
+- Note: [[Welcome]]
+- Heading: [[Linking Notes#Syntax]]
+- Block: [[First Light#^next-step]]
+- Same-note heading: [[#Embeds]]
+
+## Embeds
+
+Heading transclusion:
+
+![[Linking Notes#Syntax]]
+
+Block transclusion (the task that still needs doing):
+
+![[First Light#^next-step]]
+
+## Dual pane
+
+Alt-click [[Graph View]] to open it beside this note. **⌘2** toggles the workspace.
+
+## Related
+
+- [[Welcome]]
+- [[Visual & Source]]
+- [[Hermes Compatibility]]
+`,
+    ),
+  );
+
+  add(
+    note(
+      pathJoin("Systems", "Agent Day.md"),
+      "Agent Day.md",
+      systems.id,
+      `# Agent Day
+
+#agents #grok #pulse
+
+First-hour path for humans + Grok on the same folder.
+
+Welcome already has the feature tour — this note is the five-minute switch: open, ask, let an agent write, resolve a conflict.
+
+## Open
+
+This demo vault is already open. For a real folder: **Open…** and point at any directory of \`.md\` files.
+
+## Agent write
+
+1. Vault menu → **More → Practice agent conflict**
+2. Or press **⌘K**, type \`hermes\` / \`agent\`
+3. Pulse shows **Hermes Pulse** — an external write
+
+On disk, the same thing happens when Cursor, Grok Bot, or a script saves a file.
+
+## Conflict
+
+Edit a note in Nexus (leave it dirty) while an agent writes the same path. Nexus shelves the disk copy as \`Note.conflict-…md\` and opens **Conflict Studio**: Keep mine, Take theirs, or Open both.
+
+## Ask
+
+**⌘K** → \`ask: how do agents share this vault\` — extractive answer with citations. No cloud model required.
+
+## Related
+
+- [[Hermes Compatibility]]
+- [[Local-first Vault]]
+- [[Welcome]]
 `,
     ),
   );
@@ -485,7 +589,9 @@ The graph already ties together [[Local-first Vault]], [[Graph View]], and [[Her
 - [x] Wire wikilinks
 - [x] Try Visual ↔ Source
 - [ ] Capture a real research thread
-- [ ] Open my own folder as a vault
+  - [ ] File the interview
+  - [ ] Link it from [[Heading & Block Links]]
+- [ ] Open my own folder as a vault ^next-step
 
 ## Log
 
@@ -514,6 +620,35 @@ Felt immediate. Calm center, powerful edges. Settings accents made it mine in on
     rootIds,
     vaultName: "Demo Vault",
   };
+}
+
+/** Empty first-hour vault — Welcome note only, no demo tour. */
+export function buildBlankVault(vaultName = "Nexus Vault"): {
+  nodes: Record<string, VaultNode>;
+  rootIds: string[];
+  vaultName: string;
+} {
+  const nodes: Record<string, VaultNode> = {};
+  const welcome = note(
+    "Welcome.md",
+    "Welcome.md",
+    null,
+    `# Welcome
+
+This is your vault. Notes are ordinary Markdown in a folder — you, git, and agents share the same files.
+
+## First moves
+
+- Type \`[[\` to link a note
+- **⌘K** to search or \`ask:\` a question
+- **⌘2** to open a second note beside this one
+- Vault menu → **Practice agent conflict** to open Conflict Studio
+
+— Nexus · Notes for Humans and Agents
+`,
+  );
+  nodes[welcome.id] = welcome;
+  return { nodes, rootIds: [welcome.id], vaultName };
 }
 
 export const HERMES_SAMPLE_NOTE = {

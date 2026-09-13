@@ -108,10 +108,14 @@ export function PulseRail() {
   const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
   const resolveConflictKeepMine = useVaultStore((s) => s.resolveConflictKeepMine);
   const dismissConflictFromList = useVaultStore((s) => s.dismissConflictFromList);
+  const clearConflictDismissals = useVaultStore((s) => s.clearConflictDismissals);
+  const dismissedConflictKeys = useVaultStore((s) => s.dismissedConflictKeys);
   const openConflictPair = useVaultStore((s) => s.openConflictPair);
   const listTrash = useVaultStore((s) => s.listTrash);
   const restoreTrash = useVaultStore((s) => s.restoreTrash);
-  const mode = useVaultStore((s) => s.mode);
+  const trashTick = useVaultStore((s) => s.trashTick);
+  const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
+  const simulateHermesWrite = useVaultStore((s) => s.simulateHermesWrite);
   const [filter, setFilter] = useState<FilterId>("all");
   const [trash, setTrash] = useState<TrashEntry[]>([]);
   const [restoring, setRestoring] = useState<string | null>(null);
@@ -129,7 +133,7 @@ export function PulseRail() {
     return () => {
       cancelled = true;
     };
-  }, [vaultId, events, listTrash]);
+  }, [vaultId, events, listTrash, trashTick]);
 
   const conflictItems = useMemo(() => getConflictItems(), [nodes, getConflictItems]);
   const liveConflictCount = getOpenConflictCount();
@@ -173,8 +177,6 @@ export function PulseRail() {
     { id: "agent", label: "Agents" },
     { id: "all", label: "All" },
   ];
-
-  const disk = mode === "fsa" || mode === "desktop";
 
   const handleRestore = async (trashPath: string) => {
     setRestoring(trashPath);
@@ -227,6 +229,38 @@ export function PulseRail() {
           </button>
         ))}
       </div>
+      {vaultId ? (
+        <div className="flex flex-wrap gap-1">
+          <button
+            type="button"
+            className="chip-btn text-[11px]"
+            onClick={() => simulateHermesWrite()}
+          >
+            Simulate write
+          </button>
+          <button
+            type="button"
+            className="chip-btn text-[11px]"
+            onClick={() => practiceAgentConflict()}
+            title="Edit Hermes Pulse locally, then write an agent copy so Conflict Studio opens"
+          >
+            Practice conflict
+          </button>
+        </div>
+      ) : null}
+
+      {dismissedConflictKeys.length > 0 ? (
+        <div className="mb-2">
+          <button
+            type="button"
+            className="chip-btn text-[11px]"
+            onClick={() => clearConflictDismissals()}
+          >
+            Show {dismissedConflictKeys.length} snoozed conflict
+            {dismissedConflictKeys.length === 1 ? "" : "s"}
+          </button>
+        </div>
+      ) : null}
 
       {/* Wave C — live conflict pairs */}
       {(filter === "conflict" || filter === "inbox") && conflictItems.length > 0 ? (
@@ -299,7 +333,7 @@ export function PulseRail() {
                           )
                         }
                       >
-                        Dismiss
+                        Snooze
                       </button>
                     </div>
                   </div>
@@ -416,7 +450,22 @@ export function PulseRail() {
                       <button
                         type="button"
                         className="chip-btn"
-                        onClick={() => openConflictStudio()}
+                        onClick={() => {
+                          const items = useVaultStore.getState().getConflictItems();
+                          const hit = items.find(
+                            (i) =>
+                              i.sibling.path === ev.path ||
+                              i.primaryPath === ev.path,
+                          );
+                          if (hit) {
+                            openConflictStudio({
+                              primaryPath: hit.primaryPath,
+                              siblingPath: hit.sibling.path,
+                            });
+                          } else {
+                            openConflictStudio();
+                          }
+                        }}
                       >
                         Review
                       </button>
@@ -439,48 +488,45 @@ export function PulseRail() {
         </ul>
       )}
 
-      {/* Wave C — Recently deleted / trash restore */}
-      {disk ? (
-        <div className="mt-3 border-t border-[var(--border)] pt-3">
-          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
-            <Trash2 size={11} className="opacity-70" />
-            Recently deleted
-          </div>
-          {trash.length === 0 ? (
-            <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
-              Soft-deleted notes appear here for restore.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {trash.slice(0, 12).map((t) => (
-                <li
-                  key={t.trashPath}
-                  className="flex items-center gap-2 rounded-[10px] px-2.5 py-2 hover:bg-white/[0.04]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-[var(--text-primary)]">
-                      {t.name.replace(/\.md$/i, "")}
-                    </div>
-                    <div className="truncate text-[11px] text-[var(--text-muted)]">
-                      {t.originalPath}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="chip-btn shrink-0"
-                    disabled={restoring === t.trashPath}
-                    onClick={() => void handleRestore(t.trashPath)}
-                    title={`Restore ${t.originalPath}`}
-                  >
-                    <RotateCcw size={11} className="mr-1 inline" />
-                    {restoring === t.trashPath ? "…" : "Restore"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className="mt-3 border-t border-[var(--border)] pt-3">
+        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+          <Trash2 size={11} className="opacity-70" />
+          Recently deleted
         </div>
-      ) : null}
+        {trash.length === 0 ? (
+          <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
+            Soft-deleted notes appear here for restore.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {trash.slice(0, 12).map((t) => (
+              <li
+                key={t.trashPath}
+                className="flex items-center gap-2 rounded-[10px] px-2.5 py-2 hover:bg-white/[0.04]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                    {t.name.replace(/\.md$/i, "")}
+                  </div>
+                  <div className="truncate text-[11px] text-[var(--text-muted)]">
+                    {t.originalPath}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="chip-btn shrink-0"
+                  disabled={restoring === t.trashPath}
+                  onClick={() => void handleRestore(t.trashPath)}
+                  title={`Restore ${t.originalPath}`}
+                >
+                  <RotateCcw size={11} className="mr-1 inline" />
+                  {restoring === t.trashPath ? "…" : "Restore"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

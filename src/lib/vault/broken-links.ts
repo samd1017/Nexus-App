@@ -6,6 +6,7 @@ import type { VaultNode } from "./types";
 import { noteTitle } from "./types";
 import { extractWikilinks } from "@/lib/markdown/wikilinks";
 import { resolveWikilink } from "@/lib/graph/build-graph";
+import { sliceMarkdownByBlockId, sliceMarkdownByHeading } from "@/lib/markdown/note-slice";
 
 export type BrokenLink = {
   target: string;
@@ -24,7 +25,17 @@ export function getBrokenLinksForNote(
     const key = link.target.trim().toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    if (resolveWikilink(link.target, nodes)) continue;
+    if (!link.noteTarget && (link.heading || link.blockId)) {
+      const headingOk = link.heading
+        ? Boolean(sliceMarkdownByHeading(content, link.heading))
+        : true;
+      const blockOk = link.blockId
+        ? Boolean(sliceMarkdownByBlockId(content, link.blockId))
+        : true;
+      if (headingOk && blockOk) continue;
+    } else if (resolveWikilink(link.noteTarget || link.target, nodes)) {
+      continue;
+    }
     const start = Math.max(0, link.start - 40);
     const end = Math.min(content.length, link.end + 40);
     let ctx = content.slice(start, end).replace(/\s+/g, " ").trim();

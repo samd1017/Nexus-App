@@ -838,6 +838,11 @@ export function CanvasBoard({ noteId, content }: Props) {
 
   return (
     <div className="nexus-canvas relative flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
+        <span className="font-semibold text-[var(--text-secondary)]">Tour board</span>
+        {" · "}
+        Spatial cards in this vault — not an Obsidian Canvas plugin.
+      </div>
       <div className="nexus-canvas-toolbar">
         <div className="relative" data-canvas-add>
           <button type="button" className="chip-btn" onClick={() => setAddOpen((v) => !v)}>

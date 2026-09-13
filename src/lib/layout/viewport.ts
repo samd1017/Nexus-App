@@ -35,33 +35,32 @@ export function closeDrawersIfNarrow(): void {
 }
 
 /**
- * Phone: graph is fullscreen (the side panel is too cramped).
- * Desktop/tablet: panel first, second press expands.
+ * ⌘G / Graph toolbar: always enter fullscreen (idempotent).
+ * A second press must not bounce the demo back to the editor — leave via
+ * Esc or Exit graph only (`exitGraphForViewport`).
  */
-export function toggleGraphForViewport(): void {
+export function enterGraphFullscreen(): void {
   const s = useVaultStore.getState();
-  const cur = s.settings.graphMode;
   if (isPhoneViewport()) {
-    // Hidden — not panel — so we don't pop the cramped right drawer
-    if (cur === "fullscreen") {
-      s.setGraphMode("hidden");
-    } else {
-      if (s.settings.leftOpen) s.setLeftOpen(false);
-      if (s.settings.rightOpen) s.setRightOpen(false);
-      s.setGraphMode("fullscreen");
-    }
-    return;
+    if (s.settings.leftOpen) s.setLeftOpen(false);
+    if (s.settings.rightOpen) s.setRightOpen(false);
   }
-  const onGraphPanel =
-    cur === "panel" && s.settings.rightOpen && s.rightTab === "graph";
-  if (cur === "fullscreen") s.setGraphMode("panel");
-  else if (onGraphPanel) s.setGraphMode("fullscreen");
-  else s.setGraphMode("panel");
+  if (s.settings.graphMode !== "fullscreen") {
+    s.setGraphMode("fullscreen");
+  }
+}
+
+/** @deprecated Use enterGraphFullscreen — kept so older call sites stay enter-only. */
+export function toggleGraphForViewport(): void {
+  enterGraphFullscreen();
 }
 
 export function exitGraphForViewport(): void {
   const s = useVaultStore.getState();
   s.setGraphMode(isPhoneViewport() ? "hidden" : "panel");
+  // Leave the graph surface — do not remount ForceGraph3D in the side panel
+  // (that 3D init was stealing the next note-create / note-switch frame).
+  if (s.rightTab === "graph") s.setRightTab("backlinks");
 }
 
 /** Phone: open/close the backlinks drawer. */

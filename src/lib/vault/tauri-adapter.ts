@@ -17,6 +17,10 @@ import {
   expandPathsToNoteTargets,
   type NotePathOp,
 } from "./path-patch";
+import {
+  shouldRetainWatchScan,
+  watchPollIntervalMs,
+} from "./watcher";
 
 const ROOT_KEY = "nexus-desktop-vault-root";
 const RECENTS_KEY = "nexus-desktop-vault-recents";
@@ -35,9 +39,13 @@ const SKIP_DIRS = new Set([
   "target",
 ]);
 
-export function deskNodeId(path: string): string {
-  return "desk_" + path.replace(/[^a-zA-Z0-9._/-]+/g, "_");
-}
+import { deskNodeId } from "./desk-node-id";
+import {
+  DesktopFsForbiddenError,
+  isForbiddenFsError,
+} from "./desktop-fs-scope";
+export { deskNodeId };
+export { DesktopFsForbiddenError, isForbiddenFsError } from "./desktop-fs-scope";
 
 function nodeId(path: string): string {
   return deskNodeId(path);
@@ -91,6 +99,45 @@ export function pushDesktopRecent(entry: {
 function basename(p: string): string {
   const parts = p.replace(/\\/g, "/").split("/").filter(Boolean);
   return parts[parts.length - 1] || p;
+}
+
+/**
+ * Register a programmatic vault path with plugin-fs persisted-scope
+ * (same grant dialog `open({ directory: true, recursive: true })` performs),
+ * then probe `readDir` so Wave E fails loudly instead of scanning 0 forever.
+ */
+export async function ensureDesktopVaultFsScope(root: string): Promise<void> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("vault_register_root", { root });
+  } catch (err) {
+    if (isForbiddenFsError(err)) {
+      throw new DesktopFsForbiddenError(root, err);
+    }
+    console.warn("[nexus] vault_register_root failed", root, err);
+  }
+  await assertDesktopRootReadable(root);
+}
+
+export async function assertDesktopRootReadable(root: string): Promise<void> {
+  const { readDir, exists } = await import("@tauri-apps/plugin-fs");
+  try {
+    const ok = await exists(root);
+    if (!ok) {
+      throw new Error(`Vault folder does not exist: ${root}`);
+    }
+    await readDir(root);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Vault folder does not exist")) {
+      throw err;
+    }
+    if (isForbiddenFsError(err) || err instanceof DesktopFsForbiddenError) {
+      throw err instanceof DesktopFsForbiddenError
+        ? err
+        : new DesktopFsForbiddenError(root, err);
+    }
+    throw err;
+  }
 }
 
 /** Join vault root + relative POSIX path (macOS / Linux; Windows uses \\ roots). */
@@ -213,6 +260,13 @@ async function walkNotes(
   try {
     entries = await readDir(absDir);
   } catch (err) {
+    if (!relDir || isForbiddenFsError(err)) {
+      throw isForbiddenFsError(err)
+        ? new DesktopFsForbiddenError(absDir, err)
+        : err instanceof Error
+          ? err
+          : new Error(`readDir failed: ${absDir}`);
+    }
     console.warn("[nexus] readDir failed", absDir, err);
     return;
   }
@@ -268,6 +322,9 @@ export async function scanDesktopVault(root: string): Promise<VaultScan> {
       try {
         content = await readTextFile(abs);
       } catch (err) {
+        if (isForbiddenFsError(err)) {
+          throw new DesktopFsForbiddenError(abs, err);
+        }
         console.warn("[nexus] readTextFile failed", abs, err);
         // Unloaded — never treat read failure as empty body (avoids wipe risk)
         content = undefined;
@@ -507,7 +564,14 @@ export async function readDesktopNote(
   path: string,
 ): Promise<string> {
   const { readTextFile } = await import("@tauri-apps/plugin-fs");
-  return readTextFile(joinRoot(root, path));
+  try {
+    return await readTextFile(joinRoot(root, path));
+  } catch (err) {
+    if (isForbiddenFsError(err)) {
+      throw new DesktopFsForbiddenError(joinRoot(root, path), err);
+    }
+    throw err;
+  }
 }
 
 export async function openDesktopVaultAt(
@@ -515,6 +579,7 @@ export async function openDesktopVaultAt(
   opts?: { metaOnly?: boolean; onProgress?: (scanned: number) => void },
 ): Promise<VaultScan> {
   setDesktopVaultRoot(root);
+  await ensureDesktopVaultFsScope(root);
   if (opts?.metaOnly) return scanDesktopVaultMeta(root, opts.onProgress);
   return scanDesktopVault(root);
 }
@@ -636,6 +701,7 @@ export function startDesktopWatch(
   const metaOnly = !!opts?.metaOnly;
   let lastSig = "";
   let lastScan: VaultScan | null = null;
+  let sigCount = 0;
   let suppressUntil = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   let busy = false;
@@ -650,9 +716,9 @@ export function startDesktopWatch(
     try {
       const sigs = await scanDesktopSignatures(root);
       const hash = sigMapHash(sigs);
-      if (hash === lastSig && lastScan) return;
+      if (hash === lastSig) return;
       lastSig = hash;
-      if (lastScan) {
+      if (lastScan && shouldRetainWatchScan(Object.keys(sigs).length)) {
         const { scan, changedPaths } = await incrementalScanDesktopVault(root, lastScan, {
           metaOnly,
         });
@@ -662,7 +728,9 @@ export function startDesktopWatch(
         const scan = metaOnly
           ? await scanDesktopVaultMeta(root)
           : await scanDesktopVault(root);
-        lastScan = scan;
+        lastScan = shouldRetainWatchScan(Object.keys(scan.signatures).length)
+          ? scan
+          : null;
         onChange(scan);
       }
     } catch (err) {
@@ -681,9 +749,14 @@ export function startDesktopWatch(
     try {
       const sigs = await scanDesktopSignatures(root);
       lastSig = sigMapHash(sigs);
-      lastScan = metaOnly
-        ? await scanDesktopVaultMeta(root)
-        : await scanDesktopVault(root);
+      sigCount = Object.keys(sigs).length;
+      if (shouldRetainWatchScan(sigCount)) {
+        lastScan = metaOnly
+          ? await scanDesktopVaultMeta(root)
+          : await scanDesktopVault(root);
+      } else {
+        lastScan = null;
+      }
     } catch {
       lastSig = "";
       lastScan = null;
@@ -743,8 +816,11 @@ export function startDesktopWatch(
             }
             void runIncremental();
           });
-          // Slow safety-net poll (missed events / network FS)
-          startPoll(Math.max(intervalMs * 20, 15000));
+          // Safety-net poll walks every file. Above 10k that is a 100k–300k
+          // signature scan — skip it when native OS notify is live.
+          if (shouldRetainWatchScan(sigCount)) {
+            startPoll(Math.max(intervalMs * 20, 15000));
+          }
           return;
         }
       }
@@ -752,8 +828,8 @@ export function startDesktopWatch(
       usingNative = false;
     }
 
-    // Fallback: classic poll
-    startPoll(intervalMs);
+    // Fallback: classic poll (slow on 100k so we do not walk signatures every 900ms)
+    startPoll(watchPollIntervalMs(sigCount, intervalMs));
   })();
 
   return {

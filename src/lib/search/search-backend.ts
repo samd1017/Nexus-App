@@ -1,6 +1,10 @@
 /**
- * Single search path: DurableIndex FTS (memory now, SQLite later).
- * Fuse kept only as last-resort fallback if durable index fails to open.
+ * Single search path: DurableIndex when open.
+ *
+ * HONEST ENGINE NAMES — do not call the JS inverted index “SQLite FTS5”:
+ * - sqlite-fts5-bm25: Tauri native index with searchFtsAsync (desktop only)
+ * - memory-fts-capped: in-process inverted index, 800-candidate cap (web / FSA / benches)
+ * - inverted / fuse: fallbacks when no durable index is open
  */
 
 import type { SearchHit, VaultNode } from "@/lib/vault/types";
@@ -8,6 +12,11 @@ import { searchVault as fuseSearchVault } from "./fuse-search";
 import { indexedSearch } from "./indexed-search";
 import { getScaleFlags, type SearchBackendKind } from "@/lib/vault/scale-flags";
 import { getDurableIndex } from "@/lib/vault/durable-index";
+import {
+  getSearchIndexState,
+  sqliteEngineShortLabel,
+  type SearchIndexState,
+} from "@/lib/vault/sqlite-fill-progress";
 
 export interface SearchBackend {
   kind: SearchBackendKind;
@@ -41,7 +50,8 @@ class IndexedSearchBackend implements SearchBackend {
 }
 
 /**
- * Primary path: DurableIndex FTS when open; else inverted index; fuse only if forced.
+ * DurableIndex path. Flag name `fts5` means “use durable index”, NOT that
+ * SQLite FTS5 BM25 is running. See describeSearchEngine().
  */
 class FtsSearchBackend implements SearchBackend {
   kind = "fts5" as const;
@@ -55,6 +65,22 @@ class FtsSearchBackend implements SearchBackend {
       return idx.searchFts(query, limit);
     }
     return indexedSearch(nodes, query, limit);
+  }
+
+  async searchAsync(
+    nodes: Record<string, VaultNode>,
+    query: string,
+    limit = 40,
+  ): Promise<SearchHit[]> {
+    const idx = getDurableIndex();
+    if (idx?.ready && idx.searchFtsAsync) {
+      try {
+        return await idx.searchFtsAsync(query, limit);
+      } catch {
+        return idx.searchFts(query, limit);
+      }
+    }
+    return this.search(nodes, query, limit);
   }
 }
 
@@ -76,6 +102,80 @@ export function searchWithBackend(
   limit?: number,
 ): SearchHit[] {
   return getSearchBackend().search(nodes, query, limit);
+}
+
+export type SearchEngineId =
+  | "sqlite-fts5-bm25"
+  | "memory-fts-capped"
+  | "inverted"
+  | "fuse";
+
+export function describeSearchEngine(): {
+  id: SearchEngineId;
+  label: string;
+  shortLabel: string;
+  ranked: boolean;
+  indexState: SearchIndexState;
+} {
+  const flag = getScaleFlags().searchBackend;
+  if (flag === "fuse") {
+    return {
+      id: "fuse",
+      label: "Fuse.js",
+      shortLabel: "Fuse",
+      ranked: false,
+      indexState: "idle",
+    };
+  }
+  if (flag === "worker") {
+    return {
+      id: "inverted",
+      label: "In-process inverted index",
+      shortLabel: "Inverted",
+      ranked: false,
+      indexState: "idle",
+    };
+  }
+  const idx = getDurableIndex();
+  if (idx?.ready && (idx.kind === "sqlite" || idx.kind === "native") && idx.searchFtsAsync) {
+    const indexState = getSearchIndexState();
+    return {
+      id: "sqlite-fts5-bm25",
+      label: "SQLite FTS5 BM25 (desktop)",
+      shortLabel: sqliteEngineShortLabel(indexState),
+      ranked: true,
+      indexState,
+    };
+  }
+  if (idx?.ready) {
+    return {
+      id: "memory-fts-capped",
+      label: "In-memory FTS (800-candidate cap, not SQLite BM25)",
+      shortLabel: "Memory FTS (capped)",
+      ranked: false,
+      indexState: "idle",
+    };
+  }
+  return {
+    id: "inverted",
+    label: "In-process inverted index",
+    shortLabel: "Inverted",
+    ranked: false,
+    indexState: "idle",
+  };
+}
+
+/** Desktop: native BM25 FTS5 only when the sqlite index exposes searchFtsAsync. */
+export async function searchWithBackendAsync(
+  nodes: Record<string, VaultNode>,
+  query: string,
+  limit?: number,
+): Promise<SearchHit[]> {
+  const backend = getSearchBackend();
+  if (backend instanceof FtsSearchBackend) {
+    return backend.searchAsync(nodes, query, limit);
+  }
+  return backend.search(nodes, query, limit);
 }
 
 /** Post-filter search hits by path: / folder: substring semantics. */

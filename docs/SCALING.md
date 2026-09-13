@@ -82,7 +82,7 @@
 Still pending later (release ops / real hardware):
 
 - **Wave D:** sign + notarize + DMG + auto-update + product docs
-- **Wave E:** real-disk 100k/300k open numbers on Mac; closed beta → 1.0
+- **Wave E:** real-disk 100k/300k open numbers on Mac/Windows (`npm run soak:wave-e-desktop` + `tauri:dev`). Not proven. Not SCALE READY.
 - Optional store-level O(k) apply without shallow-copy map
 
 ---
@@ -107,7 +107,10 @@ Disk vaults always:
 
 1. **Meta-only open** + progressive open progress
 2. **Lazy body hydrate** + automatic LRU memory budget
-3. **DurableIndex** FTS (memory on web/FSA; SQLite on desktop)
+3. **DurableIndex** — two different engines, do not conflate:
+   - **Desktop Tauri:** SQLite FTS5 BM25 via `searchFtsAsync` (≤50ms target)
+   - **Web / FSA / this VM:** in-memory inverted index, **800-candidate cap** (not BM25). Palette heading always shows `Memory FTS (capped)`.
+   - **FSA/disk Ready means search is filled:** after the meta scan, a second pass reads a 2k file head into FTS and drops the string. Store nodes stay meta-only. Do not mark Ready after metadata alone.
 4. **Ego graph** (neighborhood)
 5. **Virtualized file tree**
 6. **Path-patch watch** for small external change sets (FSA + desktop)
@@ -129,6 +132,7 @@ Demo/local stay eager in-memory (not a size-based mode flip).
 
 - Folder spheres use the same metal `createOrb` pipeline (size via `val` only)
 - Click folder → enter level; click note → open + ego links; Esc → up one folder
+- Note-select on a large folder map highlights + restyles edges; it must not rebuild `graphData()` or restart physics. Ego hops stay ≤2 / ≤400 nodes. Map/Links, filters (tag, folder, orphan, ghosts), and an out/in inspector are the daily-driver chrome. Particles stay off at ≥400 notes. See the checklist in [`GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 - Kill switch: `folderGraph: false` in scale-flags restores ego/full only
 - Never materializes 300k–500k orbs — claims are “whole vault **structure**”, not every note as an orb
 
@@ -141,7 +145,7 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 | Open vault (metadata) | < 3–5s progressive |
 | Expand folder / scroll tree | 60fps, ≤50 DOM rows |
 | Title / wikilink suggest | ≤ 10–20ms |
-| Full-text top-20 | ≤ 50ms (FTS5) |
+| Full-text top-20 | ≤ 50ms **SQLite FTS5 BM25 on desktop**. Memory FTS is capped JS (honest floor, not BM25). |
 | Save note → indexes ready | O(tokens of that note) |
 | Path-patch 20 notes | << full tree rebuild |
 | Graph | Ego / cluster only — never 500k orbs |
@@ -152,7 +156,7 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 ## Decision log
 
 1. **Markdown-on-disk remains canonical** (Hermes-compatible).
-2. **Desktop is the 500k primary path**; browser aims for solid 20–50k with progressive limits.
+2. **Desktop is the 100k–500k primary path** (SQLite FTS5). Chrome in the browser is **≤20,000 notes** (warn 15k, refuse 25k). Not 50k.
 3. **One scale-safe path** — no user Large Vault Mode toggle.
 4. **Indexes are derived** — safe to wipe and rebuild from files.
 5. **Conflict policy** — keep local on diverge; shelf disk as `.conflict-*`; Studio resolves after the fact.
@@ -168,4 +172,4 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 | `public/large-test-vault/*` | Prebuilt seed for in-app **Open 45k test vault** |
 | `src/lib/vault/large-test-vault.ts` | Loader → `openLargeTestVault()` |
 
-Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder.
+Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder. Session creates/edits on that seed stay in a **browser overlay** (not files); the title bar says `Test · this browser` and the banner offers **Open a folder**. Disk vaults write markdown; do not treat overlay remount as SCALE READY.
