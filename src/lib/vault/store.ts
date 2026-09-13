@@ -2129,7 +2129,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	},
 	setActiveNote: (id, opts) => {
 		flushStageNow(set);
-		flushActiveEditors();
+		const leavingId = get().activeNoteId;
+		const leavingDirty = !!(leavingId && get().dirtyNoteIds.includes(leavingId));
+		if (leavingDirty) flushActiveEditors();
 		const pane = opts?.pane === "secondary" ? "secondary" : "primary";
 		const jump: NoteJump | null =
 			id && (opts?.heading || opts?.blockId)
@@ -2194,6 +2196,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			// legacy dual-write for one release
 			if (vaultId) pushNoteVisit(id, get().recentNoteVisits);
 		}
+		const nextPath = note?.path ?? get().settings.lastNotePath;
+		const pathChanged = nextPath !== get().settings.lastNotePath;
 		set({
 			activeNoteId: id,
 			pendingJump: jump,
@@ -2201,10 +2205,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				? { expandedFolders: Array.from(new Set([...curExpanded, ...pathExpand])) }
 				: {}),
 			recentNoteVisits,
-			settings: {
-				...get().settings,
-				lastNotePath: note?.path ?? get().settings.lastNotePath
-			}
+			...(pathChanged
+				? { settings: { ...get().settings, lastNotePath: nextPath } }
+				: {}),
 		});
 		if (id && note?.kind === "note" && note.content === undefined) get().ensureNoteBody(id);
 		else if (id) touchBody(id);
@@ -4222,11 +4225,18 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		let notes = 0;
 		let folders = 0;
 		let bodiesLoaded = 0;
-		for (const n of Object.values(s.nodes)) {
-			if (n.kind === "note") {
-				notes++;
-				if (n.content !== undefined) bodiesLoaded++;
-			} else if (n.kind === "folder") folders++;
+		try {
+			const idx = ensureVaultIndex(s.nodes);
+			notes = idx.noteCount;
+			folders = idx.folderCount;
+			bodiesLoaded = getBodyCacheStats(new Set(s.dirtyNoteIds)).loaded;
+		} catch {
+			for (const n of Object.values(s.nodes)) {
+				if (n.kind === "note") {
+					notes++;
+					if (n.content !== undefined) bodiesLoaded++;
+				} else if (n.kind === "folder") folders++;
+			}
 		}
 		return {
 			vaultId: s.vaultId,
@@ -4265,11 +4275,14 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		createNote: (parentId?: string | null, title?: string) =>
 			useVaultStore.getState().createNote(parentId ?? null, title ?? "Untitled"),
 		setActiveNote: (id: string | null) =>
-			useVaultStore.getState().setActiveNote(id),
+			useVaultStore.getState().setActiveNote(id, { silent: true }),
 		noteIds: (limit = 8) => {
-			const nodes = useVaultStore.getState().nodes;
+			const s = useVaultStore.getState();
+			const nodes = s.nodes;
+			const active = s.activeNoteId;
 			const out: string[] = [];
 			for (const id in nodes) {
+				if (id === active) continue;
 				if (nodes[id]?.kind === "note") {
 					out.push(id);
 					if (out.length >= limit) break;

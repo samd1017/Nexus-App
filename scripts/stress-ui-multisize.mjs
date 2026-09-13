@@ -39,6 +39,8 @@ async function clearVault(page) {
       for (const k of Object.keys(localStorage)) {
         if (k.startsWith("nexus-")) localStorage.removeItem(k);
       }
+      // clearVault wipes coach; keep it dismissed so it cannot cover the editor.
+      localStorage.setItem("nexus-first-run-coach-v1", "done");
     } catch {}
   });
 }
@@ -82,7 +84,11 @@ async function openPalette(page) {
 }
 
 async function typeInEditor(page, text) {
-  const editor = page.locator("[data-editor-pane] .ProseMirror, [data-editor-pane] [contenteditable='true'], .ProseMirror, [contenteditable='true'], [aria-label='Markdown source']").first();
+  const editor = page
+    .locator(
+      "[data-testid='nexus-editor'] .ProseMirror, [data-testid='nexus-editor'] [contenteditable='true'], [data-testid='nexus-editor'] [aria-label='Markdown source']",
+    )
+    .first();
   try {
     await editor.waitFor({ state: "visible", timeout: 6000 });
   } catch {
@@ -91,8 +97,9 @@ async function typeInEditor(page, text) {
   await editor.click({ timeout: 4000 });
   await page.keyboard.type(text, { delay: 8 });
   const seen = await page.evaluate((needle) => {
-    const el = document.querySelector(".ProseMirror, [contenteditable='true']");
-    const src = document.querySelector("[aria-label='Markdown source'], textarea, .cm-content");
+    const root = document.querySelector("[data-testid='nexus-editor']");
+    const el = root?.querySelector(".ProseMirror, [contenteditable='true']");
+    const src = root?.querySelector("[aria-label='Markdown source'], textarea, .cm-content");
     const hay = `${el?.textContent || ""} ${src?.textContent || ""}`;
     return hay.includes(needle.trim());
   }, text);
@@ -143,10 +150,19 @@ async function runDemoStress(page, errors) {
   }
 
   const tNote = now();
-  const noteRow = page.getByText(/Welcome|Getting started|Start here|Inbox/i).first();
-  if (await noteRow.count()) {
-    await noteRow.click({ timeout: 4000 }).catch(() => {});
+  // Do not click /Welcome/ — that matches the canvas "Welcome board" and unmounts TipTap.
+  const welcomeRow = page
+    .locator('[data-file-tree] [data-testid="tree-note-row"]')
+    .filter({ hasText: /^Welcome$/ })
+    .first();
+  if (await welcomeRow.count()) {
+    await welcomeRow.click({ timeout: 4000 }).catch(() => {});
   }
+  await page
+    .locator("[data-testid='nexus-editor'] .ProseMirror")
+    .first()
+    .waitFor({ state: "visible", timeout: 8000 })
+    .catch(() => {});
   result.steps.openNoteMs = Math.round(now() - tNote);
 
   const typed = await typeInEditor(page, " Stress-test edit line.");
@@ -194,6 +210,15 @@ async function runDemoStress(page, errors) {
     .catch(() => false);
   failIfSlow(result, "graph", graph.appReadyMs, COMMON_OP_MS, result.blockers);
   await page.keyboard.press("Escape").catch(() => {});
+  await waitFor(
+    page,
+    async () => {
+      const p = await probe(page);
+      return p.stress?.graphMode && p.stress.graphMode !== "fullscreen" ? p : null;
+    },
+    2000,
+    25,
+  );
 
   const before = await probe(page);
   const created = await appReadyOp(
@@ -336,6 +361,15 @@ async function runLargeStress(page, errors) {
   }
   failIfSlow(result, "graph", graph.appReadyMs, COMMON_OP_MS, result.blockers);
   await page.keyboard.press("Escape").catch(() => {});
+  await waitFor(
+    page,
+    async () => {
+      const p = await probe(page);
+      return p.stress?.graphMode && p.stress.graphMode !== "fullscreen" ? p : null;
+    },
+    2000,
+    25,
+  );
   await page.screenshot({ path: `${SHOT_DIR}/large-after-graph.png`, fullPage: false });
 
   const beforeCreate = await probe(page);
@@ -375,7 +409,11 @@ async function runLargeStress(page, errors) {
       () => page.evaluate((noteId) => window.__NEXUS_SOAK__?.setActiveNote?.(noteId), id),
       async () => {
         const p = await probe(page);
-        return p.stress?.activeNoteId === id ? id : null;
+        if (p.stress?.activeNoteId !== id) return null;
+        const shown = await page
+          .locator(`[data-testid="nexus-editor"][data-active-note="${id}"] .ProseMirror`)
+          .count();
+        return shown ? id : null;
       },
       3000,
     );

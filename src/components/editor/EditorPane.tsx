@@ -295,6 +295,7 @@ export function EditorPane({
         className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)]"
         data-active-note={note.id}
         data-editor-pane={pane}
+        data-testid="nexus-editor"
         data-body-loading="true"
       >
         <Loader2
@@ -310,7 +311,7 @@ export function EditorPane({
 
   const body = note.content ?? "";
   const canvasNote = isCanvasNote(body);
-  const editorKey = `${note.id}::${editorMode}::${canvasNote ? "canvas" : "note"}`;
+  const editorKey = `${editorMode}::${canvasNote ? "canvas" : "note"}`;
   const previewBody = splitLive?.id === note.id ? splitLive.text : body;
 
   return (
@@ -318,6 +319,7 @@ export function EditorPane({
       className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
       data-active-note={note.id}
       data-editor-pane={pane}
+      data-testid="nexus-editor"
       onPointerDownCapture={() => setFindFocusPane(pane)}
     >
       <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">

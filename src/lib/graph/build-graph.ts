@@ -33,13 +33,28 @@ export function parentFolderOf(path: string): string {
   return parts.join("/");
 }
 
+let wikilinkIndexCache: {
+  nodes: Record<string, VaultNode>;
+  structureGeneration: number;
+  map: Map<string, string>;
+} | null = null;
+
 /**
  * Map-based wikilink index: normalized title / name / path → node id.
- * Built once per resolve pass so graph builds stay O(links) not O(links × notes).
+ * Cached on structural generation — content-only hydrates must not rebuild 45k maps.
  */
 export function buildWikilinkIndex(
   nodes: Record<string, VaultNode>,
 ): Map<string, string> {
+  const structGen = ensureVaultIndex(nodes).structureGeneration;
+  if (
+    wikilinkIndexCache &&
+    wikilinkIndexCache.nodes === nodes &&
+    wikilinkIndexCache.structureGeneration === structGen
+  ) {
+    return wikilinkIndexCache.map;
+  }
+
   const index = new Map<string, string>();
   const setIfAbsent = (key: string, id: string) => {
     if (key && !index.has(key)) index.set(key, id);
@@ -63,6 +78,11 @@ export function buildWikilinkIndex(
     setIfAbsent(normalizeLinkTarget(f.path), f.id);
   }
 
+  wikilinkIndexCache = {
+    nodes,
+    structureGeneration: structGen,
+    map: index,
+  };
   return index;
 }
 
@@ -559,6 +579,9 @@ export function resolveWikilink(
 
   const exactId = idx.get(norm);
   if (exactId && nodes[exactId]) return nodes[exactId];
+
+  // Fuzzy suffix/partial scan is O(n). Large vaults keep exact title/path only.
+  if (shouldUseEgoGraph(ensureVaultIndex(nodes).noteCount)) return null;
 
   const notes = Object.values(nodes).filter((n) => n.kind === "note");
   const folders = Object.values(nodes).filter((n) => n.kind === "folder");

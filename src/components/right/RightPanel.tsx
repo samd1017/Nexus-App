@@ -84,9 +84,9 @@ export function RightPanel() {
   const bodyReady = !note || note.kind !== "note" || isContentLoaded(note);
 
   const backlinks = useMemo(() => {
-    if (!note || note.kind !== "note") return [];
+    if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getBacklinks(note, nodes);
-  }, [note, nodes]);
+  }, [tab, note, nodes]);
 
   /** Wave 4: group multi-mentions by source note, show count */
   const groupedBacklinks = useMemo((): GroupedBacklink[] => {
@@ -114,14 +114,14 @@ export function RightPanel() {
   }, [backlinks]);
 
   const brokenLinks = useMemo(() => {
-    if (!note || note.kind !== "note") return [];
+    if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getBrokenLinksForNote(note, nodes);
-  }, [note, nodes]);
+  }, [tab, note, nodes]);
 
   const unlinkedMentions = useMemo(() => {
-    if (!note || note.kind !== "note") return [];
+    if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getUnlinkedMentions(note, nodes);
-  }, [note, nodes]);
+  }, [tab, note, nodes]);
 
   const tags = useMemo(() => {
     if (!note || note.kind !== "note") return [];

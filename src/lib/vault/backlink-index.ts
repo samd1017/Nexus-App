@@ -22,7 +22,9 @@ let cachedIndex: Map<string, string[]> | null = null;
 export function buildReverseIndex(
   nodes: Record<string, VaultNode>,
 ): Map<string, string[]> {
-  const gen = ensureVaultIndex(nodes).generation();
+  // Structure only — body hydrate bumps contentGeneration and must not
+  // rescan 45k notes on every switch. Live links go through vaultLinkIndex.
+  const gen = ensureVaultIndex(nodes).structureGeneration;
   if (cachedIndex && cachedGen === gen) return cachedIndex;
 
   const index = new Map<string, string[]>();

@@ -52,7 +52,8 @@ import {
   upgradeSparseDailySkeleton,
 } from "@/lib/vault/templates";
 import { cn } from "@/lib/utils";
-import { resolveWikilink } from "@/lib/graph/build-graph";
+import { buildWikilinkIndex, resolveWikilink } from "@/lib/graph/build-graph";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import {
@@ -124,9 +125,7 @@ function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) 
       ? state.nodes[hostId]
       : null;
   const activateNote = (id: string) => {
-    const noteCount = Object.values(state.nodes).filter(
-      (n) => n.kind === "note",
-    ).length;
+    const noteCount = ensureVaultIndex(state.nodes).noteCount;
     // Large vaults: wikilink open → ego neighborhood (does not thrash setActiveNote scope)
     if (shouldUseFolderGraph(noteCount) && pane !== "secondary") {
       state.enterGraphEgo?.({ returnPath: state.graphBrowsePath || "" });
@@ -229,7 +228,6 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const contentRef = useRef(content);
   /** Morning autofocus: once per note id open */
   const morningFocusedFor = useRef<string | null>(null);
-  noteIdRef.current = noteId;
   contentRef.current = content;
 
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -296,9 +294,11 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         next.setAttribute("data-daily-meta", "1");
       }
     }
+    const nodes = useVaultStore.getState().nodes;
+    const widx = buildWikilinkIndex(nodes);
     dom.querySelectorAll("span[data-wikilink]").forEach((pill) => {
       const t = pill.getAttribute("data-wikilink") || "";
-      const hit = resolveWikilink(t, useVaultStore.getState().nodes);
+      const hit = resolveWikilink(t, nodes, widx);
       pill.classList.toggle("is-missing", !hit);
       pill.classList.add("wikilink-pill");
       (pill as HTMLElement).style.cursor = "pointer";
@@ -479,7 +479,8 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         TableHeader,
         TableCell,
         Wikilink.configure({
-          onOpen: (target, event) => openWikilinkTarget(target, event, noteId),
+          onOpen: (target, event) =>
+            openWikilinkTarget(target, event, noteIdRef.current),
         }),
         HighlightMark,
         Callout,
@@ -671,7 +672,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         setFindFocusPane(pane);
       },
     },
-    [noteId, spellCheck, pane],
+    [spellCheck, pane],
   );
 
   editorRef.current = editor && !editor.isDestroyed ? editor : null;
@@ -784,8 +785,30 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     return () => registerVisualFindAdapter(null, pane);
   }, [editor, pane]);
 
-  // Turn leftover empty `-` Focus/Later bullets into tasks, then sync
+  // Turn leftover empty `-` Focus/Later bullets into tasks, then sync.
+  // Keep one TipTap instance across notes — remounting @45k is a 0.7–1.1s hitch.
   useEffect(() => {
+    if (noteIdRef.current !== noteId && editor && !editor.isDestroyed) {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      try {
+        commit(editor, { force: true });
+      } catch {
+        /* previous note already flushed */
+      }
+      userEdited.current = false;
+      morningFocusedFor.current = null;
+    }
+    noteIdRef.current = noteId;
+    try {
+      if (editor && !editor.isDestroyed) {
+        editor.view.dom.setAttribute("data-note-id", noteId);
+      }
+    } catch {
+      /* view gone */
+    }
     const incoming = upgradeSparseDailySkeleton(content || "");
     if (incoming !== (content || "")) {
       userEdited.current = false;
@@ -810,7 +833,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       paintEditorExtras(editor);
       applying.current = false;
     });
-  }, [editor, content, noteId, updateNoteContent]);
+  }, [editor, content, noteId, updateNoteContent, commit]);
 
   // Morning autofocus: today's daily with empty Focus bullet — once per note open
   useEffect(() => {

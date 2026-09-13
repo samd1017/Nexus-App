@@ -164,7 +164,7 @@ async function soakSize(browser, notes) {
     if (result.steps.splitMs > BLOCK_MS) result.blockers.push(`split ${result.steps.splitMs}ms`);
 
     const tEdit = performance.now();
-    const editor = page.locator(".ProseMirror, [contenteditable='true'], [aria-label='Markdown source']").first();
+    const editor = page.locator("[data-testid='nexus-editor'] .ProseMirror, [data-testid='nexus-editor'] [contenteditable='true'], [data-testid='nexus-editor'] [aria-label='Markdown source']").first();
     result.steps.editorTyped = false;
     if (await editor.count()) {
       await editor.click({ force: true }).catch(() => {});
