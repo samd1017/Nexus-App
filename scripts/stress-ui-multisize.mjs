@@ -15,6 +15,8 @@ const SHOT_DIR = "/opt/cursor/artifacts/stress/shots";
 const COMMON_OP_MS = 1000;
 const SWITCH_P95_MS = 700;
 const OPEN_OK_MS = 30000;
+const OPEN_INTERACTIVE_MS = 1500;
+const LONG_TASK_FAIL_MS = 1000;
 
 mkdirSync(SHOT_DIR, { recursive: true });
 
@@ -284,19 +286,68 @@ async function runLargeStress(page, errors) {
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
   await clearVault(page);
   const largeUrl = new URL("?vault=45k", BASE).href;
+  const progressPhases = [];
+  const rafSamples = [];
+  let interactiveMs = null;
+  const openT0 = now();
   const open = await appReadyOp(
     page,
     () => page.goto(largeUrl, { waitUntil: "domcontentloaded", timeout: 60000 }),
     async () => {
       const p = await probe(page);
-      return p.stress && p.stress.notes === 45000 && !p.stress.connecting ? p : null;
+      const phase = p.stress?.openProgress?.phase;
+      if (phase && !progressPhases.includes(phase)) progressPhases.push(phase);
+      const banner = await page.locator("[data-open-progress]").count();
+      if (banner) result.steps.openProgressVisible = true;
+      if (
+        interactiveMs == null &&
+        p.stress?.notes === 45000 &&
+        p.stress?.vaultId
+      ) {
+        interactiveMs = Math.round(now() - openT0);
+        const raf = await page
+          .evaluate(
+            () =>
+              new Promise((resolve) => {
+                const t = performance.now();
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() =>
+                    resolve(Math.round(performance.now() - t)),
+                  );
+                });
+              }),
+          )
+          .catch(() => null);
+        if (typeof raf === "number") rafSamples.push(raf);
+      }
+      return p.stress &&
+        p.stress.notes === 45000 &&
+        !p.stress.connecting &&
+        p.last?.openMs
+        ? p
+        : null;
     },
     90000,
   );
   result.steps.openedVia = "query";
+  const longTasks = await page
+    .evaluate(() => window.__NEXUS_LONG_TASKS__ || [])
+    .catch(() => []);
+  const longTaskMax = longTasks.length
+    ? Math.max(...longTasks.map((t) => t.duration || 0))
+    : 0;
   result.steps.open = {
     ...open,
     storeOpenMs: open.value?.last?.openMs ?? null,
+    storeInteractiveMs: open.value?.last?.interactiveMs ?? interactiveMs,
+    storeIndexMs: open.value?.last?.indexMs ?? null,
+    harnessInteractiveMs: interactiveMs,
+    progressPhases,
+    progressVisible: Boolean(result.steps.openProgressVisible),
+    rafSamplesMs: rafSamples,
+    longTaskCount: longTasks.length,
+    longTaskMaxMs: longTaskMax,
+    longTasks: longTasks.filter((t) => (t.duration || 0) >= 200).slice(0, 12),
   };
   if (!open.ready || open.value?.stress?.notes !== 45000) {
     result.ok = false;
@@ -309,6 +360,26 @@ async function runLargeStress(page, errors) {
     result.blockers.push(`cold open ${open.appReadyMs}ms > ${OPEN_OK_MS}ms`);
   } else if ((open.appReadyMs || 0) > COMMON_OP_MS) {
     result.steps.openWarn = `cold open ${open.appReadyMs}ms (progress OK if UI responsive)`;
+  }
+  if (!result.steps.open.progressVisible && !progressPhases.length) {
+    result.ok = false;
+    result.blockers.push("cold open never showed a progress banner");
+  }
+  if (longTaskMax > LONG_TASK_FAIL_MS) {
+    result.ok = false;
+    result.blockers.push(
+      `cold open long-task ${longTaskMax}ms > ${LONG_TASK_FAIL_MS}ms (UI freeze)`,
+    );
+  }
+  if (rafSamples.some((ms) => ms > LONG_TASK_FAIL_MS)) {
+    result.ok = false;
+    result.blockers.push(
+      `cold open rAF ${Math.max(...rafSamples)}ms > ${LONG_TASK_FAIL_MS}ms (UI freeze)`,
+    );
+  }
+  const interactive = open.value?.last?.interactiveMs ?? interactiveMs;
+  if (interactive != null && interactive > OPEN_INTERACTIVE_MS) {
+    result.steps.openInteractiveWarn = `interactive ${interactive}ms > ${OPEN_INTERACTIVE_MS}ms`;
   }
 
   await page.screenshot({ path: `${SHOT_DIR}/large-after-open.png`, fullPage: false });
@@ -520,34 +591,53 @@ async function runLargeStress(page, errors) {
     result.blockers.push(`post-create notes ${postCreate.stress?.notes} !== 45001`);
   }
 
-  const seedId = await page.evaluate(() => {
+  if (
+    !postCreate.stress?.lastNotePath ||
+    !/Soak Created/i.test(String(postCreate.stress.lastNotePath))
+  ) {
+    result.ok = false;
+    result.blockers.push(
+      `createNote lastNotePath=${postCreate.stress?.lastNotePath} (expected Soak Created)`,
+    );
+  }
+
+  const seedPair = await page.evaluate(() => {
     const soak = window.__NEXUS_SOAK__;
-    const ids = soak?.noteIds?.(12) || [];
-    const seed = ids.find((id) => !/Soak_Created/.test(id)) || ids[0];
-    if (seed) soak?.setActiveNote?.(seed);
-    return seed || null;
+    const primary =
+      soak?.findNoteId?.("Brief-41936-jrg") ||
+      soak?.findNoteId?.("Concept-14473-dep") ||
+      (soak?.noteIds?.(12) || []).find((id) => !/Soak_Created/.test(id)) ||
+      null;
+    const secondary =
+      soak?.findNoteId?.("Brief-02193-eyp") ||
+      soak?.findNoteId?.("Concept-15332-ycl") ||
+      (soak?.noteIds?.(16) || []).find((id) => id !== primary && !/Soak_Created/.test(id)) ||
+      null;
+    if (primary) soak?.setActiveNote?.(primary);
+    if (secondary) soak?.setSecondaryNote?.(secondary);
+    return { primary, secondary };
   });
   await waitFor(
     page,
     async () => {
       const p = await probe(page);
-      return p.stress?.activeNoteId === seedId ? p : null;
+      return p.stress?.activeNoteId === seedPair.primary && p.stress?.workspaceSplit
+        ? p
+        : null;
     },
     4000,
     25,
   );
-  await page.keyboard.press("Control+2").catch(() => {});
-  await waitFor(
-    page,
-    async () => {
-      const p = await probe(page);
-      return p.stress?.workspaceSplit ? p : null;
-    },
-    2500,
-    25,
-  );
   const preReload = await probe(page);
   const expectPath = preReload.stress?.activeNotePath;
+  const expectSplit = Boolean(preReload.stress?.workspaceSplit);
+  const expectSecondaryPath = preReload.stress?.lastSecondaryNotePath ?? null;
+  if (!expectPath || /Brief-41569-wka/.test(expectPath)) {
+    result.ok = false;
+    result.blockers.push(
+      `reload pre-state was default inbox (${expectPath}) — need a non-default seed path`,
+    );
+  }
   const reload = await appReadyOp(
     page,
     () => page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }),
@@ -567,8 +657,12 @@ async function runLargeStress(page, errors) {
     activeNotePath: reload.value?.stress?.activeNotePath ?? null,
     expectedPath: expectPath ?? null,
     workspaceSplit: Boolean(reload.value?.stress?.workspaceSplit),
+    expectedSplit: expectSplit,
+    expectedSecondaryPath: expectSecondaryPath,
+    lastSecondaryNotePath: reload.value?.stress?.lastSecondaryNotePath ?? null,
     vaultId: reload.value?.stress?.vaultId ?? null,
     openMs: reload.value?.last?.openMs ?? null,
+    interactiveMs: reload.value?.last?.interactiveMs ?? null,
   };
   if (!reload.ready) {
     result.ok = false;
@@ -585,6 +679,15 @@ async function runLargeStress(page, errors) {
   } else if (!reload.value?.stress?.vaultId) {
     result.ok = false;
     result.blockers.push("reload landed on Welcome (vaultId null)");
+  } else if (expectSplit && !reload.value?.stress?.workspaceSplit) {
+    result.ok = false;
+    result.blockers.push("reload did not restore workspace split");
+  } else if (
+    expectPath &&
+    !/Brief-41569-wka/.test(expectPath) &&
+    reload.value?.stress?.activeNotePath === expectPath
+  ) {
+    result.steps.reloadNonDefault = true;
   }
 
   const post = await probe(page);
@@ -611,6 +714,23 @@ async function runLargeStress(page, errors) {
 
 async function withFreshPage(browser, fn) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(() => {
+    window.__NEXUS_LONG_TASKS__ = [];
+    try {
+      const obs = new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) {
+          window.__NEXUS_LONG_TASKS__.push({
+            duration: Math.round(e.duration),
+            start: Math.round(e.startTime),
+            name: e.name,
+          });
+        }
+      });
+      obs.observe({ type: "longtask", buffered: true });
+    } catch {
+      /* PerformanceObserver longtask is Chromium-only */
+    }
+  });
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${String(e)}`));

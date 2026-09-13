@@ -112,7 +112,7 @@ import {
   type BodyCacheStats,
 } from "./body-cache";
 import {
-  archiveBodiesFromNodes,
+  archiveBodiesFromNodesAsync,
   clearBodyArchive,
   hasBodyArchive,
   bodyArchiveSize,
@@ -121,6 +121,7 @@ import {
   removeBodyFromArchive,
   setBodyInArchive,
 } from "./body-archive";
+import { yieldToUi } from "./yield-ui";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
   closeDurableIndex,
@@ -157,6 +158,7 @@ import {
   nativeMetaWalk,
   vaultScanFromNodeMeta,
   setOpenProgress,
+  getOpenProgress,
 } from "./native-index";
 import { invalidateVaultTagsCache } from "./tags";
 import { recordNoteRevision, getNoteRevision, clearNoteHistory } from "./note-history";
@@ -1277,29 +1279,28 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 
 			setOpenProgress({
 				phase: "indexing",
-				scanned: data.noteCount,
+				scanned: 0,
 				totalHint: data.noteCount,
-				message: "Building indexes…"
+				message: "Archiving note bodies…"
 			});
 
-			// Archive full bodies → durable FTS on full bodies → strip for store.
+			// Archive + strip + mount first so the tree/editor paint while FTS fills.
 			// Mode stays "local"; partialize skips LARGE_TEST_VAULT_ID from localStorage.
-			archiveBodiesFromNodes(data.nodes);
-			syncActiveBackend("local");
-			await prepareDurableIndex(vaultId, "local");
-			if (gen !== vaultGen) return;
-			await rebuildDurableIndexFromNodesAsync(vaultId, data.nodes, true, {
-				chunkSize: 2000,
+			await archiveBodiesFromNodesAsync(data.nodes, {
+				chunkSize: 2500,
 				onProgress: (done, total) => {
 					if (gen !== vaultGen) return;
 					setOpenProgress({
 						phase: "indexing",
 						scanned: done,
 						totalHint: total,
-						message: `Indexing… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+						message: `Archiving bodies… ${done.toLocaleString()} / ${total.toLocaleString()}`,
 					});
 				},
 			});
+			if (gen !== vaultGen) return;
+			syncActiveBackend("local");
+			await prepareDurableIndex(vaultId, "local");
 			if (gen !== vaultGen) return;
 			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""], {
 				vaultId
@@ -1341,9 +1342,52 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					rightOpen: true,
 					soakNoteCount: null,
 				},
-				toast: `Large Test Vault ready — ${data.noteCount.toLocaleString()} notes`
+				toast: `Large Test Vault open — ${data.noteCount.toLocaleString()} notes`
 			});
 			applyScaleRestore(get, set, restore);
+			const interactiveMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+			);
+			if (typeof window !== "undefined") {
+				(
+					window as unknown as {
+						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+					}
+				).__NEXUS_SOAK_LAST__ = {
+					noteCount: data.noteCount,
+					interactiveMs,
+					vaultId,
+					kind: "large-test",
+					restoredPath: restore?.lastNotePath ?? firstNote?.path ?? null,
+					workspaceSplit: Boolean(restore?.workspaceSplit),
+				};
+			}
+			setOpenProgress({
+				phase: "indexing",
+				scanned: 0,
+				totalHint: data.noteCount,
+				message: "Indexing search…",
+			});
+			await yieldToUi(true);
+			if (gen !== vaultGen) return;
+			const tIndex = typeof performance !== "undefined" ? performance.now() : Date.now();
+			await rebuildDurableIndexFromNodesAsync(vaultId, data.nodes, true, {
+				chunkSize: 1500,
+				wipe: false,
+				onProgress: (done, total) => {
+					if (gen !== vaultGen) return;
+					setOpenProgress({
+						phase: "indexing",
+						scanned: done,
+						totalHint: total,
+						message: `Indexing search… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+					});
+				},
+			});
+			if (gen !== vaultGen) return;
+			const indexMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - tIndex,
+			);
 			const openMs = Math.round(
 				(typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
 			);
@@ -1354,11 +1398,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					}
 				).__NEXUS_SOAK_LAST__ = {
 					noteCount: data.noteCount,
+					interactiveMs,
+					indexMs,
 					openMs,
 					vaultId,
 					kind: "large-test",
 					restoredPath: restore?.lastNotePath ?? firstNote?.path ?? null,
-					workspaceSplit: Boolean(restore?.workspaceSplit),
+					workspaceSplit: Boolean(get().settings.workspaceSplit),
 				};
 			}
 			setOpenProgress({
@@ -1451,26 +1497,21 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				totalHint: data.noteCount,
 				message: "Archiving bodies…",
 			});
-			archiveBodiesFromNodes(data.nodes);
-			syncActiveBackend("local");
-			await prepareDurableIndex(vaultId, "local");
-			if (gen !== vaultGen) return;
-			const tIndex = typeof performance !== "undefined" ? performance.now() : Date.now();
-			await rebuildDurableIndexFromNodesAsync(vaultId, data.nodes, true, {
-				chunkSize: 1500,
+			await archiveBodiesFromNodesAsync(data.nodes, {
+				chunkSize: 2500,
 				onProgress: (done, total) => {
 					if (gen !== vaultGen) return;
 					setOpenProgress({
 						phase: "indexing",
 						scanned: done,
 						totalHint: total,
-						message: `Indexing… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+						message: `Archiving bodies… ${done.toLocaleString()} / ${total.toLocaleString()}`,
 					});
 				},
 			});
-			const indexMs = Math.round(
-				(typeof performance !== "undefined" ? performance.now() : Date.now()) - tIndex,
-			);
+			if (gen !== vaultGen) return;
+			syncActiveBackend("local");
+			await prepareDurableIndex(vaultId, "local");
 			if (gen !== vaultGen) return;
 			const nodes = prepareMountedNodes(data.nodes, "local", [firstNote?.id ?? ""], {
 				vaultId,
@@ -1478,9 +1519,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (gen !== vaultGen) return;
 			invalidateVaultTagsCache();
 			const restore = opts?.restore && opts.restore !== true ? opts.restore : null;
-			const openMs = Math.round(
-				(typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
-			);
 			set({
 				vaultId,
 				vaultName: data.vaultName,
@@ -1508,15 +1546,18 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					...get().settings,
 					lastNotePath: restore?.lastNotePath ?? firstNote?.path ?? null,
 					lastSecondaryNotePath: restore?.lastSecondaryNotePath ?? null,
-					workspaceSplit: Boolean(restore?.workspaceSplit),
+					workspaceSplit: false,
 					editorMode: getPrefs().defaultEditorMode,
 					graphMode: "panel",
 					rightOpen: true,
 					soakNoteCount: data.noteCount,
 				},
-				toast: `${data.vaultName} ready — ${data.noteCount.toLocaleString()} notes (${openMs}ms)`,
+				toast: `${data.vaultName} open — ${data.noteCount.toLocaleString()} notes`,
 			});
 			applyScaleRestore(get, set, restore);
+			const interactiveMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+			);
 			if (typeof window !== "undefined") {
 				(
 					window as unknown as {
@@ -1524,6 +1565,47 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					}
 				).__NEXUS_SOAK_LAST__ = {
 					noteCount: data.noteCount,
+					interactiveMs,
+					folderCount: data.folderCount,
+					vaultId,
+				};
+			}
+			setOpenProgress({
+				phase: "indexing",
+				scanned: 0,
+				totalHint: data.noteCount,
+				message: "Indexing search…",
+			});
+			await yieldToUi(true);
+			if (gen !== vaultGen) return;
+			const tIndex = typeof performance !== "undefined" ? performance.now() : Date.now();
+			await rebuildDurableIndexFromNodesAsync(vaultId, data.nodes, true, {
+				chunkSize: 1500,
+				wipe: false,
+				onProgress: (done, total) => {
+					if (gen !== vaultGen) return;
+					setOpenProgress({
+						phase: "indexing",
+						scanned: done,
+						totalHint: total,
+						message: `Indexing search… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+					});
+				},
+			});
+			const indexMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - tIndex,
+			);
+			const openMs = Math.round(
+				(typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+			);
+			if (typeof window !== "undefined") {
+				(
+					window as unknown as {
+						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+					}
+				).__NEXUS_SOAK_LAST__ = {
+					noteCount: data.noteCount,
+					interactiveMs,
 					openMs,
 					indexMs,
 					folderCount: data.folderCount,
@@ -2644,6 +2726,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				vaultId: get().vaultId
 			});
 			recordNoteOpen(get, set, id);
+			if (path !== get().settings.lastNotePath) {
+				set({ settings: { ...get().settings, lastNotePath: path } });
+			}
 		}
 		return id;
 	},
@@ -4269,6 +4354,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			activeNoteId: s.activeNoteId,
 			activeNotePath: s.activeNoteId ? s.nodes[s.activeNoteId]?.path ?? null : null,
 			lastNotePath: s.settings?.lastNotePath ?? null,
+			lastSecondaryNotePath: s.settings?.lastSecondaryNotePath ?? null,
 			secondaryNoteId: s.secondaryNoteId,
 			workspaceSplit: Boolean(s.settings?.workspaceSplit),
 			hasBodyArchive: hasBodyArchive(),
@@ -4277,6 +4363,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			rightTab: s.rightTab ?? null,
 			scaleRemount: s.scaleRemount,
 			soakNoteCount: s.settings?.soakNoteCount ?? null,
+			openProgress: getOpenProgress(),
 		};
 	};
 	(
@@ -4286,8 +4373,10 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				open45k: () => Promise<void>;
 				createNote: (parentId?: string | null, title?: string) => string | null;
 				setActiveNote: (id: string | null) => void;
+				setSecondaryNote: (id: string | null) => void;
 				setRightTab: (tab: string) => void;
 				noteIds: (limit?: number) => string[];
+				findNoteId: (needle: string) => string | null;
 				probe: () => Record<string, unknown> | undefined;
 			};
 		}
@@ -4298,6 +4387,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			useVaultStore.getState().createNote(parentId ?? null, title ?? "Untitled"),
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),
+		setSecondaryNote: (id: string | null) =>
+			useVaultStore.getState().setActiveNote(id, { pane: "secondary" }),
 		setRightTab: (tab: string) =>
 			useVaultStore.getState().setRightTab(tab as RightTab),
 		noteIds: (limit = 8) => {
@@ -4313,6 +4404,18 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				}
 			}
 			return out;
+		},
+		findNoteId: (needle: string) => {
+			const nodes = useVaultStore.getState().nodes;
+			const n = String(needle || "").toLowerCase();
+			if (!n) return null;
+			for (const id in nodes) {
+				const node = nodes[id];
+				if (node?.kind === "note" && node.path && node.path.toLowerCase().includes(n)) {
+					return id;
+				}
+			}
+			return null;
 		},
 		probe: () =>
 			(

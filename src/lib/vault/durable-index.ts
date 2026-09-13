@@ -11,6 +11,7 @@
  */
 
 import type { SearchHit, VaultNode } from "./types";
+import { yieldToUi } from "./yield-ui";
 import { noteTitle } from "./types";
 import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
 import { snippetForSearchHit } from "@/lib/search/snippets";
@@ -60,7 +61,11 @@ export interface DurableIndex {
   /** Chunked rebuild so large mounts do not freeze the UI for seconds. */
   rebuildFromNodesAsync?(
     nodes: Record<string, VaultNode>,
-    opts?: { chunkSize?: number; onProgress?: (done: number, total: number) => void },
+    opts?: {
+      chunkSize?: number;
+      wipe?: boolean;
+      onProgress?: (done: number, total: number) => void;
+    },
   ): Promise<void>;
   /** Wave B: delta sync — upsert/remove only; never wipe FTS bodies for unloaded notes */
   reconcileFromNodes(nodes: Record<string, VaultNode>): {
@@ -214,9 +219,13 @@ class MemoryDurableIndex implements DurableIndex {
 
   async rebuildFromNodesAsync(
     nodes: Record<string, VaultNode>,
-    opts?: { chunkSize?: number; onProgress?: (done: number, total: number) => void },
+    opts?: {
+      chunkSize?: number;
+      wipe?: boolean;
+      onProgress?: (done: number, total: number) => void;
+    },
   ): Promise<void> {
-    this.wipe();
+    if (opts?.wipe !== false) this.wipe();
     const list = Object.values(nodes);
     const chunk = Math.max(200, opts?.chunkSize ?? 1500);
     let folders = 0;
@@ -229,7 +238,7 @@ class MemoryDurableIndex implements DurableIndex {
       tagCount += r.tags;
       if ((i + 1) % chunk === 0) {
         opts?.onProgress?.(i + 1, list.length);
-        await new Promise((r) => setTimeout(r, 0));
+        await yieldToUi((i + 1) % (chunk * 3) === 0);
       }
     }
     this.folders = folders;
@@ -342,6 +351,25 @@ class MemoryDurableIndex implements DurableIndex {
   searchFts(query: string, limit = 40): SearchHit[] {
     const q = query.trim().toLowerCase();
     if (!q) {
+      if (this.notes.size > MEMORY_FTS_FULL_SCAN_MAX_NOTES) {
+        const out: SearchHit[] = [];
+        for (const n of this.notes.values()) {
+          out.push({
+            noteId: n.id,
+            path: n.path,
+            title: n.title ?? n.name.replace(/\.md$/i, ""),
+            snippet: snippetForSearchHit({
+              path: n.path,
+              durableBody: n.bodySnippet,
+              matchType: "title",
+            }),
+            score: 1,
+            matchType: "title",
+          });
+          if (out.length >= limit) break;
+        }
+        return out;
+      }
       return [...this.notes.values()]
         .sort((a, b) => b.mtime - a.mtime)
         .slice(0, limit)
@@ -360,54 +388,43 @@ class MemoryDurableIndex implements DurableIndex {
     }
 
     const tokens = tokenize(q);
-    let candidates: Set<string> | null = null;
-    if (tokens.length) {
-      const sorted = [...tokens].sort(
-        (a, b) =>
-          (this.inv.get(a)?.size ?? Infinity) -
-          (this.inv.get(b)?.size ?? Infinity),
-      );
-      const first = this.inv.get(sorted[0]);
-      if (first) {
-        candidates = new Set(first);
-        for (const t of sorted.slice(1)) {
-          const set = this.inv.get(t);
-          if (!set) {
-            candidates = new Set();
+    const lists = tokens
+      .map((t) => this.inv.get(t))
+      .filter((s): s is Set<string> => Boolean(s));
+    let candidateIds: string[] = [];
+    if (tokens.length && lists.length === tokens.length) {
+      lists.sort((a, b) => a.size - b.size);
+      const smallest = lists[0]!;
+      const rest = lists.slice(1);
+      for (const id of smallest) {
+        let ok = true;
+        for (const set of rest) {
+          if (!set.has(id)) {
+            ok = false;
             break;
           }
-          for (const id of [...candidates]) {
-            if (!set.has(id)) candidates.delete(id);
-          }
         }
-      } else {
-        candidates = new Set();
+        if (ok) {
+          candidateIds.push(id);
+          if (candidateIds.length >= MEMORY_FTS_CANDIDATE_CAP) break;
+        }
       }
-    } else {
-      candidates = new Set(this.notes.keys());
     }
 
     if (
-      (!candidates || candidates.size < limit) &&
+      candidateIds.length < limit &&
       this.notes.size <= MEMORY_FTS_FULL_SCAN_MAX_NOTES
     ) {
-      const set = candidates ?? new Set<string>();
+      const have = new Set(candidateIds);
       for (const n of this.notes.values()) {
+        if (have.has(n.id)) continue;
         const title = (n.title ?? n.name).toLowerCase();
         if (title.includes(q) || n.path.toLowerCase().includes(q)) {
-          set.add(n.id);
+          candidateIds.push(n.id);
+          have.add(n.id);
+          if (candidateIds.length >= MEMORY_FTS_CANDIDATE_CAP) break;
         }
       }
-      candidates = set;
-    }
-
-    if (candidates && candidates.size > MEMORY_FTS_CANDIDATE_CAP) {
-      const capped = new Set<string>();
-      for (const id of candidates) {
-        capped.add(id);
-        if (capped.size >= MEMORY_FTS_CANDIDATE_CAP) break;
-      }
-      candidates = capped;
     }
 
     const scored: Array<{
@@ -415,7 +432,7 @@ class MemoryDurableIndex implements DurableIndex {
       score: number;
       matchType: "title" | "content";
     }> = [];
-    for (const id of candidates ?? []) {
+    for (const id of candidateIds) {
       const n = this.notes.get(id);
       if (!n) continue;
       const title = n.title ?? n.name.replace(/\.md$/i, "");
@@ -437,16 +454,18 @@ class MemoryDurableIndex implements DurableIndex {
         score = 40;
         matchType = "content";
       }
-      const body = n.bodySnippet ?? "";
-      if (body.toLowerCase().includes(q)) {
-        score += 10;
-        matchType = matchType === "title" && score >= 80 ? "title" : "content";
-      }
       scored.push({ n, score, matchType });
     }
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, limit).map(({ n, score, matchType }) => {
       const title = n.title ?? n.name.replace(/\.md$/i, "");
+      const body = n.bodySnippet ?? "";
+      let nextScore = score;
+      let nextType = matchType;
+      if (body.toLowerCase().includes(q)) {
+        nextScore += 10;
+        nextType = matchType === "title" && score >= 80 ? "title" : "content";
+      }
       return {
         noteId: n.id,
         path: n.path,
@@ -454,11 +473,11 @@ class MemoryDurableIndex implements DurableIndex {
         snippet: snippetForSearchHit({
           path: n.path,
           query: q,
-          matchType,
+          matchType: nextType,
           durableBody: n.bodySnippet || undefined,
         }),
-        score,
-        matchType,
+        score: nextScore,
+        matchType: nextType,
       };
     });
   }
@@ -567,7 +586,11 @@ export async function rebuildDurableIndexFromNodesAsync(
   vaultId: string | null,
   nodes: Record<string, VaultNode>,
   enabled: boolean,
-  opts?: { chunkSize?: number; onProgress?: (done: number, total: number) => void },
+  opts?: {
+    chunkSize?: number;
+    wipe?: boolean;
+    onProgress?: (done: number, total: number) => void;
+  },
 ): Promise<void> {
   if (!enabled || !vaultId) {
     closeDurableIndex();

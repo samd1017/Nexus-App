@@ -10,6 +10,7 @@
  */
 
 import type { VaultNode } from "./types";
+import { yieldToUi } from "./yield-ui";
 
 let bodyArchive: Map<string, string> | null = null;
 
@@ -35,6 +36,32 @@ export function archiveBodiesFromNodes(
     }
   }
   bodyArchive = map;
+  return map;
+}
+
+/** Chunked archive so 45k+ open can paint the progress banner. */
+export async function archiveBodiesFromNodesAsync(
+  nodes: Record<string, VaultNode>,
+  opts?: {
+    chunkSize?: number;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const ids = Object.keys(nodes);
+  const chunk = Math.max(400, opts?.chunkSize ?? 2500);
+  for (let i = 0; i < ids.length; i++) {
+    const n = nodes[ids[i]!];
+    if (n?.kind === "note" && typeof n.content === "string") {
+      map.set(n.path, n.content);
+    }
+    if ((i + 1) % chunk === 0) {
+      opts?.onProgress?.(i + 1, ids.length);
+      await yieldToUi((i + 1) % (chunk * 3) === 0);
+    }
+  }
+  bodyArchive = map;
+  opts?.onProgress?.(ids.length, ids.length);
   return map;
 }
 

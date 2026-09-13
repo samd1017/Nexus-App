@@ -36,7 +36,8 @@ const tauriSteps = {
     "npm run tauri:dev",
     "Welcome → Open folder → pick ~/nexus-soak-100k (then 300k)",
     "Search 'retrieval hub' — desktop should use SQLite FTS5 BM25 (≤50ms target).",
-    "If Command Palette still uses the memory mirror, that is a product bug: wire searchFtsAsync.",
+    "Command Palette prefers searchWithBackendAsync when searchFtsAsync exists (desktop SQLite BM25).",
+    "This VM still benches the memory inverted index (honest floor if SQLite is absent).",
   ],
 };
 

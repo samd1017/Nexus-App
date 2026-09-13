@@ -37,6 +37,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   searchWithBackend as searchVault,
+  searchWithBackendAsync,
 } from "@/lib/search/search-backend";
 import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-ops";
 import { fuseSearchHits } from "@/lib/search/rank-fusion";
@@ -319,7 +320,7 @@ function CommandPaletteOpen() {
   const isEmptyQuery = !raw && !isCommandMode;
   const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
 
-  const hits = useMemo(() => {
+  const syncHits = useMemo(() => {
     if (isEmptyQuery) {
       return topNotesByVisitMtime(nodes, 10, vaultId);
     }
@@ -386,6 +387,67 @@ function CommandPaletteOpen() {
     isAskMode,
     activeNoteId,
   ]);
+
+  const [asyncHits, setAsyncHits] = useState<SearchHit[] | null>(null);
+  useEffect(() => {
+    setAsyncHits(null);
+    if (
+      isEmptyQuery ||
+      isCommandMode ||
+      isTagBrowse ||
+      wantsOrphans ||
+      wantsBroken ||
+      isAskMode ||
+      exactTagQuery
+    ) {
+      return;
+    }
+    const idx = getDurableIndex();
+    if (!idx?.searchFtsAsync) return;
+    const needle = hasPathFolderOp
+      ? debouncedSearch.trim() || raw
+      : debouncedSearch.trim() || searchText || raw;
+    if (!needle.trim()) return;
+    let cancelled = false;
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const activeNode = activeNoteId ? nodes[activeNoteId] : null;
+    const neighborIds =
+      activeNode?.kind === "note"
+        ? getBacklinks(activeNode, nodes).map((b) => b.fromId)
+        : [];
+    const signals = {
+      recentIds,
+      activeNoteId,
+      neighborIds,
+      queryText: needle,
+    };
+    void (hasPathFolderOp
+      ? Promise.resolve(searchWithOps(nodes, needle, 16))
+      : searchWithBackendAsync(nodes, needle, 16)
+    ).then((rows) => {
+      if (cancelled) return;
+      setAsyncHits(fuseSearchHits(rows, signals));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    nodes,
+    vaultId,
+    raw,
+    searchText,
+    debouncedSearch,
+    isEmptyQuery,
+    isTagBrowse,
+    exactTagQuery,
+    wantsOrphans,
+    wantsBroken,
+    isCommandMode,
+    hasPathFolderOp,
+    isAskMode,
+    activeNoteId,
+  ]);
+  const hits = asyncHits ?? syncHits;
 
   const askAnswer = useMemo(() => {
     if (!isAskMode) return null;
