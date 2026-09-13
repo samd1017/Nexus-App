@@ -84,9 +84,18 @@ export function scoreAskSentence(
   sentence: string,
   tokens: string[],
   phrase: string,
+  baseTokens: string[] = [],
 ): number {
   if (isAskCatalogNoise(sentence)) return 0;
   const lower = sentence.toLowerCase();
+  const grounded = /\b(agents?|hermes|grok|share|vault|files?)\b/i.test(sentence);
+  if (
+    baseTokens.length &&
+    !baseTokens.some((t) => t.length >= 3 && lower.includes(t)) &&
+    !grounded
+  ) {
+    return 0;
+  }
   let hits = 0;
   let consecutive = 0;
   let run = 0;

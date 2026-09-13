@@ -88,7 +88,9 @@ export function buildAskAnswer(
     let best = "";
     let bestScore = 0;
     for (const s of sents) {
-      const sc = tokens.length ? scoreAskSentence(s, tokens, phrase) : 0;
+      const sc = tokens.length
+        ? scoreAskSentence(s, tokens, phrase, askContentTokens(phrase))
+        : 0;
       if (sc > bestScore) {
         bestScore = sc;
         best = s;
