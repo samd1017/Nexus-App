@@ -4,11 +4,24 @@ import * as THREE from "three";
 import SpriteText from "three-spritetext";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveGraphData, type GraphViewMode } from "@/lib/graph/build-graph";
+import { folderIdFromBrowsePath } from "@/lib/graph/folder-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
 import { vaultLinkIndex } from "@/lib/vault/link-index";
 import { useGraphTick } from "@/lib/graph/graph-tick";
+import {
+  EGO_REBUILD_DEBOUNCE_MS,
+  FLY_DEBOUNCE_MS,
+  decideActiveNoteFly,
+  egoStructureKey,
+  folderLevelFingerprint,
+  graphTopologyKey,
+  isAlreadyFramed,
+  mergePreservedPositions,
+  recentlyInteracted,
+  shouldReplaceGraphData,
+} from "@/lib/graph/graph-select";
 import type { VaultNode } from "@/lib/vault/types";
 import {
   Maximize2,
@@ -783,6 +796,60 @@ function applyLodCap(
   return { nodes, links, lowDetail: true };
 }
 
+function cancelCameraFly(graph: ForceGraph3DInstance | null) {
+  if (!graph) return;
+  try {
+    const cam = graph.cameraPosition();
+    graph.cameraPosition({ x: cam.x, y: cam.y, z: cam.z }, undefined, 0);
+  } catch {
+    /* ok */
+  }
+}
+
+function flyCameraToNode(
+  graph: ForceGraph3DInstance,
+  node: { x?: number; y?: number; z?: number },
+  durationMs: number,
+  dist: number,
+): boolean {
+  if (node.x == null || node.y == null || node.z == null) return false;
+  const lookAt = { x: node.x, y: node.y, z: node.z };
+  let cam: { x: number; y: number; z: number };
+  try {
+    cam = graph.cameraPosition();
+  } catch {
+    return false;
+  }
+  if (isAlreadyFramed(cam, lookAt, dist)) return false;
+  const dx = cam.x - lookAt.x;
+  const dy = cam.y - lookAt.y;
+  const dz = cam.z - lookAt.z;
+  const len = Math.hypot(dx, dy, dz) || 1;
+  const scale = dist / len;
+  try {
+    graph.cameraPosition(
+      {
+        x: lookAt.x + dx * scale,
+        y: lookAt.y + dy * scale,
+        z: lookAt.z + dz * scale,
+      },
+      lookAt,
+      durationMs,
+    );
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function findGraphNode(
+  graph: ForceGraph3DInstance,
+  id: string,
+): GNode | undefined {
+  const nodes = (graph.graphData()?.nodes ?? []) as GNode[];
+  return nodes.find((n) => n.id === id);
+}
+
 function graphHintText(
   chromeMode: "panel" | "fullscreen",
   viewMode: GraphViewMode,
@@ -857,6 +924,15 @@ export function GraphView({ mode, className }: Props) {
   const hoverAppliedRef = useRef<string | null>(null);
   const hoverThrottleRef = useRef<number | null>(null);
   const prevActiveFlyRef = useRef<string | null | undefined>(undefined);
+  const flyGenRef = useRef(0);
+  const userInteractingRef = useRef(false);
+  const lastInteractAtRef = useRef(0);
+  const restyleEdgesRef = useRef<() => void>(() => {});
+  const lastGraphTopoKeyRef = useRef<string | null>(null);
+  const lastGraphDataRef = useRef<{ nodes: GNode[]; links: GLink[] } | null>(
+    null,
+  );
+  const prevGraphScopeRef = useRef<string | null>(null);
   const graphScopeMode = useVaultStore((s) => s.graphScopeMode ?? "vault");
   const graphBrowsePath = useVaultStore((s) => s.graphBrowsePath ?? "");
   const enterGraphFolder = useVaultStore((s) => s.enterGraphFolder);
@@ -867,11 +943,32 @@ export function GraphView({ mode, className }: Props) {
   const [engineReady, setEngineReady] = useState(false);
   /** Skip first browse-path effect so it doesn't fight mount zoomToFit */
   const browsePathReadyRef = useRef(false);
+  /** Debounced ego center — highlight uses live activeNoteId immediately. */
+  const [egoCenterId, setEgoCenterId] = useState(activeNoteId);
 
   useEffect(() => {
     if (mode !== "fullscreen") return;
     useVaultStore.getState().setToast("Fullscreen graph · Esc or Exit to leave");
   }, [mode]);
+
+  useEffect(() => {
+    if (graphScopeMode !== "ego") {
+      setEgoCenterId(activeNoteId);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setEgoCenterId(activeNoteId);
+    }, EGO_REBUILD_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [activeNoteId, graphScopeMode]);
+
+  const markUserInteracted = useCallback((interacting: boolean) => {
+    userInteractingRef.current = interacting;
+    lastInteractAtRef.current = performance.now();
+    if (interacting) {
+      flyGenRef.current += 1;
+    }
+  }, []);
 
   activeRef.current = activeNoteId;
   neighborhoodRef.current = neighborhood;
@@ -889,15 +986,25 @@ export function GraphView({ mode, className }: Props) {
   }, [deferredNodes]);
 
 
-  // Mode-gated fingerprint — folder mode is O(1) structure gen + path (not O(N) links)
+  // Mode-gated fingerprint — folder uses O(level) child signature (not O(N) links,
+  // and not structureGeneration which can bump on content-only body evicts).
   const graphStructureKey = useMemo(() => {
     const large = shouldUseFolderGraph(vaultNoteCount);
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
     if (large && graphScopeMode !== "ego") {
-      return `folder:${idx.structureGeneration}:${graphBrowsePath}:${graphScopeMode}`;
+      const levelId = folderIdFromBrowsePath(
+        deferredNodes as Record<string, VaultNode>,
+        idx,
+        graphBrowsePath || "",
+      );
+      const childSig = idx.childSignature(
+        deferredNodes as Record<string, VaultNode>,
+        levelId ?? "__root__",
+      );
+      return folderLevelFingerprint(childSig, graphBrowsePath, graphScopeMode);
     }
     if (large && graphScopeMode === "ego") {
-      return `ego:${vaultLinkIndex.generation}:${activeNoteId ?? ""}`;
+      return egoStructureKey(vaultLinkIndex.generation, egoCenterId ?? "");
     }
     // Full notes (demo / small vault)
     const parts: string[] = [`links:${vaultLinkIndex.generation}`];
@@ -917,14 +1024,14 @@ export function GraphView({ mode, className }: Props) {
     vaultNoteCount,
     graphBrowsePath,
     graphScopeMode,
-    graphScopeMode === "ego" ? activeNoteId : null,
+    egoCenterId,
     graphTick,
   ]);
 
   const resolved = useMemo(() => {
     return resolveGraphData(deferredNodes as Record<string, VaultNode>, {
       noteCount: vaultNoteCount,
-      activeNoteId,
+      activeNoteId: graphScopeMode === "ego" ? egoCenterId : activeNoteId,
       graphBrowsePath: graphBrowsePath || "",
       graphScopeMode: graphScopeMode || "vault",
       structuralIndex: ensureVaultIndex(
@@ -937,12 +1044,13 @@ export function GraphView({ mode, className }: Props) {
 
   const graphModeResolved: GraphViewMode = resolved.mode;
 
+  const tagColorNodes = colorBy === "tag" ? deferredNodes : null;
   const data = useMemo(() => {
     const tagByNote = new Map<string, string>();
     // Folder/ego color-by-folder must not walk 45k tag metas.
-    if (colorBy === "tag") {
+    if (colorBy === "tag" && tagColorNodes) {
       const visible = new Set(resolved.nodes.map((n) => n.id));
-      for (const t of collectVaultTags(deferredNodes as Record<string, VaultNode>)) {
+      for (const t of collectVaultTags(tagColorNodes as Record<string, VaultNode>)) {
         for (const id of t.noteIds) {
           if (visible.has(id) && !tagByNote.has(id)) tagByNote.set(id, t.tag);
         }
@@ -974,7 +1082,7 @@ export function GraphView({ mode, className }: Props) {
         target: e.target,
       })) as GLink[],
     };
-  }, [resolved, deferredNodes, colorBy]);
+  }, [resolved, colorBy, tagColorNodes]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);
@@ -1024,6 +1132,12 @@ export function GraphView({ mode, className }: Props) {
 
   // Folder hues live on the orbs only — no multi-chip legend (clutters large vaults).
 
+  const lodActiveId =
+    graphModeResolved === "folder" ||
+    (neighborhood === "all" && !isolateHops && !graphQuery)
+      ? null
+      : activeNoteId;
+
   const displayData = useMemo(() => {
     let base: { nodes: GNode[]; links: GLink[] } = data;
     if (graphModeResolved === "folder") {
@@ -1042,13 +1156,13 @@ export function GraphView({ mode, className }: Props) {
         }),
       };
     }
-    const lod = applyLodCap(base, activeNoteId, neighborMapRef.current);
+    const lod = applyLodCap(base, lodActiveId, neighborMapRef.current);
     lowDetailRef.current = lod.lowDetail;
     const soft = softNeighborhood(
       { nodes: lod.nodes, links: lod.links },
       neighborhood,
       isolateHops,
-      activeNoteId,
+      lodActiveId,
       neighborMapRef.current,
     );
     hopKeepRef.current = soft.hopKeep;
@@ -1066,7 +1180,7 @@ export function GraphView({ mode, className }: Props) {
           )
           .map((n) => n.id),
       );
-      if (activeNoteId) keep.add(activeNoteId);
+      if (lodActiveId) keep.add(lodActiveId);
       nodes = nodes.filter((n) => keep.has(n.id));
       links = links.filter((l) => {
         const [s, t] = linkIds(l);
@@ -1079,7 +1193,7 @@ export function GraphView({ mode, className }: Props) {
     neighborhood,
     isolateHops,
     graphQuery,
-    graphModeResolved === "folder" ? null : activeNoteId,
+    lodActiveId,
     showGhosts,
     graphModeResolved,
   ]);
@@ -1306,6 +1420,10 @@ export function GraphView({ mode, className }: Props) {
           const mix = (c: number) => Math.round(c * 0.45 + 255 * 0.55);
           return `rgb(${mix(ar)},${mix(ag)},${mix(ab)})`;
         });
+    };
+    restyleEdgesRef.current = () => {
+      const g = graphRef.current;
+      if (g) applyEdgeStyles(g);
     };
 
     const graph = new ForceGraph3D(el, {
@@ -1562,6 +1680,7 @@ export function GraphView({ mode, className }: Props) {
       /* ok */
     }
 
+    let interactCleanup: (() => void) | undefined;
     try {
       const controls = graph.controls() as {
         enableDamping?: boolean;
@@ -1571,6 +1690,8 @@ export function GraphView({ mode, className }: Props) {
         panSpeed?: number;
         minDistance?: number;
         maxDistance?: number;
+        addEventListener?: (ev: string, fn: () => void) => void;
+        removeEventListener?: (ev: string, fn: () => void) => void;
       } | null;
       if (controls) {
         controls.enableDamping = true;
@@ -1580,6 +1701,14 @@ export function GraphView({ mode, className }: Props) {
         controls.panSpeed = 0.48;
         controls.minDistance = 10;
         controls.maxDistance = 900;
+        const onStart = () => markUserInteracted(true);
+        const onEnd = () => markUserInteracted(false);
+        controls.addEventListener?.("start", onStart);
+        controls.addEventListener?.("end", onEnd);
+        interactCleanup = () => {
+          controls.removeEventListener?.("start", onStart);
+          controls.removeEventListener?.("end", onEnd);
+        };
       }
     } catch {
       /* ok */
@@ -1601,7 +1730,10 @@ export function GraphView({ mode, className }: Props) {
       raf = requestAnimationFrame(drift);
     }
 
-    const hideHint = () => setHintVisible(false);
+    const hideHint = () => {
+      setHintVisible(false);
+      lastInteractAtRef.current = performance.now();
+    };
     const clearPointerHover = () => {
       // Orbit / trackpad pointercancel otherwise leaves stale hover chrome
       hoverRef.current = null;
@@ -1654,6 +1786,7 @@ export function GraphView({ mode, className }: Props) {
       zoomRaf = requestAnimationFrame(tickZoom);
     };
     const onWheelZoom = (e: WheelEvent) => {
+      lastInteractAtRef.current = performance.now();
       e.preventDefault();
       e.stopPropagation();
       const raw = e.deltaY;
@@ -1682,6 +1815,11 @@ export function GraphView({ mode, className }: Props) {
     const { width, height } = el.getBoundingClientRect();
     graph.width(width).height(height);
     graph.graphData(displayData);
+    lastGraphTopoKeyRef.current = graphTopologyKey(
+      displayData.nodes,
+      displayData.links,
+    );
+    lastGraphDataRef.current = displayData;
 
     const fitMs = usePrefsStore.getState().reducedMotion ? 0 : 650;
     const zoomTimer = window.setTimeout(() => {
@@ -1707,6 +1845,8 @@ export function GraphView({ mode, className }: Props) {
       el.removeEventListener("pointerdown", hideHint);
       el.removeEventListener("pointercancel", clearPointerHover);
       el.removeEventListener("wheel", onWheelZoom, true);
+      interactCleanup?.();
+      flyGenRef.current += 1;
       if (zoomRaf) cancelAnimationFrame(zoomRaf);
       ro.disconnect();
       try {
@@ -1754,17 +1894,38 @@ export function GraphView({ mode, className }: Props) {
     accentCustom,
   ]);
 
-  const lastGraphDataRef = useRef<{ nodes: GNode[]; links: GLink[] } | null>(
-    null,
-  );
   useEffect(() => {
     if (!graphRef.current) return;
     const prev = lastGraphDataRef.current;
-    if (prev && prev.nodes === displayData.nodes && prev.links === displayData.links) {
+    if (
+      prev &&
+      prev.nodes === displayData.nodes &&
+      prev.links === displayData.links
+    ) {
       return;
     }
+    const nextKey = graphTopologyKey(displayData.nodes, displayData.links);
+    if (!shouldReplaceGraphData(lastGraphTopoKeyRef.current, nextKey)) {
+      lastGraphDataRef.current = displayData;
+      return;
+    }
+    const live = (graphRef.current.graphData()?.nodes ?? []) as GNode[];
+    const merged = {
+      nodes: mergePreservedPositions(live, displayData.nodes),
+      links: displayData.links,
+    };
     lastGraphDataRef.current = displayData;
-    graphRef.current.graphData(displayData);
+    lastGraphTopoKeyRef.current = nextKey;
+    graphRef.current.graphData(merged);
+    try {
+      // Soft continue — do not reheat the whole simulation on every swap.
+      const sim = graphRef.current as ForceGraph3DInstance & {
+        d3Alpha?: (a: number) => ForceGraph3DInstance;
+      };
+      sim.d3Alpha?.(0.06);
+    } catch {
+      /* ok */
+    }
   }, [displayData]);
 
   /** Debounced zoomToFit after folder path / scope change (skip first mount) */
@@ -1781,7 +1942,7 @@ export function GraphView({ mode, className }: Props) {
       const g = graphRef.current;
       if (!g) return;
       try {
-        g.zoomToFit(650, mode === "fullscreen" ? 70 : 48);
+        g.zoomToFit(420, mode === "fullscreen" ? 70 : 48);
       } catch {
         /* ok */
       }
@@ -1789,94 +1950,76 @@ export function GraphView({ mode, className }: Props) {
     return () => window.clearTimeout(t);
   }, [graphBrowsePath, graphScopeMode, graphModeResolved, mode]);
 
-  /** Fit camera when entering ego scope (including same-id Show links) */
+  /** One short fit when entering ego (Show links) — not on every note click. */
   useEffect(() => {
-    if (graphModeResolved !== "ego" || !activeNoteId) return;
+    const prev = prevGraphScopeRef.current;
+    prevGraphScopeRef.current = graphScopeMode;
+    if (graphModeResolved !== "ego" || prev === "ego") return;
     const t = window.setTimeout(() => {
       const g = graphRef.current;
       if (!g) return;
       try {
-        const nodes = (g.graphData()?.nodes ?? []) as GNode[];
-        const node = nodes.find((n) => n.id === activeNoteId);
-        if (node?.x != null && node.y != null && node.z != null) {
-          const lookAt = { x: node.x, y: node.y, z: node.z };
-          const dist = 180;
-          g.cameraPosition(
-            { x: lookAt.x, y: lookAt.y + dist * 0.35, z: lookAt.z + dist },
-            lookAt,
-            650,
-          );
-        } else {
-          g.zoomToFit(650, mode === "fullscreen" ? 70 : 48);
-        }
+        g.zoomToFit(280, mode === "fullscreen" ? 70 : 48);
       } catch {
         /* ok */
       }
-    }, 200);
+    }, 180);
     return () => window.clearTimeout(t);
-  }, [graphModeResolved, graphStructureKey, activeNoteId, mode]);
+  }, [graphModeResolved, graphScopeMode, mode]);
 
-  /** W5: camera fly-to when activeNoteId changes (not on hover) */
+  /**
+   * Coalesced camera fly-to on active note change.
+   * Debounced, cancelable, skipped while the user is orbiting/zooming,
+   * and skipped when the note is not in the current draw list (folder map).
+   */
   useEffect(() => {
-    const g = graphRef.current;
-    if (
-      graphModeResolved === "folder" &&
-      (activeNoteMissingFromFolderMap || !activeNoteId)
-    ) {
-      prevActiveFlyRef.current = activeNoteId;
-      return;
-    }
-    if (!g || !activeNoteId) {
-      prevActiveFlyRef.current = activeNoteId;
-      return;
-    }
-    // Skip first mount / same id (avoid fighting zoomToFit)
-    if (prevActiveFlyRef.current === undefined) {
-      prevActiveFlyRef.current = activeNoteId;
-      return;
-    }
-    if (prevActiveFlyRef.current === activeNoteId) return;
+    const first = prevActiveFlyRef.current === undefined;
+    const sameId = prevActiveFlyRef.current === activeNoteId;
     prevActiveFlyRef.current = activeNoteId;
 
-    const fly = () => {
-      const graph = graphRef.current;
-      if (!graph) return;
-      const nodes = (graph.graphData()?.nodes ?? []) as GNode[];
-      const node = nodes.find((n) => n.id === activeNoteId);
-      if (!node || node.x == null || node.y == null || node.z == null) return;
+    const visible =
+      !!activeNoteId &&
+      !(graphModeResolved === "folder" && activeNoteMissingFromFolderMap);
 
-      const lookAt = { x: node.x, y: node.y, z: node.z };
-      let cam: { x: number; y: number; z: number };
-      try {
-        cam = graph.cameraPosition();
-      } catch {
+    const decision = decideActiveNoteFly({
+      viewMode: graphModeResolved,
+      activeNoteId,
+      nodeIsVisible: visible,
+      userInteracting: userInteractingRef.current,
+      interactedRecently: recentlyInteracted(
+        lastInteractAtRef.current,
+        performance.now(),
+      ),
+      reducedMotion: usePrefsStore.getState().reducedMotion,
+      isFirstActive: first,
+      fullscreen: mode === "fullscreen",
+    });
+
+    if (!decision.fly || sameId) return;
+
+    const gen = ++flyGenRef.current;
+    const t = window.setTimeout(() => {
+      if (gen !== flyGenRef.current) return;
+      if (userInteractingRef.current) return;
+      const graph = graphRef.current;
+      if (!graph || !activeNoteId) return;
+      if (
+        recentlyInteracted(lastInteractAtRef.current, performance.now())
+      ) {
         return;
       }
-      const dx = cam.x - lookAt.x;
-      const dy = cam.y - lookAt.y;
-      const dz = cam.z - lookAt.z;
-      const len = Math.hypot(dx, dy, dz) || 1;
+      const node = findGraphNode(graph, activeNoteId);
+      if (!node) return;
       const dist = mode === "fullscreen" ? 160 : 110;
-      // Keep roughly same viewing angle, pull in/out to target distance
-      const scale = dist / len;
-      try {
-        graph.cameraPosition(
-          {
-            x: lookAt.x + dx * scale,
-            y: lookAt.y + dy * scale,
-            z: lookAt.z + dz * scale,
-          },
-          lookAt,
-          750,
-        );
-      } catch {
-        /* ok */
+      flyCameraToNode(graph, node, decision.durationMs, dist);
+    }, FLY_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(t);
+      if (gen === flyGenRef.current) {
+        cancelCameraFly(graphRef.current);
       }
     };
-
-    // Wait a frame so graphData / layout coords settle after active change
-    const t = window.setTimeout(fly, 80);
-    return () => window.clearTimeout(t);
   }, [activeNoteId, mode, graphModeResolved, activeNoteMissingFromFolderMap]);
 
   useEffect(() => {
@@ -1990,6 +2133,13 @@ export function GraphView({ mode, className }: Props) {
     };
 
     hoverAppliedRef.current = null;
+    restyleEdgesRef.current = () => {
+      const g = graphRef.current;
+      if (!g) return;
+      g.linkColor((link) => edgeStyle(link as GLink).color)
+        .linkWidth((link) => edgeStyle(link as GLink).width)
+        .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles);
+    };
     graphRef.current
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
       .linkColor((link) => edgeStyle(link as GLink).color)
@@ -2009,6 +2159,12 @@ export function GraphView({ mode, className }: Props) {
     if (prev) tintOrbHover(nodeObjMapRef.current.get(prev), false, accent);
     if (next) tintOrbHover(nodeObjMapRef.current.get(next), true, accent);
     prevActiveTintRef.current = next;
+    // Light edge restyle only — never nodeThreeObject / graphData / refresh.
+    try {
+      restyleEdgesRef.current();
+    } catch {
+      /* ok */
+    }
   }, [activeNoteId]);
 
   return (

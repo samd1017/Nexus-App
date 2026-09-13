@@ -455,6 +455,20 @@ D1–D8: full note galaxy feel, ~9–10 notes as orbs + links, ghosts/1-hop/expo
 4. **Click note** — open + near-active ego; Globe back to map
 5. **Cap** — mega-folder shows `+N more`, never freezes
 
+### Note-select at scale (graph UX — not a SCALE READY claim)
+
+Automated: `npm run test:graph-select` (synthetic 2k folder + ego cap).
+
+On a ~100k **desktop** vault with Graph panel or fullscreen open:
+
+1. Stay on the **folder map**. Click 10+ different notes in the tree/editor.
+2. Camera must not thrash (no stacked 750ms fly-tos). If the note is not on this level, highlight/edges only — no `graphData()` rebuild.
+3. Orbit or zoom, then click another note — fly-to must not steal the view.
+4. Click **Show links**, then click several notes. Neighborhood may update after a short coalesce; hops stay ≤2 and ≤400 nodes. No physics explosion.
+5. Tree/editor and Wave E / FTS / FS-scope paths stay unchanged.
+
+Success: highlight feels immediate; no multi-hundred-ms hitch; no wild camera. This is a graph UX fix only.
+
 ---
 
 ## Next step

@@ -132,6 +132,7 @@ Demo/local stay eager in-memory (not a size-based mode flip).
 
 - Folder spheres use the same metal `createOrb` pipeline (size via `val` only)
 - Click folder → enter level; click note → open + ego links; Esc → up one folder
+- Note-select on a large folder map highlights + restyles edges; it must not rebuild `graphData()` or restart physics. Ego hops stay ≤2 / ≤400 nodes. See the checklist in [`GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 - Kill switch: `folderGraph: false` in scale-flags restores ego/full only
 - Never materializes 300k–500k orbs — claims are “whole vault **structure**”, not every note as an orb
 

@@ -18,6 +18,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
 import { vaultLinkIndex } from "@/lib/vault/link-index";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
+import { composeGraphTick } from "@/lib/graph/graph-select";
 
 let cachedNodesRef: Record<string, unknown> | null = null;
 let cachedTick = "0";
@@ -42,15 +43,16 @@ export function getGraphTickSnapshot(): string {
   const browse = s.graphBrowsePath ?? "";
   const active = s.activeNoteId ?? "";
 
-  let next: string;
-  if (large && scope !== "ego") {
-    next = `f:${struct}:${browse}:${scope}:${n}`;
-  } else if (large) {
-    next = `e:${links}:${active}:${n}`;
-  } else {
-    // structure + content + links — all primitives, no ensureVaultIndex in selector
-    next = `full:${struct}:${content}:${links}`;
-  }
+  const next = composeGraphTick({
+    large,
+    scope: scope === "ego" || scope === "folder" ? scope : "vault",
+    structureGeneration: struct,
+    contentGeneration: content,
+    linkGeneration: links,
+    browsePath: browse,
+    activeNoteId: active,
+    noteCount: n,
+  });
 
   if (next === cachedTick) return cachedTick;
   cachedTick = next;
