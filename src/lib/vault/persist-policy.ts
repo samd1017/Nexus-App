@@ -7,12 +7,16 @@
  * - Large in-memory seeds (45k / soak-*) persist a remount ticket instead of nodes
  *   so reload can restore last note + dual-pane without blowing quota.
  * - Session creates/edits on those seeds go to IndexedDB overlay
- *   (`large-vault-overlay.ts`), not this localStorage slice.
+ *   (`large-vault-overlay.ts`) and a small copy on the remount ticket.
  */
 
 import { isLargeMemoryVault } from "./scale-flags";
 import { isSyntheticSoakVault, parseSoakNoteCount } from "./synthetic-vault";
 import type { VaultMode, VaultSettings } from "./types";
+import {
+  overlayEntriesFor,
+  type LargeVaultOverlayEntry,
+} from "./large-vault-overlay";
 
 /** Persist full node map only at or below this count (strict > empties). */
 export const PARTIALIZE_NODE_CAP = 2500;
@@ -25,6 +29,8 @@ export type ScaleRemount = {
   lastNotePath: string | null;
   lastSecondaryNotePath: string | null;
   workspaceSplit: boolean;
+  /** Session creates/edits — IndexedDB/LS overlay may miss a fast reload. */
+  overlay?: LargeVaultOverlayEntry[];
 };
 
 export type PersistSlice = {
@@ -61,19 +67,27 @@ function settingsOf(s: PersistInput): Record<string, unknown> {
 
 export function buildScaleRemount(s: PersistInput): ScaleRemount | null {
   const id = s.vaultId ?? null;
-  if (!isLargeMemoryVault(id)) return s.scaleRemount ?? null;
+  if (!id || !isLargeMemoryVault(id)) return s.scaleRemount ?? null;
   const st = settingsOf(s);
   const soakN =
     (typeof st.soakNoteCount === "number" ? st.soakNoteCount : null) ??
     parseSoakNoteCount(id);
+  const overlay = overlayEntriesFor(id)
+    .slice(-80)
+    .map((e) => ({
+      ...e,
+      content:
+        typeof e.content === "string" ? e.content.slice(0, 20_000) : e.content,
+    }));
   return {
     kind: isSyntheticSoakVault(id) ? "soak" : "large-test",
-    vaultId: id!,
+    vaultId: id,
     vaultName: s.vaultName || (isSyntheticSoakVault(id) ? `Soak ${soakN}` : "Large Test Vault"),
     noteCount: soakN,
     lastNotePath: (st.lastNotePath as string | null) ?? null,
     lastSecondaryNotePath: (st.lastSecondaryNotePath as string | null) ?? null,
     workspaceSplit: Boolean(st.workspaceSplit),
+    overlay,
   };
 }
 

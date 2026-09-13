@@ -694,8 +694,14 @@ async function mergeLargeVaultOverlay(
 	vaultId: string,
 	nodes: Record<string, VaultNode>,
 	rootIds: string[],
+	ticketOverlay?: import("./large-vault-overlay").LargeVaultOverlayEntry[] | null,
 ): Promise<{ rootIds: string[]; applied: number; noteCount: number }> {
-	const entries = await loadLargeVaultOverlay(vaultId);
+	const stored = await loadLargeVaultOverlay(vaultId);
+	const byPath = new Map(stored.map((e) => [e.path, e]));
+	for (const e of ticketOverlay ?? []) {
+		if (e?.path) byPath.set(e.path, e);
+	}
+	const entries = [...byPath.values()];
 	let nextRoots = rootIds;
 	let applied = 0;
 	if (entries.length) {
@@ -1326,7 +1332,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				mode: "local"
 			});
 
-			const overlay = await mergeLargeVaultOverlay(vaultId, data.nodes, data.rootIds);
+			const overlay = await mergeLargeVaultOverlay(
+				vaultId,
+				data.nodes,
+				data.rootIds,
+				restoreEarly?.overlay,
+			);
 			data.rootIds = overlay.rootIds;
 			const noteCount = overlay.noteCount;
 
