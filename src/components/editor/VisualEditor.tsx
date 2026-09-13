@@ -434,9 +434,8 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
           bulletList: false,
           // Link is registered separately — avoid duplicate extension warning
           link: false,
-          // Default undo stack is unbounded; 24 steps is enough and stays small
-          // when switching notes on a 100k FSA vault.
-          undoRedo: { depth: 24 },
+          // Keep one PM doc. Depth 2: switch notes without retaining 24 trees.
+          undoRedo: { depth: 2 },
         }),
         StyledBulletList,
         Placeholder.configure({

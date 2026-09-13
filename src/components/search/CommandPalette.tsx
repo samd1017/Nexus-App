@@ -371,6 +371,10 @@ function CommandPaletteOpen() {
     }
     const needle = debouncedSearch.trim() || searchText || raw;
     if (needle) {
+      const idx = getDurableIndex();
+      // Durable async search owns FTS. A second sync intersect at 100k
+      // was enough extra allocation to discard Chrome on the 12th search.
+      if (idx?.ready && idx.searchFtsAsync) return [];
       return fuseSearchHits(searchVault(nodes, needle, 16), signals);
     }
     return fuseSearchHits(searchVault(nodes, raw, 16), signals);

@@ -34,6 +34,11 @@ export const MEMORY_FTS_CANDIDATE_CAP = 800;
  * (rare) lists first so a 16-file token still hits.
  */
 export const MEMORY_FTS_POSTING_CAP = 800;
+/**
+ * After a slim disk fill, drop unique (size-1) tokens until we are under this
+ * many inverted keys. Meeting-* soak files otherwise create ~1 Set per note id.
+ */
+export const MEMORY_FTS_INV_TOKEN_CAP = 12_000;
 /** Skip O(n) title/path fallback above this vault size. */
 export const MEMORY_FTS_FULL_SCAN_MAX_NOTES = 10_000;
 export {
@@ -108,6 +113,8 @@ export interface DurableIndex {
   };
   /** Drop title-only postings before a file-head fill so we do not hold two indexes. */
   beginSlimDiskFill?(): void;
+  /** Prune unique tokens after a 100k fill so Chrome can keep the tab. */
+  compactSlimInv?(): { before: number; after: number; dropped: number };
 }
 
 function simpleHash(s: string): string {
@@ -127,11 +134,14 @@ function extractTags(body: string): string[] {
   return [...tags];
 }
 
-function tokenize(text: string): string[] {
-  return text
+function tokenize(text: string, opts?: { slim?: boolean }): string[] {
+  const raw = text
     .toLowerCase()
     .split(/[^a-z0-9_\u00c0-\u024f]+/i)
     .filter((t) => t.length >= 2);
+  if (!opts?.slim) return raw;
+  // Meeting-10949-1oo → drop 10949 / 1oo. Keep hub, cluster, retrieval.
+  return raw.filter((t) => t.length >= 3 && !/\d/.test(t));
 }
 
 /**
@@ -183,6 +193,33 @@ class MemoryDurableIndex implements DurableIndex {
     this.slimNotes.clear();
   }
 
+  compactSlimInv(): { before: number; after: number; dropped: number } {
+    const before = this.inv.size;
+    if (before <= MEMORY_FTS_INV_TOKEN_CAP) {
+      return { before, after: before, dropped: 0 };
+    }
+    const bySize = new Map<number, string[]>();
+    for (const [token, set] of this.inv) {
+      const n = set.size;
+      let bucket = bySize.get(n);
+      if (!bucket) {
+        bucket = [];
+        bySize.set(n, bucket);
+      }
+      bucket.push(token);
+    }
+    const sizes = [...bySize.keys()].sort((a, b) => a - b);
+    for (const size of sizes) {
+      if (this.inv.size <= MEMORY_FTS_INV_TOKEN_CAP) break;
+      if (size >= MEMORY_FTS_POSTING_CAP) break;
+      for (const token of bySize.get(size) ?? []) {
+        if (this.inv.size <= MEMORY_FTS_INV_TOKEN_CAP) break;
+        this.inv.delete(token);
+      }
+    }
+    return { before, after: this.inv.size, dropped: before - this.inv.size };
+  }
+
   private indexTokens(id: string, meta: DurableNoteMeta, opts?: { slim?: boolean }) {
     const prev = this.noteTokens.get(id);
     if (prev) {
@@ -197,7 +234,7 @@ class MemoryDurableIndex implements DurableIndex {
     const title = meta.title ?? meta.name.replace(/\.md$/i, "");
     const extra = meta.ftsText ?? meta.bodySnippet ?? "";
     const blob = `${title} ${meta.path} ${extra}`;
-    const tokens = tokenize(blob);
+    const tokens = tokenize(blob, { slim: Boolean(opts?.slim) });
     if (!opts?.slim) {
       this.noteTokens.set(id, new Set(tokens));
       this.slimNotes.delete(id);
@@ -580,6 +617,10 @@ export function beginSlimDiskFill(): void {
   active?.beginSlimDiskFill?.();
 }
 
+export function compactSlimInv(): { before: number; after: number; dropped: number } {
+  return active?.compactSlimInv?.() ?? { before: 0, after: 0, dropped: 0 };
+}
+
 export function getDurableIndex(): DurableIndex | null {
   return active;
 }
@@ -691,6 +732,24 @@ export async function rebuildDurableIndexFromNodesAsync(
 
 export function upsertDurableNoteFromNode(n: VaultNode): void {
   if (!active?.ready || n.kind !== "note") return;
+  const stats = active.stats();
+  // 100k FSA: opening a note used to fatten slim postings (4000-char snippet +
+  // per-note token Set). That growth discarded Chrome around note 12.
+  if ((stats.slimNotes ?? 0) > 400 || (stats.notes ?? 0) >= 8_000) {
+    if (n.content === undefined) return;
+    active.upsertNote({
+      id: n.id,
+      path: n.path,
+      name: n.name,
+      kind: "note",
+      parentId: n.parentId,
+      mtime: n.mtime,
+      title: noteTitle(n),
+      ftsText: n.content.slice(0, 2000),
+      slim: true,
+    });
+    return;
+  }
   const body =
     n.content !== undefined ? n.content.slice(0, 4000) : undefined;
   active.upsertNote({

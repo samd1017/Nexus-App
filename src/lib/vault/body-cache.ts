@@ -8,6 +8,19 @@ import { getScaleFlags } from "./scale-flags";
 
 const order: string[] = [];
 let sessionEvictions = 0;
+let noteCountHint = 0;
+
+/** Drive a tighter LRU on 10k+ disk vaults without flipping the 45k default. */
+export function setBodyCacheNoteCount(n: number): void {
+  noteCountHint = Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function bodyLruMax(): number {
+  const base = getScaleFlags().bodyLruSize;
+  if (noteCountHint >= 20_000) return Math.min(base, 8);
+  if (noteCountHint >= 400) return Math.min(base, 16);
+  return base;
+}
 
 /** Snapshot of automatic body memory budget. */
 export interface BodyCacheStats {
@@ -32,6 +45,7 @@ export function removeBodyTouch(id: string): void {
 export function clearBodyTouches(): void {
   order.length = 0;
   sessionEvictions = 0;
+  noteCountHint = 0;
 }
 
 export function getBodyCacheOrder(): readonly string[] {
@@ -39,7 +53,7 @@ export function getBodyCacheOrder(): readonly string[] {
 }
 
 export function getBodyCacheStats(protectedIds: Set<string>): BodyCacheStats {
-  const max = getScaleFlags().bodyLruSize;
+  const max = bodyLruMax();
   const loaded = order.length;
   const protectedCount = protectedIds.size;
   return {
@@ -52,7 +66,7 @@ export function getBodyCacheStats(protectedIds: Set<string>): BodyCacheStats {
 }
 
 const AGGRESSIVE_FACTOR = 0.5;
-const AGGRESSIVE_MIN_FLOOR = 32;
+const AGGRESSIVE_MIN_FLOOR = 4;
 const PRESSURE_RATIO = 1.25;
 
 export function effectiveBodyBudget(
@@ -74,7 +88,7 @@ export function pickEvictions(
   protectedIds: Set<string>,
   opts?: EvictOpts,
 ): string[] {
-  const max = getScaleFlags().bodyLruSize;
+  const max = bodyLruMax();
   const aggressive =
     opts?.aggressive === true || order.length > Math.ceil(max * PRESSURE_RATIO);
   const target = effectiveBodyBudget(max, protectedIds.size, aggressive);

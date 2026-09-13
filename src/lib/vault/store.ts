@@ -109,6 +109,7 @@ import {
   getBodyCacheStats,
   pickEvictions,
   removeBodyTouch,
+  setBodyCacheNoteCount,
   touchBody,
   type BodyCacheStats,
 } from "./body-cache";
@@ -795,6 +796,7 @@ async function completeDiskSearchIndex(): Promise<{
 	}
 	let noteCount = 0;
 	for (const id in st.nodes) if (st.nodes[id]?.kind === "note") noteCount += 1;
+	setBodyCacheNoteCount(noteCount);
 	setOpenProgress({
 		phase: "indexing",
 		scanned: 0,
@@ -4072,10 +4074,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				patchVaultIndex(live, dirtyIds);
 				set({ nodes: live });
 				vaultLinkIndex.setNoteLinks(id, content);
-				upsertDurableNoteFromNode({
-					...cur,
-					content
-				});
+				// Do not fatten slim 100k FTS on every open — that discarded Chrome.
+				const slimNotes = getDurableIndex()?.stats().slimNotes ?? 0;
+				if (slimNotes < 400) {
+					upsertDurableNoteFromNode({
+						...cur,
+						content
+					});
+				}
 				try {
 					upsertIndexedNote({
 						...cur,
@@ -4564,6 +4570,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			ftsLargestPosting: fts?.largestPosting ?? 0,
 			ftsNoteTokenSets: fts?.noteTokenSets ?? 0,
 			ftsSlimNotes: fts?.slimNotes ?? 0,
+			bodyLruMax: getBodyCacheStats(new Set(s.dirtyNoteIds)).max,
 			jsHeapUsedMb: heap ? Math.round(heap.usedJSHeapSize / 1048576) : null,
 			jsHeapTotalMb: heap ? Math.round(heap.totalJSHeapSize / 1048576) : null,
 			jsHeapLimitMb: heap ? Math.round(heap.jsHeapSizeLimit / 1048576) : null,
@@ -4586,6 +4593,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				openMockFsa: (files: Record<string, string>) => Promise<void>;
 				search: (query: string, limit?: number) => Promise<unknown>;
 				openNotes: (limit?: number) => Promise<number>;
+				heapTrend: (opens?: number) => Promise<Record<string, unknown>>;
 				probe: () => Record<string, unknown> | undefined;
 			};
 		}
@@ -4684,6 +4692,59 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				await useVaultStore.getState().ensureNoteBody(id);
 			}
 			return ids.length;
+		},
+		heapTrend: async (opens = 20) => {
+			const soak = (
+				window as unknown as {
+					__NEXUS_SOAK__?: {
+						noteIds: (n?: number) => string[];
+						search: (q: string, n?: number) => Promise<{ hits?: unknown[] }>;
+						probe: () => Record<string, unknown> | undefined;
+					};
+				}
+			).__NEXUS_SOAK__;
+			const snap = async (i: number) => {
+				const cluster = await soak?.search("cluster", 16);
+				const p = soak?.probe() ?? {};
+				return {
+					i,
+					clusterHits: cluster?.hits?.length ?? 0,
+					jsHeapUsedMb: p.jsHeapUsedMb ?? null,
+					jsHeapLimitMb: p.jsHeapLimitMb ?? null,
+					bodiesLoaded: p.bodiesLoaded ?? 0,
+					bodyLruMax: p.bodyLruMax ?? null,
+					ftsNoteTokenSets: p.ftsNoteTokenSets ?? 0,
+					ftsInvTokens: p.ftsInvTokens ?? 0,
+					ftsSlimNotes: p.ftsSlimNotes ?? 0,
+				};
+			};
+			const trend: Record<string, unknown>[] = [await snap(0)];
+			const st = useVaultStore.getState();
+			const ids: string[] = [];
+			if (st.activeNoteId) ids.push(st.activeNoteId);
+			for (const id of soak?.noteIds(opens) ?? []) {
+				if (!ids.includes(id)) ids.push(id);
+				if (ids.length >= opens) break;
+			}
+			let opened = 0;
+			for (const id of ids) {
+				useVaultStore.getState().setActiveNote(id, { silent: true });
+				await useVaultStore.getState().ensureNoteBody(id);
+				opened += 1;
+				trend.push(await snap(opened));
+			}
+			const heaps = trend
+				.map((row) => row.jsHeapUsedMb)
+				.filter((n): n is number => typeof n === "number");
+			return {
+				opened,
+				discarded: false,
+				clusterHits: trend[trend.length - 1]?.clusterHits ?? 0,
+				heapFirstMb: heaps[0] ?? null,
+				heapLastMb: heaps[heaps.length - 1] ?? null,
+				heapMaxMb: heaps.length ? Math.max(...heaps) : null,
+				trend,
+			};
 		},
 		search: async (query: string, limit = 16) => {
 			const { searchWithBackendAsync, describeSearchEngine } = await import(

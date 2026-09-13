@@ -10,6 +10,7 @@
 import type { VaultNode } from "./types";
 import {
   beginSlimDiskFill,
+  compactSlimInv,
   getDurableIndex,
   noteMetaFromNode,
   type DurableNoteMeta,
@@ -77,6 +78,7 @@ export async function fillDurableIndexFromReader(
   };
 
   await Promise.all(Array.from({ length: Math.min(concurrency, total || 1) }, () => work()));
+  compactSlimInv();
   opts?.onProgress?.(total, total);
   return { indexed, errors };
 }

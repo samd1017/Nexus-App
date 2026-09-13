@@ -98,3 +98,37 @@ console.log(
     uniqueHubHits: uniqueHub.length,
   }),
 );
+
+// Meeting-* ids must not create one inverted key per note (100k FSA retainer).
+closeDurableIndex();
+const meetFiles: Record<string, string> = {};
+for (let i = 0; i < 1500; i++) {
+  meetFiles[`m/Meeting-${i}-1oo.md`] = `# Meeting ${i}\n\ncluster agenda\n`;
+}
+const meetNodes = nodesFromFileMap(meetFiles).nodes;
+openMemoryDurableIndex("disk-fts-meeting");
+const meetIdx = getDurableIndex();
+if (!meetIdx) throw new Error("no meeting index");
+meetIdx.reconcileFromNodes(meetNodes);
+await fillDurableIndexFromReader(
+  meetNodes,
+  async (p) => meetFiles[p]!.slice(0, DISK_FTS_HEAD_CHARS),
+  { concurrency: 4 },
+);
+const meetStats = meetIdx.stats();
+const meetCluster = meetIdx.searchFts("cluster", 16);
+assert.ok(meetCluster.length > 0, "cluster hits on Meeting-* vault");
+assert.ok(
+  (meetStats.invTokens ?? 99999) < 80,
+  `Meeting-* must not explode inv tokens (got ${meetStats.invTokens})`,
+);
+closeDurableIndex();
+console.log(
+  JSON.stringify({
+    ok: true,
+    meetingNotes: 1500,
+    invTokens: meetStats.invTokens,
+    largestPosting: meetStats.largestPosting,
+    clusterHits: meetCluster.length,
+  }),
+);
