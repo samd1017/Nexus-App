@@ -1908,10 +1908,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				)?.id ?? null
 			: null;
 		const recents = get().recentNoteVisits ?? [];
+		const otherNote = Object.values(get().nodes).find(
+			(n) => n.kind === "note" && n.id !== primary,
+		)?.id ?? null;
 		const next =
 			get().secondaryNoteId ??
 			(remembered && remembered !== primary ? remembered : null) ??
 			recents.find((id) => id !== primary) ??
+			otherNote ??
 			primary;
 		const nextNode = next ? get().nodes[next] : null;
 		set({
@@ -3591,8 +3595,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return;
 		}
 		const primaryId = pair.primaryId;
+		if (primaryId) await get().ensureNoteBody(primaryId);
+		const primaryNode = primaryId ? get().nodes[primaryId] : null;
+		const keepBody =
+			primaryNode?.kind === "note" ? (primaryNode.content ?? "") : "";
 		for (const sib of targets) get().deleteNode(sib.id);
-		shelvedConflicts.delete(primaryPath);
+		if (isDiskVault(get().mode)) {
+			await queueDiskWrite(() => persistNoteIfFsa(primaryPath, keepBody, { ack: false }));
+		}
+		shelvedConflicts.set(primaryPath, markdownFingerprint(keepBody));
 		if (get().activeNoteId && targets.some((t) => t.id === get().activeNoteId)) get().setActiveNote(primaryId);
 		pushPulse({
 			kind: "update",

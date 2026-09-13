@@ -37,7 +37,7 @@ import { ConflictBanner } from "@/components/conflict/ConflictStudioHost";
 import { formatShortcut } from "@/lib/platform";
 import { FindInNoteBar } from "./FindInNoteBar";
 import { FrontmatterEditor } from "./FrontmatterEditor";
-import { setFindEditorMode } from "@/lib/editor/find-target";
+import { setFindEditorMode, setFindFocusPane, getFindFocusPane } from "@/lib/editor/find-target";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import {
   formatDateLong,
@@ -89,6 +89,10 @@ export function EditorPane({
   }, [editorMode]);
 
   useEffect(() => {
+    if (!workspaceSplit && pane === "primary") setFindFocusPane("primary");
+  }, [workspaceSplit, pane]);
+
+  useEffect(() => {
     // Close find when switching notes
     setFindOpen(false);
   }, [note?.id]);
@@ -106,6 +110,7 @@ export function EditorPane({
 
   useEffect(() => {
     const onOpenFind = (e: Event) => {
+      if (getFindFocusPane() !== pane) return;
       const detail = (e as CustomEvent<{ seed?: string; replace?: boolean }>)
         .detail;
       setFindSeed(detail?.seed ?? "");
@@ -119,7 +124,7 @@ export function EditorPane({
       window.removeEventListener("nexus:find-open", onOpenFind);
       window.removeEventListener("nexus:find-close", onCloseFind);
     };
-  }, []);
+  }, [pane]);
 
   const crumbs = useMemo(
     () => getBreadcrumbTrail(note ?? null, nodes),
@@ -305,6 +310,7 @@ export function EditorPane({
       className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
       data-active-note={note.id}
       data-editor-pane={pane}
+      onPointerDownCapture={() => setFindFocusPane(pane)}
     >
       <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
         <div className="min-w-0 flex-1">
@@ -415,6 +421,7 @@ export function EditorPane({
                   type="button"
                   className={cn("chip-btn !border-0", findOpen && "is-active")}
                   onClick={() => {
+                    setFindFocusPane(pane);
                     if (findOpen) setFindOpen(false);
                     else {
                       const sel = window.getSelection()?.toString()?.trim() ?? "";
@@ -566,6 +573,7 @@ export function EditorPane({
         onOpenChange={setFindOpen}
         seedQuery={findSeed}
         replaceMode={findReplace}
+        pane={pane}
       />
 
       <FrontmatterEditor noteId={note.id} content={body} />
@@ -577,11 +585,11 @@ export function EditorPane({
         {editorMode === "visual" && canvasNote ? (
           <CanvasBoard noteId={note.id} content={body} />
         ) : editorMode === "visual" ? (
-          <VisualEditor noteId={note.id} content={body} />
+          <VisualEditor noteId={note.id} content={body} pane={pane} />
         ) : editorMode === "split" && !canvasNote ? (
           <div className="nexus-split">
             <div className="nexus-split-pane">
-              <SourceEditor noteId={note.id} content={body} />
+              <SourceEditor noteId={note.id} content={body} pane={pane} />
             </div>
             <div className="nexus-split-pane">
               <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
@@ -591,7 +599,7 @@ export function EditorPane({
             </div>
           </div>
         ) : (
-          <SourceEditor noteId={note.id} content={body} />
+          <SourceEditor noteId={note.id} content={body} pane={pane} />
         )}
       </div>
     </div>

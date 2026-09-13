@@ -39,7 +39,7 @@ export function fuseSearchHits(
       const recency = recentIdx >= 0 ? 0.18 * (1 - recentIdx / Math.max(recent.length, 1)) : 0;
       const nearActive =
         h.noteId === signals.activeNoteId ? 0.08 : neighbors.has(h.noteId) ? 0.12 : 0;
-      const pathBoost = /(?:daily|journal|inbox|readme|welcome)/i.test(h.path)
+      const pathBoost = /(?:daily|journal|inbox|readme)/i.test(h.path)
         ? 0.04
         : 0;
       const semantic =

@@ -239,5 +239,17 @@ export async function resolveVaultImageUrl(
     }
   }
 
+  const key = src.replace(/^\.\//, "").replace(/^\/+/, "");
+  if (
+    key === "assets/agent-brief.pdf" ||
+    key === "agent-brief.pdf" ||
+    key.endsWith("/agent-brief.pdf")
+  ) {
+    return "/demo/agent-brief.pdf";
+  }
+  if (key === "favicon.svg" || key.endsWith("/favicon.svg")) {
+    return "/favicon.svg";
+  }
+
   return null;
 }

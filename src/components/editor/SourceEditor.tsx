@@ -15,6 +15,7 @@ import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import {
   collectPlainMatches,
   registerSourceFindAdapter,
+  setFindFocusPane,
   type FindMatch,
 } from "@/lib/editor/find-target";
 import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
@@ -22,6 +23,7 @@ import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
 interface Props {
   noteId: string;
   content: string;
+  pane?: "primary" | "secondary";
 }
 
 /** True when Focus section still has only empty bullets. */
@@ -54,7 +56,7 @@ function emptyFocusCaretIndex(markdown: string): number | null {
  *
  * Wave 1: intentional Source edits always save (no fingerprint drop of blank lines).
  */
-export function SourceEditor({ noteId, content }: Props) {
+export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const spellCheck = usePrefsStore((s) => s.spellCheck);
   const editorFontSize = usePrefsStore((s) => s.editorFontSize);
@@ -312,9 +314,9 @@ export function SourceEditor({ noteId, content }: Props) {
         scheduleSave(v);
         return all.length;
       },
-    });
-    return () => registerSourceFindAdapter(null);
-  }, [noteId, scheduleSave]);
+    }, pane);
+    return () => registerSourceFindAdapter(null, pane);
+  }, [noteId, pane, scheduleSave]);
 
   useEffect(() => {
     return registerInsertWikilink((focusedOnly) => {
@@ -387,6 +389,7 @@ export function SourceEditor({ noteId, content }: Props) {
             const ta = e.currentTarget;
             refreshSuggest(ta.value, ta.selectionStart ?? 0);
           }}
+          onFocus={() => setFindFocusPane(pane)}
           onClick={(e) => {
             const ta = e.currentTarget;
             refreshSuggest(ta.value, ta.selectionStart ?? 0);

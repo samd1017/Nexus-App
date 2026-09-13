@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Replace, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   getActiveFindAdapter,
+  setFindFocusPane,
   type FindMatch,
 } from "@/lib/editor/find-target";
 import { formatShortcut } from "@/lib/platform";
@@ -14,6 +15,7 @@ type Props = {
   seedQuery?: string;
   /** Start with the replace field visible (⌘H). */
   replaceMode?: boolean;
+  pane?: "primary" | "secondary";
 };
 
 /**
@@ -25,6 +27,7 @@ export function FindInNoteBar({
   onOpenChange,
   seedQuery = "",
   replaceMode = false,
+  pane = "primary",
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const replaceRef = useRef<HTMLInputElement | null>(null);
@@ -44,7 +47,7 @@ export function FindInNoteBar({
 
   useEffect(() => {
     if (!open) {
-      getActiveFindAdapter()?.clear();
+      getActiveFindAdapter(pane)?.clear();
       return;
     }
     setQuery(seedQuery);
@@ -60,11 +63,11 @@ export function FindInNoteBar({
       }
     }, 20);
     return () => window.clearTimeout(t);
-  }, [open, seedQuery, replaceMode]);
+  }, [open, seedQuery, replaceMode, pane]);
 
   useEffect(() => {
     if (!open) {
-      getActiveFindAdapter()?.clear();
+      getActiveFindAdapter(pane)?.clear();
       return;
     }
 
@@ -73,7 +76,7 @@ export function FindInNoteBar({
 
     const run = () => {
       if (cancelled) return;
-      const adapter = getActiveFindAdapter();
+      const adapter = getActiveFindAdapter(pane);
       if (!adapter) {
         setMatches([]);
         setIndex(0);
@@ -98,21 +101,21 @@ export function FindInNoteBar({
     return () => {
       cancelled = true;
     };
-  }, [open, query]);
+  }, [open, query, pane]);
 
   const revealAt = (i: number) => {
     const list = matchesRef.current;
     if (!list.length) return;
     const wrapped = ((i % list.length) + list.length) % list.length;
     setIndex(wrapped);
-    getActiveFindAdapter()?.reveal(list[wrapped]!, wrapped, list.length);
+    getActiveFindAdapter(pane)?.reveal(list[wrapped]!, wrapped, list.length);
   };
 
   const goNext = () => revealAt(indexRef.current + 1);
   const goPrev = () => revealAt(indexRef.current - 1);
 
   const rescan = (preferIndex: number) => {
-    const adapter = getActiveFindAdapter();
+    const adapter = getActiveFindAdapter(pane);
     if (!adapter) return;
     const next = adapter.findAll(queryRef.current);
     setMatches(next);
@@ -127,7 +130,7 @@ export function FindInNoteBar({
   };
 
   const doReplace = () => {
-    const adapter = getActiveFindAdapter();
+    const adapter = getActiveFindAdapter(pane);
     const list = matchesRef.current;
     const i = indexRef.current;
     const match = list[i];
@@ -137,7 +140,7 @@ export function FindInNoteBar({
   };
 
   const doReplaceAll = () => {
-    const adapter = getActiveFindAdapter();
+    const adapter = getActiveFindAdapter(pane);
     if (!adapter?.replaceAll || !queryRef.current.trim()) return;
     adapter.replaceAll(queryRef.current, replaceRefVal.current);
     rescan(0);
@@ -185,7 +188,7 @@ export function FindInNoteBar({
         : `${index + 1} of ${matches.length}`;
 
   const canReplace = Boolean(
-    matches.length && getActiveFindAdapter()?.replace,
+    matches.length && getActiveFindAdapter(pane)?.replace,
   );
 
   return (
@@ -194,6 +197,8 @@ export function FindInNoteBar({
       role="search"
       aria-label={showReplace ? "Find and replace in note" : "Find in note"}
       data-find-open="1"
+      data-find-pane={pane}
+      onFocusCapture={() => setFindFocusPane(pane)}
     >
       <div className="flex items-center gap-2">
         <Search size={14} className="shrink-0 text-[var(--accent)]" aria-hidden />

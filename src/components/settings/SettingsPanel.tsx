@@ -779,11 +779,15 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Editing"
-                body="Visual is the rich editor. Source shows clean Markdown. They stay in sync. Type [[ to link notes or folders."
+                body={`Visual is the rich editor. Source is clean Markdown. Preview is Source + live render. ${formatShortcut("E")} cycles them. Type [[ to link, ${formatShortcut("L", { shift: true })} to insert a link, ${formatShortcut("F")} to find in the focused pane.`}
               />
               <HelpItem
                 title="Daily notes & templates"
                 body={`${formatShortcut("D")} opens today's daily page. Create Meeting, Idea, or Project notes from the command palette or file tree context menu.`}
+              />
+              <HelpItem
+                title="Search & Ask"
+                body={`${formatShortcut("K")} opens search. Prefix ask: or ?  for a grounded answer with citations. Operators: path: folder: file: #tag -exclude is:orphan. Trash restore is in the sidebar, the delete toast, and ${formatShortcut("K")} trash / is:deleted.`}
               />
               <HelpItem
                 title="Graph"

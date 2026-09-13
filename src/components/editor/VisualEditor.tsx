@@ -14,6 +14,7 @@ import {
 } from "@/lib/editor/paste-import";
 import {
   registerVisualFindAdapter,
+  setFindFocusPane,
   type FindMatch,
 } from "@/lib/editor/find-target";
 import { findMatchesInPmDoc } from "@/lib/editor/find-pm";
@@ -73,6 +74,7 @@ import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
 interface Props {
   noteId: string;
   content: string;
+  pane?: "primary" | "secondary";
 }
 
 function countFence(md: string, lang: string): number {
@@ -128,6 +130,17 @@ function openWikilinkTarget(target: string, event?: Event) {
     state.setActiveNote(id, jump);
   };
   if (!hit) {
+    const title = (parts.noteTarget || "").trim();
+    if (!title) {
+      state.setToast(`No note found for [[${target}]]`);
+      return;
+    }
+    const created = state.createNote(null, title, { activate: false });
+    if (created) {
+      state.setToast(`Created “${title}”`);
+      activateNote(created);
+      return;
+    }
     state.setToast(`No note found for [[${target}]]`);
     return;
   }
@@ -197,7 +210,7 @@ function morningAutofocusEditor(ed: Editor): void {
  * Visual view of a single note. Parent remounts via key when note/mode changes.
  * Always: Markdown store ↔ GFM HTML (tables, tasks) ↔ TipTap ↔ clean Markdown.
  */
-export function VisualEditor({ noteId, content }: Props) {
+export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const notePath = useVaultStore((s) => s.nodes[noteId]?.path ?? "");
   const isDaily = isJournalDailyPath(notePath);
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
@@ -382,7 +395,7 @@ export function VisualEditor({ noteId, content }: Props) {
       if (noise && !edited) {
         return;
       }
-      if (!edited && lostSpecialMarkdown(prev, serialized)) {
+      if (lostSpecialMarkdown(prev, serialized)) {
         return;
       }
 
@@ -586,8 +599,11 @@ export function VisualEditor({ noteId, content }: Props) {
         refreshSuggest(ed);
         refreshSlash(ed);
       },
+      onFocus: () => {
+        setFindFocusPane(pane);
+      },
     },
-    [noteId, spellCheck],
+    [noteId, spellCheck, pane],
   );
 
   editorRef.current = editor && !editor.isDestroyed ? editor : null;
@@ -624,7 +640,7 @@ export function VisualEditor({ noteId, content }: Props) {
   // Register find-in-note adapter for Visual mode
   useEffect(() => {
     if (!editor || editor.isDestroyed) {
-      registerVisualFindAdapter(null);
+      registerVisualFindAdapter(null, pane);
       return;
     }
     let cached: FindMatch[] = [];
@@ -696,9 +712,9 @@ export function VisualEditor({ noteId, content }: Props) {
           return 0;
         }
       },
-    });
-    return () => registerVisualFindAdapter(null);
-  }, [editor]);
+    }, pane);
+    return () => registerVisualFindAdapter(null, pane);
+  }, [editor, pane]);
 
   // Turn leftover empty `-` Focus/Later bullets into tasks, then sync
   useEffect(() => {

@@ -181,6 +181,11 @@ export function detectSlashCommand(
 ): { query: string; from: number; to: number } | null {
   const { state } = editor;
   if (!state.selection.empty) return null;
+  try {
+    if (editor.isActive("table")) return null;
+  } catch {
+    /* older TipTap without table */
+  }
   const $from = state.selection.$from;
   const textBefore = $from.parent.textBetween(0, $from.parentOffset, "\0", "\0");
   const m = textBefore.match(/^\s*\/([^\n]*)$/);

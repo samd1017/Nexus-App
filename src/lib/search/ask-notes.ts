@@ -6,7 +6,7 @@
 import type { SearchHit, VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import { sliceMarkdownByHeading } from "@/lib/markdown/note-slice";
-import { parseSearchOps } from "./query-ops";
+import { filterHitsByOps, hasSearchOps, parseSearchOps, searchWithOps } from "./query-ops";
 import { searchWithBackend, searchWithPathFolderOps } from "./search-backend";
 import { fuseSearchHits, type RankSignals } from "./rank-fusion";
 import { snippetForSearchHit } from "./snippets";
@@ -184,13 +184,15 @@ export function retrieveForAsk(
   const free = ops.rest || stripped;
   const raw = ops.fileFilter
     ? []
-    : searchWithPathFolderOps(
-        nodes,
-        free,
-        ops.pathFilter,
-        ops.folderFilter,
-        Math.max(limit * 3, 24),
-      );
+    : hasSearchOps(ops)
+      ? searchWithOps(nodes, stripped, Math.max(limit * 3, 24))
+      : searchWithPathFolderOps(
+          nodes,
+          free,
+          ops.pathFilter,
+          ops.folderFilter,
+          Math.max(limit * 3, 24),
+        );
   const fallback = raw.length
     ? raw
     : searchWithBackend(nodes, free, Math.max(limit * 3, 24));
@@ -205,10 +207,15 @@ export function retrieveForAsk(
     const prev = byId.get(h.noteId);
     if (!prev || (h.score || 0) > (prev.score || 0)) byId.set(h.noteId, h);
   }
-  return fuseSearchHits([...byId.values()], { ...signals, queryText: free }).slice(
-    0,
-    limit,
-  );
+  const mentionsWelcome = /\bwelcome\b/i.test(free);
+  const fused = fuseSearchHits([...byId.values()], {
+    ...signals,
+    queryText: free,
+  }).filter((h) => {
+    if (mentionsWelcome) return true;
+    return !/(?:^|\/)welcome\.md$/i.test(h.path);
+  });
+  return filterHitsByOps(fused, ops, nodes).slice(0, limit);
 }
 
 /** Prefer a heading-scoped body when the question names a section. */
