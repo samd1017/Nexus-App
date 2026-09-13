@@ -177,7 +177,9 @@ fn open_conn(db_path: &str) -> Result<Connection, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir index: {e}"))?;
     }
     let conn = Connection::open(db_path).map_err(|e| format!("sqlite open: {e}"))?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY;",
+    )
         .map_err(|e| format!("pragma: {e}"))?;
     // Readers (search / list_links) and the dedicated fill writer share the
     // file. Without a busy timeout the UI connection errors immediately and
@@ -921,10 +923,12 @@ fn fill_from_disk_job(
     )
 }
 
-/// Walk the vault on disk in phases: title/path catalog, short heads, then
-/// deeper heads. Runs on the blocking pool so the WebView stays responsive.
-/// Emits `vault-index-progress` (`ready-meta` / `ready-fts-partial` / `done`).
-/// Incremental: skip unchanged path+mtime+size at the already-reached depth.
+/// Walk the vault on disk in phases: title/path FTS seed (`ready-meta`),
+/// short heads, then deeper heads. Desktop does not write every empty-body
+/// FTS row before title search is live. Runs on the blocking pool so the
+/// WebView stays responsive. Emits `vault-index-progress` (`ready-meta` /
+/// `ready-fts-partial` / `done`). Incremental: skip unchanged
+/// path+mtime+size at the already-reached depth.
 #[tauri::command]
 pub async fn vault_index_fill_from_disk(
     app: tauri::AppHandle,

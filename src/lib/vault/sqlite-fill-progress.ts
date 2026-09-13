@@ -1,6 +1,8 @@
 /**
  * Desktop SQLite FTS fill progress helpers (no Tauri import).
  * Banner copy + success/failure rules + honest search-index phases.
+ * `ready-meta` may fire after a title/path FTS seed — Open must not wait
+ * for every empty-body row or short-head before title search is live.
  */
 
 export type SqliteFillProgress = {

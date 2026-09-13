@@ -178,7 +178,11 @@ assert.match(
   /note heads/,
 );
 assert.equal(isFillSettlePhase("ready-meta", "meta"), true);
-assert.equal(isFillSettlePhase("fts-partial", "meta"), false);
+assert.equal(
+  isFillSettlePhase("fts-partial", "meta"),
+  false,
+  "Open settles on ready-meta (title seed), not on later head phases",
+);
 assert.equal(isFillSettlePhase("done", "meta"), true);
 assert.equal(isFillSettlePhase("ready-fts-partial", "fts-partial"), true);
 assert.equal(

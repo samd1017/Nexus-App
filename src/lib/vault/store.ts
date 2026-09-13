@@ -889,8 +889,9 @@ function diskFillPriorityPaths(): string[] {
 }
 
 /**
- * After meta-only disk mount: catalog titles/paths into SQLite (ready-meta),
- * then keep filling short/deep heads in the background. Tree/editor are
+ * After meta-only disk mount: seed titles/paths into SQLite and settle at
+ * ready-meta after the first searchable batch (not a 100k empty-body
+ * catalog), then fill short/deep heads in the background. Tree/editor are
  * already interactive — this must not gate vault-usable on full 100k FTS.
  */
 async function completeDiskSearchIndex(opts?: {
