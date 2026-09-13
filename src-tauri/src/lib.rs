@@ -1,4 +1,5 @@
 mod durable_index;
+mod index_fill;
 mod vault_scope;
 mod vault_watch;
 

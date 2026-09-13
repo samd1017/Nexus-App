@@ -126,6 +126,7 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 | Rust | `vault_index_fill_from_disk` is **async** (blocking pool). Incremental: skip notes whose path+mtime+size already match `note_meta`. Emits `vault-index-progress` every 64 notes or 250ms. Dedicated writer connection so the UI/search mutex is not held. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. |
 | JS | `NativeSqliteDurableIndex.fillFromDisk` listens for progress and can resolve on the `done` event if the invoke is still finalizing. Banner shows live `scanned / total`. Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
 | Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `runWaveE(path, { forceRebuild: true })` re-reads every head. Waits for `searchReady`; throws if fill errors. |
+| Tests | `npm run test:sqlite-fill` (banner/success rules). `npm run test:sqlite-fill-rust` (incremental skip / force rebuild / progress; GTK-free crate). |
 
 **Fill expectations (not SCALE READY):**
 
