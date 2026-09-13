@@ -18,7 +18,11 @@ if (!process.env.NEXUS_TSX) {
 }
 
 const {
+  advanceSearchIndexState,
   isEmptyNativeFillFailure,
+  isFillSettlePhase,
+  sqliteEngineShortLabel,
+  sqliteFillPhaseMessage,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
 } = await import("../src/lib/vault/sqlite-fill-progress.ts");
@@ -77,5 +81,39 @@ assert.equal(
   "Ready · SQLite FTS5 BM25 (unchanged)",
 );
 assert.equal(sqliteFillReadyMessage(0, 100000), "Ready · SQLite FTS5 BM25");
+
+assert.match(
+  sqliteFillPhaseMessage({
+    phase: "meta",
+    scanned: 100000,
+    total: 100000,
+    skipped: 0,
+    indexed: 100000,
+  }),
+  /title search on/,
+);
+assert.match(
+  sqliteFillPhaseMessage({
+    phase: "fts-partial",
+    scanned: 12800,
+    total: 100000,
+    skipped: 0,
+    indexed: 12800,
+  }),
+  /note heads/,
+);
+assert.equal(isFillSettlePhase("ready-meta", "meta"), true);
+assert.equal(isFillSettlePhase("fts-partial", "meta"), false);
+assert.equal(isFillSettlePhase("done", "meta"), true);
+assert.equal(isFillSettlePhase("ready-fts-partial", "fts-partial"), true);
+assert.equal(
+  advanceSearchIndexState("ready-meta", "fts"),
+  "ready-fts-partial",
+);
+assert.equal(advanceSearchIndexState("ready-fts-partial", "done"), "ready-fts");
+assert.equal(advanceSearchIndexState("ready-fts", "meta"), "ready-fts");
+assert.equal(sqliteEngineShortLabel("ready-meta"), "SQLite FTS5 BM25 · titles");
+assert.equal(sqliteEngineShortLabel("ready-fts-partial"), "SQLite FTS5 BM25 · heads");
+assert.equal(sqliteEngineShortLabel("ready-fts"), "SQLite FTS5 BM25");
 
 console.log("sqlite-fill-progress: PASS");

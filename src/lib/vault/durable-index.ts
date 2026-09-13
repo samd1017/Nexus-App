@@ -116,6 +116,9 @@ export interface DurableIndex {
     headChars?: number,
     opts?: {
       forceRebuild?: boolean;
+      settleAtPhase?: "meta" | "fts-partial" | "done";
+      priorityPaths?: string[];
+      shortHeadChars?: number;
       onProgress?: (p: {
         dbPath?: string;
         scanned: number;
@@ -125,6 +128,7 @@ export interface DurableIndex {
         errors: number;
         phase: string;
         message?: string | null;
+        searchState?: string | null;
       }) => void;
     },
   ): Promise<{
@@ -132,7 +136,9 @@ export interface DurableIndex {
     skipped?: number;
     errors: number;
     notes: number;
+    searchState?: string;
   }>;
+  cancelFill?(): Promise<void>;
   /** Drop title-only postings before a file-head fill so we do not hold two indexes. */
   beginSlimDiskFill?(): void;
   /** Prune unique tokens after a 100k fill so Chrome can keep the tab. */

@@ -22,7 +22,7 @@ That is **not** SCALE READY and **not** a 100k desktop proof. Later tips (`2f202
 
 **Refuse (Chrome ≥25k):** Welcome card `data-chrome-fsa-refused` — Chrome will kill the tab; Desktop is required; Chrome max is ~20k, not a lifetime Obsidian archive. Saved handle is cleared. Walk aborts so we do not allocate 100k nodes first. `?forceLargeFsa` / `nexus-force-large-fsa=1` works **only in DEV** and pops a scary `window.confirm`. Production ignores both.
 
-**Desktop north star:** `~/Documents/nexus-soak-100k` then `~/Documents/nexus-soak-300k` via `npm run tauri:dev`. Native `vault_index_fill_from_disk` walks files in Rust (no 100k JS IPC), **incremental** on reopen, and emits live progress so the UI is not wedged at `scanned: 0`. Programmatic Wave E open registers the folder with plugin-fs persisted-scope (same as dialog). Not proven on this Linux VM.
+**Desktop north star:** `~/Documents/nexus-soak-100k` then `~/Documents/nexus-soak-300k` via `npm run tauri:dev`. Native fill is **phased** (title/path catalog → short heads → 8k heads). Cold open must paint the tree in seconds (`ready-meta`); full body FTS is background. Incremental skip on reopen. Live progress. Programmatic Wave E open registers the folder with plugin-fs persisted-scope (same as dialog). Not proven on this Linux VM.
 
 Real Chrome FSA of a 100k folder:
 
@@ -196,9 +196,9 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 
 | Metric | How | 100k target | 300k target |
 |--------|-----|-------------|-------------|
-| Open wall (Welcome → tree+editor interactive) | stopwatch or `__NEXUS_SOAK_LAST__.interactiveMs` | <5s progressive | <8s progressive |
-| Open progress | banner walking → indexing → ready | visible, no ≥1s freeze | same |
-| Search `retrieval hub` app-ready | palette options visible | ≤50ms SQLite | ≤50ms SQLite |
+| Open wall (Welcome → tree+editor interactive) | stopwatch or `runWaveE.openMs` (`ready-meta`) | <3s (100k target) | <5s progressive |
+| Open progress | walking → ready-meta → heads in background | live scanned/total; never a browse gate on 8k FTS | same |
+| Search `retrieval hub` useful | `runWaveE.searchUsefulMs` (short-head / poll) | <15s first useful; then ≤50ms SQLite | same |
 | `describeSearchEngine().id` | DevTools: `__NEXUS_STRESS__().searchEngine` | `sqlite-fts5-bm25` | `sqlite-fts5-bm25` |
 | Create + type + reload | new note still on disk after quit/reopen | present | present |
 | Switch 8 notes (graph panel open) | p95 / max | p95 <700ms, max <1s | same |
@@ -213,8 +213,9 @@ Closed on this SHA (needs a Mac/Windows Tauri run to prove):
 
 | Gap | Fix |
 |-----|-----|
-| JS `fillDurableIndexFromReader` + per-note `vault_index_upsert` at 100k–300k | Desktop skips JS fill when SQLite is open; **`vault_index_fill_from_disk`** walks `.md` heads in Rust |
+| JS `fillDurableIndexFromReader` + per-note `vault_index_upsert` at 100k–300k | Desktop skips JS fill when SQLite is open; **`vault_index_fill_from_disk`** walks `.md` in Rust |
 | Sync fill froze WebView ~1h at `scanned: 0` (100k already in SQLite) | Async blocking-pool fill + `vault-index-progress`; incremental path+mtime+size skip; no JS fallback on native failure |
+| Cold open waited on full 8k-head FTS of 100k notes | **Meta-first:** `ready-meta` settles open; short heads then 8k heads in background; Wave E does not require `ready-fts` for a basic pass |
 | `vault_index_list` hydrated 300k FTS rows into the JS mirror | `openNative` no longer hydrates the mirror; palette uses `searchFtsAsync` |
 | `maybeSyncDurableIndex` reconciled every meta row over IPC | Skipped when `getDurableIndex().kind === "sqlite"` |
 | Desktop watch safety poll re-walked 100k signatures | No signature poll above 10k when native OS notify is live |
@@ -230,7 +231,7 @@ Still unproven / remaining:
 |-----|-------|
 | Real Tauri open of 100k then 300k with `describeSearchEngine().id === sqlite-fts5-bm25` | Human / desktop agent on Mac or Windows |
 | `cargo check` / Rust fill compile on this Linux VM | Missing crates (`bitflags` / notify). Compile on the desktop machine. |
-| First-open fill wall at 300k (Rust walk + FTS insert) | Still minutes on HDD possible; UI must stay responsive with live scanned/total. Reopen of an unchanged vault should be seconds (incremental skip). Not SCALE READY. |
+| First-open fill wall at 300k (deep 8k-head FTS) | Background only. Tree must be interactive at `ready-meta` (seconds). Reopen of an unchanged vault should be seconds (incremental skip). Not SCALE READY. |
 | Windows path separators vs POSIX rel paths | Contract test exists; confirm on a real NTFS vault |
 | Signed / notarized install (Wave D) | Release ops |
 

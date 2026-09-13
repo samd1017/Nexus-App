@@ -1128,6 +1128,7 @@ function CommandPaletteOpen() {
           className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]"
           data-search-engine={searchEngine.id}
           data-search-engine-label={searchEngine.shortLabel}
+          data-search-index-state={searchEngine.indexState}
         >
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input

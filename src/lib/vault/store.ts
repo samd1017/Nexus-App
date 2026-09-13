@@ -147,8 +147,11 @@ import {
   nodesFromFileMap,
 } from "./disk-fts-fill";
 import {
+  advanceSearchIndexState,
+  getSearchIndexState,
   isEmptyNativeFillFailure,
-  sqliteFillProgressMessage,
+  setSearchIndexState,
+  sqliteFillPhaseMessage,
   sqliteFillReadyMessage,
 } from "./sqlite-fill-progress";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
@@ -631,6 +634,11 @@ function cancelVaultModuleState() {
 	bodyHydrateInflight.clear();
 	mockDiskBodies = null;
 	diskSearchReady = false;
+	setSearchIndexState("idle");
+	try {
+		const idx = getDurableIndex();
+		if (idx?.cancelFill) void idx.cancelFill();
+	} catch {}
 	_conflictPairsCache = null;
 	_conflictPairsStructGen = -1;
 	_conflictPairsNodesRef = null;
@@ -798,12 +806,34 @@ function canReadDiskSearchHeads(): boolean {
 	return Boolean(mockDiskBodies || fsaRoot || desktopRoot);
 }
 
+function diskFillPriorityPaths(): string[] {
+	const st = useVaultStore.getState();
+	const out: string[] = [];
+	const push = (p?: string | null) => {
+		if (p && !out.includes(p)) out.push(p);
+	};
+	push(st.settings.lastNotePath);
+	push(st.settings.lastSecondaryNotePath);
+	const active = st.activeNoteId ? st.nodes[st.activeNoteId] : null;
+	push(active?.path);
+	if (active?.parentId) push(st.nodes[active.parentId]?.path);
+	for (const id of st.expandedFolders.slice(0, 8)) {
+		push(st.nodes[id]?.path);
+	}
+	for (const visit of st.recentNoteVisits.slice(0, 8)) {
+		push(visit.path);
+	}
+	return out;
+}
+
 /**
- * After meta-only disk mount: index file heads into DurableIndex, then Ready.
- * Tree can already be interactive. Search is not Ready until this finishes.
+ * After meta-only disk mount: catalog titles/paths into SQLite (ready-meta),
+ * then keep filling short/deep heads in the background. Tree/editor are
+ * already interactive — this must not gate vault-usable on full 100k FTS.
  */
 async function completeDiskSearchIndex(opts?: {
 	forceRebuild?: boolean;
+	waitFor?: "meta" | "done";
 }): Promise<{
 	indexed: number;
 	errors: number;
@@ -832,24 +862,43 @@ async function completeDiskSearchIndex(opts?: {
 		sqlite?.kind === "sqlite" &&
 		typeof sqlite.fillFromDisk === "function"
 	) {
+		setSearchIndexState("idle");
 		setOpenProgress({
 			phase: "indexing",
 			scanned: 0,
 			totalHint: noteCount,
-			message: "Workspace ready — indexing SQLite FTS5 from disk…",
+			message: "Workspace ready — title search first, then note heads…",
 		});
 		await yieldToUi(true);
 		try {
 			const native = await sqlite.fillFromDisk(8000, {
 				forceRebuild: opts?.forceRebuild === true,
+				settleAtPhase: opts?.waitFor === "done" ? "done" : "meta",
+				shortHeadChars: 768,
+				priorityPaths: diskFillPriorityPaths(),
 				onProgress: (p) => {
 					if (gen !== vaultGen) return;
 					const total = p.total > 0 ? p.total : noteCount;
+					const next = advanceSearchIndexState(getSearchIndexState(), p.phase);
+					setSearchIndexState(next);
+					if (next === "ready-meta" || next === "ready-fts-partial" || next === "ready-fts") {
+						diskSearchReady = true;
+					}
+					if (p.phase === "done") {
+						setOpenProgress({
+							phase: "ready",
+							scanned: total || noteCount,
+							totalHint: total || noteCount,
+							message: sqliteFillReadyMessage(p.skipped, total || noteCount),
+						});
+						return;
+					}
 					setOpenProgress({
 						phase: "indexing",
 						scanned: p.scanned,
 						totalHint: total || noteCount,
-						message: sqliteFillProgressMessage({
+						message: sqliteFillPhaseMessage({
+							phase: p.phase,
 							scanned: p.scanned,
 							total: total || noteCount,
 							skipped: p.skipped,
@@ -874,6 +923,15 @@ async function completeDiskSearchIndex(opts?: {
 				throw new DesktopFsForbiddenError(root);
 			}
 			diskSearchReady = true;
+			if (getSearchIndexState() === "idle") {
+				setSearchIndexState(
+					native?.searchState === "ready-fts"
+						? "ready-fts"
+						: native?.searchState === "ready-fts-partial"
+							? "ready-fts-partial"
+							: "ready-meta",
+				);
+			}
 			if (typeof window !== "undefined") {
 				const prev =
 					(
@@ -889,14 +947,17 @@ async function completeDiskSearchIndex(opts?: {
 					searchIndexSkipped: skipped,
 					searchIndexErrors: Number(native?.errors ?? 0),
 					searchReady: true,
+					searchIndexState: getSearchIndexState(),
 				};
 			}
-			setOpenProgress({
-				phase: "ready",
-				scanned: noteCount,
-				totalHint: noteCount,
-				message: sqliteFillReadyMessage(skipped, notes || noteCount),
-			});
+			if (getSearchIndexState() === "ready-fts" || skipped >= (notes || noteCount)) {
+				setOpenProgress({
+					phase: "ready",
+					scanned: noteCount,
+					totalHint: noteCount,
+					message: sqliteFillReadyMessage(skipped, notes || noteCount),
+				});
+			}
 			return {
 				indexed: indexed || skipped || noteCount,
 				errors: Number(native?.errors ?? 0),
@@ -1391,6 +1452,7 @@ async function mountDesktopVaultAt(
 	vaultPath: string;
 	searchEngine: ReturnType<typeof describeSearchEngine>;
 	searchReady: boolean;
+	searchIndexState: ReturnType<typeof getSearchIndexState>;
 }> {
 	cancelVaultModuleState();
 	clearBodyArchive();
@@ -1496,6 +1558,7 @@ async function mountDesktopVaultAt(
 		vaultPath: live.vaultPath,
 		searchEngine: describeSearchEngine(),
 		searchReady: diskSearchReady,
+		searchIndexState: getSearchIndexState(),
 	};
 }
 
@@ -4870,6 +4933,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			overlayCount: overlayCount(s.vaultId),
 			searchEngine: describeSearchEngine(),
 			searchReady: diskSearchReady,
+			searchIndexState: getSearchIndexState(),
 			ftsNotes: fts?.notes ?? 0,
 			ftsInvTokens: fts?.invTokens ?? 0,
 			ftsLargestPosting: fts?.largestPosting ?? 0,
@@ -5180,11 +5244,25 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			const openMs = Math.round(performance.now() - t0);
 			if (!open?.searchReady) {
 				throw new Error(
-					"Wave E: searchReady is false after open — SQLite FTS fill did not finish",
+					"Wave E: searchReady is false after open — title/path FTS (ready-meta) did not finish",
 				);
 			}
-			const hub = await soak.search("retrieval hub", 16);
-			const cluster = await soak.search("cluster", 16);
+			// Browse is already usable. Poll body search until short-head FTS
+			// is ready enough — do not wait for full 100k 8k-head fill.
+			const tSearch = performance.now();
+			let hub = await soak.search("retrieval hub", 16);
+			let cluster = await soak.search("cluster", 16);
+			let hubHits = hub?.hits?.length ?? 0;
+			let clusterHits = cluster?.hits?.length ?? 0;
+			const deadline = tSearch + 45_000;
+			while (performance.now() < deadline && (hubHits < 1 || clusterHits < 1)) {
+				await new Promise((r) => window.setTimeout(r, 200));
+				hub = await soak.search("retrieval hub", 16);
+				cluster = await soak.search("cluster", 16);
+				hubHits = hub?.hits?.length ?? 0;
+				clusterHits = cluster?.hits?.length ?? 0;
+			}
+			const searchUsefulMs = Math.round(performance.now() - tSearch);
 			const opened = await soak.openNotes(opts?.opens ?? 20);
 			const createdTitle = `Wave-E-Create-${Date.now()}`;
 			const createdId = soak.createNote(null, createdTitle);
@@ -5192,8 +5270,6 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			const reload = await soak.reloadDesktop();
 			const foundAfterReload = soak.findNoteId(createdTitle);
 			const engine = describeSearchEngine();
-			const hubHits = hub?.hits?.length ?? 0;
-			const clusterHits = cluster?.hits?.length ?? 0;
 			const pass =
 				engine.id === "sqlite-fts5-bm25" &&
 				hubHits >= 1 &&
@@ -5208,6 +5284,9 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 					: "Wave E desktop proof failed. Do not claim SCALE READY.",
 				open,
 				openMs,
+				searchUsefulMs,
+				indexStateAtOpen: open.searchIndexState ?? getSearchIndexState(),
+				indexStateAtSearch: engine.indexState,
 				searchEngine: engine,
 				hubHits,
 				clusterHits,

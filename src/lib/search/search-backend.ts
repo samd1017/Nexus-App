@@ -12,6 +12,11 @@ import { searchVault as fuseSearchVault } from "./fuse-search";
 import { indexedSearch } from "./indexed-search";
 import { getScaleFlags, type SearchBackendKind } from "@/lib/vault/scale-flags";
 import { getDurableIndex } from "@/lib/vault/durable-index";
+import {
+  getSearchIndexState,
+  sqliteEngineShortLabel,
+  type SearchIndexState,
+} from "@/lib/vault/sqlite-fill-progress";
 
 export interface SearchBackend {
   kind: SearchBackendKind;
@@ -110,10 +115,17 @@ export function describeSearchEngine(): {
   label: string;
   shortLabel: string;
   ranked: boolean;
+  indexState: SearchIndexState;
 } {
   const flag = getScaleFlags().searchBackend;
   if (flag === "fuse") {
-    return { id: "fuse", label: "Fuse.js", shortLabel: "Fuse", ranked: false };
+    return {
+      id: "fuse",
+      label: "Fuse.js",
+      shortLabel: "Fuse",
+      ranked: false,
+      indexState: "idle",
+    };
   }
   if (flag === "worker") {
     return {
@@ -121,15 +133,18 @@ export function describeSearchEngine(): {
       label: "In-process inverted index",
       shortLabel: "Inverted",
       ranked: false,
+      indexState: "idle",
     };
   }
   const idx = getDurableIndex();
   if (idx?.ready && (idx.kind === "sqlite" || idx.kind === "native") && idx.searchFtsAsync) {
+    const indexState = getSearchIndexState();
     return {
       id: "sqlite-fts5-bm25",
       label: "SQLite FTS5 BM25 (desktop)",
-      shortLabel: "SQLite FTS5 BM25",
+      shortLabel: sqliteEngineShortLabel(indexState),
       ranked: true,
+      indexState,
     };
   }
   if (idx?.ready) {
@@ -138,6 +153,7 @@ export function describeSearchEngine(): {
       label: "In-memory FTS (800-candidate cap, not SQLite BM25)",
       shortLabel: "Memory FTS (capped)",
       ranked: false,
+      indexState: "idle",
     };
   }
   return {
@@ -145,6 +161,7 @@ export function describeSearchEngine(): {
     label: "In-process inverted index",
     shortLabel: "Inverted",
     ranked: false,
+    indexState: "idle",
   };
 }
 

@@ -1,9 +1,13 @@
-//! Incremental SQLite FTS5 fill from a vault folder.
-//! No Tauri imports — this module is also compiled by `src-tauri/fill-test`.
+//! Phased SQLite FTS5 fill from a vault folder.
+//!
+//! Meta catalog (titles/paths) is separated from content FTS so a 100k
+//! cold open can paint the tree and run title search without waiting for
+//! every note head. No Tauri imports — also compiled by `src-tauri/fill-test`.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -22,6 +26,31 @@ pub const FILL_SKIP_DIRS: &[&str] = &[
     ".nexus",
 ];
 
+pub const DEFAULT_SHORT_HEAD: usize = 768;
+pub const DEFAULT_DEEP_HEAD: usize = 8000;
+pub const FILL_DEPTH_META: i64 = 0;
+pub const FILL_DEPTH_PARTIAL: i64 = 1;
+pub const FILL_DEPTH_DEEP: i64 = 2;
+const META_BATCH: usize = 1024;
+const FTS_WRITE_BATCH: usize = 1024;
+const READ_CHUNK: usize = 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FillUntil {
+    Meta,
+    Partial,
+    Deep,
+}
+
+pub struct FillOpts<'a> {
+    pub deep_head_chars: usize,
+    pub short_head_chars: usize,
+    pub force_rebuild: bool,
+    pub db_path: &'a str,
+    pub priority_rels: &'a [String],
+    pub until: FillUntil,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexFillResult {
@@ -29,6 +58,8 @@ pub struct IndexFillResult {
     pub skipped: i64,
     pub errors: i64,
     pub notes: i64,
+    #[serde(default)]
+    pub search_state: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -42,12 +73,15 @@ pub struct IndexFillProgress {
     pub errors: i64,
     pub phase: String,
     pub message: Option<String>,
+    #[serde(default)]
+    pub search_state: String,
 }
 
 struct ExistingNote {
     id: String,
     mtime: i64,
     size: Option<i64>,
+    fill_depth: Option<i64>,
 }
 
 struct DiskNote {
@@ -67,6 +101,7 @@ struct FillNote {
     size: i64,
     title: String,
     body: String,
+    fill_depth: i64,
 }
 
 /// Must match TS `deskNodeId` in `src/lib/vault/tauri-adapter.ts`.
@@ -104,10 +139,33 @@ pub fn take_head(bytes: &[u8], head_chars: usize) -> String {
         .collect()
 }
 
+/// Filename stem, or the first ATX H1 in a short head (frontmatter skipped).
+pub fn title_from_name_and_head(name: &str, head: &str) -> String {
+    for line in head.lines().take(48) {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("# ") {
+            let title = rest.trim();
+            if !title.is_empty() {
+                return title.to_string();
+            }
+        }
+    }
+    name.trim_end_matches(".md").to_string()
+}
+
+pub fn inferred_fill_depth(fill_depth: Option<i64>) -> i64 {
+    // Legacy rows (no column / NULL) were written with full heads.
+    fill_depth.unwrap_or(FILL_DEPTH_DEEP)
+}
+
+pub fn ensure_fill_depth_column(conn: &Connection) {
+    let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN fill_depth INTEGER", []);
+}
+
 fn load_existing_notes(conn: &Connection) -> HashMap<String, ExistingNote> {
     let mut map = HashMap::new();
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, path, mtime, size FROM note_meta WHERE kind='note' AND deleted=0",
+        "SELECT id, path, mtime, size, fill_depth FROM note_meta WHERE kind='note' AND deleted=0",
     ) else {
         return map;
     };
@@ -118,6 +176,7 @@ fn load_existing_notes(conn: &Connection) -> HashMap<String, ExistingNote> {
                 id: r.get(0)?,
                 mtime: r.get(2)?,
                 size: r.get(3)?,
+                fill_depth: r.get(4)?,
             },
         ))
     }) else {
@@ -189,11 +248,89 @@ fn should_emit_progress(last_at: Instant, last_scanned: i64, scanned: i64) -> bo
     scanned.saturating_sub(last_scanned) >= 64 || last_at.elapsed() >= Duration::from_millis(250)
 }
 
+fn normalize_rel(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+pub fn is_priority_rel(rel: &str, prefixes: &[String]) -> bool {
+    let rel = normalize_rel(rel);
+    prefixes.iter().any(|raw| {
+        let p = normalize_rel(raw).trim_matches('/').to_string();
+        if p.is_empty() {
+            return false;
+        }
+        rel == p || rel.starts_with(&format!("{p}/")) || p.starts_with(&format!("{rel}/"))
+    })
+}
+
+pub fn order_indices_for_fill(rels: &[String], prefixes: &[String]) -> Vec<usize> {
+    let mut pri = Vec::new();
+    let mut rest = Vec::new();
+    for (i, rel) in rels.iter().enumerate() {
+        if is_priority_rel(rel, prefixes) {
+            pri.push(i);
+        } else {
+            rest.push(i);
+        }
+    }
+    pri.extend(rest);
+    pri
+}
+
+fn worker_count(n: usize) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(4)
+        .clamp(2, 8)
+        .min(n)
+}
+
+fn read_heads(files: &[DiskNote], indices: &[usize], head_chars: usize) -> Vec<(usize, String)> {
+    if indices.is_empty() {
+        return Vec::new();
+    }
+    let workers = worker_count(indices.len());
+    let chunk = (indices.len() + workers - 1) / workers;
+    std::thread::scope(|scope| {
+        let mut joins = Vec::with_capacity(workers);
+        for piece in indices.chunks(chunk.max(1)) {
+            joins.push(scope.spawn(move || {
+                use std::fs::File;
+                let mut buf = vec![0u8; head_chars.saturating_mul(4).clamp(256, 128_000)];
+                let mut out = Vec::with_capacity(piece.len());
+                for &i in piece {
+                    let body = match File::open(&files[i].abs) {
+                        Ok(mut f) => {
+                            let n = f.read(&mut buf).unwrap_or(0);
+                            take_head(&buf[..n], head_chars)
+                        }
+                        Err(_) => String::new(),
+                    };
+                    out.push((i, body));
+                }
+                out
+            }));
+        }
+        joins
+            .into_iter()
+            .flat_map(|j| j.join().unwrap_or_default())
+            .collect()
+    })
+}
+
+fn parent_id_for(rel: &str) -> Option<String> {
+    rel.rsplit_once('/').map(|(p, _)| desk_node_id(p))
+}
+
 fn flush_note_batch(
     conn: &mut Connection,
     batch: &mut Vec<FillNote>,
     indexed: &mut i64,
     errors: &mut i64,
+    written: &mut HashSet<String>,
 ) {
     if batch.is_empty() {
         return;
@@ -209,12 +346,12 @@ fn flush_note_batch(
     let flush_err = (|| -> Result<(), String> {
         let mut meta = tx
             .prepare_cached(
-                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted)
-                 VALUES (?1,?2,?3,'note',?4,?5,?6,NULL,?7,0)
+                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth)
+                 VALUES (?1,?2,?3,'note',?4,?5,?6,NULL,?7,0,?8)
                  ON CONFLICT(id) DO UPDATE SET
                    path=excluded.path, name=excluded.name, parent_id=excluded.parent_id,
                    mtime=excluded.mtime, size=excluded.size,
-                   title=excluded.title, deleted=0",
+                   title=excluded.title, deleted=0, fill_depth=excluded.fill_depth",
             )
             .map_err(|e| e.to_string())?;
         let mut fts_del = tx
@@ -235,6 +372,7 @@ fn flush_note_batch(
                     note.mtime,
                     note.size,
                     note.title,
+                    note.fill_depth,
                 ])
                 .is_err()
             {
@@ -249,7 +387,9 @@ fn flush_note_batch(
                 *errors += 1;
                 continue;
             }
-            *indexed += 1;
+            if written.insert(note.id.clone()) {
+                *indexed += 1;
+            }
         }
         Ok(())
     })();
@@ -295,116 +435,387 @@ fn remove_stale_notes(
     }
 }
 
-/// Incremental disk → FTS5 fill. Skips path+mtime+size matches. Emits progress
-/// at least every 64 notes or 250ms. Does not TRUNCATE-checkpoint WAL.
+fn emit(
+    progress: &mut IndexFillProgress,
+    phase: &str,
+    search_state: &str,
+    scanned: i64,
+    indexed: i64,
+    skipped: i64,
+    errors: i64,
+    message: Option<String>,
+    on_progress: &mut impl FnMut(&IndexFillProgress),
+) {
+    progress.phase = phase.into();
+    progress.search_state = search_state.into();
+    progress.scanned = scanned;
+    progress.indexed = indexed;
+    progress.skipped = skipped;
+    progress.errors = errors;
+    progress.message = message;
+    on_progress(progress);
+}
+
+/// Incremental disk → FTS5 fill. Compatibility wrapper (full deep pass).
 pub fn fill_from_disk_on_conn(
     conn: &mut Connection,
     vault_root: &Path,
     head_chars: usize,
     force_rebuild: bool,
     db_path: &str,
+    on_progress: impl FnMut(&IndexFillProgress),
+) -> Result<IndexFillResult, String> {
+    fill_from_disk_with_opts(
+        conn,
+        vault_root,
+        FillOpts {
+            deep_head_chars: head_chars.max(DEFAULT_SHORT_HEAD),
+            short_head_chars: DEFAULT_SHORT_HEAD.min(head_chars.max(256)),
+            force_rebuild,
+            db_path,
+            priority_rels: &[],
+            until: FillUntil::Deep,
+        },
+        || false,
+        on_progress,
+    )
+}
+
+/// Phased fill: meta (titles/paths) → short heads → deep heads.
+/// `is_cancelled` is checked between batches so a remount can preempt.
+pub fn fill_from_disk_with_opts(
+    conn: &mut Connection,
+    vault_root: &Path,
+    opts: FillOpts<'_>,
+    mut is_cancelled: impl FnMut() -> bool,
     mut on_progress: impl FnMut(&IndexFillProgress),
 ) -> Result<IndexFillResult, String> {
-    use std::fs::File;
-    use std::io::Read;
+    ensure_fill_depth_column(conn);
 
     let existing = load_existing_notes(conn);
     let files = collect_md_notes(vault_root);
     let total = files.len() as i64;
+    let short_head = opts.short_head_chars.clamp(256, 4_096);
+    let deep_head = opts.deep_head_chars.clamp(short_head, 32_000);
+    let target_depth = match opts.until {
+        FillUntil::Meta => FILL_DEPTH_META,
+        FillUntil::Partial => FILL_DEPTH_PARTIAL,
+        FillUntil::Deep => FILL_DEPTH_DEEP,
+    };
+
     let mut progress = IndexFillProgress {
-        db_path: db_path.to_string(),
+        db_path: opts.db_path.to_string(),
         scanned: 0,
         total,
         indexed: 0,
         skipped: 0,
         errors: 0,
-        phase: "indexing".into(),
-        message: None,
+        phase: "walking".into(),
+        message: Some(format!("Scanning {total} notes…")),
+        search_state: String::new(),
     };
     on_progress(&progress);
 
     let mut indexed: i64 = 0;
     let mut skipped: i64 = 0;
     let mut errors: i64 = 0;
-    let mut batch: Vec<FillNote> = Vec::with_capacity(512);
+    let mut written: HashSet<String> = HashSet::new();
+    let mut batch: Vec<FillNote> = Vec::with_capacity(META_BATCH);
     let mut seen: HashSet<String> = HashSet::with_capacity(files.len());
-    let mut buf = vec![0u8; head_chars.saturating_mul(4).clamp(256, 128_000)];
+    let mut need_partial: Vec<usize> = Vec::new();
+    let mut need_deep: Vec<usize> = Vec::new();
     let mut last_emit = Instant::now();
     let mut last_emitted_scanned: i64 = 0;
 
+    emit(
+        &mut progress,
+        "meta",
+        "",
+        0,
+        0,
+        0,
+        0,
+        Some("Writing title/path catalog…".into()),
+        &mut on_progress,
+    );
+
     for (i, disk) in files.iter().enumerate() {
+        if is_cancelled() {
+            break;
+        }
         seen.insert(disk.rel.clone());
         let scanned = (i as i64) + 1;
-        if !force_rebuild {
+        let mut skip_meta = false;
+        if !opts.force_rebuild {
             if let Some(prev) = existing.get(&disk.rel) {
                 if note_unchanged(prev, disk) {
-                    skipped += 1;
-                    if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
-                        progress.scanned = scanned;
-                        progress.indexed = indexed;
-                        progress.skipped = skipped;
-                        progress.errors = errors;
-                        on_progress(&progress);
-                        last_emit = Instant::now();
-                        last_emitted_scanned = scanned;
+                    let depth = inferred_fill_depth(prev.fill_depth);
+                    skip_meta = depth >= FILL_DEPTH_META;
+                    if depth < FILL_DEPTH_PARTIAL && opts.until != FillUntil::Meta {
+                        need_partial.push(i);
                     }
-                    continue;
+                    if depth < FILL_DEPTH_DEEP && opts.until == FillUntil::Deep {
+                        need_deep.push(i);
+                    }
+                    if depth >= target_depth {
+                        skipped += 1;
+                    }
                 }
             }
         }
+        if skip_meta {
+            if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
+                emit(
+                    &mut progress,
+                    "meta",
+                    "",
+                    scanned,
+                    indexed,
+                    skipped,
+                    errors,
+                    None,
+                    &mut on_progress,
+                );
+                last_emit = Instant::now();
+                last_emitted_scanned = scanned;
+            }
+            continue;
+        }
 
-        let body = match File::open(&disk.abs) {
-            Ok(mut f) => {
-                let n = f.read(&mut buf).unwrap_or(0);
-                take_head(&buf[..n], head_chars)
-            }
-            Err(_) => {
-                errors += 1;
-                String::new()
-            }
-        };
-        let parent_path = disk.rel.rsplit_once('/').map(|(p, _)| p.to_string());
         batch.push(FillNote {
             id: desk_node_id(&disk.rel),
             path: disk.rel.clone(),
             name: disk.name.clone(),
-            parent_id: parent_path.map(|p| desk_node_id(&p)),
+            parent_id: parent_id_for(&disk.rel),
             mtime: disk.mtime,
             size: disk.size,
             title: disk.name.trim_end_matches(".md").to_string(),
-            body,
+            body: String::new(),
+            fill_depth: FILL_DEPTH_META,
         });
-        if batch.len() >= 512 {
-            flush_note_batch(conn, &mut batch, &mut indexed, &mut errors);
+        if opts.until != FillUntil::Meta {
+            need_partial.push(i);
+        }
+        if opts.until == FillUntil::Deep {
+            need_deep.push(i);
+        }
+        if batch.len() >= META_BATCH {
+            flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
         }
         if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
-            progress.scanned = scanned;
-            progress.indexed = indexed;
-            progress.skipped = skipped;
-            progress.errors = errors;
-            on_progress(&progress);
+            emit(
+                &mut progress,
+                "meta",
+                "",
+                scanned,
+                indexed,
+                skipped,
+                errors,
+                None,
+                &mut on_progress,
+            );
             last_emit = Instant::now();
             last_emitted_scanned = scanned;
         }
     }
-    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors);
+    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
     let _ = remove_stale_notes(conn, &existing, &seen);
+
+    emit(
+        &mut progress,
+        "ready-meta",
+        "ready-meta",
+        total,
+        indexed,
+        skipped,
+        errors,
+        Some("Title/path search ready".into()),
+        &mut on_progress,
+    );
+
+    if is_cancelled() || opts.until == FillUntil::Meta {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+        return Ok(IndexFillResult {
+            indexed,
+            skipped,
+            errors,
+            notes: total,
+            search_state: "ready-meta".into(),
+        });
+    }
+
+    let rels: Vec<String> = files.iter().map(|f| f.rel.clone()).collect();
+    let pri_order = order_indices_for_fill(&rels, opts.priority_rels);
+    let pri_rank: HashMap<usize, usize> = pri_order.iter().enumerate().map(|(r, i)| (*i, r)).collect();
+    need_partial.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
+    need_deep.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
+
+    last_emit = Instant::now();
+    last_emitted_scanned = 0;
+    let partial_total = need_partial.len() as i64;
+    emit(
+        &mut progress,
+        "fts-partial",
+        "ready-meta",
+        0,
+        indexed,
+        skipped,
+        errors,
+        Some("Filling short note heads…".into()),
+        &mut on_progress,
+    );
+
+    let mut phase_scanned: i64 = 0;
+    for chunk in need_partial.chunks(READ_CHUNK) {
+        if is_cancelled() {
+            break;
+        }
+        let heads = read_heads(&files, chunk, short_head);
+        for (i, body) in heads {
+            let disk = &files[i];
+            batch.push(FillNote {
+                id: desk_node_id(&disk.rel),
+                path: disk.rel.clone(),
+                name: disk.name.clone(),
+                parent_id: parent_id_for(&disk.rel),
+                mtime: disk.mtime,
+                size: disk.size,
+                title: title_from_name_and_head(&disk.name, &body),
+                body,
+                fill_depth: FILL_DEPTH_PARTIAL,
+            });
+            if batch.len() >= FTS_WRITE_BATCH {
+                flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+            }
+        }
+        phase_scanned += chunk.len() as i64;
+        if should_emit_progress(last_emit, last_emitted_scanned, phase_scanned) {
+            emit(
+                &mut progress,
+                "fts-partial",
+                "ready-meta",
+                phase_scanned.min(partial_total),
+                indexed,
+                skipped,
+                errors,
+                Some("Filling short note heads…".into()),
+                &mut on_progress,
+            );
+            last_emit = Instant::now();
+            last_emitted_scanned = phase_scanned;
+        }
+    }
+    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+    emit(
+        &mut progress,
+        "ready-fts-partial",
+        "ready-fts-partial",
+        total,
+        indexed,
+        skipped,
+        errors,
+        Some("Short-head search ready".into()),
+        &mut on_progress,
+    );
+
+    if is_cancelled() || opts.until == FillUntil::Partial {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+        return Ok(IndexFillResult {
+            indexed,
+            skipped,
+            errors,
+            notes: total,
+            search_state: "ready-fts-partial".into(),
+        });
+    }
+
+    last_emit = Instant::now();
+    last_emitted_scanned = 0;
+    let deep_total = need_deep.len() as i64;
+    emit(
+        &mut progress,
+        "fts",
+        "ready-fts-partial",
+        0,
+        indexed,
+        skipped,
+        errors,
+        Some("Deepening FTS heads…".into()),
+        &mut on_progress,
+    );
+
+    let mut deep_scanned: i64 = 0;
+    for chunk in need_deep.chunks(READ_CHUNK) {
+        if is_cancelled() {
+            break;
+        }
+        let heads = read_heads(&files, chunk, deep_head);
+        for (i, body) in heads {
+            let disk = &files[i];
+            batch.push(FillNote {
+                id: desk_node_id(&disk.rel),
+                path: disk.rel.clone(),
+                name: disk.name.clone(),
+                parent_id: parent_id_for(&disk.rel),
+                mtime: disk.mtime,
+                size: disk.size,
+                title: title_from_name_and_head(&disk.name, &body),
+                body,
+                fill_depth: FILL_DEPTH_DEEP,
+            });
+            if batch.len() >= FTS_WRITE_BATCH {
+                flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+            }
+        }
+        deep_scanned += chunk.len() as i64;
+        if should_emit_progress(last_emit, last_emitted_scanned, deep_scanned) {
+            emit(
+                &mut progress,
+                "fts",
+                "ready-fts-partial",
+                deep_scanned.min(deep_total),
+                indexed,
+                skipped,
+                errors,
+                None,
+                &mut on_progress,
+            );
+            last_emit = Instant::now();
+            last_emitted_scanned = deep_scanned;
+        }
+    }
+    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
 
     // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
+    let search_state = if is_cancelled() {
+        "ready-fts-partial"
+    } else {
+        "ready-fts"
+    };
     let result = IndexFillResult {
         indexed,
         skipped,
         errors,
         notes: total,
+        search_state: search_state.into(),
     };
-    progress.scanned = total;
-    progress.indexed = indexed;
-    progress.skipped = skipped;
-    progress.errors = errors;
-    progress.phase = "done".into();
-    on_progress(&progress);
+    emit(
+        &mut progress,
+        if is_cancelled() { "ready-fts-partial" } else { "done" },
+        search_state,
+        total,
+        indexed,
+        skipped,
+        errors,
+        Some(if is_cancelled() {
+            "Index fill cancelled".into()
+        } else {
+            "SQLite FTS5 BM25 ready".into()
+        }),
+        &mut on_progress,
+    );
     Ok(result)
 }
 
@@ -472,17 +883,38 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         conn
     }
 
+    fn fill_until(
+        conn: &mut Connection,
+        vault: &Path,
+        force: bool,
+        until: FillUntil,
+        priority: &[String],
+    ) -> (IndexFillResult, Vec<IndexFillProgress>) {
+        let mut ticks = Vec::new();
+        let result = fill_from_disk_with_opts(
+            conn,
+            vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: force,
+                db_path: "test.sqlite",
+                priority_rels: priority,
+                until,
+            },
+            || false,
+            |p| ticks.push(p.clone()),
+        )
+        .unwrap();
+        (result, ticks)
+    }
+
     fn fill(
         conn: &mut Connection,
         vault: &Path,
         force: bool,
     ) -> (IndexFillResult, Vec<IndexFillProgress>) {
-        let mut ticks = Vec::new();
-        let result = fill_from_disk_on_conn(conn, vault, 8000, force, "test.sqlite", |p| {
-            ticks.push(p.clone());
-        })
-        .unwrap();
-        (result, ticks)
+        fill_until(conn, vault, force, FillUntil::Deep, &[])
     }
 
     fn fts_has(conn: &Connection, query: &str) -> bool {
@@ -521,6 +953,27 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     }
 
     #[test]
+    fn title_prefers_heading() {
+        assert_eq!(
+            title_from_name_and_head("file.md", "# Real Title\n\nbody"),
+            "Real Title"
+        );
+        assert_eq!(title_from_name_and_head("stem.md", "no heading"), "stem");
+    }
+
+    #[test]
+    fn priority_rels_sort_visible_folder_first() {
+        let rels = vec![
+            "zz/late.md".into(),
+            "Inbox/now.md".into(),
+            "aa/other.md".into(),
+        ];
+        let order = order_indices_for_fill(&rels, &["Inbox".into()]);
+        assert_eq!(order[0], 1);
+        assert_eq!(order[1], 0);
+    }
+
+    #[test]
     fn incremental_skips_unchanged_and_reindexes_mtime() {
         let (vault, db) = temp_pair("incr");
         write_note(&vault, "Hub.md", "retrieval hub body\n");
@@ -532,7 +985,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert_eq!(first.notes, 3);
         assert_eq!(first.indexed, 3);
         assert_eq!(first.skipped, 0);
-        assert!(ticks.iter().any(|p| p.phase == "indexing" && p.total == 3));
+        assert_eq!(first.search_state, "ready-fts");
+        assert!(ticks.iter().any(|p| p.phase == "ready-meta" && p.total == 3));
+        assert!(ticks.iter().any(|p| p.phase == "ready-fts-partial"));
         assert_eq!(ticks.last().map(|p| p.phase.as_str()), Some("done"));
         assert!(fts_has(&conn, "retrieval"), "cold fill must FTS index heads");
 
@@ -547,6 +1002,31 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert_eq!(third.indexed, 1);
         assert_eq!(third.skipped, 2);
         assert!(fts_has(&conn, "uniquexyz"));
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn meta_phase_indexes_titles_not_bodies() {
+        let (vault, db) = temp_pair("meta");
+        write_note(&vault, "Hub.md", "secretbodytoken cluster retrieval\n");
+        write_note(&vault, "plain.md", "secretbodytoken\n");
+        let mut conn = open_test_conn(&db);
+        let (meta, ticks) = fill_until(&mut conn, &vault, false, FillUntil::Meta, &[]);
+        assert_eq!(meta.notes, 2);
+        assert_eq!(meta.search_state, "ready-meta");
+        assert!(ticks.iter().any(|p| p.phase == "ready-meta"));
+        assert!(!ticks.iter().any(|p| p.phase == "done"));
+        assert!(fts_has(&conn, "Hub"), "title/path FTS after meta");
+        assert!(
+            !fts_has(&conn, "secretbodytoken"),
+            "body tokens must wait for head fill"
+        );
+
+        let (partial, _) = fill_until(&mut conn, &vault, false, FillUntil::Partial, &[]);
+        assert_eq!(partial.search_state, "ready-fts-partial");
+        assert!(fts_has(&conn, "secretbodytoken"));
+        assert!(fts_has(&conn, "cluster"));
 
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
@@ -584,15 +1064,80 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let (first, ticks) = fill(&mut conn, &vault, false);
         assert_eq!(first.indexed, 80);
         assert!(
-            ticks.len() >= 2,
-            "start + done at minimum, got {}",
+            ticks.len() >= 3,
+            "meta + ready-meta + later phases, got {}",
             ticks.len()
         );
-        assert!(ticks.iter().any(|p| p.scanned > 0 && p.phase == "indexing"));
+        assert!(ticks.iter().any(|p| p.scanned > 0 && p.phase == "meta"));
         let (second, ticks2) = fill(&mut conn, &vault, false);
         assert_eq!(second.skipped, 80);
         assert_eq!(second.indexed, 0);
         assert!(ticks2.iter().any(|p| p.skipped >= 64 || p.phase == "done"));
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    fn write_n(vault: &Path, n: usize) {
+        for i in 0..n {
+            write_note(
+                vault,
+                &format!("n{i:05}.md"),
+                &format!("# Note {i}\n\nCluster hub retrieval token {i}\n"),
+            );
+        }
+    }
+
+    #[test]
+    fn first_open_timing_budget_1k() {
+        let (vault, db) = temp_pair("t1k");
+        write_n(&vault, 1000);
+        let mut conn = open_test_conn(&db);
+        let t0 = Instant::now();
+        let (meta, _) = fill_until(&mut conn, &vault, false, FillUntil::Meta, &[]);
+        let meta_ms = t0.elapsed().as_millis();
+        assert_eq!(meta.notes, 1000);
+        assert!(fts_has(&conn, "Note"));
+        assert!(
+            meta_ms < 2_500,
+            "1k meta catalog {meta_ms}ms exceeds 2500ms CI budget"
+        );
+
+        let t1 = Instant::now();
+        let (partial, _) = fill_until(&mut conn, &vault, false, FillUntil::Partial, &[]);
+        let partial_ms = t1.elapsed().as_millis();
+        assert!(fts_has(&conn, "cluster"));
+        assert!(
+            partial_ms < 6_000,
+            "1k short-head FTS {partial_ms}ms exceeds 6000ms CI budget"
+        );
+        assert_eq!(partial.search_state, "ready-fts-partial");
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn first_open_timing_budget_10k() {
+        let (vault, db) = temp_pair("t10k");
+        write_n(&vault, 10_000);
+        let mut conn = open_test_conn(&db);
+        let t0 = Instant::now();
+        let (meta, _) = fill_until(&mut conn, &vault, false, FillUntil::Meta, &[]);
+        let meta_ms = t0.elapsed().as_millis();
+        assert_eq!(meta.notes, 10_000);
+        assert!(
+            meta_ms < 12_000,
+            "10k meta catalog {meta_ms}ms exceeds 12000ms CI budget"
+        );
+
+        let t1 = Instant::now();
+        let (partial, _) = fill_until(&mut conn, &vault, false, FillUntil::Partial, &[]);
+        let partial_ms = t1.elapsed().as_millis();
+        assert!(fts_has(&conn, "retrieval"));
+        assert!(
+            partial_ms < 30_000,
+            "10k short-head FTS {partial_ms}ms exceeds 30000ms CI budget"
+        );
+        assert_eq!(partial.search_state, "ready-fts-partial");
 
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }

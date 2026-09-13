@@ -96,7 +96,15 @@ npm run soak:wave-e-desktop -- --notes 300000
 
 That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\…`) if missing, then prints the prove steps. Documents is inside the production `fs:scope` allow-list; a home-dir folder like `%USERPROFILE%\nexus-soak-100k` still works if you open it programmatically — Wave E registers that path with plugin-fs persisted-scope the same way **Open folder** does. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
 
-### Prove (must all hold)
+### Prove (must all hold) — honest phases
+
+Cold 100k must **not** wait for every note body to enter FTS before the vault is usable. Obsidian-class first open: tree/editor in seconds; search becomes useful while heads fill in the background.
+
+| Phase | What works | Browse blocked? |
+|--------|------------|-----------------|
+| `ready-meta` | Tree, open notes, title/path FTS | No — this is “vault usable” |
+| `ready-fts-partial` | Short-head body search (768 chars; hub/cluster probes) | No |
+| `ready-fts` | Deep 8k-head FTS | No — background only |
 
 1. Open the folder in `tauri:dev` (Welcome → Open folder), **or** DevTools:
 
@@ -104,8 +112,8 @@ That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windo
    await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")
    ```
 
-2. Banner: **Ready · SQLite FTS5 BM25**. Palette heading the same — never `Memory FTS (capped)`.
-3. Search `retrieval hub` and `cluster`. Hits > 0.
+2. First paint: tree/editor interactive in seconds. Banner may still say heads are filling. Palette heading includes **SQLite FTS5 BM25** (may append `· titles` / `· heads` until deep FTS finishes). Never `Memory FTS (capped)`.
+3. Search `retrieval hub` and `cluster`. Hits > 0 once short-head FTS is ready enough (Wave E polls; it does not wait for full 100k 8k-head fill).
 4. Open 20 notes. UI stays responsive.
 5. Create a note, reload (or `await __NEXUS_SOAK__.reloadDesktop()`), confirm it is still on disk.
 
@@ -123,16 +131,16 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 
 | Layer | What |
 |--------|------|
-| Rust | `vault_index_fill_from_disk` is **async** (blocking pool). Incremental: skip notes whose path+mtime+size already match `note_meta`. Emits `vault-index-progress` every 64 notes or 250ms. Dedicated writer connection so the UI/search mutex is not held. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. |
-| JS | `NativeSqliteDurableIndex.fillFromDisk` listens for progress and can resolve on the `done` event if the invoke is still finalizing. Banner shows live `scanned / total`. Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
-| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `runWaveE(path, { forceRebuild: true })` re-reads every head. Waits for `searchReady`; throws if fill errors. |
-| Tests | `npm run test:sqlite-fill` (banner/success rules). `npm run test:sqlite-fill-rust` (incremental skip / force rebuild / progress; GTK-free crate). |
+| Rust | `vault_index_fill_from_disk` is **async** (blocking pool) and **phased**: title/path catalog → parallel 768-char heads (priority folder first) → deferred 8k heads. Incremental: skip notes whose path+mtime+size already match at that `fill_depth`. Emits `ready-meta` / `ready-fts-partial` / `done`. Dedicated writer connection. PASSIVE WAL checkpoint only. IDs via `desk_node_id`. |
+| JS | `fillFromDisk({ settleAtPhase: "meta" })` returns when title search is live. Tree/editor do not wait for body FTS. Banner keeps live `scanned / total` through later phases. Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
+| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `searchReady` means **ready-meta** (vault usable), not “100k bodies indexed”. `runWaveE` polls hub/cluster until short-head FTS is useful. `forceRebuild: true` re-reads heads in the background. |
+| Tests | `npm run test:sqlite-fill` (banner/phase/settle rules). `npm run test:sqlite-fill-rust` (phased fill + 1k/10k timing budgets; GTK-free crate). `npm run test:first-open`. |
 
 **Fill expectations (not SCALE READY):**
 
-- Cold 100k on HDD: minutes is possible; the window must keep `Responding=True` and the banner must move at least ~1/sec. SSD is typically faster.
+- Cold 100k: tree/editor in **seconds** (`ready-meta`). Short-head search should become useful quickly (Tower target under 15s). Full 8k-head FTS may still take minutes on HDD — **background only**, never a browse gate.
 - Re-open of the same unchanged 100k vault: **seconds** (stat + skip), not another hour.
-- Do not claim SCALE READY from this fill/UX fix alone.
+- Do not claim SCALE READY from this first-open architecture alone.
 | FS scope | Production capabilities allow Documents / Desktop / Downloads + app data. Programmatic path open grants that folder only (not `$HOME/**`). Forbidden reads fail the progress banner — they do not spin at scanned:0. |
 
 Outputs (typical paths):

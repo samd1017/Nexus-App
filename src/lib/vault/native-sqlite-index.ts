@@ -126,10 +126,21 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     this.ready = true;
   }
 
+  async cancelFill(): Promise<void> {
+    try {
+      await this.invoke("vault_index_fill_cancel", { dbPath: this.dbPath });
+    } catch {
+      /* ignore */
+    }
+  }
+
   async fillFromDisk(
     headChars = 8000,
     opts?: {
       forceRebuild?: boolean;
+      settleAtPhase?: "meta" | "fts-partial" | "done";
+      priorityPaths?: string[];
+      shortHeadChars?: number;
       onProgress?: (p: {
         dbPath?: string;
         scanned: number;
@@ -139,6 +150,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
         errors: number;
         phase: string;
         message?: string | null;
+        searchState?: string | null;
       }) => void;
     },
   ): Promise<{
@@ -146,6 +158,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     skipped: number;
     errors: number;
     notes: number;
+    searchState?: string;
   }> {
     type FillPayload = {
       dbPath?: string;
@@ -157,13 +170,23 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       notes?: number;
       phase?: string;
       message?: string | null;
+      searchState?: string | null;
     };
     const toResult = (r: FillPayload | null | undefined) => ({
       indexed: Number(r?.indexed ?? 0),
       skipped: Number(r?.skipped ?? 0),
       errors: Number(r?.errors ?? 0),
       notes: Number(r?.notes ?? r?.total ?? r?.scanned ?? 0),
+      searchState: String(r?.searchState ?? ""),
     });
+    const settleAt = opts?.settleAtPhase ?? "done";
+    const shouldSettle = (phase: string) => {
+      if (phase === "error") return true;
+      if (phase === "done") return true;
+      if (settleAt === "meta") return phase === "ready-meta";
+      if (settleAt === "fts-partial") return phase === "ready-fts-partial";
+      return phase === "done";
+    };
 
     let unlisten: (() => void) | undefined;
     let settled = false;
@@ -176,71 +199,79 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       resolve(value);
     };
 
-    try {
-      return await new Promise((resolve, reject) => {
-        void (async () => {
-          try {
-            const { listen } = await import("@tauri-apps/api/event");
-            unlisten = await listen<FillPayload>(
-              "vault-index-progress",
-              (ev) => {
-                const p = ev.payload;
-                if (p?.dbPath && p.dbPath !== this.dbPath) return;
-                opts?.onProgress?.({
-                  dbPath: p?.dbPath,
-                  scanned: Number(p?.scanned ?? 0),
-                  total: Number(p?.total ?? 0),
-                  indexed: Number(p?.indexed ?? 0),
-                  skipped: Number(p?.skipped ?? 0),
-                  errors: Number(p?.errors ?? 0),
-                  phase: String(p?.phase ?? ""),
-                  message: p?.message ?? null,
-                });
-                if (p?.phase === "done") {
-                  finish(resolve, toResult(p));
+    return await new Promise((resolve, reject) => {
+      void (async () => {
+        try {
+          const { listen } = await import("@tauri-apps/api/event");
+          unlisten = await listen<FillPayload>(
+            "vault-index-progress",
+            (ev) => {
+              const p = ev.payload;
+              if (p?.dbPath && p.dbPath !== this.dbPath) return;
+              const phase = String(p?.phase ?? "");
+              opts?.onProgress?.({
+                dbPath: p?.dbPath,
+                scanned: Number(p?.scanned ?? 0),
+                total: Number(p?.total ?? 0),
+                indexed: Number(p?.indexed ?? 0),
+                skipped: Number(p?.skipped ?? 0),
+                errors: Number(p?.errors ?? 0),
+                phase,
+                message: p?.message ?? null,
+                searchState: p?.searchState ?? null,
+              });
+              if (phase === "error") {
+                unlisten?.();
+                if (!settled) {
+                  settled = true;
+                  reject(
+                    new Error(
+                      String(p?.message || "SQLite FTS fill failed"),
+                    ),
+                  );
                 }
-                if (p?.phase === "error") {
-                  if (!settled) {
-                    settled = true;
-                    reject(
-                      new Error(
-                        String(p?.message || "SQLite FTS fill failed"),
-                      ),
-                    );
-                  }
-                }
-              },
-            );
-          } catch {
-            /* web / missing event plugin — invoke result is enough */
+                return;
+              }
+              if (shouldSettle(phase)) {
+                finish(resolve, toResult(p));
+              }
+              if (phase === "done") {
+                unlisten?.();
+              }
+            },
+          );
+        } catch {
+          /* web / missing event plugin — invoke result is enough */
+        }
+        try {
+          const r = await this.invoke<FillPayload>(
+            "vault_index_fill_from_disk",
+            {
+              dbPath: this.dbPath,
+              vaultRoot: this.vaultRoot,
+              headChars,
+              shortHeadChars: opts?.shortHeadChars ?? 768,
+              forceRebuild: opts?.forceRebuild === true,
+              priorityPaths: opts?.priorityPaths ?? [],
+            },
+          );
+          finish(resolve, toResult(r));
+          unlisten?.();
+        } catch (err) {
+          unlisten?.();
+          if (!settled) {
+            settled = true;
+            reject(err);
           }
-          try {
-            const r = await this.invoke<FillPayload>(
-              "vault_index_fill_from_disk",
-              {
-                dbPath: this.dbPath,
-                vaultRoot: this.vaultRoot,
-                headChars,
-                forceRebuild: opts?.forceRebuild === true,
-              },
-            );
-            finish(resolve, toResult(r));
-          } catch (err) {
-            if (!settled) {
-              settled = true;
-              reject(err);
-            }
-          }
-        })();
-      });
-    } finally {
-      unlisten?.();
-    }
+        }
+      })();
+    });
   }
 
   close(): void {
     this.ready = false;
     this.mirror.close();
+    void this.cancelFill();
     void this.invoke("vault_index_close", { dbPath: this.dbPath }).catch(
       () => {},
     );
