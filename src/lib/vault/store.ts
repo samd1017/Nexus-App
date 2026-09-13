@@ -1997,15 +1997,21 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			editorMode: mode
 		} });
 	},
-	setGraphMode: (mode) => set({
-		settings: {
-			...get().settings,
-			graphMode: mode,
-			// Keep graph visible in the right rail when leaving fullscreen
-			...(mode === "panel" ? { rightOpen: true } : {})
-		},
-		...(mode === "panel" ? { rightTab: "graph" as const } : {})
-	}),
+	setGraphMode: (mode) => {
+		const prev = get().settings.graphMode;
+		set({
+			settings: {
+				...get().settings,
+				graphMode: mode,
+				// Keep graph visible in the right rail when leaving fullscreen
+				...(mode === "panel" ? { rightOpen: true } : {})
+			},
+			...(mode === "panel" ? { rightTab: "graph" as const } : {})
+		});
+		if (mode === "fullscreen" && prev !== "fullscreen") {
+			get().setToast("Fullscreen graph · Esc or Exit to leave");
+		}
+	},
 	toggleEditorMode: () => {
 		flushActiveEditors();
 		const cur = get().settings.editorMode;
@@ -2035,6 +2041,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			},
 			rightTab: "graph"
 		});
+		if (next === "fullscreen" && cur !== "fullscreen") {
+			get().setToast("Fullscreen graph · Esc or Exit to leave");
+		}
 	},
 	togglePinnedNote: (id) => {
 		const node = get().nodes[id];

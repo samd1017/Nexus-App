@@ -24,6 +24,8 @@ interface Props {
   noteId: string;
   content: string;
   pane?: "primary" | "secondary";
+  /** Immediate source text (no persist debounce) so split preview stays live. */
+  onLiveChange?: (text: string) => void;
 }
 
 /** True when Focus section still has only empty bullets. */
@@ -56,10 +58,20 @@ function emptyFocusCaretIndex(markdown: string): number | null {
  *
  * Wave 1: intentional Source edits always save (no fingerprint drop of blank lines).
  */
-export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
+export function SourceEditor({
+  noteId,
+  content,
+  pane = "primary",
+  onLiveChange,
+}: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const spellCheck = usePrefsStore((s) => s.spellCheck);
   const editorFontSize = usePrefsStore((s) => s.editorFontSize);
+  const onLiveChangeRef = useRef(onLiveChange);
+  onLiveChangeRef.current = onLiveChange;
+  const emitLive = useCallback((text: string) => {
+    onLiveChangeRef.current?.(text);
+  }, []);
 
   // Prefer live store value at mount (post-flush), fall back to prop
   const seed = upgradeSparseDailySkeleton(
@@ -149,6 +161,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
       dirtyRef.current = true;
       setValue(val);
       valueRef.current = val;
+      emitLive(val);
       scheduleSave(val);
       if (typeof cursor === "number") {
         requestAnimationFrame(() => {
@@ -160,7 +173,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
         });
       }
     },
-    [scheduleSave, refreshSuggest],
+    [scheduleSave, refreshSuggest, emitLive],
   );
 
   const pickSuggest = useCallback(
@@ -211,6 +224,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
       lastSavedRef.current = live;
       setValue(live);
       valueRef.current = live;
+      emitLive(live);
       setSuggestOpen(false);
       return;
     }
@@ -222,7 +236,8 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
     if (live === valueRef.current) return;
     setValue(live);
     valueRef.current = live;
-  }, [noteId, content]);
+    emitLive(live);
+  }, [noteId, content, emitLive]);
 
   // Morning autofocus: today's daily + empty Focus — once per note open
   useEffect(() => {
@@ -297,6 +312,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
         setValue(next);
         valueRef.current = next;
         dirtyRef.current = true;
+        emitLive(next);
         scheduleSave(next);
         const ta = taRef.current;
         const caret = match.from + text.length;
@@ -318,12 +334,13 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
         setValue(v);
         valueRef.current = v;
         dirtyRef.current = true;
+        emitLive(v);
         scheduleSave(v);
         return all.length;
       },
     }, pane);
     return () => registerSourceFindAdapter(null, pane);
-  }, [noteId, pane, scheduleSave]);
+  }, [noteId, pane, scheduleSave, emitLive]);
 
   useEffect(() => {
     return registerInsertWikilink((focusedOnly) => {
@@ -343,6 +360,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
       setValue(next);
       valueRef.current = next;
       dirtyRef.current = true;
+      emitLive(next);
       scheduleSave(next);
       ta.focus();
       requestAnimationFrame(() => {
@@ -351,7 +369,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
       });
       return true;
     });
-  }, [noteId, scheduleSave, refreshSuggest]);
+  }, [noteId, scheduleSave, refreshSuggest, emitLive]);
 
   return (
     <div
@@ -389,6 +407,7 @@ export function SourceEditor({ noteId, content, pane = "primary" }: Props) {
             dirtyRef.current = true;
             setValue(val);
             valueRef.current = val;
+            emitLive(val);
             scheduleSave(val);
             refreshSuggest(val, cursor);
           }}

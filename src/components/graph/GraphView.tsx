@@ -783,6 +783,31 @@ function applyLodCap(
   return { nodes, links, lowDetail: true };
 }
 
+function graphHintText(
+  chromeMode: "panel" | "fullscreen",
+  viewMode: GraphViewMode,
+): string {
+  const phone = isPhoneViewport();
+  if (chromeMode === "fullscreen") {
+    if (viewMode === "folder") {
+      return phone
+        ? "Pinch · Pan · Tap folder · Exit graph"
+        : "Orbit · Zoom · Pan · Click folder · Esc / Exit graph";
+    }
+    return phone
+      ? "Pinch · Pan · Tap a note · Exit graph"
+      : "Orbit · Zoom · Pan · Click note · Esc / Exit graph";
+  }
+  if (viewMode === "folder") {
+    return phone
+      ? "Pinch · Pan · Tap folder or note"
+      : "Orbit · Zoom · Pan · Click folder · Click note · Esc up";
+  }
+  return phone
+    ? "Pinch · Pan · Tap to open"
+    : "Orbit · Zoom · Pan · Hover for details · Click to open";
+}
+
 export function GraphView({ mode, className }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
@@ -1952,6 +1977,22 @@ export function GraphView({ mode, className }: Props) {
 
       <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-1.5">
+          {mode === "fullscreen" ? (
+            <button
+              type="button"
+              data-exit-graph
+              className="pointer-events-auto flex h-9 w-fit shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[var(--accent)] px-3 text-[13px] font-semibold text-black shadow-[0_0_24px_rgba(0,200,255,0.28)] hover:brightness-110"
+              title="Exit fullscreen graph (Esc or Ctrl+G)"
+              aria-label="Exit graph"
+              onClick={() => exitGraphForViewport()}
+            >
+              <Minimize2 size={15} />
+              <span>Exit graph</span>
+              <kbd className="ml-0.5 rounded border border-black/20 bg-black/15 px-1 py-px text-[10px] font-medium text-black/80">
+                Esc
+              </kbd>
+            </button>
+          ) : null}
           <div className="flex min-w-0 items-center gap-2 rounded-full border border-white/[0.06] bg-black/40 px-3 py-1.5 backdrop-blur-sm">
             <Network
               size={12}
@@ -2204,14 +2245,15 @@ export function GraphView({ mode, className }: Props) {
           {mode === "fullscreen" ? (
             <button
               type="button"
-              className="ml-0.5 flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[var(--accent-dim)] px-2.5 text-[12px] font-medium text-[var(--accent)] shadow-[0_0_20px_rgba(0,200,255,0.12)] hover:brightness-110"
+              data-exit-graph
+              className="ml-0.5 flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[var(--accent)] px-3 text-[13px] font-semibold text-black shadow-[0_0_24px_rgba(0,200,255,0.28)] hover:brightness-110"
               title="Exit fullscreen graph (Esc or Ctrl+G)"
-              aria-label="Exit fullscreen graph"
+              aria-label="Exit graph"
               onClick={() => exitGraphForViewport()}
             >
-              <Minimize2 size={14} />
-              <span className="hidden sm:inline">Exit</span>
-              <kbd className="ml-0.5 hidden rounded border border-white/10 bg-black/30 px-1 py-px text-[10px] text-[var(--text-muted)] sm:inline">
+              <Minimize2 size={15} />
+              <span>Exit graph</span>
+              <kbd className="ml-0.5 rounded border border-black/20 bg-black/15 px-1 py-px text-[10px] font-medium text-black/80">
                 Esc
               </kbd>
             </button>
@@ -2242,28 +2284,14 @@ export function GraphView({ mode, className }: Props) {
       {hintVisible ? (
         <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
           <div className="rounded-full border border-white/[0.08] bg-black/50 px-3 py-1.5 text-[10px] tracking-wide text-[var(--text-muted)] shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md">
-            {mode === "fullscreen"
-              ? graphModeResolved === "folder"
-                ? isPhoneViewport()
-                  ? "Pinch · Pan · Tap folder · Exit"
-                  : "Orbit · Zoom · Pan · Click folder · Esc / Exit"
-                : isPhoneViewport()
-                  ? "Pinch · Pan · Tap a note"
-                  : `Orbit · Zoom · Pan · Click note · Esc or ${formatShortcut("G")}`
-              : graphModeResolved === "folder"
-                ? isPhoneViewport()
-                  ? "Pinch · Pan · Tap folder or note"
-                  : "Orbit · Zoom · Pan · Click folder · Click note · Esc up"
-                : isPhoneViewport()
-                  ? "Pinch · Pan · Tap to open"
-                  : "Orbit · Zoom · Pan · Hover for details · Click to open"}
+            {graphHintText(mode, graphModeResolved)}
           </div>
         </div>
       ) : mode === "fullscreen" ? (
         <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-white/[0.08] bg-black/50 px-3 py-1.5 text-[10px] text-[var(--text-muted)] backdrop-blur-md">
-            Esc or <span className="text-[var(--accent)]">Exit</span> to leave
-            fullscreen
+          <div className="rounded-full border border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-black/60 px-3 py-1.5 text-[11px] text-[var(--text-primary)] backdrop-blur-md">
+            Esc or <span className="font-semibold text-[var(--accent)]">Exit graph</span>{" "}
+            to leave fullscreen
           </div>
         </div>
       ) : null}

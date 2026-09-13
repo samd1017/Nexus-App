@@ -83,6 +83,9 @@ export function EditorPane({
   const isSecondary = pane === "secondary";
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const [hydrateError, setHydrateError] = useState(false);
+  const [splitLive, setSplitLive] = useState<{ id: string; text: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     setFindEditorMode(editorMode === "visual" ? "visual" : "source");
@@ -304,6 +307,7 @@ export function EditorPane({
   const body = note.content ?? "";
   const canvasNote = isCanvasNote(body);
   const editorKey = `${note.id}::${editorMode}::${canvasNote ? "canvas" : "note"}`;
+  const previewBody = splitLive?.id === note.id ? splitLive.text : body;
 
   return (
     <div
@@ -589,13 +593,18 @@ export function EditorPane({
         ) : editorMode === "split" && !canvasNote ? (
           <div className="nexus-split">
             <div className="nexus-split-pane">
-              <SourceEditor noteId={note.id} content={body} pane={pane} />
+              <SourceEditor
+                noteId={note.id}
+                content={body}
+                pane={pane}
+                onLiveChange={(text) => setSplitLive({ id: note.id, text })}
+              />
             </div>
             <div className="nexus-split-pane">
               <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Live preview
               </div>
-              <SourcePreview content={body} noteId={note.id} />
+              <SourcePreview content={previewBody} noteId={note.id} />
             </div>
           </div>
         ) : (
