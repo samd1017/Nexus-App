@@ -98,7 +98,8 @@ Reload remount drops session-created `Soak Created.md` (seed has 45,000 notes). 
 | Editor / graph / palette | One TipTap instance; no graph refresh on note switch; recents-only empty query; `searchWithBackendAsync` when SQLite exposes it |
 | Wikilink / backlinks | Index cached on `structureGeneration`; no O(n) reverse/fuzzy at ≥400 notes |
 | Graph exit | Esc returns to backlinks so ForceGraph3D does not remount in the panel |
-| Memory FTS | Intersect the rarest posting list and **stop at 800 candidates**; body scan only for the top `limit` |
+| Memory FTS | Intersect the rarest posting list and **stop at 800 candidates**; body scan only for the top `limit`. Palette labels this **Memory FTS (capped)**, never SQLite BM25 |
+| Large-seed writes | IndexedDB overlay (`large-vault-overlay.ts`) restores creates/edits on remount; banner tells the user this is not files |
 | Playwright | App-ready vs wait; graph-panel switch p95; long-task + progress probe; non-default reload path + split |
 | Disk | `generate-synthetic-vault.mjs` + `bench-disk-vault.mjs` + `wave-e-disk.mjs` |
 
@@ -117,13 +118,45 @@ Not a Tauri/FSA open. Real files at `/tmp/nexus-wave-e/vault-100000` and `vault-
 
 **Linux VM cannot:** File System Access picker (needs a user gesture) or Tauri + SQLite FTS5.
 
-**Mac / desktop steps** (`npm run wave:e` prints these):
+### Wave E checklist — real desktop folder open (Mac / Windows)
 
-1. `npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k`
-2. `npm run gen:soak-vault -- --notes 300000 --out ~/nexus-soak-300k`
-3. `npm run tauri:dev`
-4. Welcome → Open folder → pick the generated vault
-5. Search `retrieval hub` — desktop should hit SQLite FTS5 BM25 via `searchFtsAsync` (Command Palette now prefers `searchWithBackendAsync` when that exists)
+Do **not** call this SCALE READY until a human or desktop agent completes the 100k+ open below. Palette heading must read **SQLite FTS5 BM25**, not `Memory FTS (capped)`.
+
+**Generate (either OS, from repo root)**
+
+```bash
+# macOS
+npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k
+npm run gen:soak-vault -- --notes 300000 --out ~/nexus-soak-300k
+
+# Windows (PowerShell)
+npm run gen:soak-vault -- --notes 100000 --out $env:USERPROFILE\nexus-soak-100k
+npm run gen:soak-vault -- --notes 300000 --out $env:USERPROFILE\nexus-soak-300k
+```
+
+Confirm `SOAK-MANIFEST.json` in the folder: `notes` equals 100000 / 300000.
+
+**Open**
+
+1. `npm run tauri:dev` (signed install is also fine).
+2. Welcome → **Open folder** → pick `~/nexus-soak-100k` first, then `~/nexus-soak-300k` (Windows: `%USERPROFILE%\nexus-soak-300k`).
+3. Title bar must say **On disk** / **Desktop vault**, never `Test · this browser`.
+4. Command palette (`⌘K` / `Ctrl+K`) → type `retrieval hub`. Group heading must include **SQLite FTS5 BM25**. If it says `Memory FTS (capped)`, the native index failed — stop and file that, do not pass Wave E.
+
+**Metrics to capture (write into this report)**
+
+| Metric | How | 100k target | 300k target |
+|--------|-----|-------------|-------------|
+| Open wall (Welcome → tree+editor interactive) | stopwatch or `__NEXUS_SOAK_LAST__.interactiveMs` | <5s progressive | <8s progressive |
+| Open progress | banner walking → indexing → ready | visible, no ≥1s freeze | same |
+| Search `retrieval hub` app-ready | palette options visible | ≤50ms SQLite | ≤50ms SQLite |
+| `describeSearchEngine().id` | DevTools: `__NEXUS_STRESS__().searchEngine` | `sqlite-fts5-bm25` | `sqlite-fts5-bm25` |
+| Create + type + reload | new note still on disk after quit/reopen | present | present |
+| Switch 8 notes (graph panel open) | p95 / max | p95 <700ms, max <1s | same |
+| RSS / CPU | Activity Monitor / Task Manager | note | note |
+| Failures | crash, silent Welcome, lost note, palette freeze | none | none |
+
+Run 100k first. Only then 300k. If 100k search is still `memory-fts-capped`, fix desktop wiring before touching 300k.
 
 ---
 
@@ -138,18 +171,23 @@ Not a Tauri/FSA open. Real files at `/tmp/nexus-wave-e/vault-100000` and `vault-
 | Body LRU | `bodyLruSize` | **120** |
 | Memory FTS candidates | `MEMORY_FTS_CANDIDATE_CAP` | **800** |
 | Memory FTS title fallback | `MEMORY_FTS_FULL_SCAN_MAX_NOTES` | **10_000** |
+| Browser overlay | `LARGE_VAULT_OVERLAY_CAP` | **400** notes/folders |
 | Unlinked scan | `unlinked-mentions.ts` | 400 notes / 24 hits |
 | Native SQLite list | `native-sqlite-index.ts` | `limit: 500_000` |
 | Docs | `docs/SCALING.md` | Desktop 300–500k; browser “solid 20–50k” |
 
 ---
 
+## Browser overlay (45k / soak seeds)
+
+localStorage still cannot hold the 45k map. Creates and edits on large in-memory seeds now go to an **IndexedDB overlay** (`src/lib/vault/large-vault-overlay.ts`, cap 400). Remount reapplies them. Title bar + banner say this is **this browser**, not files. Daily-driver path remains **Open folder**. Overlay is not a 300k vault.
+
 ## What is still not proven
 
 - Tauri/FSA **open** of the generated 100k/300k folder (this VM has no folder grant / no Tauri).
-- SQLite FTS5 quality at 300k (memory FTS is capped-candidate, not BM25).
-- Session-created notes surviving a 45k remount (seed persist cannot store the map).
-- Desktop 300–500k as a daily driver (RSS ~2.6GB for the in-process 300k mirror alone).
+- SQLite FTS5 BM25 at 100k+ (memory FTS is capped-candidate; palette must not be labeled FTS5).
+- Overlay surviving a different browser / machine (it will not — by design).
+- Desktop 300–500k as a daily driver.
 
 **Largest green N on this VM**
 

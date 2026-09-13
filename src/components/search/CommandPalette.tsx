@@ -38,6 +38,7 @@ import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   searchWithBackend as searchVault,
   searchWithBackendAsync,
+  describeSearchEngine,
 } from "@/lib/search/search-backend";
 import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-ops";
 import { fuseSearchHits } from "@/lib/search/rank-fusion";
@@ -1068,6 +1069,7 @@ function CommandPaletteOpen() {
     a.run();
   };
 
+  const searchEngine = describeSearchEngine();
   const notesHeading = isEmptyQuery
     ? "Recent notes"
     : hasPathFolderOp
@@ -1083,7 +1085,7 @@ function CommandPaletteOpen() {
         ? isTagBrowse
           ? `Tagged #${tagPartial}`
           : hits.length > 0
-            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""}`
+            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""} · ${searchEngine.shortLabel}`
             : "Notes"
         : "Recent";
 

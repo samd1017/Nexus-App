@@ -87,19 +87,26 @@ export async function buildLargeTestVault(opts?: {
   let loaded = 0;
   let firstNoteId: string | null = null;
   const now = Date.now();
-  for (let c = 0; c < manifest.chunks; c++) {
-    const chunk = await fetchJson<NoteSeed[]>(`/large-test-vault/notes-${c}.json`);
-    for (const n of chunk) {
-      const parentId = n.f ? folderIdByPath.get(n.f) ?? null : null;
-      const node = note(n.p, n.n, parentId, n.c, now - (manifest.total - loaded));
-      nodes[node.id] = node;
-      if (!firstNoteId && (n.p.startsWith("00-Inbox/") || n.p === "README.md")) {
-        firstNoteId = node.id;
-      }
-      loaded++;
+  const CONCURRENCY = 3;
+  for (let c = 0; c < manifest.chunks; ) {
+    const batch: Promise<NoteSeed[]>[] = [];
+    for (let k = 0; k < CONCURRENCY && c + k < manifest.chunks; k++) {
+      batch.push(fetchJson<NoteSeed[]>(`/large-test-vault/notes-${c + k}.json`));
     }
+    const chunks = await Promise.all(batch);
+    for (const chunk of chunks) {
+      for (const n of chunk) {
+        const parentId = n.f ? folderIdByPath.get(n.f) ?? null : null;
+        const node = note(n.p, n.n, parentId, n.c, now - (manifest.total - loaded));
+        nodes[node.id] = node;
+        if (!firstNoteId && (n.p.startsWith("00-Inbox/") || n.p === "README.md")) {
+          firstNoteId = node.id;
+        }
+        loaded++;
+      }
+    }
+    c += batch.length;
     onProgress?.(loaded, manifest.total, "notes");
-    // yield to UI between chunks
     await new Promise((r) => setTimeout(r, 0));
   }
 

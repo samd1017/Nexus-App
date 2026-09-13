@@ -112,6 +112,7 @@ import {
   type BodyCacheStats,
 } from "./body-cache";
 import {
+  archiveBodiesFromNodes,
   archiveBodiesFromNodesAsync,
   clearBodyArchive,
   hasBodyArchive,
@@ -122,6 +123,16 @@ import {
   setBodyInArchive,
 } from "./body-archive";
 import { yieldToUi } from "./yield-ui";
+import {
+  applyLargeVaultOverlay,
+  clearLargeVaultOverlay,
+  flushLargeVaultOverlay,
+  loadLargeVaultOverlay,
+  markLargeVaultOverlayDeleted,
+  overlayCount,
+  upsertLargeVaultOverlay,
+} from "./large-vault-overlay";
+import { describeSearchEngine } from "@/lib/search/search-backend";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
 import {
   closeDurableIndex,
@@ -659,6 +670,44 @@ function prepareMountedNodes(
 	}
 	return result;
 }
+
+function persistLargeVaultOverlayNode(
+	vaultId: string | null,
+	node: VaultNode | undefined,
+	nodes: Record<string, VaultNode>,
+) {
+	if (!vaultId || !isLargeMemoryVault(vaultId) || !node) return;
+	const parent = node.parentId ? nodes[node.parentId] : null;
+	upsertLargeVaultOverlay(vaultId, {
+		id: node.id,
+		path: node.path,
+		name: node.name,
+		kind: node.kind,
+		parentId: node.parentId,
+		parentPath: parent?.path ?? null,
+		content: node.kind === "note" ? node.content : undefined,
+		mtime: node.mtime,
+	});
+}
+
+async function mergeLargeVaultOverlay(
+	vaultId: string,
+	nodes: Record<string, VaultNode>,
+	rootIds: string[],
+): Promise<{ rootIds: string[]; applied: number; noteCount: number }> {
+	const entries = await loadLargeVaultOverlay(vaultId);
+	let nextRoots = rootIds;
+	let applied = 0;
+	if (entries.length) {
+		const r = applyLargeVaultOverlay(nodes, rootIds, entries);
+		nextRoots = r.rootIds;
+		applied = r.applied;
+	}
+	let noteCount = 0;
+	for (const id in nodes) if (nodes[id]?.kind === "note") noteCount += 1;
+	return { rootIds: nextRoots, applied, noteCount };
+}
+
 function maybeSyncDurableIndex(
 	vaultId: string | null,
 	mode: VaultMode,
@@ -1277,27 +1326,21 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				mode: "local"
 			});
 
+			const overlay = await mergeLargeVaultOverlay(vaultId, data.nodes, data.rootIds);
+			data.rootIds = overlay.rootIds;
+			const noteCount = overlay.noteCount;
+
 			setOpenProgress({
 				phase: "indexing",
 				scanned: 0,
-				totalHint: data.noteCount,
-				message: "Archiving note bodies…"
+				totalHint: noteCount,
+				message: overlay.applied
+					? `Restoring ${overlay.applied.toLocaleString()} browser-saved notes…`
+					: "Archiving note bodies…"
 			});
 
-			// Archive + strip + mount first so the tree/editor paint while FTS fills.
-			// Mode stays "local"; partialize skips LARGE_TEST_VAULT_ID from localStorage.
-			await archiveBodiesFromNodesAsync(data.nodes, {
-				chunkSize: 2500,
-				onProgress: (done, total) => {
-					if (gen !== vaultGen) return;
-					setOpenProgress({
-						phase: "indexing",
-						scanned: done,
-						totalHint: total,
-						message: `Archiving bodies… ${done.toLocaleString()} / ${total.toLocaleString()}`,
-					});
-				},
-			});
+			// Sync archive (one 45k walk). Async chunking was adding ~300ms of yields.
+			archiveBodiesFromNodes(data.nodes);
 			if (gen !== vaultGen) return;
 			syncActiveBackend("local");
 			await prepareDurableIndex(vaultId, "local");
@@ -1311,7 +1354,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			set({
 				vaultId,
 				vaultName: data.vaultName,
-				vaultPath: "Large Test Vault · 45,000 notes",
+				vaultPath: `Large Test Vault · ${noteCount.toLocaleString()} notes`,
 				mode: "local",
 				nodes,
 				rootIds: data.rootIds,
@@ -1326,7 +1369,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					kind: "large-test",
 					vaultId,
 					vaultName: data.vaultName,
-					noteCount: data.noteCount,
+					noteCount,
 					lastNotePath: restore?.lastNotePath ?? firstNote?.path ?? null,
 					lastSecondaryNotePath: restore?.lastSecondaryNotePath ?? null,
 					workspaceSplit: Boolean(restore?.workspaceSplit),
@@ -1342,7 +1385,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					rightOpen: true,
 					soakNoteCount: null,
 				},
-				toast: `Large Test Vault open — ${data.noteCount.toLocaleString()} notes`
+				toast: overlay.applied
+					? `Large Test Vault open — ${noteCount.toLocaleString()} notes (${overlay.applied} restored from this browser)`
+					: `Large Test Vault open — ${noteCount.toLocaleString()} notes`
 			});
 			applyScaleRestore(get, set, restore);
 			const interactiveMs = Math.round(
@@ -1354,8 +1399,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
 					}
 				).__NEXUS_SOAK_LAST__ = {
-					noteCount: data.noteCount,
+					noteCount,
 					interactiveMs,
+					overlayApplied: overlay.applied,
 					vaultId,
 					kind: "large-test",
 					restoredPath: restore?.lastNotePath ?? firstNote?.path ?? null,
@@ -1365,14 +1411,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			setOpenProgress({
 				phase: "indexing",
 				scanned: 0,
-				totalHint: data.noteCount,
-				message: "Indexing search…",
+				totalHint: noteCount,
+				message: "Indexing in-memory search (not SQLite)…",
 			});
 			await yieldToUi(true);
 			if (gen !== vaultGen) return;
 			const tIndex = typeof performance !== "undefined" ? performance.now() : Date.now();
 			await rebuildDurableIndexFromNodesAsync(vaultId, data.nodes, true, {
-				chunkSize: 1500,
+				chunkSize: 2500,
 				wipe: false,
 				onProgress: (done, total) => {
 					if (gen !== vaultGen) return;
@@ -1380,7 +1426,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						phase: "indexing",
 						scanned: done,
 						totalHint: total,
-						message: `Indexing search… ${done.toLocaleString()} / ${total.toLocaleString()}`,
+						message: `In-memory search index… ${done.toLocaleString()} / ${total.toLocaleString()}`,
 					});
 				},
 			});
@@ -1397,10 +1443,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
 					}
 				).__NEXUS_SOAK_LAST__ = {
-					noteCount: data.noteCount,
+					noteCount,
 					interactiveMs,
 					indexMs,
 					openMs,
+					overlayApplied: overlay.applied,
 					vaultId,
 					kind: "large-test",
 					restoredPath: restore?.lastNotePath ?? firstNote?.path ?? null,
@@ -1409,8 +1456,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 			setOpenProgress({
 				phase: "ready",
-				scanned: data.noteCount,
-				totalHint: data.noteCount,
+				scanned: noteCount,
+				totalHint: noteCount,
 				message: "Ready"
 			});
 			window.setTimeout(() => {
@@ -1491,11 +1538,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				lastOpened: Date.now(),
 				mode: "local",
 			});
+			const overlay = await mergeLargeVaultOverlay(vaultId, data.nodes, data.rootIds);
+			data.rootIds = overlay.rootIds;
 			setOpenProgress({
 				phase: "indexing",
 				scanned: 0,
-				totalHint: data.noteCount,
-				message: "Archiving bodies…",
+				totalHint: overlay.noteCount,
+				message: overlay.applied
+					? `Restoring ${overlay.applied.toLocaleString()} browser-saved notes…`
+					: "Archiving bodies…",
 			});
 			await archiveBodiesFromNodesAsync(data.nodes, {
 				chunkSize: 2500,
@@ -2518,6 +2569,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (updated?.kind === "note") {
 			upsertDurableNoteFromNode(updated);
 			upsertIndexedNote(updated);
+			persistLargeVaultOverlayNode(get().vaultId, updated, get().nodes);
 		}
 		if (!opts?.external && isDiskVault(get().mode)) {
 			const noteId = id;
@@ -2730,6 +2782,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				set({ settings: { ...get().settings, lastNotePath: path } });
 			}
 		}
+		persistLargeVaultOverlayNode(get().vaultId, get().nodes[id], get().nodes);
 		return id;
 	},
 	createFolder: (parentId, name = "New Folder", opts) => {
@@ -2763,6 +2816,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (expand && !stage.expandedFolders.includes(id)) stage.expandedFolders = [...stage.expandedFolders, id];
 		patchVaultIndex(stage.nodes, [id]);
 		scheduleStageFlush(set);
+		persistLargeVaultOverlayNode(get().vaultId, stage.nodes[id], stage.nodes);
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
 			const pth = path;
@@ -3007,6 +3061,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				content: null,
 				kind: "folder"
 			});
+		}
+		const overlayVault = get().vaultId;
+		if (overlayVault && isLargeMemoryVault(overlayVault)) {
+			for (const item of trashPayload) {
+				markLargeVaultOverlayDeleted(overlayVault, item.path, item.path);
+			}
 		}
 		for (const d of toDelete) {
 			const gone = nodes[d];
@@ -3916,6 +3976,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		flushActiveEditors();
 		diskWriteError = null;
 		flushDiskOps();
+		void flushLargeVaultOverlay(get().vaultId);
 		const disk = isDiskVault(get().mode);
 		if (disk) for (const id of get().dirtyNoteIds) {
 			const n = get().nodes[id];
@@ -4364,6 +4425,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			scaleRemount: s.scaleRemount,
 			soakNoteCount: s.settings?.soakNoteCount ?? null,
 			openProgress: getOpenProgress(),
+			overlayCount: overlayCount(s.vaultId),
+			searchEngine: describeSearchEngine(),
 		};
 	};
 	(
@@ -4377,6 +4440,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				setRightTab: (tab: string) => void;
 				noteIds: (limit?: number) => string[];
 				findNoteId: (needle: string) => string | null;
+				flushOverlay: () => Promise<void>;
+				clearOverlay: () => Promise<void>;
 				probe: () => Record<string, unknown> | undefined;
 			};
 		}
@@ -4405,6 +4470,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			}
 			return out;
 		},
+		flushOverlay: () => flushLargeVaultOverlay(useVaultStore.getState().vaultId),
+		clearOverlay: () => clearLargeVaultOverlay(),
 		findNoteId: (needle: string) => {
 			const nodes = useVaultStore.getState().nodes;
 			const n = String(needle || "").toLowerCase();

@@ -31,13 +31,14 @@ const tauriSteps = {
     "Tauri desktop + SQLite FTS5 is not installed in this browser-first VM.",
   ],
   steps: [
-    "npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k",
-    "npm run gen:soak-vault -- --notes 300000 --out ~/nexus-soak-300k",
-    "npm run tauri:dev",
-    "Welcome → Open folder → pick ~/nexus-soak-100k (then 300k)",
-    "Search 'retrieval hub' — desktop should use SQLite FTS5 BM25 (≤50ms target).",
-    "Command Palette prefers searchWithBackendAsync when searchFtsAsync exists (desktop SQLite BM25).",
-    "This VM still benches the memory inverted index (honest floor if SQLite is absent).",
+    "macOS: npm run gen:soak-vault -- --notes 100000 --out ~/nexus-soak-100k",
+    "macOS: npm run gen:soak-vault -- --notes 300000 --out ~/nexus-soak-300k",
+    "Windows: npm run gen:soak-vault -- --notes 300000 --out %USERPROFILE%\\nexus-soak-300k",
+    "npm run tauri:dev → Welcome → Open folder → pick the generated vault",
+    "Title bar must say On disk / Desktop — never Test · this browser",
+    "⌘K / Ctrl+K 'retrieval hub' — heading must include SQLite FTS5 BM25 (not Memory FTS capped)",
+    "Capture: interactiveMs, search app-ready, __NEXUS_STRESS__().searchEngine.id, create+reload, graph-panel switch p95, RSS",
+    "This VM only benches memory inverted index. Do not record those ms as SQLite BM25.",
   ],
 };
 

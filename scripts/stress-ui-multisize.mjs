@@ -36,7 +36,7 @@ async function probe(page) {
 }
 
 async function clearVault(page) {
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     try {
       localStorage.removeItem("nexus-vault-v1");
       for (const k of Object.keys(localStorage)) {
@@ -45,6 +45,19 @@ async function clearVault(page) {
       // clearVault wipes coach; keep it dismissed so it cannot cover the editor.
       localStorage.setItem("nexus-first-run-coach-v1", "done");
     } catch {}
+    try {
+      await window.__NEXUS_SOAK__?.clearOverlay?.();
+    } catch {}
+    await new Promise((resolve) => {
+      try {
+        const req = indexedDB.deleteDatabase("nexus-large-vault-overlay-v1");
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+        req.onblocked = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
   });
 }
 
@@ -284,6 +297,7 @@ async function runLargeStress(page, errors) {
   const t0 = now();
 
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await waitStress(page);
   await clearVault(page);
   const largeUrl = new URL("?vault=45k", BASE).href;
   const progressPhases = [];
@@ -501,6 +515,7 @@ async function runLargeStress(page, errors) {
       `createNote lastNotePath=${createdPath} (expected Soak Created)`,
     );
   }
+  await page.evaluate(() => window.__NEXUS_SOAK__?.flushOverlay?.());
 
   const typed = await typeInEditor(page, " 45k editor type");
   result.steps.editorTyped = typed.typed;
@@ -690,12 +705,20 @@ async function runLargeStress(page, errors) {
 
   const post = await probe(page);
   result.steps.postProbe = post.stress;
-  result.steps.exact45kAfterReload = post.stress?.notes === 45000;
-  if (post.stress?.notes !== 45000) {
+  result.steps.exact45kAfterReload = post.stress?.notes === 45001;
+  if (post.stress?.notes !== 45001) {
     result.ok = false;
     result.blockers.push(
-      `post-reload notes ${post.stress?.notes} !== 45000 (seed remount drops Soak Created)`,
+      `post-reload notes ${post.stress?.notes} !== 45001 (overlay should keep Soak Created)`,
     );
+  }
+  const overlayNote = await page.evaluate(() =>
+    window.__NEXUS_SOAK__?.findNoteId?.("Soak Created"),
+  );
+  result.steps.reloadOverlayNote = overlayNote;
+  if (!overlayNote) {
+    result.ok = false;
+    result.blockers.push("reload lost session-created Soak Created.md");
   }
   if ((post.stress?.bodiesLoaded ?? 99) > 20) {
     result.steps.bodyWarn = `bodiesLoaded=${post.stress.bodiesLoaded}`;

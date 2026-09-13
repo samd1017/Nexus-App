@@ -26,7 +26,7 @@ import {
 
 export const DURABLE_INDEX_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION;
 export const DURABLE_INDEX_SQL = CONTRACT_SQL;
-/** Memory FTS: never score more than this many inverted-index hits. */
+/** Memory FTS only — not SQLite BM25. Never score more than this many inverted-index hits. */
 export const MEMORY_FTS_CANDIDATE_CAP = 800;
 /** Skip O(n) title/path fallback above this vault size. */
 export const MEMORY_FTS_FULL_SCAN_MAX_NOTES = 10_000;

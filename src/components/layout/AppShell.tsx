@@ -35,6 +35,7 @@ import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
 import { bindWindowState } from "@/lib/desktop/window-state";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
+import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 
 function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
   // Auto-dismiss ready flash so the banner doesn't stick forever
@@ -144,6 +145,20 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
           />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function LargeVaultOverlayBanner({ vaultId }: { vaultId: string | null }) {
+  if (!isLargeMemoryVault(vaultId)) return null;
+  return (
+    <div
+      className="shrink-0 border-b border-[rgba(255,159,10,0.22)] bg-[rgba(255,159,10,0.07)] px-3 py-1 text-[11px] text-[var(--warning)]"
+      data-large-vault-overlay
+      role="status"
+    >
+      In-browser test vault — new notes and edits are saved in this browser, not
+      as files. Open a folder for a real vault that survives across machines.
     </div>
   );
 }
@@ -353,6 +368,7 @@ export function AppShell() {
       </a>
       <TitleBar />
       <OpenProgressBanner progress={openProgress} />
+      <LargeVaultOverlayBanner vaultId={vaultId} />
       <main
         id="main-content"
         tabIndex={-1}

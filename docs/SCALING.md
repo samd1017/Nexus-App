@@ -107,7 +107,9 @@ Disk vaults always:
 
 1. **Meta-only open** + progressive open progress
 2. **Lazy body hydrate** + automatic LRU memory budget
-3. **DurableIndex** FTS (memory on web/FSA; SQLite on desktop)
+3. **DurableIndex** — two different engines, do not conflate:
+   - **Desktop Tauri:** SQLite FTS5 BM25 via `searchFtsAsync` (≤50ms target)
+   - **Web / FSA / this VM:** in-memory inverted index, **800-candidate cap** (not BM25). Palette heading says `Memory FTS (capped)`.
 4. **Ego graph** (neighborhood)
 5. **Virtualized file tree**
 6. **Path-patch watch** for small external change sets (FSA + desktop)
@@ -141,7 +143,7 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 | Open vault (metadata) | < 3–5s progressive |
 | Expand folder / scroll tree | 60fps, ≤50 DOM rows |
 | Title / wikilink suggest | ≤ 10–20ms |
-| Full-text top-20 | ≤ 50ms (FTS5) |
+| Full-text top-20 | ≤ 50ms **SQLite FTS5 BM25 on desktop**. Memory FTS is capped JS (honest floor, not BM25). |
 | Save note → indexes ready | O(tokens of that note) |
 | Path-patch 20 notes | << full tree rebuild |
 | Graph | Ego / cluster only — never 500k orbs |

@@ -144,9 +144,9 @@ export function TitleBar() {
       return (
         <span
           className="hidden items-center gap-1 rounded-full border border-[rgba(255,159,10,0.28)] bg-[rgba(255,159,10,0.08)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--warning)] sm:flex"
-          title="Large test vault — in this browser session only (not a disk folder)"
+          title="In-browser test vault — new notes and edits are saved in this browser overlay, not as files. Open a folder for a real vault."
         >
-          {flashSaved ? "Saved in session" : "Test · in memory"}
+          {flashSaved ? "Saved in this browser" : "Test · this browser"}
         </span>
       );
     }

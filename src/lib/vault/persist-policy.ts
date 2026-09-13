@@ -6,6 +6,8 @@
  * - Disk vaults never persist nodes (markdown on disk is canonical).
  * - Large in-memory seeds (45k / soak-*) persist a remount ticket instead of nodes
  *   so reload can restore last note + dual-pane without blowing quota.
+ * - Session creates/edits on those seeds go to IndexedDB overlay
+ *   (`large-vault-overlay.ts`), not this localStorage slice.
  */
 
 import { isLargeMemoryVault } from "./scale-flags";
