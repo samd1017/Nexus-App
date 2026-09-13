@@ -205,7 +205,16 @@ Root cause on current mainline too: `loadDiskVaultScan` marked Ready after a **m
 
 Fix on this branch: `completeDiskSearchIndex()` reads a 2k file head, tokens it, stores an 180-char snippet, drops the string. Ready waits for that pass. Palette always shows `data-search-engine` + heading. Empty index says “still reading files”.
 
-Prove:
+Prove (this SHA):
+
+| Run | Notes | Fill | Search `hub`/`cluster` | Engine | RSS | Result |
+|-----|-------|------|------------------------|--------|-----|--------|
+| `npm run test:disk-fts` | 400 | 13ms | 16 / 16 (`cluster` empty before fill) | memory-fts-capped | — | PASS |
+| `npm run soak:disk-fts -- --notes 2000` | 2000 | 50ms | 16 / 16 | memory-fts-capped | 107MB | PASS |
+| `npm run soak:disk-fts -- --notes 10000` | 10000 | 196ms | 16 / 16 | memory-fts-capped | 175MB | PASS |
+| `npm run soak:fsa` Playwright mock FSA | 800 | open 58ms | 16 / 16 | `memory-fts-capped` | bodiesLoaded **1** | PASS |
+
+`cluster` is body-only. Before fill it is 0 hits; after file-head fill it hits. Store keeps one body (the open note). That is the memory path 100k FSA must use.
 
 ```bash
 npm run test:disk-fts
