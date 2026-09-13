@@ -1,7 +1,7 @@
 # Scale soak report
 
-**SHA under test:** `5b169dd` (this branch), vs baseline **`907d8ea`**.
-**Verdict: not SCALE READY.** Core path-patch is fixed. 45k UI must still clear the ~1s common-op bar on measured app-ready (not “no errors”). Desktop 300–500k remains a north star; this VM proved in-process + disk-file generation through 300k, not a Tauri/FSA mount.
+**SHA under test:** `edca326` (this branch), vs baseline **`907d8ea`**.
+**Verdict: not SCALE READY.** Core path-patch is fixed. 45k tree / search / create / editor / exact count are under 1s app-ready. Note-switch p95 is ~1.07s on this VM; cold open is ~3s with progress. Desktop 300–500k remains a north star; this VM proved in-process + disk-file generation through 300k, not a Tauri/FSA mount.
 
 Sam’s bar: do not PASS 45k UI on the absence of crashes. Common ops target **<1s app-ready**. Cold open may exceed 1s if progress is visible and the UI stays responsive.
 
@@ -103,23 +103,23 @@ Not a Tauri/FSA open. Real files on disk + the same generate / structural / path
 
 ## 45k UI (this SHA, Playwright, app-ready)
 
-Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on `d12807a` / follow-up chrome wrap.
+Run: `node scripts/stress-ui-multisize.mjs http://127.0.0.1:8080/` on **`edca326`**.
 
 | Op | 907d8ea wall | After app-ready | Budget | Result |
 |----|--------------|-----------------|--------|--------|
-| open (cold) | 2593ms | **2853ms** (store **1655ms**) | <30s progressive | WARN (progress OK) |
-| tree | 3842ms | **528ms** | <1s | PASS |
-| search | 2501ms | **432ms** | <1s | PASS |
-| graph chrome | 3836ms | **2507ms** then Exit-on-shell (re-run) | <1s | was FAIL; chrome moved to RightPanel |
-| new note | 3826ms | **392ms** | <1s | PASS |
-| switch notes | count=0 | **6 switches**, samples 339–1142ms (max 1142) | <1s | BORDERLINE (5/6 <1s) |
+| open (cold) | 2593ms | **2988ms** (store **1726ms**) | <30s progressive | WARN (progress OK) |
+| tree | 3842ms | **828ms** | <1s | PASS |
+| search | 2501ms | **426ms** | <1s | PASS |
+| graph chrome | 3836ms | **209ms** | <1s | PASS |
+| new note | 3826ms | **877ms** | <1s | PASS |
+| switch notes | count=0 | **6 switches**: 348, 727, 1074, 916, 926, 1017 (max **1074**) | <1s | FAIL (2/6 >1s) |
 | editorTyped | n/a | **true** | must be true | PASS |
 | notes after create | toast | **45001** exact, 8 bodies | 45001 | PASS |
 | page errors | none | none | none | PASS |
 
-Demo on the same run: search 81ms PASS; graph chrome 318ms PASS after rAF; editorTyped still false (Welcome visual editor not visible to Playwright); newNote 1159ms (slightly over).
+Demo same run: search **89ms**, graph chrome **21ms**, editorTyped still false (Welcome editor not visible to the harness), newNote **1135ms**.
 
-**Still not SCALE READY.** Tree / search / create / exact count / editor type are under the bar. Graph chrome and switch p95 must clear 1s on a re-run after the RightPanel Exit wrap. Do not treat “no errors” as a pass.
+**Still not SCALE READY.** Do not treat “no errors” as a pass. Switch needs to stay under 1s (TipTap remount + body hydrate on this VM). Desktop FSA/Tauri open of the generated 100k/300k folder is unproven here.
 
 ---
 
