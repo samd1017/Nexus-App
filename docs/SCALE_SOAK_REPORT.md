@@ -1,13 +1,20 @@
 # Scale soak report
 
-**SHA under test:** this branch (FSA memory retainers + file-head fill), vs baseline **`907d8ea`**.
-**Verdict: not SCALE READY.**
+**SHA under test:** this branch (Chrome honesty gate + FSA watch kill + tree cap + heap log), vs baseline **`907d8ea`**.
+**Verdict: not SCALE READY. Not 100k FSA PASS.** Chrome’s product bar is **≤20k FSA, 20 opens, no discard**. 25k+ must refuse in Chrome.
 
-A real Chrome FSA open of `/workspace/nexus-soak-100k` on tip **`d68b055`** got farther than first-open discard: **`cluster` → 16 hits**, indexed 100,002, engine **Memory FTS (capped)**, **11 distinct notes opened**, then Chrome discarded the tab while starting the **12th search**. Heap stats were not collected. That is **not PASS**.
+Real Chrome FSA of a 100k folder:
 
-**`hub` → 0 hits on that folder is a FALSE ALARM.** That vault was written by a one-off `/workspace/gen-soak-vault.mjs` (not in this repo) with **zero `hub` tokens** (`hub_files=0`, `cluster_files=100000`). Official `scripts/generate-synthetic-vault.mjs` / `scripts/gen-soak-vault.mjs` emit Hub titles and `Cluster hub` in every body. Probe that unofficial folder with **`cluster` only**, or regenerate.
+| Tip | Result |
+|-----|--------|
+| `d68b055` | `cluster` 16, Ready 100,002, **11 notes**, discard on 12th search |
+| `024c28a` | `cluster` 16 before and after reopen, **7 notes**, discard while opening note 8 (`Brief-02800-z66`). Box 15GB RAM / ~9GB free. Chrome ~1.8GB RSS + renderer ~1.8GB. Flaky and worse. |
 
-This SHA pushes harder: slim tokens drop digits, inv unique-key cap 12k, no FTS fatten on hydrate, LRU 8–16, TipTap undo depth 2, palette async-only, `soak:fsa-open` heap trend. **Do not PASS 100k FSA until a human re-opens the folder, searches the documented tokens, opens 20+ notes with repeated search, and the tab is not discarded.**
+**`hub` → 0 hits on the unofficial one-off folder is a FALSE ALARM.** That vault was written by `/workspace/gen-soak-vault.mjs` (not in this repo) with **zero `hub` tokens**. Official generators emit Hub + `Cluster hub`. Probe unofficial folders with **`cluster` only**.
+
+This SHA does not claim 100k Chrome works. It (A) logs `jsHeapUsedMb` after every note open (`[nexus-heap]` / `__NEXUS_STRESS__().heapLog`), (B) **refuses Open folder at ≥25k** in Chrome (“use desktop/Tauri”), (C) caps the file-tree flatten at 2400 and accordion-expands at ≥400 notes, and **stops FSA signature poll / FileSystemObserver rescans above 4k** (the likely note-8 discard: every open re-walked the vault). Override only with `?forceLargeFsa` or `localStorage nexus-force-large-fsa=1`.
+
+**Do not PASS 100k FSA on mock-800 or mock-20k.** Mock-20k (`npm run soak:fsa-20k`) is the in-browser FSA-path stand-in. Real folder: `scripts/stress-fsa-cdp.mjs` after attaching Chrome on port 9222.
 
 I would not trust this as my only vault at 300k. Browser 45k common-ops are green on this VM. Disk generate + memory FTS through 300k is not a Tauri/FSA mount and not SQLite BM25.
 
@@ -182,6 +189,10 @@ Run 100k first. Only then 300k. If 100k search is still `memory-fts-capped`, fix
 | Slim tokens | `tokenize(..., { slim })` | length ≥ 3 and no digits (`hub`/`cluster` stay; `10949`/`1oo` drop) |
 | Memory FTS title fallback | `MEMORY_FTS_FULL_SCAN_MAX_NOTES` | **10_000** |
 | FSA watch full `lastScan` | `WATCH_RETAIN_SCAN_MAX` | **10_000** (above: signatures only) |
+| Chrome FSA watch poll | `CHROME_FSA_WATCH_MAX` | **4_000** (no signature poll / observer rescan) |
+| Chrome FSA getFile during meta | `CHROME_FSA_GETFILE_MAX` | **4_000** |
+| Chrome FSA warn / refuse | `CHROME_FSA_NOTE_WARN` / `CAP` | **15_000** / **25_000** |
+| File-tree flatten | `TREE_FLAT_CAP` | **2_400** (virtualizer mounts ~30) |
 | TipTap undo | `StarterKit.undoRedo.depth` | **2** |
 | Browser overlay | `LARGE_VAULT_OVERLAY_CAP` | **400** notes/folders |
 | Unlinked scan | `unlinked-mentions.ts` | 400 notes / 24 hits |
@@ -230,7 +241,28 @@ npm run test:disk-fts
 npm run soak:disk-fts -- --notes 2000
 npm run soak:fsa -- http://127.0.0.1:8080/ --notes 800
 npm run soak:fsa-open -- http://127.0.0.1:8080/ --notes 800 --opens 20
+npm run soak:fsa-20k --   # in-page mock 20k + 20 opens. Not a real picker.
+npm run soak:fsa-cdp --   # attach Chrome :9222 after a human picks the folder
 ```
+
+### Chrome FSA honesty + CDP
+
+| Size | Chrome behavior |
+|------|-----------------|
+| &lt;15k | Open normally. Watch poll only below 4k. |
+| 15k–24,999 | Open + amber banner. Prefer desktop. |
+| ≥25k | **Refuse.** Clear the saved handle. Welcome card `data-chrome-fsa-refused`. No silent OOM. |
+| Force | `?forceLargeFsa` or `localStorage.nexus-force-large-fsa=1` for soak only. |
+
+Playwright cannot drive `showDirectoryPicker` for `/workspace/nexus-soak-100k`. Attach a real Chrome:
+
+```
+google-chrome --remote-debugging-port=9222 --enable-precise-memory-info --user-data-dir=/tmp/nexus-fsa-cdp
+# Open Nexus, pick the folder (or confirm the refuse card)
+node scripts/stress-fsa-cdp.mjs http://127.0.0.1:9222 --opens 20
+```
+
+`__NEXUS_STRESS__()` includes `heapLog`, `jsHeapUsedMb`, `treeFlatRows`, `chromeFsaLimit`. Each `setActiveNote` prints `[nexus-heap] open:<path> heap=…MB`.
 
 ## Soak probe words
 
@@ -273,8 +305,10 @@ Opening one note after Ready was the last straw. Baseline heap was already huge:
 - **UI:** browser 45k common-ops (store open 1.15s / interactive 0.41s; wall 1.79s WARN; overlay remount keeps Soak Created; no ≥1s freeze).
 - **Disk generate + memory FTS:** 300k files, search 2.57ms.
 - **Disk file-head FTS (this SHA):** 10k fill 165ms / search 3ms / RSS **142MB** (was 175); slim fill `noteTokenSets=0`, `largestPosting=800`.
-- **Playwright mock FSA 800:** `soak:fsa-open` 20 opens + search each step: heap **44→43MB** (max 46), bodiesLoaded plateau **16**, `ftsNoteTokenSets=0`, `ftsInvTokens=42`, cluster 16. Not a 100k Chrome picker.
+- **Playwright mock FSA 800:** `soak:fsa-open` 20 opens. Not a 100k picker. Do not treat as PASS.
+- **Playwright mock FSA 20k:** `npm run soak:fsa-20k` (in-page). Required Chrome bar. Still not a directory picker.
 - **Real 100k FSA on `d68b055`:** `cluster` 16, Ready 100,002, **11 notes then discard on 12th search**. Not PASS.
-- **Real 100k FSA after this SHA:** not re-run here (no picker on this VM). Not PASS. `npm run soak:fsa-open` is the mock stand-in.
+- **Real 100k FSA on `024c28a`:** opened **7**, discard on note **8**. Not PASS. Worse/flaky.
+- **Real 100k FSA after this SHA:** Chrome must **refuse** at ≥25k unless forced. Forced 100k is still not a daily driver. Not PASS.
 
 Do not ship as the only vault at 45k+ on the strength of one Playwright box. Do not claim SCALE READY until a real 100k FSA (or Mac Tauri 300k) stays in memory and search hits the documented tokens.

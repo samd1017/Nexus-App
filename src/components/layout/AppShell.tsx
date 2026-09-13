@@ -37,6 +37,8 @@ import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import { canOpenLocalVaultFolder } from "@/lib/platform";
+import { CHROME_FSA_WATCH_MAX } from "@/lib/vault/chrome-fsa-cap";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
 
 function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
   // Auto-dismiss ready flash so the banner doesn't stick forever
@@ -146,6 +148,29 @@ function OpenProgressBanner({ progress }: { progress: OpenProgress }) {
           />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ChromeFsaLimitBanner() {
+  const limit = useVaultStore((s) => s.chromeFsaLimit);
+  if (!limit) return null;
+  const refuse = limit.kind === "refuse";
+  return (
+    <div
+      className={
+        refuse
+          ? "flex shrink-0 items-center gap-2 border-b border-[rgba(255,69,58,0.35)] bg-[rgba(255,69,58,0.1)] px-3 py-1.5 text-[12px] text-[var(--text-primary)]"
+          : "flex shrink-0 items-center gap-2 border-b border-[rgba(255,159,10,0.22)] bg-[rgba(255,159,10,0.07)] px-3 py-1 text-[11px] text-[var(--warning)]"
+      }
+      data-chrome-fsa-limit={limit.kind}
+      role={refuse ? "alert" : "status"}
+    >
+      <span className="min-w-0 flex-1">
+        {refuse
+          ? `${limit.name} has ${limit.notes.toLocaleString()} notes. Chrome cannot hold this vault — the tab will discard. Use the Nexus desktop app. Chrome is for about 20,000 notes or fewer.`
+          : `Large folder (${limit.notes.toLocaleString()} notes). Chrome may discard the tab. Prefer the desktop app above 20k.`}
+      </span>
     </div>
   );
 }
@@ -304,14 +329,26 @@ export function AppShell() {
 
     if (mode === "fsa" && getFsaRoot()) {
       const dir = getFsaRoot()!;
-      setWatcherAck((d: any) => watcher.acknowledgeWrite(d));
-
-      setDesktopWatchAck(null);
-      void watcher.startFsa(dir, (ev) => {
-        if (ev.scan) {
-          applyExternalSnapshot(ev.scan.nodes, ev.scan.rootIds);
-        }
-      });
+      let notes = 0;
+      try {
+        notes = ensureVaultIndex(useVaultStore.getState().nodes).noteCount;
+      } catch {
+        /* ignore */
+      }
+      if (notes >= CHROME_FSA_WATCH_MAX) {
+        // Signature poll + FileSystemObserver re-walked 20k–100k files and
+        // discarded Chrome while opening notes 8–12.
+        setWatcherAck(null);
+        setDesktopWatchAck(null);
+      } else {
+        setWatcherAck((d: any) => watcher.acknowledgeWrite(d));
+        setDesktopWatchAck(null);
+        void watcher.startFsa(dir, (ev) => {
+          if (ev.scan) {
+            applyExternalSnapshot(ev.scan.nodes, ev.scan.rootIds);
+          }
+        });
+      }
     } else if (mode === "desktop" && getDesktopRoot()) {
       const root = getDesktopRoot()!;
       setWatcherAck(null);
@@ -391,6 +428,7 @@ export function AppShell() {
       <TitleBar />
       <OpenProgressBanner progress={openProgress} />
       <LargeVaultOverlayBanner vaultId={vaultId} />
+      <ChromeFsaLimitBanner />
       <main
         id="main-content"
         tabIndex={-1}

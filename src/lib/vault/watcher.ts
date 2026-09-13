@@ -14,9 +14,12 @@ import {
   type VaultScan,
 } from "./fs-adapter";
 import { shouldLazyBodies } from "./scale-flags";
+import { CHROME_FSA_WATCH_MAX } from "./chrome-fsa-cap";
 
 /** Keep a full lastScan copy only under this many signature entries. */
 export const WATCH_RETAIN_SCAN_MAX = 10_000;
+/** Re-export — Chrome FSA must not poll above this or note-open discards the tab. */
+export const WATCH_POLL_DISABLE_MIN = CHROME_FSA_WATCH_MAX;
 
 export function watchPollIntervalMs(sigCount: number, requested = 900): number {
   if (sigCount > 50_000) return Math.max(requested, 60_000);
@@ -26,6 +29,11 @@ export function watchPollIntervalMs(sigCount: number, requested = 900): number {
 
 export function shouldRetainWatchScan(sigCount: number): boolean {
   return sigCount <= WATCH_RETAIN_SCAN_MAX;
+}
+
+/** Signature poll + FileSystemObserver rescan discarded Chrome at note 8–12. */
+export function shouldPollFsaWatch(sigCount: number): boolean {
+  return sigCount < CHROME_FSA_WATCH_MAX;
 }
 
 function sigCountOf(sigs: Record<string, string>): number {
@@ -80,6 +88,12 @@ export class VaultWatcher {
       this.lastSigs = {};
     }
     const n = sigCountOf(this.lastSigs);
+    if (!shouldPollFsaWatch(n)) {
+      // Drop the 20k–100k signature map. Do not poll or observe.
+      this.lastSigs = {};
+      this.lastScan = null;
+      return;
+    }
     if (shouldRetainWatchScan(n)) {
       try {
         const full = shouldLazyBodies("fsa")
@@ -127,9 +141,15 @@ export class VaultWatcher {
   private async pollFsa(force: boolean) {
     if (!this.dir || this.scanning) return;
     if (Date.now() < this.suppressUntil) return;
+    if (!shouldPollFsaWatch(sigCountOf(this.lastSigs))) return;
     this.scanning = true;
     try {
       const next = await scanSignatures(this.dir);
+      if (!shouldPollFsaWatch(sigCountOf(next))) {
+        this.lastSigs = {};
+        this.lastScan = null;
+        return;
+      }
       if (!force && !signaturesChanged(this.lastSigs, next)) return;
 
       const metaOnly = shouldLazyBodies("fsa");

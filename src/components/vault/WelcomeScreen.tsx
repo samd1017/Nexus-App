@@ -53,6 +53,7 @@ export function WelcomeScreen() {
   const connecting = useVaultStore((s) => s.connecting);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const folderAccessLost = useVaultStore((s) => s.folderAccessLost);
+  const chromeFsaLimit = useVaultStore((s) => s.chromeFsaLimit);
   const setToast = useVaultStore((s) => s.setToast);
   const [createName, setCreateName] = useState("Nexus Vault");
   const [showCreate, setShowCreate] = useState(false);
@@ -214,6 +215,24 @@ export function WelcomeScreen() {
                 </button>{" "}
                 (in-browser only).
               </div>
+            </div>
+          ) : null}
+
+          {chromeFsaLimit?.kind === "refuse" ? (
+            <div
+              className="mt-6 rounded-[14px] border border-[color-mix(in_srgb,#ff453a_40%,transparent)] bg-[rgba(255,69,58,0.08)] px-4 py-3 text-[13px] leading-relaxed text-[var(--text-secondary)]"
+              data-chrome-fsa-refused
+              role="alert"
+            >
+              <strong className="text-[var(--text-primary)]">
+                {chromeFsaLimit.name} is too large for Chrome
+              </strong>
+              <p className="mt-1">
+                {chromeFsaLimit.notes.toLocaleString()} notes (limit{" "}
+                {chromeFsaLimit.cap.toLocaleString()}). Opening it here discards
+                the tab. Use the Nexus desktop app for 25k+ vaults. Chrome is
+                reliable up to about 20,000 notes.
+              </p>
             </div>
           ) : null}
 

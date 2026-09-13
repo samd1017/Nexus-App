@@ -23,7 +23,12 @@ import { useVaultStore } from "@/lib/vault/store";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import type { NoteTemplateId } from "@/lib/vault/templates";
-import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { setLastTreeFlatCount } from "@/lib/vault/heap-log";
+import {
+  flattenVisibleTree,
+  TREE_FLAT_CAP,
+  type FlatTreeRow,
+} from "@/lib/vault/file-tree-flat";
 import { useTreeStructureTick } from "@/lib/vault/tree-tick";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
@@ -52,7 +57,7 @@ type DragSession = {
   pointerId: number;
 };
 
-type FlatRow = { id: string; depth: number; kind: "folder" | "note" };
+type FlatRow = FlatTreeRow;
 
 /** Slightly above accidental jitter so clicks open reliably at 45k. */
 const DRAG_THRESHOLD_PX = 10;
@@ -111,30 +116,7 @@ function dropTargetsEqual(a: DropTarget, b: DropTarget): boolean {
   return true; // both root
 }
 
-function flattenVisible(
-  rootIds: string[],
-  nodes: Record<string, VaultNode>,
-  expanded: string[],
-): FlatRow[] {
-  const idx = ensureVaultIndex(nodes);
-  const exp = new Set(expanded);
-  const rows: FlatRow[] = [];
-  // Index child lists are already sorted (folders first, then name) — do not copy+sort.
-  const walk = (ids: string[], depth: number) => {
-    for (const id of ids) {
-      const n = nodes[id];
-      if (!n) continue;
-      rows.push({ id, depth, kind: n.kind });
-      if (n.kind === "folder" && exp.has(id)) {
-        walk(idx.getChildIds(id), depth + 1);
-      }
-    }
-  };
-  // Prefer index-sorted roots when in sync; fall back to store rootIds
-  const indexRoots = idx.getChildIds(null);
-  walk(indexRoots.length > 0 ? indexRoots : rootIds, 0);
-  return rows;
-}
+export { TREE_FLAT_CAP };
 
 const ROW_H = 30;
 
@@ -434,7 +416,9 @@ export const FileTree = memo(function FileTree() {
 
   const flatRows = useMemo(() => {
     const nodes = useVaultStore.getState().nodes;
-    return flattenVisible(rootIds, nodes, expandedFolders);
+    const rows = flattenVisibleTree(rootIds, nodes, expandedFolders);
+    setLastTreeFlatCount(rows.length);
+    return rows;
     // structureTick encodes structureGen + nodeCount + rootIds
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootIds, expandedFolders, structureTick]);
@@ -455,8 +439,7 @@ export const FileTree = memo(function FileTree() {
 
   const virtualizer = useVirtualizer({
     count: flatRows.length,
-    getScrollElement: () =>
-      parentRef.current?.closest("[data-tree-scroll]") as HTMLElement | null,
+    getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H,
     overscan: 12,
     getItemKey: (index) => flatRows[index]?.id ?? index,
@@ -782,6 +765,8 @@ export const FileTree = memo(function FileTree() {
     <div
       ref={parentRef}
       data-file-tree
+      data-tree-flat-rows={flatRows.length}
+      data-tree-virtualized="1"
       className={cn(
         "titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-3 outline-none",
         rootDropActive &&
