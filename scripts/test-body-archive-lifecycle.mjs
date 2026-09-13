@@ -52,16 +52,6 @@ assert.equal(hasBodyArchive(), true);
 assert.equal(bodyArchiveSize(), 2);
 assert.equal(getBodyFromArchive("00-Inbox/a.md"), "# A\\nbody-a");
 
-clearBodyArchive();
-const combined = {
-  keep: { id: "keep", path: "keep.md", name: "keep.md", kind: "note", parentId: null, mtime: 1, content: "keep-body" },
-  drop: { id: "drop", path: "drop.md", name: "drop.md", kind: "note", parentId: null, mtime: 1, content: "drop-body" },
-};
-archiveAndStripBodiesInPlace(combined, ["keep"]);
-assert.equal(combined.keep.content, "keep-body");
-assert.equal(combined.drop.content, undefined);
-assert.equal(getBodyFromArchive("drop.md"), "drop-body");
-
 // strip keeps only keep ids
 const stripped = stripBodies(nodes, new Set(["a"]));
 assert.equal(stripped.a.content, "# A\\nbody-a");
@@ -95,6 +85,16 @@ assert.equal(shouldLazyBodies("desktop"), true);
 assert.equal(shouldUseDurableIndex("local", LARGE_TEST_VAULT_ID), true);
 assert.equal(shouldUseDurableIndex("local", "other"), false);
 assert.equal(shouldUseDurableIndex("desktop", "desk-x"), true);
+
+clearBodyArchive();
+const combined = {
+  keep: { id: "keep", path: "keep.md", name: "keep.md", kind: "note", parentId: null, mtime: 1, content: "keep-body" },
+  drop: { id: "drop", path: "drop.md", name: "drop.md", kind: "note", parentId: null, mtime: 1, content: "drop-body" },
+};
+archiveAndStripBodiesInPlace(combined, ["keep"]);
+assert.equal(combined.keep.content, "keep-body");
+assert.equal(combined.drop.content, undefined);
+assert.equal(getBodyFromArchive("drop.md"), "drop-body");
 
 // clear leaves no archive (failed re-open must not clear while still mounted — tested at store level)
 clearBodyArchive();
