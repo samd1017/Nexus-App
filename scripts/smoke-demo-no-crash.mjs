@@ -1,7 +1,8 @@
 /**
  * Smoke: demo vault stays up 5s and Graph tab does not crash the app.
  * Run: node --input-type=module scripts/smoke-demo-no-crash.mjs
- * Requires: npm run dev on :8080, playwright in node_modules, chrome path.
+ * Requires: npm run dev on :8080, playwright in node_modules.
+ * Optional: CHROME_PATH, NEXUS_URL, NEXUS_SMOKE_OUT
  */
 import { createRequire } from "module";
 import fs from "fs";
@@ -12,26 +13,16 @@ const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
-const CHROME =
-  process.env.CHROME_PATH ||
-  "/home/sam/.agent-browser/browsers/chrome-149.0.7827.115/chrome";
+const CHROME = process.env.CHROME_PATH;
 const BASE = process.env.NEXUS_URL || "http://127.0.0.1:8080/";
-const OUT = path.join(
-  root,
-  "..",
-  "..",
-  "hermes-outputs",
-  "nexus-dogfood",
-  "round1",
-  "screenshots",
-);
+const OUT = process.env.NEXUS_SMOKE_OUT || path.join(root, "screenshots");
 
 function bad(body) {
   return /display error|Maximum update depth/i.test(body);
 }
 
 const browser = await chromium.launch({
-  executablePath: fs.existsSync(CHROME) ? CHROME : undefined,
+  executablePath: CHROME && fs.existsSync(CHROME) ? CHROME : undefined,
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });

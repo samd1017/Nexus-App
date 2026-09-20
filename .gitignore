@@ -40,10 +40,23 @@ Thumbs.db
 .vscode/
 *.log
 
-# Env
+# Env / secrets — never commit these
 .env
 .env.*
 !.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+*.keystore
+credentials.json
+**/service-account*.json
+.npmrc
+.netrc
 
 # Coverage / misc
 coverage/
