@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useRef, useSyncExternalStore } from "react";
-import { Activity, History, Link2, ListTree, Minimize2, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
+import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
 import {
@@ -27,7 +27,6 @@ import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { exitGraphForViewport } from "@/lib/layout/viewport";
 import { isContentLoaded } from "@/lib/vault/content";
 import {
   getUnreadPulseCount,
@@ -157,19 +156,6 @@ export function RightPanel() {
         className="absolute inset-0 z-30 flex flex-col bg-[var(--bg-deepest)]"
         data-graph-host
       >
-        <div className="absolute left-3 top-3 z-40">
-          <button
-            type="button"
-            data-exit-graph
-            className="pointer-events-auto flex h-9 w-fit shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[var(--accent)] px-3 text-[13px] font-semibold text-black shadow-[0_0_24px_rgba(0,200,255,0.28)] hover:brightness-110"
-            title="Exit fullscreen graph (Esc or Ctrl+G)"
-            aria-label="Exit graph"
-            onClick={() => exitGraphForViewport()}
-          >
-            <Minimize2 size={15} />
-            <span>Exit graph</span>
-          </button>
-        </div>
         <ErrorBoundary
           variant="panel"
           label="Graph"
