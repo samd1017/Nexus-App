@@ -179,7 +179,6 @@ export function NexusWordmark({
           "nexus-wordmark font-semibold select-none",
           textClass,
         )}
-        aria-label="Nexus"
       >
         Nexus
       </span>
