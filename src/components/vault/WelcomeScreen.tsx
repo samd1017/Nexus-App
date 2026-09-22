@@ -183,7 +183,6 @@ export function WelcomeScreen() {
               <div>
                 <div
                   className="nexus-wordmark select-none text-[38px] font-semibold leading-none tracking-[-0.04em] text-[var(--text-primary)] sm:text-[46px]"
-                  aria-label="Nexus"
                 >
                   Nexus
                 </div>
@@ -198,18 +197,18 @@ export function WelcomeScreen() {
             className="mt-10 max-w-xl text-[28px] font-semibold leading-[1.15] tracking-tight text-[var(--text-primary)] sm:text-[34px]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 80ms both" }}
           >
-            A writing surface that stays fast
+            Ask the vault.
             <span className="text-[var(--text-muted)]">
               {" "}
-              — Desktop for large vaults.
+              Open the right note.
             </span>
           </h1>
           <p
             className="mt-4 max-w-lg text-[15.5px] leading-relaxed text-[var(--text-secondary)]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 140ms both" }}
           >
-            Local-first Markdown. Visual + Source. Live folder sync. Light or dark.
-            Zero accounts.
+            Plain Markdown on your machine. Search that cites the source.
+            A graph you can fly. No account.
           </p>
 
           {!fsaOk && !desktop ? (
@@ -440,7 +439,7 @@ export function WelcomeScreen() {
               {
                 icon: Search,
                 title: "Find",
-                body: "Chrome: about 20,000 notes. Desktop: SQLite FTS5 for 100k+.",
+                body: "Ask in plain language. Every answer cites the note.",
               },
               {
                 icon: Network,
@@ -468,12 +467,10 @@ export function WelcomeScreen() {
             ))}
           </div>
 
-          <div className="mt-6 rounded-[16px] border border-[var(--border)] bg-[var(--fill-subtle)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-            Chrome in the browser: about 20,000 notes. A lifetime
-            Obsidian-sized vault (100k–300k) needs Nexus Desktop — same
-            markdown folder, SQLite search, no tab discard. We will not open
-            25,000+ notes in Chrome.
-          </div>
+          <p className="mt-6 max-w-xl text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+            Browser vaults stay near 20,000 notes. A 100k–300k vault opens in
+            Nexus Desktop — the same Markdown folder, with SQLite search.
+          </p>
 
           <p className="mt-8 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">
             Privacy: notes stay on your device. Nexus does not upload vault
