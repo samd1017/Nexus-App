@@ -639,20 +639,45 @@ fn collect_md_notes_publishing(
 }
 
 fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanned: i64) {
-    let rows: Vec<(String, String, i64, i64)> = notes
-        .iter()
-        .map(|n| (n.rel.clone(), n.name.clone(), n.mtime, n.size))
-        .collect();
-    let _ = crate::shell_catalog::remember_discovered(sink.conn, &rows);
-    commit_discovered_titles(
-        sink.conn,
-        notes,
-        sink.existing,
-        sink.indexed,
-        sink.errors,
-        sink.written,
-        sink.fresh_titles,
-    );
+    // One commit per path batch: ancestor folders, then title/path search.
+    // A second note_meta write used to land before the title row.
+    let started = Instant::now();
+    let mut titles = Vec::new();
+    let mut touches: Vec<(String, String, i64, i64)> = Vec::new();
+    let mut all_rows: Vec<(String, String, i64, i64)> = Vec::with_capacity(notes.len());
+    for note in notes {
+        all_rows.push((note.rel.clone(), note.name.clone(), note.mtime, note.size));
+        let id = desk_node_id(&note.rel);
+        if sink.existing.contains_key(&note.rel) || sink.written.contains(&id) {
+            touches.push((note.rel.clone(), note.name.clone(), note.mtime, note.size));
+        } else {
+            titles.push(meta_fill_note(note));
+        }
+    }
+    let indexed_before = *sink.indexed;
+    let committed = if let Ok(tx) = sink.conn.unchecked_transaction() {
+        let folders_ok =
+            crate::shell_catalog::remember_discovered_in(&tx, &all_rows, false).is_ok();
+        let touch_ok = touches.is_empty()
+            || crate::shell_catalog::remember_discovered_in(&tx, &touches, true).is_ok();
+        let write_ok = write_note_batch(
+            &tx,
+            &titles,
+            sink.indexed,
+            sink.errors,
+            sink.written,
+            sink.fresh_titles,
+        )
+        .is_ok();
+        folders_ok && touch_ok && write_ok && tx.commit().is_ok()
+    } else {
+        false
+    };
+    if !committed {
+        *sink.indexed = indexed_before;
+        *sink.errors += titles.len() as i64;
+    }
+    cooperate_after_write(started);
     if sink.allow_heads && *sink.headed < EARLY_HEAD_CAP {
         let wrote = commit_early_heads(
             sink.conn,
@@ -667,32 +692,6 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
         *sink.headed += wrote;
     }
     (sink.on_scanned)(scanned, *sink.indexed, *sink.errors);
-    std::thread::yield_now();
-}
-
-/// Title/path FTS for paths that were not already in the catalog.
-/// Empty body, so a later head can replace the row without a table scan.
-fn commit_discovered_titles(
-    conn: &mut Connection,
-    notes: &[DiskNote],
-    existing: &HashMap<String, ExistingNote>,
-    indexed: &mut i64,
-    errors: &mut i64,
-    written: &mut HashSet<String>,
-    fresh_titles: &mut HashSet<String>,
-) {
-    let mut batch = Vec::with_capacity(notes.len());
-    for note in notes {
-        if existing.contains_key(&note.rel) {
-            continue;
-        }
-        let id = desk_node_id(&note.rel);
-        if written.contains(&id) {
-            continue;
-        }
-        batch.push(meta_fill_note(note));
-    }
-    flush_note_batch(conn, &mut batch, indexed, errors, written, fresh_titles);
 }
 
 fn commit_early_heads(
@@ -816,11 +815,9 @@ fn tune_fill_connection(conn: &Connection) {
         "PRAGMA cache_size=-524288;
          PRAGMA temp_store=MEMORY;
          PRAGMA mmap_size=1073741824;
-         PRAGMA wal_autocheckpoint=100000;",
-    );
-    let _ = conn.execute(
-        "INSERT INTO note_fts(note_fts, rank) VALUES('automerge', 16)",
-        [],
+         PRAGMA wal_autocheckpoint=100000;
+         INSERT INTO note_fts(note_fts, rank) VALUES('automerge', 64);
+         INSERT INTO note_fts(note_fts, rank) VALUES('crisismerge', 64);",
     );
 }
 
@@ -1100,6 +1097,7 @@ fn flush_note_batch(
         return;
     }
     let started = Instant::now();
+    let indexed_before = *indexed;
     let tx = match conn.unchecked_transaction() {
         Ok(t) => t,
         Err(_) => {
@@ -1109,8 +1107,28 @@ fn flush_note_batch(
             return;
         }
     };
-    let flush_err = (|| -> Result<(), String> {
-        let mut meta = tx
+    let flush_err = write_note_batch(&tx, batch, indexed, errors, written, fresh_titles);
+    if flush_err.is_err() || tx.commit().is_err() {
+        *errors += batch.len() as i64;
+        *indexed = indexed_before;
+    }
+    batch.clear();
+    cooperate_after_write(started);
+}
+
+fn write_note_batch(
+    conn: &Connection,
+    batch: &[FillNote],
+    indexed: &mut i64,
+    errors: &mut i64,
+    written: &mut HashSet<String>,
+    fresh_titles: &mut HashSet<String>,
+) -> Result<(), String> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    {
+        let mut meta = conn
             .prepare_cached(
                 "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth)
                  VALUES (?1,?2,?3,'note',?4,?5,?6,NULL,?7,0,?8)
@@ -1130,37 +1148,37 @@ fn flush_note_batch(
                    END",
             )
             .map_err(|e| e.to_string())?;
-        let mut fts_row = tx
+        let mut fts_row = conn
             .prepare_cached("SELECT fts_rowid FROM note_fts_row WHERE note_id=?1")
             .map_err(|e| e.to_string())?;
-        let mut fts_len = tx
+        let mut fts_len = conn
             .prepare_cached("SELECT length(body) FROM note_fts WHERE rowid=?1")
             .map_err(|e| e.to_string())?;
-        let mut fts_del = tx
+        let mut fts_del = conn
             .prepare_cached("DELETE FROM note_fts WHERE rowid=?1")
             .map_err(|e| e.to_string())?;
-        let mut fts_ins = tx
+        let mut fts_ins = conn
             .prepare_cached("INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)")
             .map_err(|e| e.to_string())?;
-        let mut fts_map = tx
+        let mut fts_map = conn
             .prepare_cached(
                 "INSERT INTO note_fts_row(note_id, fts_rowid) VALUES (?1,?2)
                  ON CONFLICT(note_id) DO UPDATE SET fts_rowid=excluded.fts_rowid",
             )
             .map_err(|e| e.to_string())?;
-        let mut link_del = tx
+        let mut link_del = conn
             .prepare_cached("DELETE FROM link_edge WHERE source_id = ?1")
             .map_err(|e| e.to_string())?;
-        let mut link_ins = tx
+        let mut link_ins = conn
             .prepare_cached(
                 "INSERT OR IGNORE INTO link_edge(source_id, target_raw, target_norm, target_id)
                  VALUES (?1,?2,?3,NULL)",
             )
             .map_err(|e| e.to_string())?;
-        let mut tag_del = tx
+        let mut tag_del = conn
             .prepare_cached("DELETE FROM tag_map WHERE note_id = ?1")
             .map_err(|e| e.to_string())?;
-        let mut tag_ins = tx
+        let mut tag_ins = conn
             .prepare_cached("INSERT OR IGNORE INTO tag_map(tag, note_id) VALUES (?1,?2)")
             .map_err(|e| e.to_string())?;
         for note in batch.iter() {
@@ -1213,7 +1231,7 @@ fn flush_note_batch(
                     *errors += 1;
                     continue;
                 }
-                let rowid = tx.last_insert_rowid();
+                let rowid = conn.last_insert_rowid();
                 if fts_map.execute(params![note.id, rowid]).is_err() {
                     *errors += 1;
                     continue;
@@ -1259,13 +1277,7 @@ fn flush_note_batch(
             }
         }
         Ok(())
-    })();
-    if flush_err.is_err() || tx.commit().is_err() {
-        *errors += batch.len() as i64;
-        *indexed = (*indexed - batch.len() as i64).max(0);
     }
-    batch.clear();
-    cooperate_after_write(started);
 }
 
 fn remove_stale_notes(

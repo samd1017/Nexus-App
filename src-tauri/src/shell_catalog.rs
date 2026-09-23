@@ -849,8 +849,24 @@ pub fn remember_discovered(
         return Ok(());
     }
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    remember_discovered_in(&tx, notes, true)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Same writes as `remember_discovered`, on a connection that is already
+/// inside a transaction. `write_notes` is false when the caller is about to
+/// insert those notes itself and only ancestor folders are needed.
+pub fn remember_discovered_in(
+    conn: &Connection,
+    notes: &[(String, String, i64, i64)],
+    write_notes: bool,
+) -> Result<(), String> {
+    if notes.is_empty() {
+        return Ok(());
+    }
     {
-        let mut stmt = tx
+        let mut stmt = conn
             .prepare_cached(
                 "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth)
                  VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,?8,0,-1)
@@ -902,6 +918,9 @@ pub fn remember_discovered(
                     }
                 }
             }
+            if !write_notes {
+                continue;
+            }
             let title = name.trim_end_matches(".md").trim_end_matches(".MD");
             stmt.execute(params![
                 shell_node_id(&rel),
@@ -916,7 +935,6 @@ pub fn remember_discovered(
             .map_err(|e| e.to_string())?;
         }
     }
-    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
