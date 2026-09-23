@@ -23,6 +23,10 @@
 - No upload of note bodies by default
 - Ask-your-notes is extractive and local (no model API)
 
+## Scale continuum
+
+One product from a handful of notes through about 500,000 on desktop. Under 400 notes the graph draws every note. From there up, the graph is a folder map (at most 320 orbs) or the links around the open note (at most 400). It does not draw one orb per note at 100k–500k, and it does not open a small vault on an empty folder map. Search on a huge vault fills in the background. The browser stays capped (refuse around 25k). Semantic rerank is not in this beta.
+
 ## Quality gates before release
 ```bash
 npm run typecheck
