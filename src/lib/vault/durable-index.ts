@@ -96,6 +96,11 @@ export interface DurableIndex {
     removed: number;
   };
   upsertNote(meta: DurableNoteMeta): void;
+  /**
+   * Desktop only: write one opened note into SQLite. Does not copy the
+   * body into the in-memory mirror.
+   */
+  upsertSearchBody?(meta: DurableNoteMeta): void;
   removeNote(id: string): void;
   listNoteMeta(): DurableNoteMeta[];
   /** O(1) meta lookup — used for unloaded-body search snippets */
@@ -793,6 +798,29 @@ export async function rebuildDurableIndexFromNodesAsync(
     return;
   }
   idx.rebuildFromNodes(nodes);
+}
+
+/**
+ * Desktop search is SQLite. Opening a note writes that note's deep head
+ * there. The background fill does not read the rest of the vault to do it.
+ */
+export function indexOpenedDesktopNote(n: VaultNode): void {
+  if (!active?.ready || active.kind !== "sqlite" || n.kind !== "note") return;
+  if (n.content === undefined || !active.upsertSearchBody) return;
+  const body = n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.desktopOpenNoteChars);
+  active.upsertSearchBody({
+    id: n.id,
+    path: n.path,
+    name: n.name,
+    kind: "note",
+    parentId: n.parentId,
+    mtime: n.mtime,
+    title: noteTitle(n),
+    bodySnippet: body,
+    contentHash: simpleHash(body),
+    tags: extractTags(body),
+    linkTargets: extractWikilinkTargets(body),
+  });
 }
 
 export function upsertDurableNoteFromNode(n: VaultNode): void {

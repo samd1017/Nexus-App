@@ -76,7 +76,7 @@ Re-test by repeating those gestures on a small folder and on a large folder, inc
 
 These are real gaps. They are why a large vault is not yet the same product as a small one.
 
-- After titles are searchable, desktop reads note text once at the deep head. The first page may already have a short peek from the walk, and that page is read again. A bounded slice of the open set is searchable first; the rest keeps going in yielded batches. That tail still grows with the vault. Words past the deep head are not in the index. A 500,000-note open is not claimed here.
+- After titles are searchable, desktop reads note text for a fixed window: the open notes, at most a few hundred files. A later open reads that same window again only where it is still shallow. It does not continue through the rest of the vault. Opening a note indexes that note. A word in a note you have not opened is still missing, and so is a word past the deep head of a note you have opened. The first page may already have had a short peek during the walk. A 500,000-note open is not claimed here.
 - If a fill transaction outlasts the short retry budget, the gesture keeps the last page (or an empty one) and refreshes later. It does not hang. A folder the walker has not reached can still open its first page from disk.
 - Older note-only catalogs gain their root folder page from one directory listing. Nested folder rows appear when that folder is opened, or as the fill walk reaches it. Open does not read every note path to invent folders.
 - The tag rail reads `tag_map` for heads already written. It stays empty until the first head batch, then paints those tags without waiting for the rest of the vault. It does not scan bodies in the window.

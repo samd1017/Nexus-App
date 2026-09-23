@@ -148,6 +148,12 @@ export const DURABLE_INDEX_REBUILD_RULES = {
    * hid a word that sits further into an opened note.
    */
   bodySnippetMaxChars: 262_144,
+  /**
+   * Desktop deep head. Matches Rust `DEFAULT_DEEP_HEAD`. An opened note
+   * indexes this many characters; the background fill does not read the rest
+   * of the vault to match it.
+   */
+  desktopOpenNoteChars: 8_000,
 } as const;
 
 export const DESKTOP_INDEX_PATHS = {

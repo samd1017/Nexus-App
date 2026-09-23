@@ -33,6 +33,7 @@ const {
   searchStateFromPhase,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
+  sqliteFillSettledMessage,
   isInFlightFillError,
   isIndexFillProgressPhase,
   shouldJoinDesktopFill,
@@ -93,6 +94,14 @@ assert.equal(
   "Ready · SQLite FTS5 BM25 (unchanged)",
 );
 assert.equal(sqliteFillReadyMessage(0, 100000), "Ready · SQLite FTS5 BM25");
+assert.equal(
+  sqliteFillSettledMessage("ready-fts-partial", 0, 100000),
+  "Ready · titles and open notes",
+);
+assert.equal(
+  sqliteFillSettledMessage("ready-fts", 0, 12),
+  "Ready · SQLite FTS5 BM25",
+);
 
 assert.equal(
   isInFlightFillError(new Error("index fill already running for this vault")),
@@ -274,6 +283,11 @@ assert.equal(
   "ready-fts-partial",
 );
 assert.equal(advanceSearchIndexState("ready-fts-partial", "done"), "ready-fts");
+assert.equal(
+  advanceSearchIndexState("ready-fts-partial", "done", "ready-fts-partial"),
+  "ready-fts-partial",
+  "a capped fill must not claim every note body is indexed",
+);
 assert.equal(advanceSearchIndexState("ready-fts", "meta"), "ready-fts");
 assert.equal(sqliteEngineShortLabel("ready-meta"), "SQLite FTS5 BM25 · titles");
 assert.equal(sqliteEngineShortLabel("ready-fts-partial"), "SQLite FTS5 BM25 · heads");

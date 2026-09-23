@@ -20,6 +20,7 @@ if (!process.env.NEXUS_TSX) {
 const {
   shouldDeferNoteBodyHydrate,
   shouldSkipDurableUpsertOnHydrate,
+  shouldIndexOpenedDesktopNote,
   shouldSkipBackgroundBodyHydrate,
   scheduleFillSafeHydrate,
 } = await import("../src/lib/vault/fill-interaction.ts");
@@ -60,6 +61,21 @@ assert.equal(
   }),
   true,
   "empty JS mirror (slimNotes=0) must not upsert every desktop open",
+);
+
+assert.equal(
+  shouldIndexOpenedDesktopNote({ fillBusy: true, indexKind: "sqlite" }),
+  false,
+  "an open during fill must not start a second SQLite writer",
+);
+assert.equal(
+  shouldIndexOpenedDesktopNote({ fillBusy: false, indexKind: "sqlite" }),
+  true,
+  "after fill, opening a note indexes that note",
+);
+assert.equal(
+  shouldIndexOpenedDesktopNote({ fillBusy: false, indexKind: "memory" }),
+  false,
 );
 
 assert.equal(

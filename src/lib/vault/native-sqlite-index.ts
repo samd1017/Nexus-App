@@ -461,6 +461,26 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     return { upserted, removed };
   }
 
+  upsertSearchBody(meta: DurableNoteMeta): void {
+    void this.invoke("vault_index_upsert", {
+      dbPath: this.dbPath,
+      note: {
+        id: meta.id,
+        path: meta.path,
+        name: meta.name,
+        kind: meta.kind,
+        parentId: meta.parentId,
+        mtime: meta.mtime,
+        size: meta.size ?? null,
+        contentHash: meta.contentHash ?? null,
+        title: meta.title ?? null,
+        bodySnippet: meta.bodySnippet ?? null,
+        tags: meta.tags ?? null,
+        linkTargets: meta.linkTargets ?? null,
+      },
+    }).catch(() => {});
+  }
+
   upsertNote(meta: DurableNoteMeta): void {
     this.mirror.upsertNote(meta);
     // After mirror preserve-body, read back what was stored

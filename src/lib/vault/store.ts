@@ -153,6 +153,7 @@ import {
   honestFillTotal,
   sqliteFillPhaseMessage,
   sqliteFillReadyMessage,
+  sqliteFillSettledMessage,
   isInFlightFillError,
   FILL_IN_PROGRESS_TOAST,
   shouldBlockDesktopOpen,
@@ -162,6 +163,7 @@ import { isNativeFillInFlight } from "./native-sqlite-index";
 import {
   shouldDeferNoteBodyHydrate,
   shouldSkipDurableUpsertOnHydrate,
+  shouldIndexOpenedDesktopNote,
 } from "./fill-interaction";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseEgoGraph, shouldUseFolderGraph } from "./scale-flags";
 import {
@@ -179,6 +181,7 @@ import {
   getDurableIndex,
   openDurableIndexForVault,
   upsertDurableNoteFromNode,
+  indexOpenedDesktopNote,
   syncDurableIndexFromNodes,
   removeDurableNote,
   rebuildDurableIndexFromNodesAsync,
@@ -946,6 +949,15 @@ export function vaultOpenLocked(): boolean {
 	return useVaultStore.getState().connecting || vaultFillBusy();
 }
 
+/** Notes already on screen get a SQLite deep head once fill has stopped. */
+function indexLoadedDesktopNotes(): void {
+	const idx = getDurableIndex();
+	if (idx?.kind !== "sqlite") return;
+	for (const n of Object.values(useVaultStore.getState().nodes)) {
+		if (n.kind === "note" && n.content !== undefined) indexOpenedDesktopNote(n);
+	}
+}
+
 function diskFillPriorityPaths(): string[] {
 	const st = useVaultStore.getState();
 	const out: string[] = [];
@@ -969,8 +981,8 @@ function diskFillPriorityPaths(): string[] {
 /**
  * After meta-only disk mount: seed titles/paths into SQLite and settle at
  * ready-meta after the first searchable batch (not a 100k empty-body
- * catalog), then fill short/deep heads in the background. Tree/editor are
- * already interactive — this must not gate vault-usable on full 100k FTS.
+ * catalog), then index note text for the open window. Tree/editor are
+ * already interactive — this must not gate vault-usable on a full-vault read.
  */
 async function completeDiskSearchIndex(opts?: {
 	forceRebuild?: boolean;
@@ -1066,7 +1078,11 @@ async function runCompleteDiskSearchIndex(opts?: {
 					// catalog count (often 1) must not become the denominator.
 					const reportedTotal = p.total > 0 ? p.total : 0;
 					const totalHint = honestFillTotal(p.scanned, reportedTotal);
-					const next = advanceSearchIndexState(getSearchIndexState(), p.phase);
+					const next = advanceSearchIndexState(
+						getSearchIndexState(),
+						p.phase,
+						p.searchState,
+					);
 					setSearchIndexState(next);
 					if (next === "ready-meta" || next === "ready-fts-partial" || next === "ready-fts") {
 						diskSearchReady = true;
@@ -1110,8 +1126,9 @@ async function runCompleteDiskSearchIndex(opts?: {
 							phase: "ready",
 							scanned: doneTotal,
 							totalHint: doneTotal > 1 ? doneTotal : null,
-							message: sqliteFillReadyMessage(p.skipped, doneTotal),
+							message: sqliteFillSettledMessage(p.searchState, p.skipped, doneTotal),
 						});
+						indexLoadedDesktopNotes();
 						return;
 					}
 					if (p.phase === "error") {
@@ -5040,13 +5057,17 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				// Desktop SQLite mirror is empty at 100k — slimNotes≈0 used to
 				// vault_index_upsert every click into the live fill writer.
 				const idx = getDurableIndex();
-				if (
-					!shouldSkipDurableUpsertOnHydrate({
-						fillBusy: vaultFillBusy(),
-						indexKind: idx?.kind,
-						slimNotes: idx?.stats().slimNotes ?? 0,
-					})
-				) {
+				const hydrateArgs = {
+					fillBusy: vaultFillBusy(),
+					indexKind: idx?.kind,
+					slimNotes: idx?.stats().slimNotes ?? 0,
+				};
+				if (shouldIndexOpenedDesktopNote(hydrateArgs)) {
+					indexOpenedDesktopNote({
+						...cur,
+						content
+					});
+				} else if (!shouldSkipDurableUpsertOnHydrate(hydrateArgs)) {
 					upsertDurableNoteFromNode({
 						...cur,
 						content

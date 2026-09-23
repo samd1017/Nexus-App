@@ -39,6 +39,7 @@ No client puts the whole vault into the renderer in order to paint a click, a sc
 ### Desktop must not
 
 - Copy `note_meta` or `link_edge` into the WebView on open.
+- Read every remaining note body after titles are searchable.
 - Require a Nexus account.
 - Upload the folder to a Nexus server.
 

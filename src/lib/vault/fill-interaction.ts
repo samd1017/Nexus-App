@@ -37,6 +37,17 @@ export function shouldSkipDurableUpsertOnHydrate(args: {
   return (args.slimNotes ?? 0) >= 400;
 }
 
+/**
+ * After the capped fill settles, opening a note writes that one deep head
+ * into SQLite. During fill the click must not start a second writer.
+ */
+export function shouldIndexOpenedDesktopNote(args: {
+  fillBusy: boolean;
+  indexKind?: string | null;
+}): boolean {
+  return args.fillBusy !== true && args.indexKind === "sqlite";
+}
+
 /** Hover / embed / mention extras — never pile onto fill I/O. */
 export function shouldSkipBackgroundBodyHydrate(args: {
   fillBusy: boolean;

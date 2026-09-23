@@ -334,6 +334,17 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
 
     if let Some(body) = body_update {
         crate::index_fill::replace_note_fts(conn, &note.id, &title, &note.path, &body)?;
+        // An opened note is the index for that file. Mark it deep so the
+        // next fill does not spend its window re-reading the same text.
+        if !body.is_empty() {
+            crate::index_fill::ensure_fill_depth_column(conn);
+            conn.execute(
+                "UPDATE note_meta SET fill_depth = ?1
+                 WHERE id = ?2 AND COALESCE(fill_depth, 0) < ?1",
+                params![crate::index_fill::FILL_DEPTH_DEEP, note.id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     } else {
         // Preserve existing body; refresh title/path only.
         let old_body: String = conn
@@ -954,11 +965,11 @@ fn fill_from_disk_job(
 }
 
 /// Walk the vault on disk in phases: title/path FTS seed (`ready-meta`),
-/// short heads, then deeper heads. Desktop does not write every empty-body
-/// FTS row before title search is live. Runs on the blocking pool so the
-/// WebView stays responsive. Emits `vault-index-progress` (`ready-meta` /
-/// `ready-fts-partial` / `done`). Incremental: skip unchanged
-/// path+mtime+size at the already-reached depth.
+/// then deep heads for a bounded open window. Desktop does not read every
+/// remaining note, and does not write every empty-body FTS row before title
+/// search is live. Runs on the blocking pool so the WebView stays responsive.
+/// Emits `vault-index-progress` (`ready-meta` / `ready-fts-partial` / `done`).
+/// Incremental: skip unchanged path+mtime+size at the already-reached depth.
 #[tauri::command]
 pub async fn vault_index_fill_from_disk(
     app: tauri::AppHandle,

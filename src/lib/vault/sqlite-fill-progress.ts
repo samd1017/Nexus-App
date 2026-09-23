@@ -72,7 +72,13 @@ export function searchStateFromPhase(phase: string): SearchIndexState {
 export function advanceSearchIndexState(
   prev: SearchIndexState,
   phase: string,
+  searchState?: string | null,
 ): SearchIndexState {
+  if (phase === "done" && searchState === "ready-fts-partial") {
+    if (prev === "error") return "error";
+    const next: SearchIndexState = "ready-fts-partial";
+    return STATE_RANK[next] >= STATE_RANK[prev] ? next : prev;
+  }
   const next = searchStateFromPhase(phase);
   if (next === "error") return "error";
   return STATE_RANK[next] >= STATE_RANK[prev] ? next : prev;
@@ -143,7 +149,7 @@ export function sqliteFillPhaseMessage(
     return `Workspace ready — search filling note heads…${tail}`;
   }
   if (p.phase === "fts") {
-    return `Workspace ready — indexing the rest of the notes…${tail}`;
+    return `Workspace ready — indexing open notes…${tail}`;
   }
   if (!counts) return "Workspace ready — indexing SQLite FTS5…";
   return `Workspace ready — indexing SQLite FTS5…${tail}`;
@@ -184,6 +190,16 @@ export function sqliteFillReadyMessage(skipped: number, notes: number): string {
     return "Ready · SQLite FTS5 BM25 (unchanged)";
   }
   return "Ready · SQLite FTS5 BM25";
+}
+
+/** Banner once the background fill has stopped. A large vault stays on titles plus the notes that were opened. */
+export function sqliteFillSettledMessage(
+  searchState: string | null | undefined,
+  skipped: number,
+  notes: number,
+): string {
+  if (searchState === "ready-fts-partial") return "Ready · titles and open notes";
+  return sqliteFillReadyMessage(skipped, notes);
 }
 
 /** Second fill invoke while one is healthy — join, do not paint a red banner. */

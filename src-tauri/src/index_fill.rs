@@ -3,11 +3,13 @@
 //! Cold open must not wait for a full body index before title search.
 //! Desktop commits title/path FTS rows as each directory batch lands and
 //! emits `ready-meta` when that walk's titles are in. `FillUntil::Partial`
-//! then reads short heads. `FillUntil::Deep` (the desktop path) reads each
-//! remaining note once, at the deep head: a bounded open-set slice emits
-//! `ready-fts-partial`, then the rest of the vault continues in yielded
-//! batches. `FillUntil::Meta` catalogs titles only. No Tauri imports — also
-//! compiled by `src-tauri/fill-test`.
+//! then reads short heads. `FillUntil::Deep` (the desktop path) reads note
+//! text only for a bounded window: the priority open set, or the first
+//! page of the walk when no priority was passed, never more than
+//! `EAGER_CONTENT_CAP` files. A later fill reads that same window again
+//! only where it is still shallow. Notes outside the window stay on their
+//! title until something opens them. `FillUntil::Meta` catalogs titles
+//! only. No Tauri imports — also compiled by `src-tauri/fill-test`.
 //!
 //! Mid-fill UI (tree / note open / graph) must stay interactive: small WAL
 //! write batches, at most four head readers, a yield after a real write,
@@ -57,13 +59,14 @@ pub const FILL_READ_WORKERS_MAX: usize = 4;
 pub const TITLE_FTS_SEED: usize = 2048;
 /// Short heads committed while the directory walk is still running.
 /// Root notes first, so the open page has tags before the vault is listed.
+/// Once this many notes already have a head, later opens do not peek further.
 pub const EARLY_HEAD_CAP: usize = 256;
 /// Path and title rows committed during the walk so the tree and title
 /// search grow before it finishes.
 const DISCOVER_BATCH: usize = 512;
-/// Deep fill commits this many priority-sorted heads, then emits
-/// `ready-fts-partial`, before the rest of the vault. The cap does not
-/// grow with the note count, so the open set does not wait on a 500k tail.
+/// Deep fill reads at most this many note bodies after titles. The window
+/// does not grow with the vault, and a later fill does not advance into
+/// the notes past it.
 pub const EAGER_CONTENT_CAP: usize = 512;
 /// Intra-phase banner ticks. Phase transitions still emit immediately.
 /// Scan-delta emits (256) re-rendered AppShell/graph at 10–20Hz on fast fills.
@@ -714,6 +717,18 @@ fn commit_early_heads(
     if room == 0 {
         return 0;
     }
+    let already: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM note_meta
+             WHERE kind='note' AND deleted=0 AND COALESCE(fill_depth, 0) >= ?1",
+            params![FILL_DEPTH_PARTIAL],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if already >= EARLY_HEAD_CAP as i64 {
+        return 0;
+    }
+    let room = room.min((EARLY_HEAD_CAP as i64 - already) as usize);
     let take = room.min(FTS_WRITE_BATCH);
     let selected: Vec<(String, String, String, Option<String>, i64, i64)> = {
         let mut stmt = match conn.prepare(
@@ -932,6 +947,27 @@ pub fn order_indices_for_fill(rels: &[String], prefixes: &[String]) -> Vec<usize
     }
     pri.extend(rest);
     pri
+}
+
+/// Stable body-read window for a deep fill. Priority paths when the caller
+/// passed some, otherwise walk order. Truncated before any "still shallow"
+/// filter, so a reopen does not slide forward through the rest of the vault.
+fn content_read_window(
+    file_count: usize,
+    prefixes: &[String],
+    files: &[DiskNote],
+    pri_rank: &HashMap<usize, usize>,
+) -> Vec<usize> {
+    let mut idxs: Vec<usize> = if prefixes.is_empty() {
+        (0..file_count).collect()
+    } else {
+        (0..file_count)
+            .filter(|i| is_priority_rel(&files[*i].rel, prefixes))
+            .collect()
+    };
+    idxs.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
+    idxs.truncate(EAGER_CONTENT_CAP);
+    idxs
 }
 
 fn worker_count(n: usize) -> usize {
@@ -1839,11 +1875,20 @@ pub fn fill_from_disk_with_opts(
         });
     }
 
-    // One content read per note. Priority paths first, then a cap that does
-    // not grow with the vault, then the tail. A file is not read at the
-    // short head and again at the deep head.
-    need_deep.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
-    let eager_n = need_deep.len().min(EAGER_CONTENT_CAP);
+    // Body reads stay inside a stable window. Priority notes when the
+    // caller named some, otherwise the start of the walk. The window is
+    // chosen before dropping notes that are already deep, so the next open
+    // does not continue into the rest of the vault. A file already at the
+    // deep head is not read again.
+    let window = content_read_window(files.len(), opts.priority_rels, &files, &pri_rank);
+    let window_set: HashSet<usize> = window.iter().copied().collect();
+    let mut eager: Vec<usize> = need_deep
+        .iter()
+        .copied()
+        .filter(|i| window_set.contains(i))
+        .collect();
+    eager.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
+    let eager_n = eager.len();
     emit(
         &mut progress,
         "fts-partial",
@@ -1858,7 +1903,7 @@ pub fn fill_from_disk_with_opts(
     index_note_heads(
         conn,
         &files,
-        &need_deep[..eager_n],
+        &eager,
         deep_head,
         FILL_DEPTH_DEEP,
         &mut is_cancelled,
@@ -1895,7 +1940,8 @@ pub fn fill_from_disk_with_opts(
         &mut written,
         &mut fresh_titles,
     );
-    let open_set_covers_vault = eager_n >= need_deep.len();
+    let open_set_covers_vault =
+        !is_cancelled() && need_deep.iter().all(|i| window_set.contains(i));
     emit(
         &mut progress,
         "ready-fts-partial",
@@ -1918,70 +1964,14 @@ pub fn fill_from_disk_with_opts(
         &mut on_progress,
     );
 
-    if !is_cancelled() && eager_n < need_deep.len() {
-        last_emit = Instant::now();
-        last_emitted_scanned = phase_scanned;
-        emit(
-            &mut progress,
-            "fts",
-            "ready-fts-partial",
-            phase_scanned,
-            indexed,
-            skipped,
-            errors,
-            Some("Indexing the rest of the notes…".into()),
-            &mut on_progress,
-        );
-        index_note_heads(
-            conn,
-            &files,
-            &need_deep[eager_n..],
-            deep_head,
-            FILL_DEPTH_DEEP,
-            &mut is_cancelled,
-            &mut batch,
-            &mut indexed,
-            &mut errors,
-            &mut written,
-            &mut fresh_titles,
-            &mut headed_rows,
-            |n, indexed_now, errors_now| {
-                phase_scanned += n;
-                if should_emit_progress(last_emit, last_emitted_scanned, phase_scanned) {
-                    emit(
-                        &mut progress,
-                        "fts",
-                        "ready-fts-partial",
-                        phase_scanned,
-                        indexed_now,
-                        skipped,
-                        errors_now,
-                        None,
-                        &mut on_progress,
-                    );
-                    last_emit = Instant::now();
-                    last_emitted_scanned = phase_scanned;
-                }
-            },
-        );
-        flush_note_batch(
-            conn,
-            &mut batch,
-            &mut indexed,
-            &mut errors,
-            &mut written,
-            &mut fresh_titles,
-        );
-    }
-
     crate::shell_catalog::mark_catalog_walk_done(conn);
     // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
-    let search_state = if is_cancelled() {
-        "ready-fts-partial"
-    } else {
+    let search_state = if open_set_covers_vault {
         "ready-fts"
+    } else {
+        "ready-fts-partial"
     };
     let edges = finalize_link_edges(conn, skipped, indexed, true, &mut progress);
     let result = IndexFillResult {
@@ -2006,8 +1996,10 @@ pub fn fill_from_disk_with_opts(
         errors,
         Some(if is_cancelled() {
             "Index fill cancelled".into()
-        } else {
+        } else if open_set_covers_vault {
             "SQLite FTS5 BM25 ready".into()
+        } else {
+            "Titles and open notes are searchable".into()
         }),
         &mut on_progress,
     );
@@ -2538,16 +2530,35 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
+    fn shallow_note_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND COALESCE(fill_depth, 0) < ?1",
+            params![FILL_DEPTH_DEEP],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn deep_row_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND fill_depth=?1",
+            params![FILL_DEPTH_DEEP],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn deep_open_set_is_searchable_before_the_tail() {
+    fn deep_fill_indexes_the_open_window_and_stops() {
         let (vault, db) = temp_pair("eager");
         let n = EAGER_CONTENT_CAP + 20;
         for i in 0..n {
-            write_note(
-                &vault,
-                &format!("eager/n{i:04}.md"),
-                "cluster token in the open set\n",
-            );
+            let body = if i < EAGER_CONTENT_CAP {
+                "cluster token in the open set\n".to_string()
+            } else {
+                format!("beyondwindowtoken {i}\n")
+            };
+            write_note(&vault, &format!("eager/n{i:04}.md"), &body);
         }
         let mut late = String::from("headtokenzz\n");
         late.push_str(&"x".repeat(900));
@@ -2555,6 +2566,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         write_note(&vault, "tail/late.md", &late);
 
         let mut conn = open_test_conn(&db);
+        let mut saw_fts_tail = false;
         let mut at_open_set = false;
         let result = fill_from_disk_with_opts(
             &mut conn,
@@ -2569,20 +2581,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             },
             || false,
             |p| {
+                if p.phase == "fts" {
+                    saw_fts_tail = true;
+                }
                 if p.phase == "ready-fts-partial" && !at_open_set {
                     at_open_set = true;
                     assert!(
                         fts_has_at(&db, "cluster"),
-                        "the open-set slice must be searchable when heads are announced"
+                        "the open window must be searchable when heads are announced"
                     );
                     assert!(
-                        !fts_has_at(&db, "headtokenzz"),
-                        "a note past the open-set cap must still be unread"
+                        !fts_has_at(&db, "deeptokenzz"),
+                        "a note outside the window must still be unread"
                     );
-                    assert!(!fts_has_at(&db, "deeptokenzz"));
                     assert!(
-                        p.scanned < (n as i64) + 1,
-                        "ready-fts-partial scanned {} must not already be the whole vault",
+                        p.scanned <= EAGER_CONTENT_CAP as i64,
+                        "ready-fts-partial scanned {} must stay inside the cap",
                         p.scanned
                     );
                 }
@@ -2590,27 +2604,40 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         )
         .unwrap();
 
-        assert!(at_open_set, "deep fill must announce the open set before the tail");
-        assert_eq!(result.search_state, "ready-fts");
+        assert!(at_open_set, "deep fill must announce the open window");
+        assert!(!saw_fts_tail, "deep fill must not start a vault-sized tail phase");
+        assert_eq!(result.search_state, "ready-fts-partial");
         assert_eq!(result.notes, (n as i64) + 1);
-        assert!(fts_has(&conn, "headtokenzz"));
+        assert!(fts_has(&conn, "cluster"));
         assert!(
-            fts_has(&conn, "deeptokenzz"),
-            "the tail is indexed at the deep head, not left at a short head"
+            !fts_has(&conn, "deeptokenzz"),
+            "a note outside the priority window is not body-indexed"
         );
-        assert_eq!(fill_depth_of(&conn, "tail/late.md"), FILL_DEPTH_DEEP);
-        let deep_rows: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND fill_depth=?1",
-                params![FILL_DEPTH_DEEP],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(deep_rows, result.notes, "every note is deep after one pass");
+        assert_ne!(fill_depth_of(&conn, "tail/late.md"), FILL_DEPTH_DEEP);
+        assert_eq!(
+            deep_row_count(&conn),
+            EAGER_CONTENT_CAP as i64,
+            "body reads stop at the cap"
+        );
+        assert_eq!(shallow_note_count(&conn), 21, "the cap leaves the rest shallow");
 
         let (again, _) = fill_until(&mut conn, &vault, false, FillUntil::Deep, &["eager".into()]);
-        assert_eq!(again.indexed, 0);
-        assert_eq!(again.skipped, result.notes);
+        assert_eq!(again.indexed, 0, "a reopen must not advance into the rest");
+        assert_eq!(again.search_state, "ready-fts-partial");
+        assert_eq!(deep_row_count(&conn), EAGER_CONTENT_CAP as i64);
+        assert!(!fts_has(&conn, "deeptokenzz"));
+
+        let (opened, _) = fill_until(
+            &mut conn,
+            &vault,
+            false,
+            FillUntil::Deep,
+            &["tail/late.md".into()],
+        );
+        assert_eq!(opened.indexed, 1, "opening that note indexes that note");
+        assert!(fts_has(&conn, "deeptokenzz"));
+        assert_eq!(shallow_note_count(&conn), 20, "opening one note does not walk the rest");
+        assert_eq!(deep_row_count(&conn), (EAGER_CONTENT_CAP as i64) + 1);
 
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
