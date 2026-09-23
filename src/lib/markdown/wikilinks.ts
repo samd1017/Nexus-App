@@ -123,8 +123,8 @@ export function wikilinkContext(markdown: string, start: number, end: number, ra
   const from = Math.max(0, start - radius);
   const to = Math.min(markdown.length, end + radius);
   let s = markdown.slice(from, to).replace(/\s+/g, " ").trim();
-  if (from > 0) s = "\u2026" + s;
-  if (to < markdown.length) s = s + "\u2026";
+  if (from > 0) s = "…" + s;
+  if (to < markdown.length) s = s + "…";
   return s;
 }
 
@@ -140,16 +140,16 @@ export function presentLinkContext(raw: string): string {
   );
   // A snippet window can slice a wikilink in half. Drop the dangling half.
   s = s.replace(/!?\[\[[^\]]*$/g, "");
-  s = s.replace(/^\u2026?\[[^\]]*\]\]\s*/g, "\u2026");
+  s = s.replace(/^…?\[[^\]]*\]\]\s*/g, "…");
   s = s.replace(/^[^[]*\]\]\s*/g, "");
   s = s.replace(/#{1,6}\s+/g, "");
   s = s.replace(/>\s*\[![A-Za-z]+\]\s*/g, "");
   s = s.replace(/(^|\s)>\s+/g, "$1");
-  s = s.replace(/\s+[-\u2013]\s+/g, " \u00b7 ");
+  s = s.replace(/\s+[–-]\s+/g, " · ");
   s = s.replace(/\*\*|__|~~|`/g, "");
   s = s.replace(/(^|\s)[*_](.+?)[*_](?=\s|$)/g, "$1$2");
-  s = s.replace(/\s*\|\s*/g, " \u00b7 ");
-  s = s.replace(/(^|[\u00b7\s])[-+]\s+/g, "$1");
-  s = s.replace(/\s+/g, " ").replace(/\s*\u00b7\s*\u00b7\s*/g, " \u00b7 ").trim();
-  return s.replace(/^[\u00b7\s]+|[\u00b7\s]+$/g, "");
+  s = s.replace(/\s*\|\s*/g, " · ");
+  s = s.replace(/(^|[·\s])[-+]\s+/g, "$1");
+  s = s.replace(/\s+/g, " ").replace(/\s*·\s*·\s*/g, " · ").trim();
+  return s.replace(/^[·\s]+|[·\s]+$/g, "");
 }
