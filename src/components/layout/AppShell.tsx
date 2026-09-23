@@ -354,13 +354,16 @@ export function AppShell() {
 
     if (mode === "fsa" && getFsaRoot()) {
       const dir = getFsaRoot()!;
-      let notes = 0;
-      try {
-        notes = ensureVaultIndex(useVaultStore.getState().nodes).noteCount;
-      } catch {
-        /* ignore */
+      const shellNow = useVaultStore.getState();
+      let notes = shellNow.shellCatalog ? shellNow.catalogNoteCount : 0;
+      if (!shellNow.shellCatalog) {
+        try {
+          notes = ensureVaultIndex(shellNow.nodes).noteCount;
+        } catch {
+          /* ignore */
+        }
       }
-      if (notes >= CHROME_FSA_WATCH_MAX) {
+      if (shellNow.shellCatalog || notes >= CHROME_FSA_WATCH_MAX) {
         // Signature poll + FileSystemObserver re-walked 20k–100k files and
         // discarded Chrome while opening notes 8–12.
         setWatcherAck(null);

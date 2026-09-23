@@ -14,6 +14,32 @@ export const SHELL_FULL_MAX_NOTES = 399;
 /** Must match Rust `SHELL_CHILD_PAGE`. */
 export const SHELL_CHILD_PAGE = 200;
 export const SHELL_ROOT_KEY = "__root__";
+/** Local-web catalog. Not a SQLite file. */
+export const BROWSER_SHELL_DB = "browser";
+
+export type BrowserShellApi = {
+  children: (parentPath: string, offset: number, limit: number) => Promise<ShellPage>;
+  level: (parentPath: string, maxNodes: number) => Promise<ShellLevel>;
+  ego: (centerId: string, hops: number, maxNodes: number) => Promise<ShellEgo>;
+  note: (id: string) => Promise<ShellRow | null>;
+  backlinks: (id: string, limit: number) => Promise<ShellBacklinkPage>;
+  tags: (limit: number) => Promise<ShellTagCount[]>;
+  tagNotes: (tag: string, limit: number) => Promise<ShellRow[]>;
+  suggest: (query: string, limit: number) => Promise<ShellSuggestHit[]>;
+  recent: (limit: number) => Promise<ShellRow[]>;
+  forget: (paths: string[]) => Promise<ShellForget>;
+};
+
+let browserShellApi: BrowserShellApi | null = null;
+
+export function registerBrowserShell(api: BrowserShellApi | null): void {
+  browserShellApi = api;
+}
+
+function browserApi(dbPath: string): BrowserShellApi | null {
+  if (dbPath !== BROWSER_SHELL_DB) return null;
+  return browserShellApi;
+}
 
 export type ShellRow = {
   id: string;
@@ -351,6 +377,8 @@ export async function fetchShellChildren(
   offset: number,
   limit = SHELL_CHILD_PAGE,
 ): Promise<ShellPage | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.children(parentPath, offset, limit);
   if (!dbPath) return null;
   const call = await callShell<Record<string, unknown>>("vault_shell_children", {
     dbPath,
@@ -375,6 +403,8 @@ export async function fetchShellLevel(
   parentPath: string,
   maxNodes = 320,
 ): Promise<ShellLevel | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.level(parentPath, maxNodes);
   if (!dbPath) return null;
   const call = await callShell<Record<string, unknown>>("vault_shell_level", {
     dbPath,
@@ -398,6 +428,8 @@ export async function fetchShellEgo(
   hops = 2,
   maxNodes = 400,
 ): Promise<ShellEgo | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.ego(centerId, hops, maxNodes);
   if (!dbPath || !centerId) return null;
   const call = await callShell<Record<string, unknown>>("vault_shell_ego", {
     dbPath,
@@ -420,6 +452,8 @@ export async function fetchShellEgo(
 }
 
 export async function fetchShellNote(dbPath: string, id: string): Promise<ShellRow | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.note(id);
   if (!dbPath || !id) return null;
   const call = await callShell<Record<string, unknown> | null>("vault_shell_note", { dbPath, id });
   if (!call.ok || !call.value || typeof call.value !== "object") return null;
@@ -443,6 +477,8 @@ export async function fetchShellBacklinks(
   id: string,
   limit = 80,
 ): Promise<ShellBacklinkPage | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.backlinks(id, limit);
   if (!dbPath || !id) return null;
   const call = await callShell<Record<string, unknown>>("vault_shell_backlinks", {
     dbPath,
@@ -468,6 +504,8 @@ export async function fetchShellBacklinks(
 export type ShellTagCount = { tag: string; count: number };
 
 export async function fetchShellTags(dbPath: string, limit = 48): Promise<ShellTagCount[] | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.tags(limit);
   if (!dbPath) return null;
   const call = await callShell<unknown[]>("vault_shell_tags", { dbPath, limit });
   if (!call.ok || !Array.isArray(call.value)) return null;
@@ -482,6 +520,8 @@ export async function fetchShellTagNotes(
   tag: string,
   limit = 80,
 ): Promise<ShellRow[] | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.tagNotes(tag, limit);
   if (!dbPath || !tag) return null;
   const call = await callShell<unknown[]>("vault_shell_tag_notes", { dbPath, tag, limit });
   if (!call.ok || !Array.isArray(call.value)) return null;
@@ -503,6 +543,8 @@ export async function fetchShellSuggest(
   query: string,
   limit = 40,
 ): Promise<ShellSuggestHit[] | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.suggest(query, limit);
   if (!dbPath) return null;
   const call = await callShell<unknown[]>("vault_shell_suggest", { dbPath, query, limit });
   if (!call.ok || !Array.isArray(call.value)) return null;
@@ -521,6 +563,8 @@ export async function fetchShellSuggest(
 }
 
 export async function fetchShellRecent(dbPath: string, limit = 12): Promise<ShellRow[] | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.recent(limit);
   if (!dbPath) return null;
   const call = await callShell<unknown[]>("vault_shell_recent", { dbPath, limit });
   if (!call.ok || !Array.isArray(call.value)) return null;
@@ -534,6 +578,8 @@ export async function fetchShellForget(
   vaultRoot: string,
   paths: string[],
 ): Promise<ShellForget | null> {
+  const browser = browserApi(dbPath);
+  if (browser) return browser.forget(paths);
   if (!dbPath || !vaultRoot || !paths.length) return null;
   const call = await callShell<Record<string, unknown>>("vault_shell_forget", {
     dbPath,

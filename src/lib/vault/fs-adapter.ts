@@ -178,7 +178,7 @@ type WalkCollectOpts = {
   skipGetFileAfter?: number;
 };
 
-async function walkCollect(
+export async function walkCollect(
   root: FileSystemDirectoryHandle,
   onFile: (
     path: string,
@@ -187,7 +187,7 @@ async function walkCollect(
     file: File | null,
     handle: FileSystemFileHandle,
   ) => Promise<void>,
-  onDir: (path: string, name: string, parentPath: string) => void,
+  onDir: (path: string, name: string, parentPath: string) => void | Promise<void>,
   opts?: WalkCollectOpts,
 ) {
   let notes = 0;
@@ -197,7 +197,7 @@ async function walkCollect(
       if (handle.kind === "directory") {
         if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
         const path = relPath ? pathJoin(relPath, name) : name;
-        onDir(path, name, relPath);
+        await onDir(path, name, relPath);
         await walk(handle as FileSystemDirectoryHandle, path);
       } else if (
         handle.kind === "file" &&

@@ -75,4 +75,4 @@ These are real gaps. They are why a large vault is not yet the same product as a
 - Backlink rows are capped. The count is the reverse-index total for that note. Snippets are not loaded for every source.
 - Unlinked mentions, broken links, orphans, pinned notes, and `path:` / `folder:` palette filters still read the window.
 - Adding folder rows to an older note-only index streams paths inside the native process once.
-- The browser folder path is unchanged and still refuses far below this budget.
+- The browser now pages a granted folder through a disposable local catalog, and still refuses above its cap. What that client still lacks is listed in [VAULT-CONTRACT.md](./VAULT-CONTRACT.md).

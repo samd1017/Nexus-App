@@ -2,7 +2,7 @@
 
 **Goal:** Comfortably handle **300k–500k** notes on Desktop (plain-folder markdown), with headroom beyond. Web = demo/QA only. Mobile later via shared DurableIndex schema.
 
-The interactive shell does not hold the catalog. See [SHELL-CATALOG.md](./SHELL-CATALOG.md). A large desktop vault keeps a window of notes in the renderer and asks SQLite for the next page, map level, or neighborhood. The metadata RAM budget below is the old in-memory mirror, not the shell path.
+The interactive shell does not hold the catalog. See [SHELL-CATALOG.md](./SHELL-CATALOG.md) and [VAULT-CONTRACT.md](./VAULT-CONTRACT.md). A large desktop vault keeps a window of notes in the renderer and asks SQLite for the next page. A large browser folder uses the same window and still refuses above the Chrome cap. The metadata RAM budget below is the old in-memory mirror, not the shell path.
 
 ## Scale continuum (product law)
 

@@ -41,7 +41,6 @@ import {
   renamePathOnDisk,
   saveDirectoryHandle,
   scanVault,
-  scanVaultMeta,
   writeNoteFile,
   readNoteFile,
   readNoteFileHead,
@@ -165,7 +164,6 @@ import {
 } from "./fill-interaction";
 import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseEgoGraph, shouldUseFolderGraph } from "./scale-flags";
 import {
-  CHROME_FSA_GETFILE_MAX,
   CHROME_FSA_NOTE_CAP,
   allowForcedLargeFsa,
   chromeFsaLimitKind,
@@ -226,7 +224,9 @@ import {
   getOpenProgress,
   isIndexFillInFlight,
 } from "./native-index";
+import { closeBrowserShell, mountBrowserShell } from "./browser-shell";
 import {
+  BROWSER_SHELL_DB,
   SHELL_CATALOG_OFF,
   SHELL_CHILD_PAGE,
   SHELL_ROOT_KEY,
@@ -549,6 +549,7 @@ async function resyncFromDiskAfterError() {
 			const { scan } = await loadDiskVaultScan("desktop");
 			useVaultStore.getState().applyExternalSnapshot(scan.nodes, scan.rootIds);
 		} else if (fsaRoot) {
+			if (useVaultStore.getState().shellCatalog) return;
 			const { scan } = await loadDiskVaultScan("fsa");
 			useVaultStore.getState().applyExternalSnapshot(scan.nodes, scan.rootIds);
 		}
@@ -1374,23 +1375,36 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 			};
 		}
 		if (!fsaRoot) throw new Error("No FSA vault root");
-		const scan = metaOnly
-			? await scanVaultMeta(fsaRoot, onProgress, {
-					maxNotes: allowForcedLargeFsa() ? undefined : CHROME_FSA_NOTE_CAP,
-					skipGetFileAfter: CHROME_FSA_GETFILE_MAX,
-				})
-			: await scanVault(fsaRoot);
-		const n = Object.keys(scan.nodes).length;
+		if (!metaOnly) {
+			const scan = await scanVault(fsaRoot);
+			const n = Object.keys(scan.nodes).length;
+			setOpenProgress({
+				phase: "indexing",
+				scanned: n,
+				totalHint: n,
+				message: "Metadata ready — indexing search from files…",
+			});
+			return { scan, metaOnly: false, shell: null };
+		}
+		const shell = await mountBrowserShell(fsaRoot, opts?.preferPath ?? null, onProgress);
+		const built = nodesFromShellRows(shell.rows);
+		const shown = shell.materialize ? shell.notes : shell.rows.length;
 		setOpenProgress({
 			phase: "indexing",
-			scanned: n,
-			totalHint: n,
-			message: "Metadata ready — indexing search from files…",
+			scanned: shown,
+			totalHint: shell.notes || shown,
+			message: shell.materialize
+				? "Metadata ready — indexing search from files…"
+				: "Catalog ready — opening a window of the folder…",
 		});
 		return {
-			scan,
-			metaOnly,
-			shell: null,
+			scan: {
+				nodes: built.nodes,
+				rootIds: shell.rootIds.length ? shell.rootIds : built.rootIds,
+				signatures: {},
+			},
+			metaOnly: true,
+			shell,
 		};
 	} catch (e) {
 		setOpenProgress({
@@ -1451,6 +1465,7 @@ function applyChromeFsaGuardFromCount(
 	};
 	if (kind === "refuse" && !allowForcedLargeFsa()) {
 		fsaRoot = null;
+		void closeBrowserShell();
 		void clearDirectoryHandle();
 		useVaultStore.setState({
 			connecting: false,
@@ -1977,10 +1992,18 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					fsaRoot = saved.handle;
 					set({ connecting: true });
 					try {
-						const { scan, metaOnly } = await loadDiskVaultScan("fsa");
-						if (applyChromeFsaGuard(scan, saved.meta.name) === "refused") return;
 						const lastPath = get().settings.lastNotePath;
-						const active = lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id || Object.values(scan.nodes).find((n) => n.kind === "note")?.id || null;
+						const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
+							preferPath: lastPath,
+						});
+						const noteCount = shell?.notes || countVaultNotes(scan.nodes);
+						if (applyChromeFsaGuardFromCount(noteCount, saved.meta.name) === "refused") return;
+						const shellSession = shellSessionFromMount(shell, noteCount);
+						const active =
+							(shell?.activeNoteId && scan.nodes[shell.activeNoteId]?.id) ||
+							(lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id) ||
+							Object.values(scan.nodes).find((n) => n.kind === "note")?.id ||
+							null;
 						const recents2 = pushRecent({
 							id: saved.meta.id,
 							name: saved.meta.name,
@@ -2002,9 +2025,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 							dirtyNoteIds: [],
 							chromeFsaLimit: get().chromeFsaLimit,
 							...GRAPH_SCOPE_DEFAULTS,
+							...shellSession,
 							settings: {
 								...get().settings,
-								...fsaChromeScaleSettings(countVaultNotes(scan.nodes)),
+								...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
 							},
 						});
 						syncActiveBackend("fsa");
@@ -2593,6 +2617,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		cancelVaultModuleState();
 		clearBodyArchive();
 		invalidateVaultTagsCache();
+		void closeBrowserShell();
 		fsaRoot = null;
 		desktopRoot = null;
 		setDesktopVaultRoot(null);
@@ -2679,9 +2704,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				id: vaultId,
 				name: handle.name
 			});
-			const { scan, metaOnly } = await loadDiskVaultScan("fsa");
-			if (applyChromeFsaGuard(scan, handle.name) === "refused") return;
-			const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+			const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
+				preferPath: get().settings.lastNotePath,
+			});
+			const noteCount = shell?.notes || countVaultNotes(scan.nodes);
+			if (applyChromeFsaGuardFromCount(noteCount, handle.name) === "refused") return;
+			const shellSession = shellSessionFromMount(shell, noteCount);
+			const first =
+				(shell?.activeNoteId && scan.nodes[shell.activeNoteId]) ||
+				Object.values(scan.nodes).find((n) => n.kind === "note");
 			const recents = pushRecent({
 				id: vaultId,
 				name: handle.name,
@@ -2689,7 +2720,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				lastOpened: Date.now(),
 				mode: "fsa"
 			});
-			const fsaNotes = countVaultNotes(scan.nodes);
 			set({
 				vaultId,
 				vaultName: handle.name,
@@ -2705,13 +2735,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				toast: `Opened vault: ${handle.name}`,
 				chromeFsaLimit: get().chromeFsaLimit,
 				...GRAPH_SCOPE_DEFAULTS,
+				...shellSession,
 				settings: {
 					...get().settings,
 					lastNotePath: first?.path ?? null,
 					editorMode: getPrefs().defaultEditorMode,
 					graphMode: getPrefs().defaultGraphView,
 					rightOpen: getPrefs().defaultGraphView === "panel",
-					...fsaChromeScaleSettings(fsaNotes),
+					...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
 				}
 			});
 			syncActiveBackend("fsa");
@@ -2956,9 +2987,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				id: vaultId,
 				name: handle.name
 			});
-			const { scan, metaOnly } = await loadDiskVaultScan("fsa");
-			if (applyChromeFsaGuard(scan, handle.name) === "refused") return;
-			const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+			const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
+				preferPath: get().settings.lastNotePath,
+			});
+			const noteCount = shell?.notes || countVaultNotes(scan.nodes);
+			if (applyChromeFsaGuardFromCount(noteCount, handle.name) === "refused") return;
+			const shellSession = shellSessionFromMount(shell, noteCount);
+			const first =
+				(shell?.activeNoteId && scan.nodes[shell.activeNoteId]) ||
+				Object.values(scan.nodes).find((n) => n.kind === "note");
 			const recents = pushRecent({
 				id: vaultId,
 				name: handle.name,
@@ -2966,7 +3003,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				lastOpened: Date.now(),
 				mode: "fsa"
 			});
-			const fsaNotes = countVaultNotes(scan.nodes);
 			set({
 				vaultId,
 				vaultName: handle.name,
@@ -2982,9 +3018,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				toast: `Reopened vault: ${handle.name}`,
 				chromeFsaLimit: get().chromeFsaLimit,
 				...GRAPH_SCOPE_DEFAULTS,
+				...shellSession,
 				settings: {
 					...get().settings,
-					...fsaChromeScaleSettings(fsaNotes),
+					...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
 				},
 			});
 			syncActiveBackend("fsa");
@@ -3347,8 +3384,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const root = desktopRoot;
 		void (async () => {
 			let goneIds: string[] = [];
-			if (db && root) {
-				const forgotten = await fetchShellForget(db, root, paths);
+			if (db === BROWSER_SHELL_DB || (db && root)) {
+				const forgotten = await fetchShellForget(db, root || db, paths);
 				if (forgotten && get().shellDbPath === db) {
 					goneIds = forgotten.ids.slice();
 					for (const rel of forgotten.paths) {

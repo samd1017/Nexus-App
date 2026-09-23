@@ -25,6 +25,13 @@ import {
   shellSessionFromMount,
 } from "./src/lib/vault/shell-catalog.ts";
 import { graphFromShellLevel } from "./src/lib/graph/shell-graph.ts";
+import {
+  browserRecord,
+  pageChildRows,
+  pageRecentRows,
+  pageSuggestRows,
+  windowNoteCount,
+} from "./src/lib/vault/browser-shell.ts";
 
 assert.equal(SHELL_FULL_MAX_NOTES, 399);
 assert.equal(SHELL_CHILD_PAGE, 200);
@@ -128,6 +135,30 @@ assert.equal(isShellBusyMessage("database is locked"), true);
 assert.equal(isShellBusyMessage("no such table"), false);
 assert.ok(shellBusyDelayMs(0) > 0);
 assert.ok(shellBusyDelayMs(2) > shellBusyDelayMs(0));
+
+for (const size of [200, 1000, 5000]) {
+  const pile = browserRecord("Pile", "Pile", "folder", 1);
+  const notes = Array.from({ length: size }, (_, i) =>
+    browserRecord("Pile/n" + String(i).padStart(4, "0") + ".md", "n" + i + ".md", "note", i + 1),
+  );
+  const page = pageChildRows([pile, ...notes], "Pile", 0, SHELL_CHILD_PAGE);
+  assert.ok(page.rows.length <= SHELL_CHILD_PAGE);
+  assert.equal(page.noteTotal, size);
+  assert.equal(windowNoteCount(page.rows), Math.min(size, SHELL_CHILD_PAGE));
+  assert.ok(windowNoteCount(page.rows) < size || size <= SHELL_CHILD_PAGE);
+}
+const recent = pageRecentRows(
+  [1, 9, 3].map((mtime, i) => browserRecord("r" + i + ".md", "r" + i + ".md", "note", mtime)),
+  2,
+);
+assert.equal(recent[0].mtime, 9);
+const suggested = pageSuggestRows(
+  ["Alpha.md", "Alpine.md", "Beta.md"].map((name) => browserRecord(name, name, "note", 1)),
+  "al",
+  40,
+);
+assert.equal(suggested.length, 2);
+assert.ok(suggested.every((row) => row.path !== "Beta.md"));
 console.log("shell-catalog: PASS");
 `,
   ],

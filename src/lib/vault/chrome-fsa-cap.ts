@@ -4,6 +4,8 @@
  * opening notes then discards the tab (seen at 8–12 notes on 15GB boxes).
  *
  * Desktop / Tauri is the large-vault path. Chrome FSA is for ≤20k.
+ * Above 400 notes the tab keeps a window and a disposable local catalog.
+ * The cap still refuses the folder. It does not become a 500k browser.
  * Copy is written for someone leaving Obsidian — no soft-pedal.
  */
 
