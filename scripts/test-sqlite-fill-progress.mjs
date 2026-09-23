@@ -222,7 +222,7 @@ assert.equal(
 );
 assert.match(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: true }),
-  /current search index/,
+  /No notes match/,
 );
 
 {
