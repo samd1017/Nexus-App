@@ -50,11 +50,17 @@ export function pinFolderLayout<T extends { kind?: string }>(
 ): Array<T & { x: number; y: number; z: number; fx: number; fy: number; fz: number }> {
   const n = Math.max(nodes.length, 1);
   const radius = Math.max(36, 16 + n * 2.4);
+  // A tilted orbit, not a flat coin. Near nodes sit in front of far ones.
+  const inclination = 0.48;
   return nodes.map((node, i) => {
     const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-    const y = node.kind === "folder" ? 12 : node.kind === "aggregate" ? 0 : -10;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
+    const lane = (i % 5) / 4;
+    const rad = radius * (0.78 + lane * 0.38);
+    const x = Math.cos(angle) * rad;
+    const zFlat = Math.sin(angle) * rad;
+    const kindLift = node.kind === "folder" ? 10 : node.kind === "aggregate" ? -2 : -12;
+    const y = zFlat * Math.sin(inclination) * 0.42 + kindLift;
+    const z = zFlat * Math.cos(inclination);
     return { ...node, x, y, z, fx: x, fy: y, fz: z };
   });
 }

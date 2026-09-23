@@ -324,9 +324,52 @@ function paintGalaxyTexture(full: boolean): THREE.CanvasTexture {
 }
 
 /**
- * Single sky sphere — fine galaxy field, slow drift.
- * Dual shells doubled noise and made stars look chunky.
+ * Stars as real points at three distances, in front of a dim galaxy shell.
+ * Orbiting the map moves the near shell more than the far one.
  */
+function starShell(
+  count: number,
+  radius: number,
+  thickness: number,
+  size: number,
+  opacity: number,
+): THREE.Points {
+  const pos = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = radius + (Math.random() - 0.5) * thickness;
+    const th = Math.random() * Math.PI * 2;
+    const ph = Math.acos(2 * Math.random() - 1);
+    pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+    pos[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th) * 0.72;
+    pos[i * 3 + 2] = r * Math.cos(ph);
+    const roll = Math.random();
+    const mag = 0.55 + Math.random() * 0.45;
+    const blue = roll > 0.88;
+    col[i * 3] = mag * (blue ? 0.72 : 0.9);
+    col[i * 3 + 1] = mag * (blue ? 0.84 : 0.93);
+    col[i * 3 + 2] = mag;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const pts = new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      size,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      fog: false,
+    }),
+  );
+  pts.frustumCulled = false;
+  pts.renderOrder = -20;
+  return pts;
+}
+
 function buildSpaceBackdrop(
   scene: THREE.Scene,
   mode: "panel" | "fullscreen",
@@ -337,7 +380,7 @@ function buildSpaceBackdrop(
 
   const tex = paintGalaxyTexture(full);
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(full ? 3000 : 2400, 64, 40),
+    new THREE.SphereGeometry(full ? 4200 : 3400, 64, 40),
     new THREE.MeshBasicMaterial({
       map: tex,
       side: THREE.BackSide,
@@ -350,7 +393,16 @@ function buildSpaceBackdrop(
   sky.renderOrder = -50;
   sky.frustumCulled = false;
   root.add(sky);
-  layers.push({ obj: sky, speed: 0.0009 });
+  layers.push({ obj: sky, speed: 0.00035 });
+
+  // Outside the largest folder ring (radius grows with the page, up to ~800).
+  const near = starShell(full ? 420 : 260, 1280, 220, full ? 7.5 : 6.2, 0.9);
+  const mid = starShell(full ? 700 : 420, 1900, 280, full ? 5.2 : 4.4, 0.72);
+  const far = starShell(full ? 900 : 520, 2700, 360, full ? 3.4 : 2.8, 0.55);
+  root.add(near, mid, far);
+  layers.push({ obj: near, speed: 0.008 });
+  layers.push({ obj: mid, speed: 0.0032 });
+  layers.push({ obj: far, speed: 0.0011 });
 
   scene.add(root);
   scene.fog = null;
@@ -1503,6 +1555,12 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
 
     guardOrbitPointer(graph);
     applyEdgeStyles(graph);
+    // Oblique view so the orbit reads as depth. zoomToFit keeps this direction.
+    try {
+      graph.cameraPosition({ x: 95, y: 72, z: 168 }, { x: 0, y: 0, z: 0 }, 0);
+    } catch {
+      /* ok */
+    }
 
     let envMap: THREE.Texture | null = null;
     try {
