@@ -798,7 +798,14 @@ export const FileTree = memo(function FileTree() {
           }
           useVaultStore.getState().toggleFolder(s.id);
         } else if (node.kind === "note") {
-          useVaultStore.getState().setActiveNote(s.id);
+          // Alt-click (or Cmd-Shift-click) parks the note in the second pane.
+          // The row's click handler says the same thing, but pointerup owns
+          // the open and used to ignore those modifiers.
+          if (e.altKey || (e.metaKey && e.shiftKey)) {
+            useVaultStore.getState().openNoteInPane?.("secondary", s.id);
+          } else {
+            useVaultStore.getState().setActiveNote(s.id);
+          }
         }
         return;
       }
