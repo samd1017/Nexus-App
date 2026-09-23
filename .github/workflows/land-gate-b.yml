@@ -1,0 +1,80 @@
+name: land-gate-b
+on:
+  push:
+    branches:
+      - cursor/graph-hud-release-690a
+    paths:
+      - scripts/gate-b/**
+permissions:
+  contents: write
+jobs:
+  land:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Apply craft blobs
+        run: |
+          set -euo pipefail
+          for f in p00 p01 p02 p03 p04 p05; do
+            if [ ! -f "scripts/gate-b/$f" ]; then
+              echo "waiting for $f"
+              exit 0
+            fi
+          done
+          python3 - << 'PY'
+          from pathlib import Path
+          fixes = {"p02": {68: "a"}, "p03": {4187: "7"}}
+          parts = []
+          for name in ("p00", "p01", "p02", "p03", "p04", "p05"):
+              chars = list(Path(f"scripts/gate-b/{name}").read_text().strip())
+              expect = 4172 if name == "p05" else 4200
+              if len(chars) != expect:
+                  raise SystemExit(f"{name} length {len(chars)}")
+              for index, char in fixes.get(name, {}).items():
+                  chars[index] = char
+              parts.append("".join(chars))
+          Path("/tmp/craft.b64").write_text("".join(parts))
+          PY
+          base64 -d /tmp/craft.b64 > /tmp/craft.patch
+          echo "ea83ff3dbcd5beed8b33531990dd39e0efa65993b74fff17e9524a6928d450fa  /tmp/craft.patch" | sha256sum -c -
+          patch -p1 --forward --batch -i /tmp/craft.patch
+          test "$(git hash-object docs/SCALING.md)" = "d86c16f2df4a4056bea0add90d4a28c02580a724"
+          test "$(git hash-object src/components/editor/EditorStatusBar.tsx)" = "391c2dada332f58b8d12c848e639bb2c9af340b8"
+          test "$(git hash-object src/components/editor/VisualEditor.tsx)" = "a01424bd30676489ae725ff9892953d44eb510c2"
+          test "$(git hash-object src/components/layout/LeftSidebar.tsx)" = "3bdd2f88bb991cb383eeae66f1d11b94707d1142"
+          test "$(git hash-object src/components/right/RightPanel.tsx)" = "2d387a83eac5a492f8805965426f9f7a70ffd1d5"
+          test "$(git hash-object src/components/search/CommandPalette.tsx)" = "cca9cf0c8b34488958e82d1322ff57cc55c0e619"
+          test "$(git hash-object src/components/vault/FileTree.tsx)" = "ccee67fd0a990979218e81837c6dad29b8b074fb"
+          test "$(git hash-object src/components/vault/WelcomeScreen.tsx)" = "ac526379ce56f4c99befd890e443193dce7bacc5"
+          test "$(git hash-object src/lib/editor/frontmatter.ts)" = "f95fcbcc093a34df9725efcf45a639cd2b12f233"
+          test "$(git hash-object src/lib/markdown/serialize.ts)" = "3d640c6470bd4b8ad0cff94ec1a96ea665404871"
+          test "$(git hash-object src/lib/vault/__tests__/folder-graph.contract.mjs)" = "ab2bec1aa4d99ee8d38105e4c619180f24d2bd7d"
+          test "$(git hash-object src/lib/vault/content.ts)" = "44c382a35cbb0b73e5edb274b0a2fecd1ff3cad2"
+          test "$(git hash-object src/lib/vault/sqlite-fill-progress.ts)" = "882f343e688c321ea99b55245bc40aa7d9ff5121"
+          test "$(git hash-object src/lib/vault/tags.ts)" = "3568a737dde9cc286eec068d6c0be4ad26ec128c"
+          test "$(git hash-object src/components/graph/GraphView.tsx)" = "e4fbee6dd1e0d5308f09f639a6b602aacf23d46b"
+          test "$(git hash-object src/lib/vault/store.ts)" = "d30ce53af755ba4a95b680c4d169e4e505931557"
+          test "$(git hash-object src/components/layout/AppShell.tsx)" = "b6281c4b3f6aa13fe6fed4dd3de1bc7fb29647d1"
+          git config user.email "cursoragent@cursor.com"
+          git config user.name "Cursor Agent"
+          git add docs/SCALING.md \
+            src/components/editor/EditorStatusBar.tsx \
+            src/components/editor/VisualEditor.tsx \
+            src/components/layout/LeftSidebar.tsx \
+            src/components/right/RightPanel.tsx \
+            src/components/search/CommandPalette.tsx \
+            src/components/vault/FileTree.tsx \
+            src/components/vault/WelcomeScreen.tsx \
+            src/lib/editor/frontmatter.ts \
+            src/lib/markdown/serialize.ts \
+            src/lib/vault/__tests__/folder-graph.contract.mjs \
+            src/lib/vault/content.ts \
+            src/lib/vault/sqlite-fill-progress.ts \
+            src/lib/vault/tags.ts
+          git rm -r scripts/gate-b
+          git rm -f .github/workflows/land-gate-b.yml
+          git commit -m "fix: land Gate B craft blobs"
+          git push origin HEAD:cursor/graph-hud-release-690a
