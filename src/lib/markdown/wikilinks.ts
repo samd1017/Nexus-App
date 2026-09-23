@@ -123,7 +123,33 @@ export function wikilinkContext(markdown: string, start: number, end: number, ra
   const from = Math.max(0, start - radius);
   const to = Math.min(markdown.length, end + radius);
   let s = markdown.slice(from, to).replace(/\s+/g, " ").trim();
-  if (from > 0) s = "…" + s;
-  if (to < markdown.length) s = s + "…";
+  if (from > 0) s = "\u2026" + s;
+  if (to < markdown.length) s = s + "\u2026";
   return s;
+}
+
+/**
+ * Turn a raw mention snippet into a sentence a person can scan.
+ * Wikilinks become their visible label. Heading marks, emphasis, and
+ * table pipes stay out of the way.
+ */
+export function presentLinkContext(raw: string): string {
+  let s = raw.replace(
+    /!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,
+    (_m, target: string, alias?: string) => (alias || target).trim(),
+  );
+  // A snippet window can slice a wikilink in half. Drop the dangling half.
+  s = s.replace(/!?\[\[[^\]]*$/g, "");
+  s = s.replace(/^\u2026?\[[^\]]*\]\]\s*/g, "\u2026");
+  s = s.replace(/^[^[]*\]\]\s*/g, "");
+  s = s.replace(/#{1,6}\s+/g, "");
+  s = s.replace(/>\s*\[![A-Za-z]+\]\s*/g, "");
+  s = s.replace(/(^|\s)>\s+/g, "$1");
+  s = s.replace(/\s+[-\u2013]\s+/g, " \u00b7 ");
+  s = s.replace(/\*\*|__|~~|`/g, "");
+  s = s.replace(/(^|\s)[*_](.+?)[*_](?=\s|$)/g, "$1$2");
+  s = s.replace(/\s*\|\s*/g, " \u00b7 ");
+  s = s.replace(/(^|[\u00b7\s])[-+]\s+/g, "$1");
+  s = s.replace(/\s+/g, " ").replace(/\s*\u00b7\s*\u00b7\s*/g, " \u00b7 ").trim();
+  return s.replace(/^[\u00b7\s]+|[\u00b7\s]+$/g, "");
 }
