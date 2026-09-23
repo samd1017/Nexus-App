@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 import { Settings, X, Cloud } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import {
@@ -327,7 +328,9 @@ export function SettingsPanel() {
                 { value: "light", label: "Light" },
                 { value: "system", label: "System" },
               ]}
-              onChange={(v) => updatePrefs({ theme: v as ThemeMode })}
+              onChange={(v) => {
+                flushSync(() => updatePrefs({ theme: v as ThemeMode }));
+              }}
             />
 
             <Label className="mt-5">Interface density</Label>

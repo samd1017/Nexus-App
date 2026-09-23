@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -30,7 +31,12 @@ export function ThemeToggle({
       aria-label={`Theme: ${label}. Click to change.`}
       onClick={() => {
         const i = CYCLE.indexOf(theme);
-        updatePrefs({ theme: CYCLE[(i + 1) % CYCLE.length] ?? "dark" });
+        const next = CYCLE[(i + 1) % CYCLE.length] ?? "dark";
+        // dataset.theme paints inside updatePrefs, before React commits this
+        // button. Flush so the label and icon match that paint in the same click.
+        flushSync(() => {
+          updatePrefs({ theme: next });
+        });
       }}
     >
       <Icon size={15} />
