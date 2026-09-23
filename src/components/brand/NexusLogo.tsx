@@ -14,6 +14,8 @@ interface MarkProps {
   size?: Size | number;
   className?: string;
   title?: string;
+  /** Hide the mark from the accessibility tree when a wordmark already names it. */
+  decorative?: boolean;
 }
 
 /**
@@ -21,7 +23,12 @@ interface MarkProps {
  * SpaceX-adjacent: hard edges, metal faces, controlled cyan accent.
  * Reads at 16px (simplified) and large (full bevel).
  */
-export function NexusMark({ size = "md", className, title = "Nexus" }: MarkProps) {
+export function NexusMark({
+  size = "md",
+  className,
+  title = "Nexus",
+  decorative = false,
+}: MarkProps) {
   const px = typeof size === "number" ? size : SIZE_PX[size];
   const uid = `nx${px}`;
 
@@ -33,8 +40,9 @@ export function NexusMark({ size = "md", className, title = "Nexus" }: MarkProps
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={cn("nexus-mark shrink-0", className)}
-      role="img"
-      aria-label={title}
+      role={decorative ? "presentation" : "img"}
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : title}
       style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.45)) drop-shadow(0 0 10px rgba(0,200,255,0.18))" }}
     >
       <title>{title}</title>
@@ -171,6 +179,7 @@ export function NexusWordmark({
       {showMark ? (
         <NexusMark
           size={markSize}
+          decorative
           className={cn("text-[var(--text-primary)]", markClassName)}
         />
       ) : null}
