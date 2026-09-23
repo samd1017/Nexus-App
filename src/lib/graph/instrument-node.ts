@@ -22,6 +22,9 @@ export type InstrumentNodeInput = {
   noteCount?: number;
 };
 
+/**
+ * Cool teal through lavender. Warm hues read as a beige lamp.
+ */
 function hashHue(key: string): number {
   let h = 2166136261;
   const text = key || "__root__";
@@ -29,18 +32,18 @@ function hashHue(key: string): number {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  const hues = [198, 208, 188, 218, 176, 228];
+  const hues = [168, 186, 198, 214, 232, 252];
   return hues[Math.abs(h) % hues.length] / 360;
 }
 
 /**
- * Written straight to the framebuffer (this shader does not gamma-encode).
- * Lightness is the on-screen level. Around half reads clearly on the void
- * without becoming a lamp.
+ * Written straight to the framebuffer. The desktop window shows these
+ * quieter than a browser still of the same numbers, so the face sits
+ * high enough to stay colorful there.
  */
 function bodyColor(key: string, folder: boolean, active: boolean): THREE.Color {
-  const light = active ? 0.62 : folder ? 0.54 : 0.48;
-  const sat = active ? 0.28 : folder ? 0.22 : 0.16;
+  const light = active ? 0.66 : folder ? 0.6 : 0.54;
+  const sat = active ? 0.5 : folder ? 0.56 : 0.48;
   return new THREE.Color().setHSL(hashHue(key), sat, light);
 }
 
@@ -67,11 +70,11 @@ void main() {
   float facing = clamp(dot(n, viewDir), 0.0, 1.0);
   // Broad, dull sunlight. No specular hotspot.
   float key = clamp(dot(n, normalize(vec3(-0.45, 0.42, 0.55))), 0.0, 1.0);
-  float wrap = clamp(key * 0.72 + 0.28, 0.0, 1.0);
-  float shade = mix(0.58, 1.0, pow(wrap, 0.8));
-  float limb = pow(1.0 - facing, 2.8);
+  float wrap = clamp(key * 0.75 + 0.25, 0.0, 1.0);
+  float shade = mix(0.5, 1.0, pow(wrap, 0.8));
+  float edge = pow(1.0 - facing, 3.2);
   vec3 col = uColor * shade;
-  col += vec3(0.07, 0.11, 0.15) * limb;
+  col += vec3(0.05, 0.09, 0.14) * edge;
   gl_FragColor = vec4(col, uOpacity);
 }
 `;
@@ -86,11 +89,11 @@ void main() {
   vec3 n = normalize(vNormal);
   vec3 viewDir = normalize(cameraPosition - vWorld);
   float facing = clamp(abs(dot(n, viewDir)), 0.0, 1.0);
-  float rim = pow(1.0 - facing, 4.4);
-  float band = smoothstep(0.42, 0.96, rim);
+  float rim = pow(1.0 - facing, 3.4);
+  float band = smoothstep(0.32, 0.9, rim);
   float alpha = band * uOpacity;
   if (alpha < 0.02) discard;
-  gl_FragColor = vec4(uColor * alpha, alpha);
+  gl_FragColor = vec4(uColor, alpha);
 }
 `;
 
@@ -118,7 +121,6 @@ function limbMaterial(color: THREE.Color, opacity: number): THREE.ShaderMaterial
     fragmentShader: LIMB_FRAG,
     transparent: true,
     depthWrite: false,
-    premultipliedAlpha: true,
     toneMapped: false,
   });
 }
@@ -238,11 +240,11 @@ export function createInstrumentNode(
   group.add(body);
 
   if (!isGhost) {
-    const haze = tint.clone().lerp(new THREE.Color().setRGB(0.7, 0.82, 0.96), 0.55);
-    const limb = limbMaterial(haze, dim ? 0.14 : isActive ? 0.62 : 0.46);
+    const haze = tint.clone().lerp(new THREE.Color().setRGB(0.42, 0.6, 0.88), 0.4);
+    const limbMat = limbMaterial(haze, dim ? 0.16 : isActive ? 0.72 : 0.58);
     const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 1.11, Math.max(16, segs - 6), Math.max(12, segs - 8)),
-      limb,
+      new THREE.SphereGeometry(radius * 1.16, Math.max(16, segs - 4), Math.max(14, segs - 6)),
+      limbMat,
     );
     atmo.renderOrder = 2;
     group.add(atmo);
