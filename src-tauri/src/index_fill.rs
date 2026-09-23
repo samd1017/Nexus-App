@@ -51,6 +51,11 @@ pub const FILL_READ_WORKERS_MAX: usize = 2;
 /// Title/path FTS rows written before `ready-meta` on Partial/Deep fills.
 /// Enough for useful Hub-title hits; the rest wait for short-head writes.
 pub const TITLE_FTS_SEED: usize = 2048;
+/// Short heads committed while the directory walk is still running.
+/// Root notes first, so the open page has tags before the vault is listed.
+pub const EARLY_HEAD_CAP: usize = 256;
+/// Path rows committed during the walk so the tree grows before it finishes.
+const DISCOVER_BATCH: usize = 128;
 /// Intra-phase banner ticks. Phase transitions still emit immediately.
 /// Scan-delta emits (256) re-rendered AppShell/graph at 10–20Hz on fast fills.
 pub const PROGRESS_EMIT_MS: u64 = 400;
@@ -548,7 +553,22 @@ fn load_existing_notes(conn: &Connection) -> HashMap<String, ExistingNote> {
     map
 }
 
-fn collect_md_notes(root: &Path) -> Vec<DiskNote> {
+struct DiscoverPublish<'a> {
+    conn: &'a mut Connection,
+    allow_heads: bool,
+    head_chars: usize,
+    vault: &'a Path,
+    headed: &'a mut usize,
+    indexed: &'a mut i64,
+    errors: &'a mut i64,
+    written: &'a mut HashSet<String>,
+    on_scanned: &'a mut dyn FnMut(i64, i64, i64),
+}
+
+fn collect_md_notes_publishing(
+    root: &Path,
+    mut publish: Option<DiscoverPublish<'_>>,
+) -> Vec<DiskNote> {
     use std::time::SystemTime;
     let mut out = Vec::new();
     let mut stack: Vec<(PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
@@ -594,8 +614,137 @@ fn collect_md_notes(root: &Path) -> Vec<DiskNote> {
                 mtime,
                 size,
             });
+            if out.len() % DISCOVER_BATCH == 0 {
+                if let Some(sink) = publish.as_mut() {
+                    publish_discovered(sink, &out[out.len() - DISCOVER_BATCH..], out.len() as i64);
+                }
+            }
         }
         stack.extend(dirs);
+    }
+    if let Some(sink) = publish.as_mut() {
+        let rem = out.len() % DISCOVER_BATCH;
+        if rem > 0 {
+            publish_discovered(sink, &out[out.len() - rem..], out.len() as i64);
+        }
+    }
+    out
+}
+
+fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanned: i64) {
+    let rows: Vec<(String, String, i64, i64)> = notes
+        .iter()
+        .map(|n| (n.rel.clone(), n.name.clone(), n.mtime, n.size))
+        .collect();
+    let _ = crate::shell_catalog::remember_discovered(sink.conn, &rows);
+    if sink.allow_heads && *sink.headed < EARLY_HEAD_CAP {
+        let wrote = commit_early_heads(
+            sink.conn,
+            sink.vault,
+            sink.head_chars,
+            EARLY_HEAD_CAP - *sink.headed,
+            sink.indexed,
+            sink.errors,
+            sink.written,
+        );
+        *sink.headed += wrote;
+    }
+    (sink.on_scanned)(scanned, *sink.indexed, *sink.errors);
+    std::thread::yield_now();
+}
+
+fn commit_early_heads(
+    conn: &mut Connection,
+    vault_root: &Path,
+    head_chars: usize,
+    room: usize,
+    indexed: &mut i64,
+    errors: &mut i64,
+    written: &mut HashSet<String>,
+) -> usize {
+    if room == 0 {
+        return 0;
+    }
+    let take = room.min(FTS_WRITE_BATCH);
+    let selected: Vec<(String, String, String, Option<String>, i64, i64)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, path, name, parent_id, mtime, COALESCE(size, 0)
+             FROM note_meta
+             WHERE deleted=0 AND kind='note' AND COALESCE(fill_depth, 99) < ?1
+             ORDER BY CASE WHEN instr(path, '/') = 0 THEN 0 ELSE 1 END, path
+             LIMIT ?2",
+        ) {
+            Ok(stmt) => stmt,
+            Err(_) => return 0,
+        };
+        let mapped = stmt.query_map(params![FILL_DEPTH_PARTIAL, take as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        });
+        match mapped {
+            Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+            Err(_) => return 0,
+        }
+    };
+    if selected.is_empty() {
+        return 0;
+    }
+    let mut batch = Vec::with_capacity(selected.len());
+    let mut buf = vec![0u8; head_chars.saturating_mul(4).clamp(256, 16_384)];
+    for (id, path, name, parent_id, mtime, size) in &selected {
+        let abs = vault_root.join(path);
+        let meta = std::fs::metadata(&abs).ok();
+        let size = meta.as_ref().map(|m| m.len() as i64).unwrap_or(*size);
+        let mtime = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(*mtime);
+        let body = match std::fs::File::open(&abs) {
+            Ok(mut file) => {
+                let n = file.read(&mut buf).unwrap_or(0);
+                take_head(&buf[..n], head_chars)
+            }
+            Err(_) => String::new(),
+        };
+        batch.push(FillNote {
+            id: id.clone(),
+            path: path.clone(),
+            name: name.clone(),
+            parent_id: parent_id.clone(),
+            mtime,
+            size,
+            title: title_from_name_and_head(name, &body),
+            links: extract_wikilink_targets(&body),
+            tags: extract_tags(&body),
+            body,
+            fill_depth: FILL_DEPTH_PARTIAL,
+        });
+    }
+    let n = batch.len();
+    flush_note_batch(conn, &mut batch, indexed, errors, written);
+    n
+}
+
+fn paths_at_least_partial(conn: &Connection) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT path FROM note_meta WHERE kind='note' AND deleted=0 AND COALESCE(fill_depth, 0) >= ?1",
+    ) else {
+        return out;
+    };
+    let Ok(rows) = stmt.query_map(params![FILL_DEPTH_PARTIAL], |r| r.get::<_, String>(0)) else {
+        return out;
+    };
+    for path in rows.flatten() {
+        out.insert(path);
     }
     out
 }
@@ -787,7 +936,17 @@ fn flush_note_batch(
                  ON CONFLICT(id) DO UPDATE SET
                    path=excluded.path, name=excluded.name, parent_id=excluded.parent_id,
                    mtime=excluded.mtime, size=excluded.size,
-                   title=excluded.title, deleted=0, fill_depth=excluded.fill_depth",
+                   title=CASE
+                     WHEN note_meta.fill_depth IS NOT NULL AND note_meta.fill_depth > excluded.fill_depth
+                       THEN note_meta.title
+                     ELSE excluded.title
+                   END,
+                   deleted=0,
+                   fill_depth=CASE
+                     WHEN note_meta.fill_depth IS NOT NULL AND note_meta.fill_depth > excluded.fill_depth
+                       THEN note_meta.fill_depth
+                     ELSE excluded.fill_depth
+                   END",
             )
             .map_err(|e| e.to_string())?;
         let mut fts_del = tx
@@ -828,10 +987,22 @@ fn flush_note_batch(
                 *errors += 1;
                 continue;
             }
-            if fts_del.execute(params![note.id]).is_err()
-                || fts_ins
-                    .execute(params![note.id, note.title, note.path, note.body])
-                    .is_err()
+            // A title/path row must not erase a head that already landed.
+            let keep_head = note.fill_depth <= FILL_DEPTH_META
+                && note.body.is_empty()
+                && tx
+                    .query_row(
+                        "SELECT length(body) FROM note_fts WHERE note_id=?1",
+                        params![note.id],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .unwrap_or(0)
+                    > 0;
+            if !keep_head
+                && (fts_del.execute(params![note.id]).is_err()
+                    || fts_ins
+                        .execute(params![note.id, note.title, note.path, note.body])
+                        .is_err())
             {
                 *errors += 1;
                 continue;
@@ -975,9 +1146,6 @@ pub fn fill_from_disk_with_opts(
         "PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=268435456;",
     );
 
-    let existing = load_existing_notes(conn);
-    let files = collect_md_notes(vault_root);
-    let total = files.len() as i64;
     let short_head = opts.short_head_chars.clamp(256, 4_096);
     let deep_head = opts.deep_head_chars.clamp(short_head, 32_000);
     let target_depth = match opts.until {
@@ -985,24 +1153,88 @@ pub fn fill_from_disk_with_opts(
         FillUntil::Partial => FILL_DEPTH_PARTIAL,
         FillUntil::Deep => FILL_DEPTH_DEEP,
     };
-
+    let mut indexed: i64 = 0;
+    let mut errors: i64 = 0;
+    let mut written: HashSet<String> = HashSet::new();
+    let mut headed: usize = 0;
+    let allow_early = opts.until != FillUntil::Meta && !opts.force_rebuild;
     let mut progress = IndexFillProgress {
         db_path: opts.db_path.to_string(),
         scanned: 0,
-        total,
+        total: 0,
         indexed: 0,
         skipped: 0,
         errors: 0,
         phase: "walking".into(),
-        message: Some(format!("Scanning {total} notes…")),
+        message: Some("Opening the first page…".into()),
         search_state: String::new(),
     };
     on_progress(&progress);
+    // Heads for notes already on the open page (mount seeded them) before
+    // this walk reaches the rest of the vault.
+    if allow_early {
+        let n = commit_early_heads(
+            conn,
+            vault_root,
+            short_head,
+            EARLY_HEAD_CAP,
+            &mut indexed,
+            &mut errors,
+            &mut written,
+        );
+        headed = n;
+        if n > 0 {
+            emit(
+                &mut progress,
+                "early-heads",
+                "",
+                n as i64,
+                indexed,
+                0,
+                errors,
+                Some("Tags from the open page…".into()),
+                &mut on_progress,
+            );
+        }
+    }
+    let existing = load_existing_notes(conn);
+    let mut last_discover = Instant::now();
+    let files = collect_md_notes_publishing(
+        vault_root,
+        Some(DiscoverPublish {
+            conn,
+            allow_heads: allow_early,
+            head_chars: short_head,
+            vault: vault_root,
+            headed: &mut headed,
+            indexed: &mut indexed,
+            errors: &mut errors,
+            written: &mut written,
+            on_scanned: &mut |scanned, indexed_now, errors_now| {
+                if last_discover.elapsed() >= Duration::from_millis(PROGRESS_EMIT_MS) {
+                    emit(
+                        &mut progress,
+                        "meta",
+                        "",
+                        scanned,
+                        indexed_now,
+                        0,
+                        errors_now,
+                        Some("Cataloging paths…".into()),
+                        &mut on_progress,
+                    );
+                    last_discover = Instant::now();
+                }
+            },
+        }),
+    );
+    let total = files.len() as i64;
+    let already_headed = paths_at_least_partial(conn);
+    progress.total = total;
+    progress.indexed = indexed;
+    progress.errors = errors;
 
-    let mut indexed: i64 = 0;
     let mut skipped: i64 = 0;
-    let mut errors: i64 = 0;
-    let mut written: HashSet<String> = HashSet::new();
     let mut batch: Vec<FillNote> = Vec::with_capacity(META_BATCH);
     let mut seen: HashSet<String> = HashSet::with_capacity(files.len());
     let mut need_meta: Vec<usize> = Vec::new();
@@ -1029,6 +1261,42 @@ pub fn fill_from_disk_with_opts(
         }
         seen.insert(disk.rel.clone());
         let scanned = (i as i64) + 1;
+        if already_headed.contains(&disk.rel) && !opts.force_rebuild {
+            let prev = existing.get(&disk.rel);
+            let unchanged = prev.map(|p| note_unchanged(p, disk)).unwrap_or(true);
+            if unchanged {
+                // Heads committed during the walk are Partial. A deep fill
+                // still has to finish them; a title row must not replace them.
+                let depth = prev
+                    .map(|p| inferred_fill_depth(p.fill_depth))
+                    .unwrap_or(FILL_DEPTH_PARTIAL);
+                if depth < FILL_DEPTH_PARTIAL && opts.until != FillUntil::Meta {
+                    need_partial.push(i);
+                }
+                if depth < FILL_DEPTH_DEEP && opts.until == FillUntil::Deep {
+                    need_deep.push(i);
+                }
+                if depth >= target_depth {
+                    skipped += 1;
+                }
+                if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
+                    emit(
+                        &mut progress,
+                        "meta",
+                        "",
+                        scanned,
+                        indexed,
+                        skipped,
+                        errors,
+                        None,
+                        &mut on_progress,
+                    );
+                    last_emit = Instant::now();
+                    last_emitted_scanned = scanned;
+                }
+                continue;
+            }
+        }
         let mut skip_meta = false;
         if !opts.force_rebuild {
             if let Some(prev) = existing.get(&disk.rel) {
@@ -1164,6 +1432,7 @@ pub fn fill_from_disk_with_opts(
 
     if is_cancelled() || opts.until == FillUntil::Meta {
         let edges = finalize_link_edges(conn, skipped, indexed, false, &mut progress);
+        crate::shell_catalog::mark_catalog_walk_done(conn);
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
         return Ok(IndexFillResult {
             indexed,
@@ -1256,6 +1525,7 @@ pub fn fill_from_disk_with_opts(
 
     if is_cancelled() || opts.until == FillUntil::Partial {
         let edges = finalize_link_edges(conn, skipped, indexed, true, &mut progress);
+        crate::shell_catalog::mark_catalog_walk_done(conn);
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
         return Ok(IndexFillResult {
             indexed,
@@ -1328,6 +1598,7 @@ pub fn fill_from_disk_with_opts(
     }
     flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
 
+    crate::shell_catalog::mark_catalog_walk_done(conn);
     // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
@@ -1699,7 +1970,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let mut conn = open_test_conn(&db);
         let mut ready_meta_fts: Option<i64> = None;
         let mut hub_at_ready = false;
-        let mut cluster_at_ready = false;
+        let mut cluster_at_ready: Option<i64> = None;
+        let mut late_body_at_ready = false;
         let mut fts_when_heads_started: Option<i64> = None;
         let result = fill_from_disk_with_opts(
             &mut conn,
@@ -1717,7 +1989,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                 if p.phase == "ready-meta" && ready_meta_fts.is_none() {
                     ready_meta_fts = Some(fts_row_count_at(&db));
                     hub_at_ready = fts_has_at(&db, "Hub");
-                    cluster_at_ready = fts_has_at(&db, "cluster");
+                    cluster_at_ready = Some(fts_match_count_at(&db, "cluster"));
+                    late_body_at_ready = fts_has_at(&db, "secretbodytoken");
                 }
                 if p.phase == "fts-partial" && fts_when_heads_started.is_none() {
                     fts_when_heads_started = Some(fts_row_count_at(&db));
@@ -1728,20 +2001,25 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
 
         let seeded = ready_meta_fts.expect("ready-meta must emit");
         assert!(
-            seeded > 0 && seeded <= TITLE_FTS_SEED as i64,
-            "ready-meta FTS rows {seeded} should be a title seed, not the full vault"
+            seeded > 0 && seeded <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
+            "ready-meta FTS rows {seeded} should be a title seed plus open-page heads, not the full vault"
         );
         assert!(
             hub_at_ready,
             "Hub.md must be in the title seed even if it walks last"
         );
+        let cluster_rows = cluster_at_ready.expect("cluster count at ready-meta");
         assert!(
-            !cluster_at_ready,
-            "body tokens must not wait behind a full empty catalog — and must not be present at ready-meta"
+            cluster_rows > 0 && cluster_rows <= EARLY_HEAD_CAP as i64,
+            "only the open-page head batch may carry body tokens at ready-meta, got {cluster_rows}"
+        );
+        assert!(
+            !late_body_at_ready,
+            "a note discovered late must not be body-indexed before the head pass"
         );
         let heads_start = fts_when_heads_started.expect("fts-partial must start");
         assert!(
-            heads_start <= TITLE_FTS_SEED as i64,
+            heads_start <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
             "short-head fill started after {heads_start} FTS rows — catalog still monopolizing"
         );
         assert_eq!(result.search_state, "ready-fts-partial");
@@ -1784,8 +2062,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let hits = hub_hits_at_ready.expect("ready-meta must emit");
         let seed = seeded.expect("seeded FTS count");
         assert!(
-            seed > 0 && seed <= TITLE_FTS_SEED as i64,
-            "official ready-meta FTS rows {seed} should be the title seed"
+            seed > 0 && seed <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
+            "official ready-meta FTS rows {seed} should be the title seed plus the open-page heads"
         );
         assert!(
             hits >= 16,
@@ -2102,8 +2380,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let seeded = fts_at_ready.expect("seeded FTS count");
         assert_eq!(partial.notes, 10_000);
         assert!(
-            seeded > 0 && seeded <= TITLE_FTS_SEED as i64,
-            "10k ready-meta FTS rows {seeded} must be the title seed"
+            seeded > 0 && seeded <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
+            "10k ready-meta FTS rows {seeded} must be the title seed plus open-page heads"
         );
         assert!(
             meta_ms < 8_000,
@@ -2123,6 +2401,56 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
+    #[test]
+    fn seeded_page_is_searchable_before_the_walk() {
+        let (vault, db) = temp_pair("seedpage");
+        write_n(&vault, 30);
+        write_note(
+            &vault,
+            "zz-late/Hub.md",
+            "secretbodytoken cluster retrieval\n",
+        );
+        let mut conn = open_test_conn(&db);
+        ensure_fill_depth_column(&conn);
+        let complete = crate::shell_catalog::seed_first_page(&mut conn, &vault, None).unwrap();
+        assert!(!complete);
+        let mut early_total: Option<i64> = None;
+        let mut cluster_early = false;
+        let mut late_early = false;
+        let _ = fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Partial,
+            },
+            || false,
+            |p| {
+                if p.phase == "early-heads" && early_total.is_none() {
+                    early_total = Some(p.total);
+                    cluster_early = fts_has_at(&db, "cluster");
+                    late_early = fts_has_at(&db, "secretbodytoken");
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            early_total,
+            Some(0),
+            "open-page heads commit before the walk knows the vault size"
+        );
+        assert!(cluster_early, "a seeded root note is searchable before the walk");
+        assert!(
+            !late_early,
+            "a nested note is not body-indexed with the first page"
+        );
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
     /// Local soak probe — not CI. `cargo test -p nexus-fill-test -- --ignored --nocapture`
     /// with `NEXUS_FILL_PROBE_N` (default 25000).
     #[test]
@@ -2134,13 +2462,21 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             .unwrap_or(25_000);
         let (vault, db) = temp_pair("probe");
         write_n(&vault, n);
+        write_note(&vault, "n00000.md", "# Note 0\n\n#opentag cluster hub retrieval token 0\n");
         write_note(
             &vault,
             "zz-late/Hub.md",
             "secretbodytoken cluster retrieval\n",
         );
         let mut conn = open_test_conn(&db);
+        ensure_fill_depth_column(&conn);
         let t0 = Instant::now();
+        let page_rows = crate::shell_catalog::seed_first_page(&mut conn, &vault, Some("zz-late/Hub.md"))
+            .expect("seed");
+        let first_page_ms = t0.elapsed().as_millis();
+        let mut early_ms: Option<u128> = None;
+        let mut early_cluster = false;
+        let mut early_tag = false;
         let mut ready_meta_ms: Option<u128> = None;
         let mut hub_ms: Option<u128> = None;
         let mut cluster_ms: Option<u128> = None;
@@ -2158,6 +2494,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             },
             || false,
             |p| {
+                if p.phase == "early-heads" && early_ms.is_none() {
+                    early_ms = Some(t0.elapsed().as_millis());
+                    early_cluster = fts_has_at(&db, "cluster");
+                    let tags: i64 = open_reader(&db)
+                        .query_row(
+                            "SELECT COUNT(*) FROM tag_map WHERE tag='opentag'",
+                            [],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(0);
+                    early_tag = tags > 0;
+                }
                 if p.phase == "ready-meta" && ready_meta_ms.is_none() {
                     ready_meta_ms = Some(t0.elapsed().as_millis());
                     seeded = Some(fts_row_count_at(&db));
@@ -2176,14 +2524,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         )
         .unwrap();
         eprintln!(
-            "probe n={} notes={} ready-meta {:?}ms seed {:?} hub {:?}ms cluster {:?}ms total {}ms state {}",
+            "probe n={} page_complete={} first_page_ms={} early_heads_ms={:?} early_cluster={} early_tag={} ready-meta {:?}ms seed {:?} hub {:?}ms cluster {:?}ms total {}ms notes={} state {}",
             n,
-            result.notes,
+            page_rows,
+            first_page_ms,
+            early_ms,
+            early_cluster,
+            early_tag,
             ready_meta_ms,
             seeded,
             hub_ms,
             cluster_ms,
             t0.elapsed().as_millis(),
+            result.notes,
             result.search_state
         );
         assert!(ready_meta_ms.is_some());

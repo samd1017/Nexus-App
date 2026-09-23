@@ -1047,7 +1047,7 @@ fn ensure_shell_conn(
 /// busy read does not queue every other gesture behind it. After the budget
 /// the command returns `shell_busy` and the UI keeps the last page.
 fn with_shell_conn<T>(
-    state: tauri::State<'_, SharedIndex>,
+    state: &tauri::State<'_, SharedIndex>,
     db_path: &str,
     mut f: impl FnMut(&mut Connection) -> Result<T, String>,
 ) -> Result<T, String> {
@@ -1117,13 +1117,20 @@ pub fn vault_shell_mount(
             counts
         };
         if let Ok((notes, folders)) = counts {
-            if notes == 0 || folders == 0 {
+            if notes == 0 {
                 let mut writer = open_conn(&db_path)?;
-                if notes == 0 {
-                    crate::shell_catalog::write_catalog(&mut writer, Path::new(&vault_root))?;
-                } else {
-                    crate::shell_catalog::derive_folders(&mut writer)?;
-                }
+                crate::shell_catalog::seed_first_page(
+                    &mut writer,
+                    Path::new(&vault_root),
+                    prefer_path.as_deref(),
+                )?;
+            } else if folders == 0 {
+                let mut writer = open_conn(&db_path)?;
+                crate::shell_catalog::seed_folder_pages(
+                    &mut writer,
+                    Path::new(&vault_root),
+                    prefer_path.as_deref(),
+                )?;
             }
         }
     }
@@ -1179,14 +1186,37 @@ pub fn vault_shell_children(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<crate::shell_catalog::ShellPage, String> {
-    with_shell_conn(state, &db_path, |conn| {
-        crate::shell_catalog::query_children(
-            conn,
-            &parent_path,
-            limit.unwrap_or(crate::shell_catalog::SHELL_CHILD_PAGE),
-            offset.unwrap_or(0),
-        )
-    })
+    let limit = limit.unwrap_or(crate::shell_catalog::SHELL_CHILD_PAGE);
+    let offset = offset.unwrap_or(0);
+    let first = with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_children(conn, &parent_path, limit, offset)
+    })?;
+    // A folder the walker has not reached yet still has a page: list that
+    // directory on disk, outside the UI lock, then commit the rows.
+    if offset == 0 && first.rows.is_empty() {
+        let root = with_shell_conn(&state, &db_path, |conn| {
+            conn.query_row(
+                "SELECT value FROM meta_kv WHERE key='vault_root'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .ok();
+        if let Some(root) = root {
+            let listed = crate::shell_catalog::dir_page_rows(Path::new(&root), &parent_path, limit)
+                .unwrap_or_default();
+            if !listed.is_empty() {
+                let _ = with_shell_conn(&state, &db_path, |conn| {
+                    crate::shell_catalog::upsert_shell_rows(conn, listed)
+                });
+                return with_shell_conn(&state, &db_path, |conn| {
+                    crate::shell_catalog::query_children(conn, &parent_path, limit, offset)
+                });
+            }
+        }
+    }
+    Ok(first)
 }
 
 #[tauri::command]
@@ -1196,7 +1226,7 @@ pub fn vault_shell_level(
     parent_path: String,
     max_nodes: Option<i64>,
 ) -> Result<crate::shell_catalog::ShellLevel, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_level(
             conn,
             &parent_path,
@@ -1213,7 +1243,7 @@ pub fn vault_shell_ego(
     hops: Option<i64>,
     max_nodes: Option<i64>,
 ) -> Result<crate::shell_catalog::ShellEgo, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_ego(
             conn,
             &center_id,
@@ -1229,7 +1259,7 @@ pub fn vault_shell_note(
     db_path: String,
     id: String,
 ) -> Result<Option<crate::shell_catalog::ShellRow>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_note(conn, &id)
     })
 }
@@ -1241,7 +1271,7 @@ pub fn vault_shell_backlinks(
     id: String,
     limit: Option<i64>,
 ) -> Result<crate::shell_catalog::ShellBacklinks, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_backlinks(
             conn,
             &id,
@@ -1256,7 +1286,7 @@ pub fn vault_shell_tags(
     db_path: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellTagCount>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_tags(
             conn,
             limit.unwrap_or(crate::shell_catalog::SHELL_TAG_LIMIT),
@@ -1271,7 +1301,7 @@ pub fn vault_shell_tag_notes(
     tag: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_tag_notes(
             conn,
             &tag,
@@ -1287,7 +1317,7 @@ pub fn vault_shell_suggest(
     query: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellSuggestHit>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_suggest(
             conn,
             &query,
@@ -1302,7 +1332,7 @@ pub fn vault_shell_recent(
     db_path: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_recent(
             conn,
             limit.unwrap_or(crate::shell_catalog::SHELL_RECENT_LIMIT),
@@ -1317,7 +1347,7 @@ pub fn vault_shell_forget(
     vault_root: String,
     paths: Vec<String>,
 ) -> Result<crate::shell_catalog::ShellForget, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::forget_missing_paths(conn, Path::new(&vault_root), &paths)
     })
 }
@@ -1328,7 +1358,7 @@ pub fn vault_shell_paths(
     db_path: String,
     paths: Vec<String>,
 ) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_by_paths(conn, &paths)
     })
 }
@@ -1341,7 +1371,7 @@ pub fn vault_shell_path_page(
     folder_needle: Option<String>,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_path_page(
             conn,
             path_needle.as_deref().unwrap_or(""),
@@ -1357,7 +1387,7 @@ pub fn vault_shell_orphans(
     db_path: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_orphans(conn, limit.unwrap_or(24))
     })
 }
@@ -1368,7 +1398,7 @@ pub fn vault_shell_broken(
     db_path: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellBrokenLink>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_broken(conn, limit.unwrap_or(40))
     })
 }
@@ -1379,7 +1409,7 @@ pub fn vault_shell_known_norms(
     db_path: String,
     norms: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_known_norms(conn, &norms)
     })
 }
@@ -1391,7 +1421,7 @@ pub fn vault_shell_mentions(
     phrase: String,
     limit: Option<i64>,
 ) -> Result<Vec<crate::shell_catalog::ShellMentionHead>, String> {
-    with_shell_conn(state, &db_path, |conn| {
+    with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_mention_heads(conn, &phrase, limit.unwrap_or(24))
     })
 }

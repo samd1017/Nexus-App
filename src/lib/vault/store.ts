@@ -229,6 +229,7 @@ import {
   BROWSER_SHELL_DB,
   SHELL_CATALOG_OFF,
   SHELL_CHILD_PAGE,
+  SHELL_FULL_MAX_NOTES,
   SHELL_ROOT_KEY,
   dropShellIds,
   fetchShellChildren,
@@ -1071,10 +1072,29 @@ async function runCompleteDiskSearchIndex(opts?: {
 					}
 					if (useVaultStore.getState().shellCatalog) {
 						noteShellFillProgress();
-						if ((p.phase === "ready-meta" || p.phase === "done") && p.total > 0) {
-							useVaultStore.setState({ catalogNoteCount: p.total });
-							if (p.phase === "ready-meta") {
-								void useVaultStore.getState().reloadShellParent(SHELL_ROOT_KEY);
+						const seen = p.total > 0 ? p.total : p.scanned;
+						if (seen > 0) {
+							const cur = useVaultStore.getState().catalogNoteCount;
+							useVaultStore.setState({ catalogNoteCount: Math.max(cur, seen) });
+						}
+						if (p.phase === "done" && p.total > 0 && p.total <= SHELL_FULL_MAX_NOTES) {
+							const root = desktopRoot;
+							const prefer = useVaultStore.getState().settings.lastNotePath;
+							if (root) {
+								void mountShellCatalog(root, prefer).then((outcome) => {
+									if (outcome.status !== "ready" || !outcome.mount.materialize) return;
+									const built = nodesFromShellRows(outcome.mount.rows);
+									useVaultStore.setState({
+										nodes: built.nodes,
+										rootIds: outcome.mount.rootIds.length
+											? outcome.mount.rootIds
+											: built.rootIds,
+										activeNoteId:
+											outcome.mount.activeNoteId ||
+											useVaultStore.getState().activeNoteId,
+										...shellSessionFromMount(outcome.mount, outcome.mount.notes),
+									});
+								});
 							}
 						}
 					}
@@ -5448,6 +5468,8 @@ noteShellFillProgress = () => {
 		shellWakeTimer = null;
 	}
 	flushDeferredShellReads();
+	const live = useVaultStore.getState();
+	if (live.shellCatalog) void live.reloadShellParent(SHELL_ROOT_KEY);
 };
 
 export const useVaultStore = create(

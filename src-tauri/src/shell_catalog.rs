@@ -474,6 +474,10 @@ fn mtime_of(meta: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+pub fn upsert_shell_rows(conn: &mut Connection, mut rows: Vec<ShellRow>) -> Result<(), String> {
+    flush_batch(conn, &mut rows)
+}
+
 fn flush_batch(conn: &mut Connection, batch: &mut Vec<ShellRow>) -> Result<(), String> {
     if batch.is_empty() {
         return Ok(());
@@ -575,18 +579,33 @@ fn yield_catalog_batch() {
     std::thread::sleep(std::time::Duration::from_millis(2));
 }
 
-/// One native pass so older note-only catalogs gain folder rows.
-/// The path list stays in this process; it is not returned to the UI.
-pub fn derive_folders(conn: &mut Connection) -> Result<(), String> {
+/// One page of folder rows for an older note-only catalog.
+/// Returns the last path consumed, or `None` when the note list is done.
+/// Callers page with `path > cursor` so a 100k catalog is not one Rust vec.
+pub fn derive_folders_page(
+    conn: &mut Connection,
+    after_path: &str,
+    limit: i64,
+) -> Result<Option<String>, String> {
+    let limit = limit.clamp(1, 2_000);
     let paths: Vec<String> = {
         let mut stmt = conn
-            .prepare("SELECT path FROM note_meta WHERE kind='note' AND deleted=0")
+            .prepare(
+                "SELECT path FROM note_meta
+                 WHERE kind='note' AND deleted=0 AND path > ?1
+                 ORDER BY path
+                 LIMIT ?2",
+            )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |r| r.get::<_, String>(0))
+            .query_map(params![after_path, limit], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
         rows.filter_map(|r| r.ok()).collect()
     };
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let last = paths.last().cloned().unwrap_or_default();
     let mut seen = HashSet::new();
     let mut batch = Vec::new();
     for path in paths {
@@ -606,14 +625,273 @@ pub fn derive_folders(conn: &mut Connection) -> Result<(), String> {
             }
             if seen.insert(acc.clone()) {
                 push_insert(&mut batch, &acc, part, "folder", 0);
-                if batch.len() >= SHELL_WRITE_BATCH {
-                    flush_batch(conn, &mut batch)?;
-                    yield_catalog_batch();
-                }
             }
         }
     }
+    flush_batch(conn, &mut batch)?;
+    Ok(Some(last))
+}
+
+fn mark_catalog_walk(conn: &Connection, state: &str) {
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES ('catalog_walk', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![state],
+    );
+}
+
+pub fn catalog_walk_partial(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT value FROM meta_kv WHERE key='catalog_walk'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .map(|v| v == "partial")
+    .unwrap_or(false)
+}
+
+/// List one directory and keep the first display page (folders, then names).
+/// Does not open subdirectories.
+pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>, String> {
+    let rel = normalize_rel(rel);
+    let abs = if rel.is_empty() {
+        root.to_path_buf()
+    } else {
+        match safe_abs(root, &rel) {
+            Some(p) => p,
+            None => return Ok(Vec::new()),
+        }
+    };
+    if !abs.is_dir() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.clamp(1, SHELL_CHILD_PAGE) as usize;
+    // Keep only the first display page while scanning. The directory is
+    // still read once so the page is folders-then-name; subfolders are not.
+    let mut entries: Vec<(String, String, String, i64)> = Vec::with_capacity(limit);
+    let rd = match std::fs::read_dir(&abs) {
+        Ok(rd) => rd,
+        Err(err) => return Err(err.to_string()),
+    };
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || SKIP_DIRS.iter().any(|s| *s == name) {
+            continue;
+        }
+        let Ok(ft) = entry.file_type() else { continue };
+        let child_rel = if rel.is_empty() {
+            name.clone()
+        } else {
+            format!("{rel}/{name}")
+        };
+        let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
+        let kind = if ft.is_dir() {
+            "folder"
+        } else if ft.is_file() && name.to_ascii_lowercase().ends_with(".md") {
+            "note"
+        } else {
+            continue;
+        };
+        consider_page_row(&mut entries, limit, (child_rel, name, kind.to_string(), mtime));
+    }
+    if entries.len() < limit {
+        entries.sort_by(page_row_order);
+    }
+    let mut rows = Vec::new();
+    for (child_rel, name, kind, mtime) in entries {
+        push_insert(&mut rows, &child_rel, &name, &kind, mtime);
+    }
+    Ok(rows)
+}
+
+fn page_row_order(
+    a: &(String, String, String, i64),
+    b: &(String, String, String, i64),
+) -> std::cmp::Ordering {
+    let ka = (a.2 != "folder", a.1.to_ascii_lowercase());
+    let kb = (b.2 != "folder", b.1.to_ascii_lowercase());
+    ka.cmp(&kb)
+}
+
+fn consider_page_row(
+    entries: &mut Vec<(String, String, String, i64)>,
+    limit: usize,
+    item: (String, String, String, i64),
+) {
+    if entries.len() < limit {
+        entries.push(item);
+        if entries.len() == limit {
+            entries.sort_by(page_row_order);
+        }
+        return;
+    }
+    let last = entries.last().unwrap();
+    if page_row_order(&item, last) != std::cmp::Ordering::Less {
+        return;
+    }
+    entries.pop();
+    let idx = entries.partition_point(|e| page_row_order(e, &item) == std::cmp::Ordering::Less);
+    entries.insert(idx, item);
+}
+
+/// Folder rows for an older note-only catalog.
+/// Lists the root and the open note's ancestor directories only.
+/// Does not read every note path.
+pub fn seed_folder_pages(
+    conn: &mut Connection,
+    root: &Path,
+    prefer: Option<&str>,
+) -> Result<(), String> {
+    if !root.is_dir() {
+        return Ok(());
+    }
+    let mut batch = dir_page_rows(root, "", SHELL_CHILD_PAGE).unwrap_or_default();
+    batch.retain(|r| r.kind == "folder");
+    if let Some(raw) = prefer {
+        let path = normalize_rel(raw);
+        let mut acc = String::new();
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i + 1 == parts.len() {
+                break;
+            }
+            if acc.is_empty() {
+                acc = (*part).to_string();
+            } else {
+                acc = format!("{acc}/{part}");
+            }
+            let mut page = dir_page_rows(root, &acc, SHELL_CHILD_PAGE).unwrap_or_default();
+            page.retain(|r| r.kind == "folder");
+            batch.extend(page);
+        }
+    }
     flush_batch(conn, &mut batch)
+}
+
+/// Commit the root page (and the open note's ancestor pages) and return.
+/// Nested folders are not walked. `Ok(true)` means this listing is the
+/// whole vault and a small vault may still materialize.
+pub fn seed_first_page(
+    conn: &mut Connection,
+    root: &Path,
+    prefer: Option<&str>,
+) -> Result<bool, String> {
+    if !root.is_dir() {
+        return Err(format!("not a directory: {}", root.display()));
+    }
+    let mut batch = dir_page_rows(root, "", SHELL_CHILD_PAGE)?;
+    let mut saw_dir = batch.iter().any(|r| r.kind == "folder");
+    let root_truncated = batch.len() as i64 >= SHELL_CHILD_PAGE;
+    if let Some(raw) = prefer {
+        let path = normalize_rel(raw);
+        let mut acc = String::new();
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i + 1 == parts.len() {
+                break;
+            }
+            if acc.is_empty() {
+                acc = (*part).to_string();
+            } else {
+                acc = format!("{acc}/{part}");
+            }
+            let page = dir_page_rows(root, &acc, SHELL_CHILD_PAGE)?;
+            if page.iter().any(|r| r.kind == "folder") {
+                saw_dir = true;
+            }
+            batch.extend(page);
+        }
+    }
+    flush_batch(conn, &mut batch)?;
+    let complete = !saw_dir && !root_truncated;
+    mark_catalog_walk(conn, if complete { "done" } else { "partial" });
+    Ok(complete)
+}
+
+pub fn mark_catalog_walk_done(conn: &Connection) {
+    mark_catalog_walk(conn, "done");
+}
+
+/// Path rows discovered while a fill is still walking. Does not write FTS
+/// bodies and does not lower a note that already has a head.
+pub fn remember_discovered(
+    conn: &mut Connection,
+    notes: &[(String, String, i64, i64)],
+) -> Result<(), String> {
+    if notes.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare_cached(
+                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,?8,0,-1)
+                 ON CONFLICT(id) DO UPDATE SET
+                   path=excluded.path,
+                   name=excluded.name,
+                   kind=excluded.kind,
+                   parent_id=excluded.parent_id,
+                   mtime=CASE WHEN excluded.mtime>0 THEN excluded.mtime ELSE note_meta.mtime END,
+                   size=CASE WHEN excluded.size IS NOT NULL THEN excluded.size ELSE note_meta.size END,
+                   title=CASE
+                     WHEN note_meta.title IS NULL OR note_meta.title = '' THEN excluded.title
+                     ELSE note_meta.title
+                   END,
+                   deleted=0,
+                   fill_depth=CASE
+                     WHEN COALESCE(note_meta.fill_depth, 0) > excluded.fill_depth THEN note_meta.fill_depth
+                     ELSE excluded.fill_depth
+                   END",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut seen_folders = HashSet::new();
+        for (rel, name, mtime, size) in notes {
+            let rel = normalize_rel(rel);
+            let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty()).collect();
+            if parts.len() >= 2 {
+                let mut acc = String::new();
+                for (i, part) in parts.iter().enumerate() {
+                    if i + 1 == parts.len() {
+                        break;
+                    }
+                    if acc.is_empty() {
+                        acc = (*part).to_string();
+                    } else {
+                        acc = format!("{acc}/{part}");
+                    }
+                    if seen_folders.insert(acc.clone()) {
+                        stmt.execute(params![
+                            shell_node_id(&acc),
+                            acc,
+                            part,
+                            "folder",
+                            parent_id_of(&acc),
+                            0i64,
+                            Option::<i64>::None,
+                            part,
+                        ])
+                        .map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+            let title = name.trim_end_matches(".md").trim_end_matches(".MD");
+            stmt.execute(params![
+                shell_node_id(&rel),
+                rel,
+                name,
+                "note",
+                parent_id_of(&rel),
+                mtime,
+                Some(*size),
+                title,
+            ])
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Build the shell the renderer is allowed to hold.
@@ -626,17 +904,20 @@ pub fn mount_catalog(
 ) -> Result<ShellMount, String> {
     ensure_shell_indexes(conn)?;
     let (mut notes, mut folders) = catalog_counts(conn)?;
-    if notes == 0 {
+    if notes == 0 && folders == 0 {
         if !allow_walk {
             return Ok(pending_mount());
         }
         write_catalog(conn, root)?;
         (notes, folders) = catalog_counts(conn)?;
     } else if folders == 0 && allow_walk {
-        derive_folders(conn)?;
+        // One directory listing, not every note path.
+        seed_folder_pages(conn, root, prefer_path)?;
         (notes, folders) = catalog_counts(conn)?;
     }
-    if notes <= SHELL_FULL_MAX_NOTES {
+    // A cold open commits the root page before the rest of the vault exists.
+    // That partial catalog must stay a window even when the page is small.
+    if !catalog_walk_partial(conn) && notes <= SHELL_FULL_MAX_NOTES {
         let all = query_all_bounded(conn, 8_000)?;
         let got_notes = all.iter().filter(|r| r.kind == "note").count() as i64;
         if got_notes >= notes {
@@ -1747,5 +2028,98 @@ mod tests {
         assert_eq!(known, vec!["n0099".to_string()]);
         let mentions = query_mention_heads(&conn, "n0099", 24).unwrap();
         assert!(mentions.is_empty(), "missing FTS is an empty page, not a vault scan");
+    }
+
+    #[test]
+    fn first_page_does_not_wait_for_nested_notes() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-seed-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = dir.join("vault");
+        fs::create_dir_all(root.join("deep/nest")).unwrap();
+        fs::write(root.join("root.md"), "root\n").unwrap();
+        for i in 0..40 {
+            fs::write(root.join(format!("deep/nest/n{i:02}.md")), "x\n").unwrap();
+        }
+        let mut conn = open_mem();
+        let complete = seed_first_page(&mut conn, &root, None).unwrap();
+        // open_mem has no meta_kv; seed still returns. Use a file db so the
+        // walk flag can be stored — completeness is about the listing.
+        let _ = fs::remove_dir_all(&dir);
+        assert!(!complete, "a nested folder is not a finished catalog");
+        let page = query_children(&conn, "", 200, 0).unwrap();
+        let notes: Vec<_> = page.rows.iter().filter(|r| r.kind == "note").collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].path, "root.md");
+        assert!(page.rows.iter().any(|r| r.kind == "folder" && r.path == "deep"));
+        let nested = query_children(&conn, "deep/nest", 200, 0).unwrap();
+        assert!(nested.rows.is_empty(), "nested notes wait for a later page");
+    }
+
+    #[test]
+    fn folder_migration_pages_instead_of_one_path_vec() {
+        let mut conn = open_mem();
+        for i in 0..30 {
+            insert_note(&conn, &format!("Area/n{i:02}.md"), None);
+        }
+        let first = derive_folders_page(&mut conn, "", 10).unwrap();
+        assert!(first.is_some());
+        let folders: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM note_meta WHERE kind='folder'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(folders >= 1);
+        assert!(folders < 30);
+        let rest = derive_folders_page(&mut conn, first.as_deref().unwrap_or(""), 100).unwrap();
+        assert!(rest.is_some());
+        let done = derive_folders_page(&mut conn, rest.as_deref().unwrap_or(""), 100).unwrap();
+        assert!(done.is_none());
+    }
+
+    #[test]
+    fn older_catalog_lists_root_folders_without_reading_every_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-folders-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = dir.join("vault");
+        fs::create_dir_all(root.join("Area")).unwrap();
+        fs::create_dir_all(root.join("Other/nest")).unwrap();
+        fs::write(root.join("Area/n.md"), "a\n").unwrap();
+        fs::write(root.join("Other/nest/m.md"), "b\n").unwrap();
+        let mut conn = open_mem();
+        insert_note(&conn, "Area/n.md", Some(&shell_node_id("Area")));
+        insert_note(&conn, "Other/nest/m.md", Some(&shell_node_id("Other/nest")));
+        seed_folder_pages(&mut conn, &root, Some("Other/nest/m.md")).unwrap();
+        let page = query_children(&conn, "", 200, 0).unwrap();
+        let folders: Vec<_> = page
+            .rows
+            .iter()
+            .filter(|r| r.kind == "folder")
+            .map(|r| r.path.as_str())
+            .collect();
+        assert!(folders.contains(&"Area"));
+        assert!(folders.contains(&"Other"));
+        assert!(
+            query_children(&conn, "Other", 200, 0)
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.path == "Other/nest"),
+            "the open note's parent folder is listed with the root page"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

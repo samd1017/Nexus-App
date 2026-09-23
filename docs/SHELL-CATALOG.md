@@ -40,7 +40,7 @@ Small vaults (fewer than 400 notes) still materialize every note so the full not
 - `vault_shell_mentions` returns a few indexed heads for a title phrase
 - FTS stays a SQLite query
 
-The first catalog walk and a folder backfill use their own database connection. They do not hold the connection the UI reads through. Batches yield so a page query can land between them.
+A cold open commits the root page, and the open note's folder page, before the rest of the vault is walked. Expanding a folder that is not in the catalog yet lists that directory and commits its first page. While the fill walks, path batches and a short run of note heads (tags included) commit early, on a separate connection from the clicks.
 
 Shell reads use a short busy timeout (40ms, three tries, about 156ms) and drop the process lock before sleeping. The UI tries twice. If the lock is still held, the command returns `shell_busy`. The screen keeps the last page, or stays empty when nothing has loaded, and refreshes when the next fill batch commits. A gesture does not sit on a long lock.
 
@@ -76,13 +76,14 @@ Re-test by repeating those gestures on a small folder and on a large folder, inc
 
 These are real gaps. They are why a large vault is not yet the same product as a small one.
 
-- The first catalog build and the FTS fill still walk the vault in the native process. Clicks are not that walk, and the walk has not been timed at 500,000 notes.
-- If a fill transaction outlasts the short retry budget, the gesture keeps the last page (or an empty one) and refreshes later. It does not hang. A page that has not been indexed yet is still missing until that batch commits.
+- The rest of a cold catalog and the FTS fill still walk the vault in the native process after the first page is up. That work still grows with the vault. A 500,000-note open was not run.
+- If a fill transaction outlasts the short retry budget, the gesture keeps the last page (or an empty one) and refreshes later. It does not hang. A folder the walker has not reached can still open its first page from disk.
+- Older note-only catalogs gain their root folder page from one directory listing. Nested folder rows appear when that folder is opened, or as the fill walk reaches it. Open does not read every note path to invent folders.
 - The tag rail reads `tag_map` for heads already written. It stays empty until the first head batch, then paints those tags without waiting for the rest of the vault. It does not scan bodies in the window.
 - Wikilink suggestions on this path match a prefix of the title or path already in the catalog. A substring in the middle of every title is not a keystroke query.
 - Backlink rows are capped. The count is the reverse-index total for that note. Snippets are not loaded for every source.
 - Unlinked mentions read a page of indexed heads (the short head while fill is partial, a deeper head later), not every full body.
 - Orphan detection treats a note as linked when an edge names its title. A link that only matches a path can still look unlinked.
-- Adding folder rows to an older note-only index still streams paths inside the native process once. That pass no longer holds the UI connection.
+- A single directory with more entries than one page still has to be listed before that sorted page is known. The listing does not read note bodies and does not enter subfolders.
 - The browser does not implement the desktop pin, path, orphan, broken-link, or mention commands. Those panels stay on the window the browser already pages.
 - The browser pages a granted folder through a disposable local catalog, including backlinks, tags, neighborhood, and search, and still refuses above its cap. What that client still lacks is listed in [VAULT-CONTRACT.md](./VAULT-CONTRACT.md).
