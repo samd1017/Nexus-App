@@ -808,6 +808,33 @@ fn cooperate_after_write(started: Instant) {
     }
 }
 
+/// Bulk title and head writes. A larger page cache and rarer WAL checkpoints
+/// keep the index from re-reading itself as it grows. automerge stays on so
+/// a search during fill does not walk an unbounded set of FTS segments.
+fn tune_fill_connection(conn: &Connection) {
+    let _ = conn.execute_batch(
+        "PRAGMA cache_size=-524288;
+         PRAGMA temp_store=MEMORY;
+         PRAGMA mmap_size=1073741824;
+         PRAGMA wal_autocheckpoint=100000;",
+    );
+    let _ = conn.execute(
+        "INSERT INTO note_fts(note_fts, rank) VALUES('automerge', 16)",
+        [],
+    );
+}
+
+/// The first heads commit in small batches so note text is searchable
+/// before a full page of the vault has been read. Later batches stay at
+/// `FTS_WRITE_BATCH` so the lock yield does not dominate the rest of the pass.
+fn head_write_limit(headed: i64) -> usize {
+    if headed < 2048 {
+        64
+    } else {
+        FTS_WRITE_BATCH
+    }
+}
+
 /// Filename tokens users search first on cold open (official soak: `Hub N.md`).
 pub fn is_title_seed_hot_name(name: &str) -> bool {
     name.trim_end_matches(".md")
@@ -1335,9 +1362,7 @@ pub fn fill_from_disk_with_opts(
 ) -> Result<IndexFillResult, String> {
     ensure_fill_depth_column(conn);
     ensure_note_fts_row(conn);
-    let _ = conn.execute_batch(
-        "PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=268435456; PRAGMA wal_autocheckpoint=4000;",
-    );
+    tune_fill_connection(conn);
 
     let short_head = opts.short_head_chars.clamp(256, 4_096);
     let deep_head = opts.deep_head_chars.clamp(short_head, 32_000);
@@ -1672,7 +1697,7 @@ pub fn fill_from_disk_with_opts(
     emit(
         &mut progress,
         "fts-partial",
-        "ready-meta",
+        "ready-fts-partial",
         0,
         indexed,
         skipped,
@@ -1682,6 +1707,7 @@ pub fn fill_from_disk_with_opts(
     );
 
     let mut phase_scanned: i64 = 0;
+    let mut headed_now: i64 = 0;
     pipeline_head_reads(&files, &need_partial, short_head, &mut is_cancelled, |heads| {
         let n = heads.len() as i64;
         for (i, body) in heads {
@@ -1699,7 +1725,8 @@ pub fn fill_from_disk_with_opts(
                 body,
                 fill_depth: FILL_DEPTH_PARTIAL,
             });
-            if batch.len() >= FTS_WRITE_BATCH {
+            headed_now += 1;
+            if batch.len() >= head_write_limit(headed_now) {
                 flush_note_batch(
                     conn,
                     &mut batch,
@@ -1715,7 +1742,7 @@ pub fn fill_from_disk_with_opts(
             emit(
                 &mut progress,
                 "fts-partial",
-                "ready-meta",
+                "ready-fts-partial",
                 phase_scanned.min(partial_total),
                 indexed,
                 skipped,
@@ -2716,6 +2743,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let mut hub_ms: Option<u128> = None;
         let mut cluster_ms: Option<u128> = None;
         let mut short_head_ms: Option<u128> = None;
+        let mut bodies_50_ms: Option<u128> = None;
+        let mut bodies_90_ms: Option<u128> = None;
         let mut seeded: Option<i64> = None;
         let until = match std::env::var("NEXUS_FILL_PROBE_UNTIL").as_deref() {
             Ok("deep") => FillUntil::Deep,
@@ -2774,6 +2803,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                         cluster_ms = Some(t0.elapsed().as_millis());
                     }
                 }
+                if (p.phase == "fts-partial" || p.phase == "ready-fts-partial") && p.scanned > 0 {
+                    let now = t0.elapsed().as_millis();
+                    if bodies_50_ms.is_none() && p.scanned >= half {
+                        bodies_50_ms = Some(now);
+                    }
+                    if bodies_90_ms.is_none() && p.scanned >= most {
+                        bodies_90_ms = Some(now);
+                    }
+                }
                 if p.phase == "ready-fts-partial" && short_head_ms.is_none() {
                     short_head_ms = Some(t0.elapsed().as_millis());
                 }
@@ -2781,7 +2819,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         )
         .unwrap();
         eprintln!(
-            "probe n={} until={until:?} page_complete={} first_page_ms={} early_heads_ms={:?} early_cluster={} early_tag={} titles_50_ms={:?} titles_90_ms={:?} ready-meta {:?}ms seed {:?} hub {:?}ms cluster {:?}ms short_head_ms={:?} total {}ms notes={} state {}",
+            "probe n={} until={until:?} page_complete={} first_page_ms={} early_heads_ms={:?} early_cluster={} early_tag={} titles_50_ms={:?} titles_90_ms={:?} ready-meta {:?}ms seed {:?} hub {:?}ms cluster {:?}ms bodies_50_ms={:?} bodies_90_ms={:?} short_head_ms={:?} total {}ms notes={} state {}",
             n,
             page_rows,
             first_page_ms,
@@ -2794,6 +2832,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             seeded,
             hub_ms,
             cluster_ms,
+            bodies_50_ms,
+            bodies_90_ms,
             short_head_ms,
             t0.elapsed().as_millis(),
             result.notes,

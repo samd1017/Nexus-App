@@ -84,6 +84,6 @@ These are real gaps. They are why a large vault is not yet the same product as a
 - Backlink rows are capped. The count is the reverse-index total for that note. Snippets are not loaded for every source.
 - Unlinked mentions read a page of indexed heads (the short head while fill is partial, a deeper head later), not every full body.
 - Orphan detection treats a note as linked when an edge names its title. A link that only matches a path can still look unlinked.
-- A single directory with more entries than one page still has to be listed before that sorted page is known. The listing does not read note bodies and does not enter subfolders.
+- A single directory with more entries than one page is still listed once, so the first page is the real folders-then-name window. Only that page is ordered, and modification time is read only for those rows. The listing does not read note bodies and does not enter subfolders.
 - The browser does not implement the desktop pin, path, orphan, broken-link, or mention commands. Those panels stay on the window the browser already pages.
 - The browser pages a granted folder through a disposable local catalog, including backlinks, tags, neighborhood, and search, and still refuses above its cap. What that client still lacks is listed in [VAULT-CONTRACT.md](./VAULT-CONTRACT.md).

@@ -651,8 +651,54 @@ pub fn catalog_walk_partial(conn: &Connection) -> bool {
     .unwrap_or(false)
 }
 
+struct PageSlot {
+    rel: String,
+    name: String,
+    folder: bool,
+    mtime: i64,
+}
+
+fn cmp_ascii_ignore(a: &str, b: &str) -> std::cmp::Ordering {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    let n = ab.len().min(bb.len());
+    for i in 0..n {
+        let ord = ab[i].to_ascii_lowercase().cmp(&bb[i].to_ascii_lowercase());
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    ab.len().cmp(&bb.len())
+}
+
+/// Folders first, then name. Same order as the tree page query.
+fn page_slot_cmp(a: &PageSlot, b_folder: bool, b_name: &str) -> std::cmp::Ordering {
+    (!a.folder)
+        .cmp(&(!b_folder))
+        .then_with(|| cmp_ascii_ignore(&a.name, b_name))
+}
+
+fn insert_page_slot(entries: &mut Vec<PageSlot>, limit: usize, slot: PageSlot) {
+    if entries.len() >= limit {
+        let last = entries.last().unwrap();
+        if page_slot_cmp(last, slot.folder, &slot.name) != std::cmp::Ordering::Greater {
+            return;
+        }
+        entries.pop();
+    }
+    let idx = entries
+        .partition_point(|e| page_slot_cmp(e, slot.folder, &slot.name) == std::cmp::Ordering::Less);
+    entries.insert(idx, slot);
+}
+
+fn is_note_name(name: &str) -> bool {
+    let b = name.as_bytes();
+    b.len() >= 3 && b[b.len() - 3..].eq_ignore_ascii_case(b".md")
+}
+
 /// List one directory and keep the first display page (folders, then names).
-/// Does not open subdirectories.
+/// Does not open subdirectories. Modification time is read only for rows
+/// that stay on the page, so a fat folder does not stat every name.
 pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>, String> {
     let rel = normalize_rel(rel);
     let abs = if rel.is_empty() {
@@ -667,72 +713,52 @@ pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>
         return Ok(Vec::new());
     }
     let limit = limit.clamp(1, SHELL_CHILD_PAGE) as usize;
-    // Keep only the first display page while scanning. The directory is
-    // still read once so the page is folders-then-name; subfolders are not.
-    let mut entries: Vec<(String, String, String, i64)> = Vec::with_capacity(limit);
+    let mut entries: Vec<PageSlot> = Vec::with_capacity(limit);
     let rd = match std::fs::read_dir(&abs) {
         Ok(rd) => rd,
         Err(err) => return Err(err.to_string()),
     };
     for entry in rd.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || SKIP_DIRS.iter().any(|s| *s == name) {
+        let name_os = entry.file_name();
+        let name = name_os.to_string_lossy();
+        if name.starts_with('.') || SKIP_DIRS.iter().any(|s| *s == name.as_ref()) {
             continue;
         }
         let Ok(ft) = entry.file_type() else { continue };
+        let folder = ft.is_dir();
+        if !folder && !is_note_name(&name) {
+            continue;
+        }
+        if entries.len() >= limit {
+            let last = entries.last().unwrap();
+            if page_slot_cmp(last, folder, &name) != std::cmp::Ordering::Greater {
+                continue;
+            }
+        }
+        let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
+        let name = name.into_owned();
         let child_rel = if rel.is_empty() {
             name.clone()
         } else {
             format!("{rel}/{name}")
         };
-        let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
-        let kind = if ft.is_dir() {
-            "folder"
-        } else if ft.is_file() && name.to_ascii_lowercase().ends_with(".md") {
-            "note"
-        } else {
-            continue;
-        };
-        consider_page_row(&mut entries, limit, (child_rel, name, kind.to_string(), mtime));
+        insert_page_slot(
+            &mut entries,
+            limit,
+            PageSlot {
+                rel: child_rel,
+                name,
+                folder,
+                mtime,
+            },
+        );
     }
-    if entries.len() < limit {
-        entries.sort_by(page_row_order);
-    }
-    let mut rows = Vec::new();
-    for (child_rel, name, kind, mtime) in entries {
-        push_insert(&mut rows, &child_rel, &name, &kind, mtime);
+    let mut rows = Vec::with_capacity(entries.len());
+    for slot in entries {
+        let kind = if slot.folder { "folder" } else { "note" };
+        push_insert(&mut rows, &slot.rel, &slot.name, kind, slot.mtime);
     }
     Ok(rows)
-}
-
-fn page_row_order(
-    a: &(String, String, String, i64),
-    b: &(String, String, String, i64),
-) -> std::cmp::Ordering {
-    let ka = (a.2 != "folder", a.1.to_ascii_lowercase());
-    let kb = (b.2 != "folder", b.1.to_ascii_lowercase());
-    ka.cmp(&kb)
-}
-
-fn consider_page_row(
-    entries: &mut Vec<(String, String, String, i64)>,
-    limit: usize,
-    item: (String, String, String, i64),
-) {
-    if entries.len() < limit {
-        entries.push(item);
-        if entries.len() == limit {
-            entries.sort_by(page_row_order);
-        }
-        return;
-    }
-    let last = entries.last().unwrap();
-    if page_row_order(&item, last) != std::cmp::Ordering::Less {
-        return;
-    }
-    entries.pop();
-    let idx = entries.partition_point(|e| page_row_order(e, &item) == std::cmp::Ordering::Less);
-    entries.insert(idx, item);
 }
 
 /// Folder rows for an older note-only catalog.
@@ -2120,6 +2146,40 @@ mod tests {
                 .any(|r| r.path == "Other/nest"),
             "the open note's parent folder is listed with the root page"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fat_directory_page_is_the_sorted_window() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-sorted-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = dir.join("vault");
+        fs::create_dir_all(&root).unwrap();
+        // High names first, so the first names a directory returns are not
+        // the sorted page. The folder is created last.
+        for i in (0..250).rev() {
+            fs::write(root.join(format!("n{i:03}.md")), "x\n").unwrap();
+        }
+        fs::create_dir_all(root.join("zz-late")).unwrap();
+        let page = dir_page_rows(&root, "", 200).unwrap();
+        assert_eq!(page.len(), 200);
+        assert_eq!(page[0].kind, "folder");
+        assert_eq!(page[0].path, "zz-late");
+        let notes: Vec<&str> = page
+            .iter()
+            .filter(|r| r.kind == "note")
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(notes.len(), 199);
+        assert_eq!(notes[0], "n000.md");
+        assert_eq!(*notes.last().unwrap(), "n198.md");
+        assert!(notes.iter().all(|name| *name != "n249.md"));
         let _ = fs::remove_dir_all(&dir);
     }
 }
