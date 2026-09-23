@@ -39,6 +39,8 @@ import {
 } from "@/lib/vault/pulse";
 
 const DEFAULT_RIGHT_WIDTH = 340;
+/** Shell page reloads must not re-render the panel or the graph host. */
+const SHELL_PANEL_NODES: Record<string, import("@/lib/vault/types").VaultNode> = {};
 
 type GroupedBacklink = {
   fromId: string;
@@ -52,8 +54,12 @@ export function RightPanel() {
   const rightOpen = useVaultStore((s) => s.settings.rightOpen);
   const rightWidth = useVaultStore((s) => s.settings.rightWidth);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
-  const activeNoteId = useVaultStore((s) => s.activeNoteId);
-  const nodes = useVaultStore((s) => s.nodes);
+  const note = useVaultStore((s) =>
+    s.activeNoteId ? (s.nodes[s.activeNoteId] ?? null) : null,
+  );
+  const nodes = useVaultStore((s) =>
+    s.shellCatalog ? SHELL_PANEL_NODES : s.nodes,
+  );
   const vaultId = useVaultStore((s) => s.vaultId);
   const mode = useVaultStore((s) => s.mode);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
@@ -68,7 +74,6 @@ export function RightPanel() {
   const setRightTab = useVaultStore((s) => s.setRightTab);
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
   const shellDbPath = useVaultStore((s) => s.shellDbPath);
-  const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
   const [shellBacklinks, setShellBacklinks] = useState<Backlink[] | null>(null);
   const openConflictCount = useVaultStore((s) => {
     // Depend on nodes + dismissals so badge updates live
@@ -82,6 +87,20 @@ export function RightPanel() {
 
   // R1.1: do NOT auto-open Graph on demo — GraphView must be user-initiated
   // until the panel is proven stable (avoids first-run crash path).
+  // Warm the chunk after first paint so selecting Graph is not a parse hitch.
+  useEffect(() => {
+    const ric = window.requestIdleCallback;
+    if (typeof ric === "function") {
+      const id = ric(() => {
+        void import("@/components/graph/GraphView");
+      });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = window.setTimeout(() => {
+      void import("@/components/graph/GraphView");
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, []);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
@@ -89,7 +108,6 @@ export function RightPanel() {
 
   // Lazy hydrate writes into the same nodes object. This tick is the re-render.
   const bodyGen = useSyncExternalStore(subscribeBodyGen, getBodyGen, getBodyGen);
-  const note = activeNoteId ? nodes[activeNoteId] : null;
   const bodyReady = !note || note.kind !== "note" || isContentLoaded(note);
 
   useEffect(() => {
@@ -166,21 +184,30 @@ export function RightPanel() {
     const db = shellDbPath;
     const noteId = note.id;
     const title = noteTitle(note);
-    const norms = [...new Set(extractWikilinkTargets(note.content ?? "").map((target) => normalizeLinkTarget(target)).filter(Boolean))];
+    const content = note.content ?? "";
     let cancel = false;
-    void fetchShellKnownNorms(db, norms).then((known) => {
-      if (cancel || !known) return;
-      const have = new Set(known);
-      setShellBrokenTargets(norms.filter((norm) => !have.has(norm)));
-    });
-    void fetchShellMentions(db, title, 24).then((heads) => {
-      if (cancel || !heads) return;
-      setShellMentions(unlinkedFromHeads(title, heads, noteId));
+    const run = () => {
+      const norms = [...new Set(extractWikilinkTargets(content).map((target) => normalizeLinkTarget(target)).filter(Boolean))];
+      void fetchShellKnownNorms(db, norms).then((known) => {
+        if (cancel || !known) return;
+        const have = new Set(known);
+        setShellBrokenTargets(norms.filter((norm) => !have.has(norm)));
+      });
+      void fetchShellMentions(db, title, 24).then((heads) => {
+        if (cancel || !heads) return;
+        setShellMentions(unlinkedFromHeads(title, heads, noteId));
+      });
+    };
+    run();
+    const unsub = useVaultStore.subscribe((state, prev) => {
+      if (cancel || state.shellLiveTick === prev.shellLiveTick) return;
+      run();
     });
     return () => {
       cancel = true;
+      unsub();
     };
-  }, [shellCatalog, shellDbPath, shellLiveTick, tab, note, bodyGen]);
+  }, [shellCatalog, shellDbPath, tab, note, bodyGen]);
 
   const brokenLinks = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];

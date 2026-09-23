@@ -240,6 +240,12 @@
     overscroll-behavior: contain;
   }
 
+  /* Note body scroller. Anchoring fights WebKit when chrome above the
+     prose updates, and a transformed ancestor disables compositor scroll. */
+  .editor-scrollport {
+    overflow-anchor: none;
+  }
+
   .skip-link {
     position: absolute;
     left: 8px;
@@ -1244,8 +1250,8 @@
     animation: noteFadeIn var(--duration-base) var(--motion-ease) both;
   }
   @keyframes noteFadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   /* Soft Visual ↔ Source / note switch */
@@ -1255,8 +1261,8 @@
     animation: editorSurfaceIn var(--duration-base) var(--motion-ease) both;
   }
   @keyframes editorSurfaceIn {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .first-run-coach {

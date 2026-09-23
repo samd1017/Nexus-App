@@ -224,6 +224,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const editorFontSize = usePrefsStore((s) => s.editorFontSize);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const applying = useRef(false);
+  const selectionSigRef = useRef("");
   const userEdited = useRef(false);
   const baselineMd = useRef(upgradeSparseDailySkeleton(content || ""));
   const lastWrittenRef = useRef(baselineMd.current);
@@ -705,6 +706,12 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       },
       onSelectionUpdate: ({ editor: ed }) => {
         if (applying.current) return;
+        // WebKit fires selectionchange while the note scrolls. An unchanged
+        // caret must not walk suggest/slash on every frame.
+        const sel = ed.state.selection;
+        const sig = `${sel.from}:${sel.to}`;
+        if (sig === selectionSigRef.current) return;
+        selectionSigRef.current = sig;
         refreshSuggest(ed);
         refreshSlash(ed);
       },
@@ -1038,7 +1045,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       }}
     >
       <EditorToolbar editor={editor} />
-      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6">
+      <div className="editor-scrollport relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6">
         <div className={cn("mx-auto max-w-[720px]", isDaily && "daily-visual")}>
           <EditorContent editor={editor} />
         </div>

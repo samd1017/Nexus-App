@@ -11,6 +11,9 @@ import { extractWikilinkTargets, normalizeLinkTarget } from "@/lib/markdown/wiki
 import type { VaultNode } from "@/lib/vault/types";
 import { formatWordCount, noteMass } from "@/lib/editor/note-mass";
 
+/** Stable stand-in so a shell page reload does not re-render the status line. */
+const SHELL_STATUS_NODES: Record<string, VaultNode> = {};
+
 function linkTargetKey(raw: string): string {
   const base = raw.split("#")[0]?.split("^")[0] ?? raw;
   return normalizeLinkTarget(base);
@@ -61,8 +64,10 @@ export function EditorStatusBar({ noteId }: { noteId: string }) {
   const mode = useVaultStore((s) => s.mode);
   const vaultId = useVaultStore((s) => s.vaultId);
   const dirty = useVaultStore((s) => s.dirtyNoteIds.includes(noteId));
-  const nodes = useVaultStore((s) => s.nodes);
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const nodes = useVaultStore((s) =>
+    s.shellCatalog ? SHELL_STATUS_NODES : s.nodes,
+  );
   const shellDbPath = useVaultStore((s) => s.shellDbPath);
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
   const setRightTab = useVaultStore((s) => s.setRightTab);

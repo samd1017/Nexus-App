@@ -26,7 +26,7 @@ import {
   shellSessionFromMount,
 } from "./src/lib/vault/shell-catalog.ts";
 import { unlinkedFromHeads } from "./src/lib/vault/unlinked-mentions.ts";
-import { graphFromShellLevel } from "./src/lib/graph/shell-graph.ts";
+import { graphFromShellLevel, pinFolderLayout } from "./src/lib/graph/shell-graph.ts";
 import {
   browserRecord,
   backlinksFromEdges,
@@ -100,6 +100,24 @@ const merged = mergeShellRows(built.nodes, built.rootIds, [{
 }]);
 assert.equal(merged.nodes.folder.kind, "folder");
 assert.equal(Object.keys(merged.nodes).length, 11);
+const again = mergeShellRows(merged.nodes, merged.rootIds, [{
+  id: "n0",
+  path: "n0.md",
+  name: "n0.md",
+  kind: "note",
+  parentId: null,
+  mtime: 1,
+}]);
+assert.equal(again.nodes, merged.nodes, "unchanged catalog page keeps node identity");
+assert.equal(again.nodes.n0, merged.nodes.n0);
+const pinned = pinFolderLayout([
+  { id: "f", kind: "folder" },
+  { id: "n", kind: "note" },
+]);
+assert.equal(pinned.length, 2);
+assert.equal(pinned[0].fx, pinned[0].x);
+assert.equal(pinned[1].fy, pinned[1].y);
+assert.ok(Number.isFinite(pinned[0].z));
 
 const flat = flattenVisibleTree(built.rootIds, built.nodes, [], 16000, undefined, session.shellUnloaded);
 const more = flat.find((row) => row.kind === "more");

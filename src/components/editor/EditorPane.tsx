@@ -19,8 +19,6 @@ import {
   Pin,
 } from "lucide-react";
 import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
-import { useTreeStructureTick } from "@/lib/vault/tree-tick";
-import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
 import { VisualEditor } from "./VisualEditor";
@@ -84,7 +82,6 @@ export function EditorPane({
   const note = useVaultStore((s) =>
     resolvedId ? (s.nodes[resolvedId] ?? null) : null,
   );
-  const structureTick = useTreeStructureTick();
   const isSecondary = pane === "secondary";
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const [hydrateError, setHydrateError] = useState(false);
@@ -173,10 +170,18 @@ export function EditorPane({
     };
   }, [note?.id, note?.content, ensureNoteBody]);
 
-  const noteCount = useMemo(() => {
-    void structureTick;
-    return ensureVaultIndex(useVaultStore.getState().nodes).noteCount;
-  }, [structureTick]);
+  // While a note is open this stays -1, so catalog page reloads do not
+  // re-render the editor. The empty state is the only reader of the count.
+  const noteCount = useVaultStore((s) => {
+    if (s.activeNoteId || (pane === "secondary" && s.secondaryNoteId)) return -1;
+    if (s.shellCatalog) return s.catalogNoteCount;
+    let n = 0;
+    const nodes = s.nodes;
+    for (const id in nodes) {
+      if (nodes[id]?.kind === "note") n += 1;
+    }
+    return n;
+  });
   const createNote = useVaultStore((s) => s.createNote);
 
   if (!note || note.kind !== "note") {

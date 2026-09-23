@@ -15,6 +15,8 @@ import { useSyncExternalStore } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 
 const EMPTY_TICK_NODES: Record<string, unknown> = {};
+/** Shell graphs read a catalog page, not the window map. */
+const SHELL_TICK_NODES: Record<string, unknown> = {};
 
 let seenNodes: object = EMPTY_TICK_NODES;
 let seenScope = "";
@@ -26,11 +28,16 @@ let cachedTick = "0";
 /** Pure snapshot: store identity only. Never touches the vault index. */
 export function getGraphTickSnapshot(): string {
   const s = useVaultStore.getState();
-  const raw = s.nodes as object | null | undefined;
-  const nodes = raw && typeof raw === "object" ? raw : EMPTY_TICK_NODES;
   const scope = s.graphScopeMode ?? "vault";
   const browse = s.graphBrowsePath ?? "";
   const active = s.activeNoteId ?? "";
+  // A filling catalog replaces the page object every batch. The shell graph
+  // refetches on scope, not on that identity, so the WebGL host stays put.
+  const nodes = s.shellCatalog
+    ? SHELL_TICK_NODES
+    : s.nodes && typeof s.nodes === "object"
+      ? (s.nodes as object)
+      : EMPTY_TICK_NODES;
   if (
     nodes === seenNodes &&
     scope === seenScope &&

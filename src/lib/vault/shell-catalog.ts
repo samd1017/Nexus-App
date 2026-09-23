@@ -285,15 +285,34 @@ export function mergeShellRows(
   if (!rows.length) return { nodes, rootIds };
   const next = { ...nodes };
   const roots = new Set(rootIds);
+  let changed = false;
   for (const row of rows) {
     if (!row.id) continue;
     const prev = next[row.id];
+    const kind = row.kind === "folder" ? "folder" : "note";
+    const parentId = row.parentId ?? null;
+    const mtime = row.mtime || prev?.mtime || 0;
+    // A fill reload of the same page must not mint a new object for the
+    // open note. A new object re-renders the editor on every catalog tick.
+    if (
+      prev &&
+      prev.path === row.path &&
+      prev.name === row.name &&
+      prev.kind === kind &&
+      (prev.parentId ?? null) === parentId &&
+      prev.mtime === mtime
+    ) {
+      if (!parentId) roots.add(prev.id);
+      continue;
+    }
     const node = shellRowToNode(row);
     if (prev?.content !== undefined) node.content = prev.content;
     if (prev && prev.mtime > node.mtime) node.mtime = prev.mtime;
     next[row.id] = node;
+    changed = true;
     if (!node.parentId) roots.add(node.id);
   }
+  if (!changed) return { nodes, rootIds };
   return { nodes: next, rootIds: [...roots] };
 }
 

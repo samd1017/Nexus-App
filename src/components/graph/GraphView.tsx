@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type KeyboardEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type KeyboardEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import SpriteText from "three-spritetext";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveGraphData, type GraphViewMode, type ResolvedGraphData } from "@/lib/graph/build-graph";
-import { emptyShellGraph, graphFromShellEgo, graphFromShellLevel } from "@/lib/graph/shell-graph";
+import { emptyShellGraph, graphFromShellEgo, graphFromShellLevel, pinFolderLayout } from "@/lib/graph/shell-graph";
 import { fetchShellBacklinks, fetchShellEgo, fetchShellLevel } from "@/lib/vault/shell-catalog";
 import { folderIdFromBrowsePath } from "@/lib/graph/folder-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
@@ -76,6 +76,9 @@ type GNode = {
   x?: number;
   y?: number;
   z?: number;
+  fx?: number;
+  fy?: number;
+  fz?: number;
   __threeObj?: THREE.Object3D;
 };
 
@@ -1136,7 +1139,7 @@ function graphHintText(
     : "Orbit · Zoom · Pan · Hover for details · Click to open";
 }
 
-export function GraphView({ mode, className }: Props) {
+export const GraphView = memo(function GraphView({ mode, className }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -1204,9 +1207,14 @@ export function GraphView({ mode, className }: Props) {
   const graphScopeMode = useVaultStore((s) => s.graphScopeMode ?? "vault");
   const graphBrowsePath = useVaultStore((s) => s.graphBrowsePath ?? "");
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
-  const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
-  const catalogFolderCount = useVaultStore((s) => s.catalogFolderCount);
+  // Read on this render only. Subscribing would rebuild the scene on every
+  // fill tick. Scope changes and the idle refresh below re-render first.
+  const catalogNoteCount = useVaultStore.getState().catalogNoteCount;
+  const catalogFolderCount = useVaultStore.getState().catalogFolderCount;
   const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  const [graphRefresh, setGraphRefresh] = useState(0);
+  const fillWasBusyRef = useRef(false);
   const [shellResolved, setShellResolved] = useState<ResolvedGraphData | null>(null);
   const enterGraphFolder = useVaultStore((s) => s.enterGraphFolder);
   const enterGraphEgo = useVaultStore((s) => s.enterGraphEgo);
@@ -1271,7 +1279,7 @@ export function GraphView({ mode, className }: Props) {
   // and not structureGeneration which can bump on content-only body evicts).
   const graphStructureKey = useMemo(() => {
     if (shellCatalog) {
-      return `shell:${graphBrowsePath}:${graphScopeMode}:${egoCenterId ?? ""}:${catalogNoteCount}`;
+      return `shell:${graphBrowsePath}:${graphScopeMode}:${egoCenterId ?? ""}:${graphRefresh}`;
     }
     const large = shouldUseFolderGraph(vaultNoteCount);
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
@@ -1311,8 +1319,18 @@ export function GraphView({ mode, className }: Props) {
     egoCenterId,
     graphTick,
     shellCatalog,
-    catalogNoteCount,
+    graphRefresh,
   ]);
+
+  useEffect(() => {
+    if (indexFillBusy) {
+      fillWasBusyRef.current = true;
+      return;
+    }
+    if (!fillWasBusyRef.current) return;
+    fillWasBusyRef.current = false;
+    setGraphRefresh((n) => n + 1);
+  }, [indexFillBusy]);
 
   useEffect(() => {
     if (!shellCatalog || !shellDbPath) {
@@ -1335,7 +1353,7 @@ export function GraphView({ mode, className }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [shellCatalog, shellDbPath, graphBrowsePath, graphScopeMode, egoCenterId, catalogNoteCount]);
+  }, [shellCatalog, shellDbPath, graphBrowsePath, graphScopeMode, egoCenterId, graphRefresh]);
 
   const resolved = useMemo(() => {
     if (shellCatalog) return shellResolved ?? emptyShellGraph(catalogNoteCount);
@@ -1353,6 +1371,8 @@ export function GraphView({ mode, className }: Props) {
   }, [graphStructureKey, graphBrowsePath, graphScopeMode, shellCatalog, shellResolved, catalogNoteCount]);
 
   const graphModeResolved: GraphViewMode = resolved.mode;
+  const graphModeRef = useRef(graphModeResolved);
+  graphModeRef.current = graphModeResolved;
 
   const tagColorNodes =
     colorBy === "tag" || tagFilter ? deferredNodes : null;
@@ -1367,33 +1387,35 @@ export function GraphView({ mode, className }: Props) {
         }
       }
     }
+    const nodes = resolved.nodes.map((n) => ({
+      id: n.id,
+      name: n.title,
+      val:
+        n.val ??
+        Math.max(
+          1,
+          (n.noteCount ?? n.degree ?? 0) + (n.kind === "folder" ? 1 : 1),
+        ),
+      preview: n.preview,
+      path: n.path,
+      degree: n.degree,
+      folder: n.folder ?? "",
+      tag: tagByNote.get(n.id) || "",
+      ghost: n.ghost,
+      ghostTarget: n.ghostTarget,
+      kind: n.kind,
+      noteCount: n.noteCount,
+      aggregate: n.aggregate,
+    })) as GNode[];
     return {
-      nodes: resolved.nodes.map((n) => ({
-        id: n.id,
-        name: n.title,
-        val:
-          n.val ??
-          Math.max(
-            1,
-            (n.noteCount ?? n.degree ?? 0) + (n.kind === "folder" ? 1 : 1),
-          ),
-        preview: n.preview,
-        path: n.path,
-        degree: n.degree,
-        folder: n.folder ?? "",
-        tag: tagByNote.get(n.id) || "",
-        ghost: n.ghost,
-        ghostTarget: n.ghostTarget,
-        kind: n.kind,
-        noteCount: n.noteCount,
-        aggregate: n.aggregate,
-      })) as GNode[],
+      nodes:
+        graphModeResolved === "folder" ? pinFolderLayout(nodes) : nodes,
       links: resolved.edges.map((e) => ({
         source: e.source,
         target: e.target,
       })) as GLink[],
     };
-  }, [resolved, colorBy, tagColorNodes]);
+  }, [resolved, colorBy, tagColorNodes, graphModeResolved]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);
@@ -1753,7 +1775,7 @@ export function GraphView({ mode, className }: Props) {
       .showNavInfo(false)
       .enableNodeDrag(true)
       .enableNavigationControls(true)
-      .cooldownTicks(desktopBoost ? 48 : 64)
+      .cooldownTicks(graphModeRef.current === "folder" ? 0 : desktopBoost ? 20 : 36)
       .warmupTicks(0)
       .nodeId("id")
       .nodeLabel(() => "")
@@ -1912,10 +1934,7 @@ export function GraphView({ mode, className }: Props) {
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = desktopBoost ? 1.32 : 1.12;
       renderer.setPixelRatio(
-        Math.min(
-          Math.max(window.devicePixelRatio || 1, desktopBoost ? 1.5 : 1),
-          2.5,
-        ),
+        Math.min(window.devicePixelRatio || 1, desktopBoost ? 1 : 2),
       );
       if ("outputColorSpace" in renderer) {
         (renderer as THREE.WebGLRenderer).outputColorSpace =
@@ -1928,7 +1947,8 @@ export function GraphView({ mode, className }: Props) {
     }
 
     let bloomPass: UnrealBloomPass | null = null;
-    if (!usePrefsStore.getState().reducedMotion) {
+    // Panel bloom is a full-frame pass on every orbit tick. Fullscreen keeps it.
+    if (!usePrefsStore.getState().reducedMotion && mode === "fullscreen") {
       try {
         const composer = graph.postProcessingComposer();
         const bloom = new UnrealBloomPass(
@@ -2087,8 +2107,9 @@ export function GraphView({ mode, className }: Props) {
       }
       raf = requestAnimationFrame(drift);
     };
-    // Honor reduced motion — skip sky drift animation
-    if (!usePrefsStore.getState().reducedMotion) {
+    // A side-panel graph that drifts every frame steals the editor's scroll.
+    // Fullscreen can keep the sky moving. The panel stays still after layout.
+    if (!usePrefsStore.getState().reducedMotion && mode === "fullscreen") {
       raf = requestAnimationFrame(drift);
     }
 
@@ -2178,6 +2199,13 @@ export function GraphView({ mode, className }: Props) {
     graph.width(width).height(height);
     try {
       graph.graphData(displayData);
+      if (graphModeRef.current === "folder") {
+        const sim = graph as ForceGraph3DInstance & {
+          d3Alpha?: (a: number) => ForceGraph3DInstance;
+        };
+        sim.cooldownTicks(0);
+        sim.d3Alpha?.(0);
+      }
     } catch (err) {
       console.warn("[nexus] graph data", err);
     }
@@ -2307,15 +2335,21 @@ export function GraphView({ mode, className }: Props) {
       console.warn("[nexus] graph data", err);
     }
     try {
-      // Soft continue — do not reheat the whole simulation on every swap.
       const sim = graphRef.current as ForceGraph3DInstance & {
         d3Alpha?: (a: number) => ForceGraph3DInstance;
+        cooldownTicks?: (n: number) => ForceGraph3DInstance;
       };
-      sim.d3Alpha?.(0.06);
+      if (graphModeResolved === "folder") {
+        sim.cooldownTicks?.(0);
+        sim.d3Alpha?.(0);
+      } else {
+        sim.cooldownTicks?.(desktopBoost ? 20 : 36);
+        sim.d3Alpha?.(0.08);
+      }
     } catch {
       /* ok */
     }
-  }, [displayData]);
+  }, [displayData, graphModeResolved, desktopBoost]);
 
   /** Debounced zoomToFit after folder path / scope change (skip first mount) */
   useEffect(() => {
@@ -2702,7 +2736,7 @@ export function GraphView({ mode, className }: Props) {
         <>
           <span className="text-[var(--accent)] opacity-90">Near active</span>
           <span className="mx-1.5 opacity-40">·</span>
-          {vaultLinkIndex.ready ? (
+          {shellCatalog || vaultLinkIndex.ready ? (
             <>
               {realNoteCount} note{realNoteCount === 1 ? "" : "s"}
               <span className="mx-1.5 opacity-40">·</span>
@@ -2711,6 +2745,12 @@ export function GraphView({ mode, className }: Props) {
                 <>
                   <span className="mx-1.5 opacity-40">·</span>
                   of {vaultNoteCount.toLocaleString()}
+                </>
+              ) : null}
+              {shellCatalog && realLinkCount === 0 && indexFillBusy ? (
+                <>
+                  <span className="mx-1.5 opacity-40">·</span>
+                  links still filling
                 </>
               ) : null}
             </>
@@ -2739,8 +2779,12 @@ export function GraphView({ mode, className }: Props) {
     vaultNoteCount,
     drawnNodeCount: displayData.nodes.length,
     activeNoteId,
-    linkIndexReady: vaultLinkIndex.ready,
-    linkEdgeCount: vaultLinkIndex.stats().edgeCount,
+    linkIndexReady: shellCatalog ? true : vaultLinkIndex.ready,
+    linkEdgeCount: shellCatalog
+      ? realLinkCount
+      : vaultLinkIndex.stats().edgeCount,
+    catalogBacked: shellCatalog,
+    linksStillFilling: Boolean(shellCatalog && indexFillBusy),
     hasFilters: Boolean(graphQuery || tagFilter || folderFilter || orphansOnly),
     folderHasPath: Boolean(stats.levelPath || graphBrowsePath),
   });
@@ -2865,4 +2909,4 @@ export function GraphView({ mode, className }: Props) {
       />
     </GraphChrome>
   );
-}
+});

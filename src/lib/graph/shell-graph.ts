@@ -40,6 +40,25 @@ function rowToGraphNode(row: ShellRow): GraphNode {
   };
 }
 
+/**
+ * Folder maps have no link edges. A force simulation just shoves the
+ * orbs around for dozens of frames. Pin them on a ring so the first
+ * paint is the layout.
+ */
+export function pinFolderLayout<T extends { kind?: string }>(
+  nodes: T[],
+): Array<T & { x: number; y: number; z: number; fx: number; fy: number; fz: number }> {
+  const n = Math.max(nodes.length, 1);
+  const radius = Math.max(36, 16 + n * 2.4);
+  return nodes.map((node, i) => {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const y = node.kind === "folder" ? 12 : node.kind === "aggregate" ? 0 : -10;
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    return { ...node, x, y, z, fx: x, fy: y, fz: z };
+  });
+}
+
 export function emptyShellGraph(vaultNoteCount: number): ResolvedGraphData {
   return {
     mode: "folder",
