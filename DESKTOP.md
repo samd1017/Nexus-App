@@ -109,7 +109,7 @@ Cold 100k must **not** wait for every note body to enter FTS before the vault is
 1. Open the folder in `tauri:dev` (Welcome → Open folder), **or** DevTools:
 
    ```js
-   await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")
+   await __NEXUS_SOAK__.runWaveE("~/Documents/nexus-soak-100k")
    ```
 
 2. First paint: tree/editor interactive in seconds. Banner may still say heads are filling. Palette heading includes **SQLite FTS5 BM25** (may append `· titles` / `· heads` until deep FTS finishes). Never `Memory FTS (capped)`.

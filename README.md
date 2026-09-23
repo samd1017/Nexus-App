@@ -120,7 +120,7 @@ See [`docs/PUBLIC-BETA.md`](docs/PUBLIC-BETA.md) for release-readiness notes.
 - **Search + Ask** — FTS operators, fused ranking, `ask:` answers with citations.
 - **Agents** — Pulse inbox + Conflict Studio; simulate agent write in demo.
 - **Command palette** — Fast navigation and actions.
-- **Large test vault** — Included under `public/large-test-vault/` for stress testing.
+- **Large test vault** — Generate locally into gitignored `public/large-test-vault/` for stress testing. Not stored in git.
 
 ---
 

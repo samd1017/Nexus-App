@@ -31,7 +31,7 @@ Real Chrome FSA of a 100k folder:
 | `d68b055` | `cluster` 16, Ready 100,002, **11 notes**, discard on 12th search |
 | `024c28a` | `cluster` 16 before and after reopen, **7 notes**, discard while opening note 8 (`Brief-02800-z66`). Box 15GB RAM / ~9GB free. Chrome ~1.8GB RSS + renderer ~1.8GB. Flaky and worse. |
 
-**`hub` → 0 hits on the unofficial one-off folder is a FALSE ALARM.** That vault was written by `/workspace/gen-soak-vault.mjs` (not in this repo) with **zero `hub` tokens**. Official generators emit Hub + `Cluster hub`. Probe unofficial folders with **`cluster` only**.
+**`hub` → 0 hits on the unofficial one-off folder is a FALSE ALARM.** That vault was written by an unofficial generator outside this repo with **zero `hub` tokens**. Official generators emit Hub + `Cluster hub`. Probe unofficial folders with **`cluster` only**.
 
 This SHA does not claim 100k Chrome works. It (A) logs `jsHeapUsedMb` after every note open (`[nexus-heap]` / `__NEXUS_STRESS__().heapLog`), (B) **refuses Open folder at ≥25k** in Chrome (“use desktop/Tauri”), (C) caps the file-tree flatten at 2400 and accordion-expands at ≥400 notes, and **stops FSA signature poll / FileSystemObserver rescans above 4k** (the likely note-8 discard: every open re-walked the vault). DEV-only override: `?forceLargeFsa` or `localStorage nexus-force-large-fsa=1` plus a scary confirm. Production cannot force a 25k+ Chrome open.
 
@@ -187,8 +187,8 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 
 1. `npm run tauri:dev` (signed install is also fine).
 2. Welcome → **Open folder** → pick `~/Documents/nexus-soak-100k` first, then `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\nexus-soak-300k`).
-   Or DevTools (DEV build): `await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")`.
-   A home-dir path such as `C:\Users\you\nexus-soak-100k` is still valid: programmatic open grants that folder on persisted-scope before scan. Forbidden reads fail the progress banner.
+   Or DevTools (DEV build): `await __NEXUS_SOAK__.runWaveE("~/Documents/nexus-soak-100k")`.
+   A folder outside Documents is still valid: programmatic open grants that folder on persisted-scope before scan. Forbidden reads fail the progress banner.
 3. Title bar must say **On disk** / **Desktop vault**, never `Test · this browser`.
 4. Command palette (`⌘K` / `Ctrl+K`) → type `retrieval hub`. Group heading must include **SQLite FTS5 BM25**. If it says `Memory FTS (capped)`, the native index failed — stop and file that, do not pass Wave E.
 
@@ -278,7 +278,7 @@ Remount reapplies both. Title bar says **Test · this browser**. Banner: writes 
 
 | Fact | Result |
 |------|--------|
-| Vault | `/workspace/nexus-soak-100k` (100k `.md`) |
+| Vault | local soak folder outside the repo (100k `.md`) |
 | Open | Real Chrome FSA picker. Title: **On disk / Local folder · live watch** |
 | Metadata | Ready ~100,408 items in ~20–30s; could open a note |
 | Search `hub` | **No hits** — only “Create note: hub” |
@@ -318,7 +318,7 @@ npm run soak:fsa-cdp --   # attach Chrome :9222 after a human picks the folder
 | ≥25k | **Refuse.** Clear the saved handle. Welcome card `data-chrome-fsa-refused`. No silent OOM. |
 | Force | DEV only: `?forceLargeFsa` or `localStorage.nexus-force-large-fsa=1` plus a scary confirm. Production ignores both. |
 
-Playwright cannot drive `showDirectoryPicker` for `/workspace/nexus-soak-100k`. Attach a real Chrome:
+Playwright cannot drive `showDirectoryPicker` for a soak folder outside the repo. Attach a real Chrome:
 
 ```
 google-chrome --remote-debugging-port=9222 --enable-precise-memory-info --user-data-dir=/tmp/nexus-fsa-cdp
@@ -333,7 +333,7 @@ node scripts/stress-fsa-cdp.mjs http://127.0.0.1:9222 --opens 20
 | Vault | Generator | Probe |
 |-------|-----------|-------|
 | Official (`SOAK-MANIFEST.json` from this repo) | `npm run gen:soak-vault` → `scripts/generate-synthetic-vault.mjs` (alias `scripts/gen-soak-vault.mjs`) | **`hub`**, **`cluster`** (every body has `Cluster hub`; Hub titles every 200 notes). `retrieval` is a rotating topic. Wave E desktop query: `retrieval hub`. |
-| One-off `/workspace/nexus-soak-100k` on the Grok box | `/workspace/gen-soak-vault.mjs` (**not in repo**); names like `Meeting-10949-1oo` | **`cluster` only.** `rg` hub_files=0. Do not treat a `hub` miss as an engine bug. |
+| One-off soak folder outside the repo | unofficial generator (**not in repo**); names like `Meeting-10949-1oo` | **`cluster` only.** `rg` hub_files=0. Do not treat a `hub` miss as an engine bug. |
 
 Regenerate unofficial folders with `npm run gen:soak-vault -- --notes 100000 --out ~/Documents/nexus-soak-100k` so `hub` and `cluster` both hit.
 

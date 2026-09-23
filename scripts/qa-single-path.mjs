@@ -1,5 +1,6 @@
 import { chromium } from "playwright";
 import fs from "fs";
+import { screenshotPath } from "./screenshot-dir.mjs";
 
 const url = process.argv[2] || "http://127.0.0.1:8080/";
 const browser = await chromium.launch({ headless: true });
@@ -38,7 +39,7 @@ if (!/Vault scale|Settings|Confirm before delete/i.test(settingsText)) {
 }
 const hasLargeToggle = /Large vault mode/i.test(settingsText);
 const hasVaultScale = /Vault scale/i.test(settingsText);
-await page.screenshot({ path: "/workspace/screenshots/single-path-settings.png" });
+await page.screenshot({ path: screenshotPath("single-path-settings.png") });
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
 
@@ -52,12 +53,12 @@ if (await input.count()) {
   await input.fill("Welcome");
   await page.waitForTimeout(700);
 }
-await page.screenshot({ path: "/workspace/screenshots/single-path-demo.png" });
+await page.screenshot({ path: screenshotPath("single-path-demo.png") });
 
 await page.setViewportSize({ width: 390, height: 844 });
 await page.keyboard.press("Escape");
 await page.waitForTimeout(400);
-await page.screenshot({ path: "/workspace/screenshots/single-path-mobile.png" });
+await page.screenshot({ path: screenshotPath("single-path-mobile.png") });
 
 const report = {
   demoClicked: clicked,
@@ -68,7 +69,7 @@ const report = {
   consoleErrors: errors.filter((e) => !/favicon|ResizeObserver|Download the React DevTools/i.test(e)),
 };
 console.log(JSON.stringify(report, null, 2));
-fs.writeFileSync("/workspace/screenshots/single-path-qa.json", JSON.stringify(report, null, 2));
+fs.writeFileSync(screenshotPath("single-path-qa.json"), JSON.stringify(report, null, 2));
 await browser.close();
 const bad = report.consoleErrors.length > 0 || report.hasLargeToggle || !report.hasVaultScale;
 process.exit(bad ? 1 : 0);

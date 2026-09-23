@@ -1,6 +1,6 @@
 /**
  * Drive a REAL Chrome tab that already has a folder open via File System Access.
- * Playwright cannot click showDirectoryPicker for /workspace/nexus-soak-100k.
+ * Playwright cannot click showDirectoryPicker for a soak folder outside the repo.
  *
  *   # Terminal 1 — human Chrome (not Playwright's headless)
  *   google-chrome --remote-debugging-port=9222 --enable-precise-memory-info \

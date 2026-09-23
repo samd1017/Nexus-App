@@ -4,21 +4,22 @@
  * Does not try to "play" the app — just proves the page loads and captures a PNG
  * the agent can Read. Exit 0 on success, 1 on navigation failure, 2 if console errors.
  *
- * Screenshots default under /workspace/screenshots/ (never /tmp) so they live on
- * the workspace volume and stay readable by agent tools.
+ * Screenshots default under gitignored artifacts/screenshots
+ * (override with NEXUS_SCREENSHOT_DIR). Never a home directory.
  *
  * Targets are restricted (browser-guard.mjs): http/https loopback, PNG under
- * /workspace. A rejected target exits 1.
+ * that screenshot directory. A rejected target exits 1.
  */
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { chromium } from "playwright";
 import { checkedOutputPath, checkedUrl } from "./browser-guard.mjs";
+import { screenshotPath, screenshotRoot } from "./screenshot-dir.mjs";
 
 const url = checkedUrl(process.argv[2] || "http://127.0.0.1:8080/");
 const outPng = checkedOutputPath(
-  process.argv[3] || "/workspace/screenshots/app-builder-preview.png",
-  ["/workspace"],
+  process.argv[3] || screenshotPath("app-builder-preview.png"),
+  [screenshotRoot()],
 );
 const timeoutMs = Number(process.env.BROWSER_SMOKE_TIMEOUT_MS || 45000);
 

@@ -1,6 +1,8 @@
 /**
- * Fixture integrity for public/large-test-vault (45k seed).
- * Verifies manifest + chunk files exist and are non-empty without loading all bodies.
+ * Fixture integrity for a local public/large-test-vault (45k seed).
+ * The seed is gitignored. When the folder is absent this check skips.
+ * When present, verifies manifest + chunk files exist and are non-empty
+ * without loading all bodies.
  * Run: node scripts/verify-large-test-vault.mjs
  */
 
@@ -20,6 +22,13 @@ function fail(msg) {
 
 function ok(msg) {
   console.log(`OK: ${msg}`);
+}
+
+if (!existsSync(vaultDir)) {
+  console.log(
+    "verify-large-test-vault: SKIP (public/large-test-vault is gitignored; generate the 45k seed on disk to check it)",
+  );
+  process.exit(0);
 }
 
 if (!existsSync(manifestPath)) {

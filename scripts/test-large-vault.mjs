@@ -1,7 +1,8 @@
 import { chromium } from "playwright";
+import { screenshotPath } from "./screenshot-dir.mjs";
 
 const url = "http://127.0.0.1:8080/";
-const shot = "/workspace/screenshots/t1-large-vault-loaded.png";
+const shot = screenshotPath("t1-large-vault-loaded.png");
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -13,7 +14,7 @@ page.on("console", (msg) => {
 
 await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
 await page.waitForTimeout(1500);
-await page.screenshot({ path: "/workspace/screenshots/t1-welcome-before.png", fullPage: false });
+await page.screenshot({ path: screenshotPath("t1-welcome-before.png"), fullPage: false });
 
 // Click Open 45k test vault
 const btn = page.getByRole("button", { name: /Open 45k test vault/i });

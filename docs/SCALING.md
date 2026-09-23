@@ -187,8 +187,8 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 
 | Path | Purpose |
 |------|---------|
-| `fixtures/large-test-vault.zip` | Source archive (unzip for desktop **Open folder…**) |
-| `public/large-test-vault/*` | Prebuilt seed for in-app **Open 45k test vault** |
+| `fixtures/large-test-vault.zip` | Optional local archive under gitignored `fixtures/`. Unzip for desktop **Open folder…**. Do not commit. |
+| `public/large-test-vault/*` | Local gitignored seed for in-app **Open 45k test vault**. Generate on disk. Do not commit. |
 | `src/lib/vault/large-test-vault.ts` | Loader → `openLargeTestVault()` |
 
 Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder. Session creates/edits on that seed stay in a **browser overlay** (not files); the title bar says `Test · this browser` and the banner offers **Open a folder**. Disk vaults write markdown; do not treat overlay remount as SCALE READY.

@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { screenshotPath } from "./screenshot-dir.mjs";
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -30,14 +31,14 @@ for (const name of ["01-Projects", "02-Areas", "03-Resources", "04-Archive"]) {
   }
 }
 await page.waitForTimeout(500);
-await page.screenshot({ path: "/workspace/screenshots/t1-large-vault-tree.png" });
+await page.screenshot({ path: screenshotPath("t1-large-vault-tree.png") });
 
 // Open graph panel if button exists
 const graphBtn = page.getByRole("button", { name: /Graph/i }).first();
 if (await graphBtn.count()) {
   try { await graphBtn.click({ timeout: 3000 }); await page.waitForTimeout(2500); } catch {}
 }
-await page.screenshot({ path: "/workspace/screenshots/t1-large-vault-graph.png" });
+await page.screenshot({ path: screenshotPath("t1-large-vault-graph.png") });
 
 // Count nodes in store if exposed via window debug — probe via text
 const info = await page.evaluate(() => {
