@@ -637,7 +637,7 @@ function flushStageNow(set: (partial: Partial<VaultStore>) => void) {
 	});
 }
 /** Cancel module-level vault timers/buffers (close or switch vault). */
-function cancelVaultModuleState() {
+function cancelVaultModuleState(opts?: { keepFill?: boolean }) {
 	vaultGen += 1;
 	if (stageTimer) {
 		clearTimeout(stageTimer);
@@ -657,12 +657,14 @@ function cancelVaultModuleState() {
 	shelvedConflicts.clear();
 	bodyHydrateInflight.clear();
 	mockDiskBodies = null;
-	diskSearchReady = false;
-	setSearchIndexState("idle");
-	try {
-		const idx = getDurableIndex();
-		if (idx?.cancelFill) void idx.cancelFill();
-	} catch {}
+	if (!opts?.keepFill) {
+		diskSearchReady = false;
+		setSearchIndexState("idle");
+		try {
+			const idx = getDurableIndex();
+			if (idx?.cancelFill) void idx.cancelFill();
+		} catch {}
+	}
 	_conflictPairsCache = null;
 	_conflictPairsStructGen = -1;
 	_conflictPairsNodesRef = null;
@@ -857,6 +859,12 @@ let diskSearchInflight: Promise<{
 	skipped: boolean;
 }> | null = null;
 let diskSearchInflightRoot: string | null = null;
+/** Root whose native FTS fill is still running after the UI promise settled. */
+let desktopFillRoot: string | null = null;
+
+function rememberedDesktopFillRoot(): string | null {
+	return desktopRoot || diskSearchInflightRoot || desktopFillRoot;
+}
 
 function vaultFillBusy(): boolean {
 	return (
@@ -907,6 +915,7 @@ async function completeDiskSearchIndex(opts?: {
 	skipped: boolean;
 }> {
 	const root = desktopRoot || "";
+	if (root) desktopFillRoot = root;
 	if (
 		diskSearchInflight &&
 		diskSearchInflightRoot === root &&
@@ -927,6 +936,7 @@ async function completeDiskSearchIndex(opts?: {
 			// Keep Open locked while background FTS (after ready-meta) still writes.
 			if (!isNativeFillInFlight() && !isIndexFillInFlight()) {
 				useVaultStore.setState({ indexFillBusy: false });
+				desktopFillRoot = null;
 			}
 		}
 	}
@@ -991,6 +1001,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 						void seedLinkIndexFromDurable(sqlite, { allowEmpty: true });
 					}
 					if (p.phase === "done") {
+						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
 						setOpenProgress({
 							phase: "ready",
@@ -1001,6 +1012,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 						return;
 					}
 					if (p.phase === "error") {
+						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
 					}
 					setOpenProgress({
@@ -1552,13 +1564,16 @@ async function mountDesktopVaultAt(
 		isIndexFillInFlight() ||
 		isNativeFillInFlight() ||
 		Boolean(diskSearchInflight);
-	if (
-		shouldJoinDesktopFill({
-			currentRoot: desktopRoot,
-			nextRoot: root,
-			fillInFlight: fillBusy,
-		})
-	) {
+	const remembered = rememberedDesktopFillRoot();
+	const sameFill = shouldJoinDesktopFill({
+		currentRoot: remembered,
+		nextRoot: root,
+		fillInFlight: fillBusy,
+	});
+	const liveNow = useVaultStore.getState();
+	const uiMounted = Boolean(liveNow.vaultId) && liveNow.rootIds.length > 0;
+	// Same folder, tree still on screen: join. Do not rescan 100k.
+	if (sameFill && uiMounted) {
 		if (diskSearchInflight) await diskSearchInflight;
 		set({ connecting: false });
 		const live = useVaultStore.getState();
@@ -1572,8 +1587,9 @@ async function mountDesktopVaultAt(
 		};
 	}
 	if (
+		!sameFill &&
 		shouldBlockDesktopOpen({
-			currentRoot: desktopRoot,
+			currentRoot: remembered,
 			nextRoot: root,
 			fillInFlight: fillBusy,
 		})
@@ -1584,7 +1600,9 @@ async function mountDesktopVaultAt(
 		});
 		throw new Error(FILL_IN_PROGRESS_TOAST);
 	}
-	cancelVaultModuleState();
+	// UI was cleared while this folder's fill is still writing. Remount
+	// metadata and join. Do not cancel the native writer.
+	cancelVaultModuleState(sameFill ? { keepFill: true } : undefined);
 	clearBodyArchive();
 	invalidateVaultTagsCache();
 	desktopRoot = root;
@@ -1733,6 +1751,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	graphEgoReturnPath: null,
 	scaleRemount: null,
 	bootstrap: async () => {
+		const live = get();
+		// A second bootstrap (remount) must not rescan or drop a live vault.
+		if (live.ready && live.vaultId && live.rootIds.length > 0) return;
+		if (live.ready && live.connecting) return;
 		const recents = loadRecents();
 		const fsaSupported = canOpenLocalVaultFolder();
 		const cloudSession = loadCloudSession();
@@ -1890,13 +1912,16 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 		}
 		const state = get();
-		if (state.vaultId && state.mode !== "fsa" && state.mode !== "desktop" && Object.keys(state.nodes).length > 0) {
+		if (state.vaultId && state.rootIds.length > 0) {
 			applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
 		resetAndSeedNav(get().activeNoteId);
 			return;
 		}
 		if (await get().remountScaleSession()) return;
+		// A fill can outlive the mounted tree. Do not clear the session
+		// out from under it — Welcome reopen joins the same folder.
+		if (vaultFillBusy() || desktopFillRoot) return;
 		set({
 			vaultId: null,
 			vaultName: "",
