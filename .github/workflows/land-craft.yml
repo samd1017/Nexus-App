@@ -1,0 +1,30 @@
+name: land-craft
+on:
+  push:
+    paths:
+      - .github/workflows/land-craft.yml
+permissions:
+  contents: write
+jobs:
+  land:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/graph-hud-release-690a
+      - name: apply
+        run: |
+          set -euo pipefail
+          echo "2ce703aaa50b3d2e8d43dda8d535255c4a44f3035738fbc207182395d8dc7f24  scripts/craft-apply.py" | sha256sum -c
+          python3 scripts/craft-apply.py "$PWD"
+          test "$(git hash-object src/lib/layout/viewport.ts)" = "b0b12952a6d48ce2b0fda80e33f183883b56e6cd"
+          test "$(git hash-object src/components/settings/SettingsPanel.tsx)" = "03b7b70623f60fff52094109ce4ae6455632ca90"
+          test "$(git hash-object src/components/right/RightPanel.tsx)" = "8ec0f1a5aef1d5172d87d6e905b810565e19c410"
+          test "$(git hash-object src/lib/vault/durable-index.ts)" = "776fe3859d2c034bc788fd08cc82cd036696ffbd"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add src/lib/layout/viewport.ts src/components/settings/SettingsPanel.tsx src/components/right/RightPanel.tsx src/lib/vault/durable-index.ts
+          git rm -f scripts/craft-apply.py .github/workflows/land-craft.yml
+          git commit -m "fix: leave the graph on backlinks, fit side tabs, and find note ids"
+          git push origin HEAD:cursor/graph-hud-release-690a
