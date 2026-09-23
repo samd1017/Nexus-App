@@ -27,6 +27,7 @@ import { setLastTreeFlatCount } from "@/lib/vault/heap-log";
 import {
   flattenVisibleTree,
   TREE_FLAT_CAP,
+  TREE_FOLDER_NOTE_WINDOW,
   type FlatTreeRow,
 } from "@/lib/vault/file-tree-flat";
 import { useTreeStructureTick } from "@/lib/vault/tree-tick";
@@ -116,7 +117,7 @@ function dropTargetsEqual(a: DropTarget, b: DropTarget): boolean {
   return true; // both root
 }
 
-export { TREE_FLAT_CAP };
+export { TREE_FLAT_CAP, TREE_FOLDER_NOTE_WINDOW };
 
 const ROW_H = 30;
 
@@ -389,6 +390,7 @@ function MenuBtn({
 
 export const FileTree = memo(function FileTree() {
   const rootIds = useVaultStore((s) => s.rootIds);
+  const vaultId = useVaultStore((s) => s.vaultId);
   const expandedFolders = useVaultStore((s) => s.expandedFolders);
   // Stable tick — never ensureVaultIndex inside a Zustand selector
   const structureTick = useTreeStructureTick();
@@ -405,6 +407,7 @@ export const FileTree = memo(function FileTree() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [folderWindows, setFolderWindows] = useState<Record<string, number>>({});
   // Ghost label only in React state; position updated via rAF + DOM
   const [ghostLabel, setGhostLabel] = useState<string | null>(null);
 
@@ -412,6 +415,9 @@ export const FileTree = memo(function FileTree() {
   const dropTargetRef = useRef<DropTarget>(null);
   const expandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRevealRef = useRef<string | null>(null);
+  const pendingMoreRef = useRef<{ parentId: string; prevShown: number } | null>(
+    null,
+  );
   const parentRef = useRef<HTMLDivElement>(null);
   const ghostElRef = useRef<HTMLDivElement>(null);
   const ghostRafRef = useRef<number | null>(null);
@@ -419,18 +425,28 @@ export const FileTree = memo(function FileTree() {
 
   const flatRows = useMemo(() => {
     const nodes = useVaultStore.getState().nodes;
-    const rows = flattenVisibleTree(rootIds, nodes, expandedFolders);
+    const rows = flattenVisibleTree(
+      rootIds,
+      nodes,
+      expandedFolders,
+      TREE_FLAT_CAP,
+      folderWindows,
+    );
     setLastTreeFlatCount(rows.length);
     return rows;
     // structureTick encodes structureGen + nodeCount + rootIds
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rootIds, expandedFolders, structureTick]);
+  }, [rootIds, expandedFolders, structureTick, folderWindows]);
 
   // Stabilize callbacks that would otherwise churn when flatRows identity changes
   const flatRowsRef = useRef(flatRows);
   flatRowsRef.current = flatRows;
 
   const useVirtual = true;
+
+  useEffect(() => {
+    setFolderWindows({});
+  }, [vaultId]);
 
   useEffect(() => {
     if (flatRows.length === 0) {
@@ -474,6 +490,14 @@ export const FileTree = memo(function FileTree() {
     [armFolderReveal, toggleFolder],
   );
 
+  const showMore = useCallback((parentId: string) => {
+    setFolderWindows((prev) => {
+      const cur = prev[parentId] ?? TREE_FOLDER_NOTE_WINDOW;
+      pendingMoreRef.current = { parentId, prevShown: cur };
+      return { ...prev, [parentId]: cur + TREE_FOLDER_NOTE_WINDOW };
+    });
+  }, []);
+
   // A folder parked on the bottom edge used to flip its chevron while every
   // new child stayed below the scrollport, so expand looked empty.
   useEffect(() => {
@@ -515,6 +539,23 @@ export const FileTree = memo(function FileTree() {
     });
   }, [expandedFolders, flatRows]);
 
+  // "N more" inserts the next window above the remainder row. Scroll so the
+  // first newly listed child is the one on screen.
+  useEffect(() => {
+    const pending = pendingMoreRef.current;
+    if (!pending) return;
+    pendingMoreRef.current = null;
+    const folderIdx = flatRows.findIndex((r) => r.id === pending.parentId);
+    if (folderIdx < 0) return;
+    const target = Math.min(
+      flatRows.length - 1,
+      folderIdx + pending.prevShown + 1,
+    );
+    requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(target, { align: "start" });
+    });
+  }, [flatRows, virtualizer]);
+
   useEffect(() => {
     const onRename = (e: Event) => {
       const id = (e as CustomEvent<string>).detail;
@@ -544,8 +585,6 @@ export const FileTree = memo(function FileTree() {
       const nodes = useVaultStore.getState().nodes;
       const row = rows[focusedIndex];
       if (!row) return;
-      const node = nodes[row.id];
-      if (!node) return;
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -561,6 +600,16 @@ export const FileTree = memo(function FileTree() {
         virtualizer.scrollToIndex(next, { align: "auto" });
         return;
       }
+      if (row.kind === "more") {
+        if (e.key === "Enter" && row.moreParentId) {
+          e.preventDefault();
+          showMore(row.moreParentId);
+        }
+        return;
+      }
+      const node = nodes[row.id];
+      if (!node) return;
+
       if (e.key === "ArrowRight") {
         e.preventDefault();
         if (node.kind === "folder") {
@@ -608,6 +657,7 @@ export const FileTree = memo(function FileTree() {
       focusedIndex,
       toggleFolderReveal,
       setActiveNote,
+      showMore,
       virtualizer,
     ],
   );
@@ -833,22 +883,47 @@ export const FileTree = memo(function FileTree() {
 
   const rootDropActive = dropTarget?.type === "root" && dragId != null;
 
-  const renderRow = (row: FlatRow) => (
-    <TreeRow
-      key={row.id}
-      nodeId={row.id}
-      depth={row.depth}
-      renamingId={renamingId}
-      setRenamingId={setRenamingId}
-      openCtx={setCtx}
-      dragId={dragId}
-      dropTarget={dropTarget}
-      onPointerDragStart={onPointerDragStart}
-      isFocused={focusedId === row.id}
-      onFocusRow={onFocusRow}
-      onToggleFolder={toggleFolderReveal}
-    />
-  );
+  const renderRow = (row: FlatRow) => {
+    if (row.kind === "more") {
+      const hidden = row.hiddenCount ?? 0;
+      return (
+        <button
+          key={row.id}
+          id={`tree-row-${row.id}`}
+          type="button"
+          className="tree-item flex w-full items-center text-left text-[12px] text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+          style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
+          role="treeitem"
+          aria-label={`${hidden.toLocaleString()} more in this folder`}
+          data-tree-more={String(hidden)}
+          data-more-parent={row.moreParentId ?? ""}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (row.moreParentId) showMore(row.moreParentId);
+          }}
+        >
+          {hidden.toLocaleString()} more
+        </button>
+      );
+    }
+    return (
+      <TreeRow
+        key={row.id}
+        nodeId={row.id}
+        depth={row.depth}
+        renamingId={renamingId}
+        setRenamingId={setRenamingId}
+        openCtx={setCtx}
+        dragId={dragId}
+        dropTarget={dropTarget}
+        onPointerDragStart={onPointerDragStart}
+        isFocused={focusedId === row.id}
+        onFocusRow={onFocusRow}
+        onToggleFolder={toggleFolderReveal}
+      />
+    );
+  };
 
   return (
     <div

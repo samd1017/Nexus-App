@@ -256,7 +256,7 @@ Still unproven / remaining:
 | Chrome FSA getFile during meta | `CHROME_FSA_GETFILE_MAX` | **4_000** |
 | Chrome FSA supported max | `CHROME_FSA_SUPPORTED_MAX` | **20_000** |
 | Chrome FSA warn / refuse | `CHROME_FSA_NOTE_WARN` / `CAP` | **15_000** / **25_000** |
-| File-tree flatten | `TREE_FLAT_CAP` | **2_400** (virtualizer mounts ~30) |
+| File-tree flatten | `TREE_FLAT_CAP` | **16_000** safety ceiling. Sibling folders are listed before a branch is opened, so a full window cannot drop the next folder. One folder lists `TREE_FOLDER_NOTE_WINDOW` (**2_000**) children, then an "N more" row. Virtualizer still mounts ~30. |
 | TipTap undo | `StarterKit.undoRedo.depth` | **2** |
 | Browser overlay | `LARGE_VAULT_OVERLAY_CAP` | **400** notes/folders |
 | Unlinked scan | `unlinked-mentions.ts` | 400 notes / 24 hits |
