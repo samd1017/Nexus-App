@@ -225,7 +225,7 @@ import {
   getOpenProgress,
   isIndexFillInFlight,
 } from "./native-index";
-import { admitBrowserPaths, closeBrowserShell, mountBrowserShell } from "./browser-shell";
+import { admitBrowserPaths, closeBrowserShell, indexOpenBrowserNote, mountBrowserShell } from "./browser-shell";
 import {
   BROWSER_SHELL_DB,
   SHELL_CATALOG_OFF,
@@ -5046,6 +5046,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						content
 					});
 				}
+				if (browserCatalogOwnsSearch()) indexOpenBrowserNote(path);
 				sampleHeap(`body:${path}`);
 				if (!vaultFillBusy()) {
 					try {

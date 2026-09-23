@@ -33,6 +33,7 @@ import {
   BROWSER_POSTING_CAP,
   browserRecord,
   backlinksFromEdges,
+  catalogTokens,
   catalogPathsToDrop,
   egoFromEdges,
   folderPollDelta,
@@ -287,6 +288,31 @@ const late = harvestNoteCatalog(
 );
 assert.ok(!late.posts.some((post) => post.token === "commonterm"));
 assert.ok(late.posts.some((post) => post.token === "zephyrquartz"));
+assert.deepEqual(catalogTokens("2024 991"), []);
+assert.deepEqual(catalogTokens("zxqwv_nexus_deepbody_991"), ["zxqwv_nexus_deepbody_991"]);
+const padWords = Array.from({ length: 180 }, (_, i) => {
+  const a = String.fromCharCode(97 + (i % 26));
+  const b = String.fromCharCode(97 + ((i * 3) % 26));
+  const c = String.fromCharCode(97 + ((i * 7) % 26));
+  return "pad" + a + b + c;
+});
+let opening = padWords.slice(0, 30).join(" ");
+opening += " ".repeat(Math.max(0, BROWSER_HEAD_CHARS - opening.length));
+const deepText = opening + " " + padWords.slice(30).join(" ") + " zxqwv_nexus_deepbody_991";
+const deepRow = browserRecord("DeepProbe.md", "DeepProbe.md", "note", 1);
+const deepHarvest = harvestNoteCatalog(deepRow, deepText, new Map());
+assert.ok(
+  deepHarvest.posts.some((post) => post.token === "zxqwv_nexus_deepbody_991"),
+  "a rare id past the head must be indexed even when the tail is crowded",
+);
+const deepHits = pageSearchHits(
+  deepHarvest.posts,
+  [deepRow],
+  "zxqwv_nexus_deepbody_991",
+  10,
+);
+assert.equal(deepHits.length, 1);
+assert.equal(deepHits[0].path, "DeepProbe.md");
 const firstPoll = folderPollDelta(["a.md"], ["a.md", "b.md", "c.md"], 1);
 assert.deepEqual(firstPoll.reported, ["b.md"]);
 assert.ok(firstPoll.next.includes("a.md") && firstPoll.next.includes("b.md"));

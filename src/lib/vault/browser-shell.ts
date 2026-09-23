@@ -198,10 +198,36 @@ export function catalogTokens(text: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const token of text.toLowerCase().split(/[^a-z0-9_\u00c0-\u024f]+/i)) {
-    if (token.length < 3 || /\d/.test(token) || seen.has(token)) continue;
+    if (token.length < 3 || seen.has(token)) continue;
+    // Bare numbers are noise. A rare id may end in digits
+    // (`zxqwv_nexus_deepbody_991`) and must stay searchable.
+    if (!/[a-z\u00c0-\u024f]/.test(token)) continue;
     seen.add(token);
     out.push(token);
   }
+  return out;
+}
+
+/** Tail words from both ends, then the head. A long opening cannot spend the budget. */
+function orderedBodyTokens(head: string, tail: string): string[] {
+  if (!tail) return catalogTokens(head);
+  const fromStart = catalogTokens(tail);
+  const fromEnd = fromStart.slice().reverse();
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (token: string) => {
+    if (seen.has(token)) return;
+    seen.add(token);
+    out.push(token);
+  };
+  const n = Math.max(fromStart.length, fromEnd.length);
+  for (let i = 0; i < n; i++) {
+    const end = fromEnd[i];
+    const start = fromStart[i];
+    if (end) push(end);
+    if (start) push(start);
+  }
+  for (const token of catalogTokens(head)) push(token);
   return out;
 }
 
@@ -408,10 +434,7 @@ export function harvestNoteCatalog(
     takeToken(token, true, seen, counts, posts, row.id);
   }
   let bodySlots = 0;
-  const bodyTokens = tail
-    ? [...catalogTokens(tail), ...catalogTokens(head)]
-    : catalogTokens(head);
-  for (const token of bodyTokens) {
+  for (const token of orderedBodyTokens(head, tail)) {
     if (bodySlots >= BROWSER_BODY_TOKEN_BUDGET) break;
     const count = counts.get(token) ?? 0;
     if (!seen.has(token) && count >= BROWSER_POSTING_CAP) continue;
@@ -1493,6 +1516,29 @@ export async function admitBrowserPaths(paths: string[]): Promise<void> {
       const text = await noteIndexText(file);
       const name = rel.slice(rel.lastIndexOf("/") + 1);
       await writeNoteCatalog(browserRecord(rel, name, "note", file.lastModified || 1), text);
+    }
+  });
+}
+
+/** Re-read one opened note so a rare word past the head is searchable. */
+export function indexOpenBrowserNote(path: string): void {
+  const rel = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const root = grantedRoot;
+  if (!root || !rel) return;
+  const pass = bodyPassGen;
+  void enqueueCatalog(async () => {
+    try {
+      if (pass !== bodyPassGen || grantedRoot !== root) return;
+      const entry = await entryAt(root, rel);
+      if (!entry || "entries" in entry) return;
+      const file = await (entry as FileSystemFileHandle).getFile();
+      if (!noteNeedsBodyPass(file.size)) return;
+      const text = await noteIndexText(file);
+      if (text.length <= BROWSER_HEAD_CHARS) return;
+      const name = rel.slice(rel.lastIndexOf("/") + 1);
+      await writeNoteCatalog(browserRecord(rel, name, "note", file.lastModified || 1), text);
+    } catch {
+      /* the head catalog remains */
     }
   });
 }
