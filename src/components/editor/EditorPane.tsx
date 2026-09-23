@@ -35,6 +35,7 @@ import { isCanvasNote } from "@/lib/vault/canvas";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import { NoteTitleInput } from "./NoteTitleInput";
 import { EditorSaveChip } from "./EditorSaveChip";
+import { EditorStatusBar } from "./EditorStatusBar";
 import { NexusMark, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
@@ -636,6 +637,7 @@ export function EditorPane({
           <SourceEditor noteId={note.id} content={body} pane={pane} />
         )}
       </div>
+      <EditorStatusBar noteId={note.id} />
     </div>
   );
 }
