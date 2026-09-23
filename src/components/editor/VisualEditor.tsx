@@ -3,7 +3,7 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
-import Placeholder from "@tiptap/extension-placeholder";
+import { SafePlaceholder } from "@/lib/editor/safe-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { VaultImage } from "@/lib/editor/vault-image";
@@ -449,7 +449,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
           undoRedo: { depth: 2 },
         }),
         StyledBulletList,
-        Placeholder.configure({
+        SafePlaceholder.configure({
           showOnlyCurrent: true,
           includeChildren: true,
           placeholder: ({ editor, pos }) => {
