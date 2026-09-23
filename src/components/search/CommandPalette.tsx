@@ -45,8 +45,10 @@ import { fuseSearchHits } from "@/lib/search/rank-fusion";
 import { buildAskAnswer, retrieveForAsk } from "@/lib/search/ask-notes";
 import { getBacklinks } from "@/lib/vault/backlinks";
 import {
+  BROWSER_SHELL_DB,
   fetchShellBacklinks,
   fetchShellRecent,
+  fetchShellSearch,
   fetchShellSuggest,
   fetchShellTagNotes,
   fetchShellTags,
@@ -492,6 +494,19 @@ function CommandPaletteOpen() {
       }
       const needle = debouncedSearch.trim() || searchText || raw;
       if (!needle.trim()) return;
+      if (db === BROWSER_SHELL_DB) {
+        void fetchShellSearch(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
+          if (cancelled || !hits) return;
+          setAsyncHits(
+            hits
+              .filter((hit) => hit.kind === "note")
+              .map((hit) => asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path)),
+          );
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
       const idx = getDurableIndex();
       if (idx?.ready && idx.searchFtsAsync) {
         void (async () => {

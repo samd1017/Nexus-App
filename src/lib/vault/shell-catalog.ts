@@ -26,6 +26,8 @@ export type BrowserShellApi = {
   tags: (limit: number) => Promise<ShellTagCount[]>;
   tagNotes: (tag: string, limit: number) => Promise<ShellRow[]>;
   suggest: (query: string, limit: number) => Promise<ShellSuggestHit[]>;
+  /** Token hits from the granted folder, not the renderer window. */
+  search: (query: string, limit: number) => Promise<ShellSuggestHit[]>;
   recent: (limit: number) => Promise<ShellRow[]>;
   forget: (paths: string[]) => Promise<ShellForget>;
 };
@@ -537,6 +539,16 @@ export type ShellSuggestHit = {
   parentId: string | null;
   mtime: number;
 };
+
+export async function fetchShellSearch(
+  dbPath: string,
+  query: string,
+  limit = 40,
+): Promise<ShellSuggestHit[] | null> {
+  const browser = browserApi(dbPath);
+  if (!browser) return null;
+  return browser.search(query, limit);
+}
 
 export async function fetchShellSuggest(
   dbPath: string,

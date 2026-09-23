@@ -40,6 +40,53 @@ function sigCountOf(sigs: Record<string, string>): number {
   return Object.keys(sigs).length;
 }
 
+const OBSERVER_SKIP = new Set(["node_modules", ".git", ".trash", ".obsidian"]);
+
+/**
+ * Paths from a FileSystemObserver callback. Dot paths are ignored.
+ * This does not walk the folder.
+ */
+export function pathsFromObserverRecords(records: unknown): string[] {
+  const list = Array.isArray(records) ? records : records && typeof records === "object" ? [records] : [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (parts: unknown) => {
+    if (!Array.isArray(parts) || parts.length === 0) return;
+    const segs = parts.map((part) => String(part));
+    if (segs.some((seg) => !seg || seg.startsWith(".") || OBSERVER_SKIP.has(seg))) return;
+    const path = segs.join("/");
+    if (seen.has(path)) return;
+    seen.add(path);
+    out.push(path);
+  };
+  for (const rec of list) {
+    if (!rec || typeof rec !== "object") continue;
+    const row = rec as {
+      relativePathComponents?: unknown;
+      relativePathMovedFrom?: unknown;
+    };
+    push(row.relativePathComponents);
+    push(row.relativePathMovedFrom);
+  }
+  return out;
+}
+
+function fileSystemObserverCtor():
+  | (new (cb: (records: unknown[]) => void) => {
+      observe: (h: FileSystemHandle) => Promise<void>;
+      disconnect: () => void;
+    })
+  | undefined {
+  return (
+    window as unknown as {
+      FileSystemObserver?: new (cb: (records: unknown[]) => void) => {
+        observe: (h: FileSystemHandle) => Promise<void>;
+        disconnect: () => void;
+      };
+    }
+  ).FileSystemObserver;
+}
+
 type WatchCallback = (event: {
   type: "change" | "create" | "delete";
   path: string;
@@ -110,16 +157,7 @@ export class VaultWatcher {
     }
 
     // FileSystemObserver (Chromium) when present
-    const Obs = (
-      window as unknown as {
-        FileSystemObserver?: new (
-          cb: (records: unknown[]) => void,
-        ) => {
-          observe: (h: FileSystemHandle) => Promise<void>;
-          disconnect: () => void;
-        };
-      }
-    ).FileSystemObserver;
+    const Obs = fileSystemObserverCtor();
 
     if (typeof Obs === "function") {
       try {
@@ -194,6 +232,30 @@ export class VaultWatcher {
       /* permission lost or transient */
     } finally {
       this.scanning = false;
+    }
+  }
+
+  /**
+   * Paged browser shell. Reports changed paths only.
+   * Does not signature-scan or rebuild a node map.
+   */
+  async startFsaShell(
+    dir: FileSystemDirectoryHandle,
+    onPaths: (paths: string[]) => void,
+  ) {
+    this.stop();
+    this.dir = dir;
+    const Obs = fileSystemObserverCtor();
+    if (typeof Obs !== "function") return;
+    try {
+      const observer = new Obs((records: unknown[]) => {
+        const paths = pathsFromObserverRecords(records);
+        if (paths.length) onPaths(paths);
+      });
+      await observer.observe(dir);
+      this.observer = observer;
+    } catch {
+      this.observer = null;
     }
   }
 

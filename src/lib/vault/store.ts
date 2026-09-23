@@ -826,6 +826,12 @@ async function mergeLargeVaultOverlay(
 	return { rootIds: nextRoots, applied, noteCount };
 }
 
+/** Paged browser search lives in the local catalog. Reconciling the window would shrink it. */
+function browserCatalogOwnsSearch(): boolean {
+	const live = useVaultStore.getState();
+	return live.shellCatalog && live.shellDbPath === BROWSER_SHELL_DB;
+}
+
 function maybeSyncDurableIndex(
 	vaultId: string | null,
 	mode: VaultMode,
@@ -835,6 +841,7 @@ function maybeSyncDurableIndex(
 		// Desktop SQLite is filled from disk in Rust. Reconciling 100k–300k
 		// meta rows from JS is an IPC storm and is not the Wave E path.
 		if (getDurableIndex()?.kind === "sqlite") return;
+		if (browserCatalogOwnsSearch()) return;
 		syncDurableIndexFromNodes(vaultId, nodes, shouldUseDurableIndex(mode, vaultId));
 	} catch {}
 }
@@ -1006,6 +1013,9 @@ async function runCompleteDiskSearchIndex(opts?: {
 }> {
 	const gen = vaultGen;
 	const st = useVaultStore.getState();
+	if (browserCatalogOwnsSearch()) {
+		return { indexed: 0, errors: 0, skipped: true };
+	}
 	if (!shouldUseDurableIndex(st.mode, st.vaultId)) {
 		return { indexed: 0, errors: 0, skipped: true };
 	}

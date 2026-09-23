@@ -27,11 +27,20 @@ import {
 import { graphFromShellLevel } from "./src/lib/graph/shell-graph.ts";
 import {
   browserRecord,
+  backlinksFromEdges,
+  catalogPathsToDrop,
+  egoFromEdges,
+  noteIdentityNorms,
   pageChildRows,
   pageRecentRows,
+  pageSearchHits,
   pageSuggestRows,
+  tagCountsFromPairs,
+  tagNoteIds,
   windowNoteCount,
 } from "./src/lib/vault/browser-shell.ts";
+import { pathsFromObserverRecords } from "./src/lib/vault/watcher.ts";
+import { CHROME_FSA_NOTE_CAP, CHROME_FSA_NOTE_WARN } from "./src/lib/vault/chrome-fsa-cap.ts";
 
 assert.equal(SHELL_FULL_MAX_NOTES, 399);
 assert.equal(SHELL_CHILD_PAGE, 200);
@@ -146,6 +155,37 @@ for (const size of [200, 1000, 5000]) {
   assert.equal(page.noteTotal, size);
   assert.equal(windowNoteCount(page.rows), Math.min(size, SHELL_CHILD_PAGE));
   assert.ok(windowNoteCount(page.rows) < size || size <= SHELL_CHILD_PAGE);
+  const center = notes[0];
+  const norms = noteIdentityNorms(center);
+  const edges = notes.slice(1).map((note) => ({ sourceId: note.id, targetNorm: norms[0] }));
+  const back = backlinksFromEdges(center.id, norms, edges, notes, 80);
+  assert.ok(back.rows.length <= 80);
+  assert.equal(back.total, size - 1);
+  assert.ok(back.rows.length < size || size <= 80);
+  const ego = egoFromEdges(center.id, edges, [pile, ...notes], 2, 400, 48);
+  assert.ok(ego.rows.length > 1);
+  assert.ok(ego.rows.length <= 400);
+  assert.ok(ego.rows.length < size || size <= 400);
+  const tags = tagCountsFromPairs(notes.map(() => ({ tag: "orbit" })), 48);
+  assert.equal(tags[0].tag, "orbit");
+  assert.equal(tags[0].count, size);
+  assert.ok(tags.length <= 48);
+  const tagged = tagNoteIds(
+    notes.map((note) => ({ tag: "orbit", noteId: note.id, mtime: note.mtime })),
+    "orbit",
+    80,
+  );
+  assert.equal(tagged.length, Math.min(80, size));
+  const postings = notes.slice(-3).map((note) => ({ token: "zephyr", noteId: note.id }));
+  const hits = pageSearchHits(postings, notes, "zephyr", 40);
+  assert.equal(hits.length, 3);
+  if (size > SHELL_CHILD_PAGE) {
+    const windowIds = new Set(page.rows.map((row) => row.id));
+    assert.ok(hits.every((hit) => !windowIds.has(hit.id)));
+  }
+  const held = nodesFromShellRows(page.rows);
+  const gone = dropShellIds(held.nodes, held.rootIds, [page.rows[0].id]);
+  assert.ok(Object.values(gone.nodes).filter((node) => node.kind === "note").length <= SHELL_CHILD_PAGE);
 }
 const recent = pageRecentRows(
   [1, 9, 3].map((mtime, i) => browserRecord("r" + i + ".md", "r" + i + ".md", "note", mtime)),
@@ -159,6 +199,20 @@ const suggested = pageSuggestRows(
 );
 assert.equal(suggested.length, 2);
 assert.ok(suggested.every((row) => row.path !== "Beta.md"));
+assert.deepEqual(
+  catalogPathsToDrop(["Keep.md", "Dir", "Dir/a.md", "Dir/sub/b.md", "Other/a.md"], ["Dir"]).sort(),
+  ["Dir", "Dir/a.md", "Dir/sub/b.md"].sort(),
+);
+assert.deepEqual(
+  pathsFromObserverRecords([
+    { type: "disappeared", relativePathComponents: ["Dir", "a.md"] },
+    { type: "disappeared", relativePathComponents: [".git", "config"] },
+    { type: "moved", relativePathMovedFrom: ["Pile", "n0.md"] },
+  ]),
+  ["Dir/a.md", "Pile/n0.md"],
+);
+assert.equal(CHROME_FSA_NOTE_WARN, 15000);
+assert.equal(CHROME_FSA_NOTE_CAP, 25000);
 console.log("shell-catalog: PASS");
 `,
   ],

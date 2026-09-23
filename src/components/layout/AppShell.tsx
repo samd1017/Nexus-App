@@ -363,7 +363,15 @@ export function AppShell() {
           /* ignore */
         }
       }
-      if (shellNow.shellCatalog || notes >= CHROME_FSA_WATCH_MAX) {
+      if (shellNow.shellCatalog) {
+        // One path at a time. A signature poll would copy the folder back into the tab.
+        setWatcherAck(null);
+        setDesktopWatchAck(null);
+        void watcher.startFsaShell(dir, (paths) => {
+          if (!paths.length) return;
+          useVaultStore.getState().refreshShellPaths(paths);
+        });
+      } else if (notes >= CHROME_FSA_WATCH_MAX) {
         // Signature poll + FileSystemObserver re-walked 20k–100k files and
         // discarded Chrome while opening notes 8–12.
         setWatcherAck(null);

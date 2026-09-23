@@ -46,6 +46,7 @@ No client puts the whole vault into the renderer in order to paint a click, a sc
 
 - Open only a folder the user granted (File System Access, or the desktop app when the browser cannot).
 - Page the tree, the map level, title prefix, and recent list from the local catalog once the folder is at or above 400 notes.
+- Read backlinks, the tag rail, the map neighborhood, and search from that same catalog. Do not scan every note body in the tab to fill them.
 - Keep the Chrome cap: warn near 15,000 notes, refuse above 25,000. That cap is the walk and the browser, not a claim that the tab matches desktop at 500,000.
 - Under 400 notes, materialize the folder so the full note graph still draws.
 
@@ -60,10 +61,9 @@ No client puts the whole vault into the renderer in order to paint a click, a sc
 
 These are real. The browser is paged. It is not desktop.
 
-- Backlinks and the tag rail on a paged web vault stay empty until a later pass writes links and tags into the local catalog. The tab does not scan every body to fill them.
-- The map neighborhood is the open note only. Link edges are not in the browser catalog yet.
-- Search still indexes the window the renderer holds, not the whole folder.
-- The browser does not yet drop a deleted file from an open page on notify. A full folder rescan is skipped on purpose, because that scan was the thing that put the vault back into the tab. Deletes show up on the next open.
+- Links, tags, and search words are taken from a bounded head of each file during the open walk. That text is not kept. A link or word past the head is missing until the folder is opened again.
+- A very common search word keeps a bounded list of note ids. A distinctive word is indexed from the whole granted folder, inside the cap. The palette returns a page of hits.
+- A deleted path drops off an open page when the browser reports that path. A browser without that report does not walk the folder to notice the delete. Those deletes show up on the next open. A new file shows up on the next open.
 - Recent modification times depend on reading file metadata during the open walk. The renderer does not keep those file objects.
 - There is no 500k browser measurement, and there will not be one inside this cap.
 
