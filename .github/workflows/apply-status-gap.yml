@@ -1,0 +1,38 @@
+name: apply-status-gap
+
+on:
+  push:
+    paths:
+      - .github/workflows/apply-status-gap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/graph-hud-release-690a
+          fetch-depth: 1
+      - name: apply
+        run: |
+          python3 scripts/status-gap.d/apply.py
+          echo "b6afc760ec91475195e8fa6c23a97f8c73e9ebd6748d1243860a8c02ebd3522f  /tmp/patch.diff" | sha256sum -c
+          git apply --check /tmp/patch.diff
+          git apply /tmp/patch.diff
+          git add \
+            src/components/editor/EditorStatusBar.tsx \
+            src/lib/vault/store.ts
+          git rm -f \
+            scripts/status-gap.d/apply.py \
+            scripts/status-gap.d/part00.txt \
+            .github/workflows/apply-status-gap.yml
+          rmdir scripts/status-gap.d || true
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git commit -m "fix: incoming count when one note is missing from the link map"
+          git push origin HEAD:cursor/graph-hud-release-690a
