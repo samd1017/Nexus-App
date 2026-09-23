@@ -61,9 +61,9 @@ No client puts the whole vault into the renderer in order to paint a click, a sc
 
 These are real. The browser is paged. It is not desktop.
 
-- Links, tags, and search words are taken from a bounded head of each file during the open walk. That text is not kept. A link or word past the head is missing until the folder is opened again.
-- A very common search word keeps a bounded list of note ids. A distinctive word is indexed from the whole granted folder, inside the cap. The palette returns a page of hits.
-- A deleted path drops off an open page when the browser reports that path. A browser without that report does not walk the folder to notice the delete. Those deletes show up on the next open. A new file shows up on the next open.
+- The open walk indexes a head of each file so the window can paint. The rest of the note is indexed afterward, up to a fixed ceiling, and the text is not kept. A link or word past that ceiling is still missing.
+- A very common search word keeps a bounded list of note ids and does not crowd out a rarer word in the same note. A distinctive word is taken from the whole note, inside the cap. The palette returns a page of hits.
+- A new or deleted path updates an open page when the browser reports that path. Without that report, one open folder is checked at a time. A new file in a folder that is not open, or in a directory too large to list that way, shows up when that folder is opened or the vault is opened again.
 - Recent modification times depend on reading file metadata during the open walk. The renderer does not keep those file objects.
 - There is no 500k browser measurement, and there will not be one inside this cap.
 

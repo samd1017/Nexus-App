@@ -28,11 +28,17 @@ import {
 import { unlinkedFromHeads } from "./src/lib/vault/unlinked-mentions.ts";
 import { graphFromShellLevel, pinFolderLayout } from "./src/lib/graph/shell-graph.ts";
 import {
+  BROWSER_BODY_TOKEN_BUDGET,
+  BROWSER_HEAD_CHARS,
+  BROWSER_POSTING_CAP,
   browserRecord,
   backlinksFromEdges,
   catalogPathsToDrop,
   egoFromEdges,
+  folderPollDelta,
+  harvestNoteCatalog,
   noteIdentityNorms,
+  noteNeedsBodyPass,
   pageChildRows,
   pageRecentRows,
   pageSearchHits,
@@ -244,6 +250,49 @@ assert.deepEqual(
 );
 assert.equal(CHROME_FSA_NOTE_WARN, 15000);
 assert.equal(CHROME_FSA_NOTE_CAP, 25000);
+assert.equal(noteNeedsBodyPass(BROWSER_HEAD_CHARS), false);
+assert.equal(noteNeedsBodyPass(BROWSER_HEAD_CHARS + 1), true);
+const headWords = Array.from({ length: BROWSER_BODY_TOKEN_BUDGET }, (_, i) => {
+  const a = String.fromCharCode(97 + (i % 26));
+  const b = String.fromCharCode(97 + Math.floor(i / 26));
+  return "tok" + a + b;
+});
+let head = headWords.join(" ");
+head += " ".repeat(Math.max(0, BROWSER_HEAD_CHARS - head.length));
+const full = head + "\\nSee [[Tail Note]] about tailtokenzz.\\n";
+const harvested = harvestNoteCatalog(
+  browserRecord("n.md", "n.md", "note", 1),
+  full,
+  new Map(),
+);
+assert.equal(harvested.posts.length, BROWSER_BODY_TOKEN_BUDGET);
+assert.ok(harvested.posts.some((post) => post.token === "tailtokenzz"));
+assert.ok(harvested.edges.some((edge) => edge.targetNorm === "tail note"));
+const commonCounts = new Map();
+let commonStored = 0;
+for (let i = 0; i < BROWSER_POSTING_CAP + 20; i++) {
+  const piece = harvestNoteCatalog(
+    browserRecord("c" + i + ".md", "c" + i + ".md", "note", 1),
+    "commonterm appears in the opening",
+    commonCounts,
+  );
+  if (piece.posts.some((post) => post.token === "commonterm")) commonStored += 1;
+}
+assert.equal(commonStored, BROWSER_POSTING_CAP);
+assert.equal(commonCounts.get("commonterm"), BROWSER_POSTING_CAP);
+const late = harvestNoteCatalog(
+  browserRecord("late.md", "late.md", "note", 1),
+  "commonterm zephyrquartz",
+  commonCounts,
+);
+assert.ok(!late.posts.some((post) => post.token === "commonterm"));
+assert.ok(late.posts.some((post) => post.token === "zephyrquartz"));
+const firstPoll = folderPollDelta(["a.md"], ["a.md", "b.md", "c.md"], 1);
+assert.deepEqual(firstPoll.reported, ["b.md"]);
+assert.ok(firstPoll.next.includes("a.md") && firstPoll.next.includes("b.md"));
+assert.ok(!firstPoll.next.includes("c.md"));
+const secondPoll = folderPollDelta(firstPoll.next, ["a.md", "b.md", "c.md"], 1);
+assert.deepEqual(secondPoll.reported, ["c.md"]);
 console.log("shell-catalog: PASS");
 `,
   ],

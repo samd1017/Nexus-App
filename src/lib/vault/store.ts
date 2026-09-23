@@ -225,7 +225,7 @@ import {
   getOpenProgress,
   isIndexFillInFlight,
 } from "./native-index";
-import { closeBrowserShell, mountBrowserShell } from "./browser-shell";
+import { admitBrowserPaths, closeBrowserShell, mountBrowserShell } from "./browser-shell";
 import {
   BROWSER_SHELL_DB,
   SHELL_CATALOG_OFF,
@@ -3431,6 +3431,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const db = get().shellDbPath;
 		const root = desktopRoot;
 		void (async () => {
+			if (db === BROWSER_SHELL_DB) {
+				try {
+					await admitBrowserPaths(paths);
+				} catch {
+					/* the page reload still shows rows already in the catalog */
+				}
+			}
 			let goneIds: string[] = [];
 			if (db === BROWSER_SHELL_DB || (db && root)) {
 				const forgotten = await fetchShellForget(db, root || db, paths);

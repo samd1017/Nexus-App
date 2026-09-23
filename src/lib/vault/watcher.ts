@@ -235,27 +235,61 @@ export class VaultWatcher {
     }
   }
 
+  private folderCursor = 0;
+
   /**
    * Paged browser shell. Reports changed paths only.
    * Does not signature-scan or rebuild a node map.
+   * When the browser can observe the folder, that report is the signal.
+   * Otherwise one open folder is compared with the catalog at a time.
    */
   async startFsaShell(
     dir: FileSystemDirectoryHandle,
     onPaths: (paths: string[]) => void,
+    openFolders?: () => string[],
   ) {
     this.stop();
     this.dir = dir;
+    this.folderCursor = 0;
     const Obs = fileSystemObserverCtor();
-    if (typeof Obs !== "function") return;
+    if (typeof Obs === "function") {
+      try {
+        const observer = new Obs((records: unknown[]) => {
+          if (Date.now() < this.suppressUntil) return;
+          const paths = pathsFromObserverRecords(records);
+          if (paths.length) onPaths(paths);
+        });
+        await observer.observe(dir);
+        this.observer = observer;
+        return;
+      } catch {
+        this.observer = null;
+      }
+    }
+    if (!openFolders) return;
+    this.timer = setInterval(() => {
+      void this.pollOpenFolder(openFolders, onPaths);
+    }, 5000);
+  }
+
+  private async pollOpenFolder(
+    openFolders: () => string[],
+    onPaths: (paths: string[]) => void,
+  ) {
+    if (!this.dir || this.scanning || Date.now() < this.suppressUntil) return;
+    const folders = openFolders().filter((path) => typeof path === "string");
+    if (!folders.length) return;
+    const parent = folders[this.folderCursor % folders.length] ?? "";
+    this.folderCursor += 1;
+    this.scanning = true;
     try {
-      const observer = new Obs((records: unknown[]) => {
-        const paths = pathsFromObserverRecords(records);
-        if (paths.length) onPaths(paths);
-      });
-      await observer.observe(dir);
-      this.observer = observer;
+      const { diffOpenFolder } = await import("./browser-shell");
+      const changed = await diffOpenFolder(parent);
+      if (changed.length) onPaths(changed);
     } catch {
-      this.observer = null;
+      /* permission lost or transient */
+    } finally {
+      this.scanning = false;
     }
   }
 

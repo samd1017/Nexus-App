@@ -59,6 +59,12 @@ type PostRec = { key: string; token: string; noteId: string };
 type TagStatRec = { tag: string; count: number };
 
 let grantedRoot: FileSystemDirectoryHandle | null = null;
+/** Shared with the open walk, the body pass, and a newly notified file. */
+let tokenCounts = new Map<string, number>();
+let bodyPassGen = 0;
+let catalogWrites: Promise<void> = Promise.resolve();
+/** Direct-child signature for folders the poll has already seen. */
+const folderSnapshots = new Map<string, string>();
 
 export function browserParentPath(path: string): string {
   const norm = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -157,8 +163,19 @@ export const BROWSER_BACKLINK_LIMIT = 80;
 export const BROWSER_TAG_LIMIT = 48;
 /** A very common word keeps this many note ids. The index still covers the folder. */
 export const BROWSER_POSTING_CAP = 400;
-/** Links and tags are taken from this much of each file, then the text is dropped. */
+/**
+ * The open walk indexes this much of each file so the window can paint.
+ * The rest of the note is indexed after that, then the text is dropped.
+ */
 export const BROWSER_HEAD_CHARS = 4096;
+/** One note contributes this many body words. A saturated common word does not spend a slot. */
+export const BROWSER_BODY_TOKEN_BUDGET = 96;
+/** Ordinary notes are read whole. Past this, the tail is not indexed. */
+export const BROWSER_INDEX_CHARS = 262_144;
+const NOTE_LINK_CAP = 64;
+const NOTE_TAG_CAP = 32;
+/** Open-folder poll stops past this many direct children. It is not a vault walk. */
+export const BROWSER_FOLDER_POLL_MAX = 2000;
 
 export type BrowserLinkEdge = { sourceId: string; targetNorm: string };
 export type BrowserTagPair = { tag: string; noteId: string; mtime: number };
@@ -320,6 +337,87 @@ export function egoFromEdges(
     drawn.push({ source, target });
   }
   return { rows, edges: drawn, capped: rows.length >= max };
+}
+
+/** True when the open walk only saw the head, so the body pass should read the file. */
+export function noteNeedsBodyPass(byteSize: number): boolean {
+  return byteSize > BROWSER_HEAD_CHARS;
+}
+
+function postingCap(fromTitle: boolean): number {
+  return fromTitle ? BROWSER_POSTING_CAP * 2 : BROWSER_POSTING_CAP;
+}
+
+function takeToken(
+  token: string,
+  fromTitle: boolean,
+  seen: Set<string>,
+  counts: Map<string, number>,
+  posts: BrowserPosting[],
+  noteId: string,
+): boolean {
+  if (!token || seen.has(token)) return false;
+  const count = counts.get(token) ?? 0;
+  if (count >= postingCap(fromTitle)) return false;
+  seen.add(token);
+  counts.set(token, count + 1);
+  posts.push({ token, noteId });
+  return true;
+}
+
+/**
+ * Links, tags, and search words from one note. `text` may be the whole note.
+ * Words past the head are preferred so a long opening cannot hide the rest.
+ * A word that already hit the common-term cap is skipped and does not spend
+ * the per-note budget. The text itself is not retained.
+ */
+export function harvestNoteCatalog(
+  row: { id: string; title: string; name: string; path: string; mtime: number },
+  text: string,
+  counts: Map<string, number>,
+): { edges: BrowserLinkEdge[]; tags: BrowserTagPair[]; posts: BrowserPosting[] } {
+  const edges: BrowserLinkEdge[] = [];
+  const tags: BrowserTagPair[] = [];
+  const posts: BrowserPosting[] = [];
+  const head = text.slice(0, BROWSER_HEAD_CHARS);
+  const tail = text.slice(BROWSER_HEAD_CHARS);
+  const seenLink = new Set<string>();
+  for (const chunk of tail ? [tail, head] : [head]) {
+    if (edges.length >= NOTE_LINK_CAP) break;
+    for (const raw of extractWikilinkTargets(chunk)) {
+      if (edges.length >= NOTE_LINK_CAP) break;
+      const norm = normalizeLinkTarget(raw);
+      if (!norm || seenLink.has(norm)) continue;
+      seenLink.add(norm);
+      edges.push({ sourceId: row.id, targetNorm: norm });
+    }
+  }
+  const seenTag = new Set<string>();
+  for (const chunk of tail ? [tail, head] : [head]) {
+    if (tags.length >= NOTE_TAG_CAP) break;
+    for (const tag of extractTagsFromMarkdown(chunk)) {
+      if (tags.length >= NOTE_TAG_CAP) break;
+      const clean = tag.trim().replace(/^#/, "").toLowerCase();
+      if (!clean || seenTag.has(clean)) continue;
+      seenTag.add(clean);
+      tags.push({ tag: clean, noteId: row.id, mtime: row.mtime });
+    }
+  }
+  const seen = new Set<string>();
+  for (const token of catalogTokens(`${row.title} ${row.path}`).slice(0, 12)) {
+    takeToken(token, true, seen, counts, posts, row.id);
+  }
+  let bodySlots = 0;
+  const bodyTokens = tail
+    ? [...catalogTokens(tail), ...catalogTokens(head)]
+    : catalogTokens(head);
+  for (const token of bodyTokens) {
+    if (bodySlots >= BROWSER_BODY_TOKEN_BUDGET) break;
+    const count = counts.get(token) ?? 0;
+    if (!seen.has(token) && count >= BROWSER_POSTING_CAP) continue;
+    if (takeToken(token, false, seen, counts, posts, row.id)) bodySlots += 1;
+  }
+  return { edges, tags, posts };
 }
 
 export function pageSearchHits(
@@ -726,42 +824,129 @@ async function noteHead(file: File | null): Promise<string> {
 
 function appendNoteCatalog(
   row: BrowserShellRecord,
-  head: string,
-  tokenCounts: Map<string, number>,
+  text: string,
+  counts: Map<string, number>,
   tagCounts: Map<string, number>,
   edges: EdgeRec[],
   tags: TagRec[],
   posts: PostRec[],
 ): void {
-  const seenLink = new Set<string>();
-  for (const raw of extractWikilinkTargets(head)) {
-    if (seenLink.size >= 64) break;
-    const norm = normalizeLinkTarget(raw);
-    if (!norm || seenLink.has(norm)) continue;
-    seenLink.add(norm);
-    edges.push({ key: `${row.id}\0${norm}`, sourceId: row.id, targetNorm: norm });
+  const harvested = harvestNoteCatalog(row, text, counts);
+  for (const edge of harvested.edges) {
+    edges.push({
+      key: `${row.id}\0${edge.targetNorm}`,
+      sourceId: row.id,
+      targetNorm: edge.targetNorm,
+    });
   }
-  let tagN = 0;
-  for (const tag of extractTagsFromMarkdown(head)) {
-    if (tagN >= 32) break;
-    const clean = tag.trim().replace(/^#/, "").toLowerCase();
-    if (!clean) continue;
-    tagN += 1;
-    tags.push({ key: `${clean}\0${row.id}`, tag: clean, noteId: row.id, mtime: row.mtime });
-    tagCounts.set(clean, (tagCounts.get(clean) ?? 0) + 1);
+  for (const tag of harvested.tags) {
+    tags.push({
+      key: `${tag.tag}\0${row.id}`,
+      tag: tag.tag,
+      noteId: row.id,
+      mtime: tag.mtime,
+    });
+    tagCounts.set(tag.tag, (tagCounts.get(tag.tag) ?? 0) + 1);
   }
-  const seen = new Set<string>();
-  const take = (token: string, fromTitle: boolean) => {
-    if (seen.has(token)) return;
+  for (const post of harvested.posts) {
+    posts.push({ key: `${post.token}\0${row.id}`, token: post.token, noteId: row.id });
+  }
+}
+
+function enqueueCatalog(job: () => Promise<void>): Promise<void> {
+  const run = catalogWrites.then(job, job);
+  catalogWrites = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function noteIndexText(file: File | null): Promise<string> {
+  if (!file) return "";
+  try {
+    const blob =
+      file.size > BROWSER_INDEX_CHARS * 4 ? file.slice(0, BROWSER_INDEX_CHARS * 4) : file;
+    const text = await blob.text();
+    return text.length > BROWSER_INDEX_CHARS ? text.slice(0, BROWSER_INDEX_CHARS) : text;
+  } catch {
+    return "";
+  }
+}
+
+async function releaseNoteCatalog(
+  tx: IDBTransaction,
+  row: BrowserShellRecord,
+): Promise<void> {
+  const edges = tx.objectStore(EDGES);
+  const tags = tx.objectStore(TAGS);
+  const stats = tx.objectStore(TAG_STATS);
+  const posts = tx.objectStore(POSTINGS);
+  await eachCursor(edges.index("bySource"), IDBKeyRange.only(row.id), (cursor) => {
+    cursor.delete();
+    return "continue";
+  });
+  const tagNames: string[] = [];
+  await eachCursor(tags.index("byNote"), IDBKeyRange.only(row.id), (cursor) => {
+    tagNames.push((cursor.value as TagRec).tag);
+    cursor.delete();
+    return "continue";
+  });
+  for (const tag of tagNames) {
+    const stat = (await req(stats.get(tag))) as TagStatRec | undefined;
+    if (!stat) continue;
+    if (stat.count <= 1) stats.delete(tag);
+    else stats.put({ tag, count: stat.count - 1 });
+  }
+  await eachCursor(posts.index("byNote"), IDBKeyRange.only(row.id), (cursor) => {
+    const token = (cursor.value as PostRec).token;
     const count = tokenCounts.get(token) ?? 0;
-    const cap = fromTitle ? BROWSER_POSTING_CAP * 2 : BROWSER_POSTING_CAP;
-    if (count >= cap) return;
-    seen.add(token);
-    tokenCounts.set(token, count + 1);
-    posts.push({ key: `${token}\0${row.id}`, token, noteId: row.id });
-  };
-  for (const token of catalogTokens(`${row.title} ${row.path}`).slice(0, 12)) take(token, true);
-  for (const token of catalogTokens(head).slice(0, 24)) take(token, false);
+    if (count <= 1) tokenCounts.delete(token);
+    else tokenCounts.set(token, count - 1);
+    cursor.delete();
+    return "continue";
+  });
+}
+
+async function writeNoteCatalog(row: BrowserShellRecord, text: string): Promise<void> {
+  const db = await openDb();
+  try {
+    const tx = db.transaction([...CATALOG_STORES], "readwrite");
+    await releaseNoteCatalog(tx, row);
+    const harvested = harvestNoteCatalog(row, text, tokenCounts);
+    const edges = tx.objectStore(EDGES);
+    const tags = tx.objectStore(TAGS);
+    const stats = tx.objectStore(TAG_STATS);
+    const posts = tx.objectStore(POSTINGS);
+    tx.objectStore(STORE).put(row);
+    for (const edge of harvested.edges) {
+      edges.put({
+        key: `${row.id}\0${edge.targetNorm}`,
+        sourceId: row.id,
+        targetNorm: edge.targetNorm,
+      } satisfies EdgeRec);
+    }
+    for (const tag of harvested.tags) {
+      tags.put({
+        key: `${tag.tag}\0${row.id}`,
+        tag: tag.tag,
+        noteId: row.id,
+        mtime: tag.mtime,
+      } satisfies TagRec);
+      const stat = (await req(stats.get(tag.tag))) as TagStatRec | undefined;
+      stats.put({ tag: tag.tag, count: (stat?.count ?? 0) + 1 });
+    }
+    for (const post of harvested.posts) {
+      posts.put({
+        key: `${post.token}\0${row.id}`,
+        token: post.token,
+        noteId: row.id,
+      } satisfies PostRec);
+    }
+    await txDone(tx);
+  } finally {
+    db.close();
+  }
 }
 
 async function putCatalogChunk(chunk: {
@@ -1150,6 +1335,9 @@ function installRoutes(): void {
 
 export async function closeBrowserShell(): Promise<void> {
   grantedRoot = null;
+  bodyPassGen += 1;
+  tokenCounts = new Map();
+  folderSnapshots.clear();
   registerBrowserShell(null);
   if (typeof indexedDB === "undefined") return;
   try {
@@ -1184,8 +1372,9 @@ export async function mountBrowserShell(
     tags: [] as TagRec[],
     posts: [] as PostRec[],
   };
-  const tokenCounts = new Map<string, number>();
+  tokenCounts = new Map();
   const tagCounts = new Map<string, number>();
+  const beyondHead: string[] = [];
   let scanned = 0;
   const flush = async () => {
     if (!chunk.rows.length && !chunk.edges.length && !chunk.tags.length && !chunk.posts.length) return;
@@ -1201,6 +1390,7 @@ export async function mountBrowserShell(
     async (path, name, _parent, file) => {
       const row = browserRecord(path, name, "note", file?.lastModified ?? 1);
       const head = await noteHead(file);
+      if (file && noteNeedsBodyPass(file.size)) beyondHead.push(path);
       chunk.rows.push(row);
       appendNoteCatalog(row, head, tokenCounts, tagCounts, chunk.edges, chunk.tags, chunk.posts);
       scanned += 1;
@@ -1221,5 +1411,189 @@ export async function mountBrowserShell(
   if (onProgress) onProgress(scanned);
   const mount = await buildMount(preferPath ?? null);
   installRoutes();
+  const pass = bodyPassGen;
+  void indexBeyondHead(beyondHead, pass);
   return mount;
+}
+
+async function entryAt(
+  root: FileSystemDirectoryHandle,
+  rel: string,
+): Promise<FileSystemFileHandle | FileSystemDirectoryHandle | null> {
+  const parts = rel.split("/").filter(Boolean);
+  const missing = (err: unknown) => (err as { name?: string }).name === "NotFoundError";
+  try {
+    let dir = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      dir = await dir.getDirectoryHandle(parts[i]!);
+    }
+    const leaf = parts[parts.length - 1];
+    if (!leaf) return dir;
+    try {
+      return await dir.getFileHandle(leaf);
+    } catch (err) {
+      if (!missing(err)) return null;
+      try {
+        return await dir.getDirectoryHandle(leaf);
+      } catch {
+        return null;
+      }
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function directoryAt(
+  root: FileSystemDirectoryHandle,
+  parentPath: string,
+): Promise<FileSystemDirectoryHandle | null> {
+  if (!parentPath) return root;
+  const entry = await entryAt(root, parentPath);
+  return entry && "entries" in entry ? (entry as FileSystemDirectoryHandle) : null;
+}
+
+/**
+ * A notified path that still exists is written into the catalog.
+ * A path that is gone is left for forget. File text is not kept.
+ */
+export async function admitBrowserPaths(paths: string[]): Promise<void> {
+  const root = grantedRoot;
+  if (!root || !paths.length) return;
+  await enqueueCatalog(async () => {
+    if (grantedRoot !== root) return;
+    let notes = -1;
+    for (const raw of paths) {
+      const rel = raw.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      if (!rel || rel.split("/").some((seg) => seg.startsWith("."))) continue;
+      const entry = await entryAt(root, rel);
+      if (!entry) continue;
+      if ("entries" in entry) {
+        const name = rel.slice(rel.lastIndexOf("/") + 1);
+        const row = browserRecord(rel, name, "folder", 1);
+        const db = await openDb();
+        try {
+          const tx = db.transaction(STORE, "readwrite");
+          tx.objectStore(STORE).put(row);
+          await txDone(tx);
+        } finally {
+          db.close();
+        }
+        continue;
+      }
+      const fileHandle = entry as FileSystemFileHandle;
+      if (!rel.toLowerCase().endsWith(".md")) continue;
+      const existing = await byPath(rel);
+      if (!existing) {
+        if (notes < 0) notes = (await counts()).notes;
+        if (notes >= CHROME_FSA_NOTE_CAP) continue;
+        notes += 1;
+      }
+      const file = await fileHandle.getFile();
+      const text = await noteIndexText(file);
+      const name = rel.slice(rel.lastIndexOf("/") + 1);
+      await writeNoteCatalog(browserRecord(rel, name, "note", file.lastModified || 1), text);
+    }
+  });
+}
+
+async function indexBeyondHead(paths: string[], pass: number): Promise<void> {
+  for (const rel of paths) {
+    if (pass !== bodyPassGen || !grantedRoot) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await enqueueCatalog(async () => {
+      const root = grantedRoot;
+      if (pass !== bodyPassGen || !root) return;
+      const entry = await entryAt(root, rel);
+      if (!entry || "entries" in entry) return;
+      const file = await (entry as FileSystemFileHandle).getFile();
+      if (!noteNeedsBodyPass(file.size)) return;
+      const text = await noteIndexText(file);
+      if (text.length <= BROWSER_HEAD_CHARS) return;
+      const name = rel.slice(rel.lastIndexOf("/") + 1);
+      await writeNoteCatalog(browserRecord(rel, name, "note", file.lastModified || 1), text);
+    });
+  }
+}
+
+/**
+ * Names gained or lost since the last look, at most `limit`.
+ * The next snapshot keeps unreported names pending so a later look can see them.
+ */
+export function folderPollDelta(
+  known: string[],
+  disk: string[],
+  limit = 64,
+): { reported: string[]; next: string[] } {
+  const knownSet = new Set(known);
+  const diskSet = new Set(disk);
+  const changed: string[] = [];
+  for (const name of disk) {
+    if (!knownSet.has(name)) changed.push(name);
+  }
+  for (const name of known) {
+    if (!diskSet.has(name)) changed.push(name);
+  }
+  const reported = changed.slice(0, Math.max(1, limit));
+  const reportedSet = new Set(reported);
+  const next = new Set(known);
+  for (const name of disk) {
+    if (reportedSet.has(name) || knownSet.has(name)) next.add(name);
+  }
+  for (const name of known) {
+    if (reportedSet.has(name) && !diskSet.has(name)) next.delete(name);
+  }
+  return { reported, next: [...next].sort() };
+}
+
+/**
+ * One open folder, compared with the catalog (first look) or the last listing.
+ * Returns paths to admit or forget. A large directory is left alone.
+ */
+export async function diffOpenFolder(parentPath: string): Promise<string[]> {
+  const root = grantedRoot;
+  if (!root) return [];
+  if (folderSnapshots.get(parentPath) === "large") return [];
+  const dir = await directoryAt(root, parentPath);
+  if (!dir) return [];
+  const disk: string[] = [];
+  for await (const [name, handle] of dir.entries()) {
+    if (!name || name.startsWith(".") || name === ".DS_Store" || name === "Thumbs.db") continue;
+    disk.push(handle.kind === "directory" ? `${name}/` : name);
+    if (disk.length > BROWSER_FOLDER_POLL_MAX) {
+      folderSnapshots.set(parentPath, "large");
+      return [];
+    }
+  }
+  disk.sort();
+  const prefix = parentPath ? `${parentPath}/` : "";
+  const pathOf = (name: string) => prefix + name.replace(/\/$/, "");
+  let known: Set<string>;
+  const prev = folderSnapshots.get(parentPath);
+  if (prev != null) {
+    known = new Set(prev.split("\n").filter(Boolean));
+  } else {
+    known = new Set();
+    const db = await openDb();
+    try {
+      const tx = db.transaction(STORE, "readonly");
+      const range = IDBKeyRange.bound([parentPath, 0, ""], [parentPath, 1, "\uffff"]);
+      await eachCursor(tx.objectStore(STORE).index("byParent"), range, (cursor) => {
+        if (known.size > BROWSER_FOLDER_POLL_MAX) return "stop";
+        const row = cursor.value as BrowserShellRecord;
+        known.add(row.kind === "folder" ? `${row.name}/` : row.name);
+        return "continue";
+      });
+      await txDone(tx);
+    } finally {
+      db.close();
+    }
+    if (known.size > BROWSER_FOLDER_POLL_MAX) {
+      folderSnapshots.set(parentPath, "large");
+      return [];
+    }
+  }
+  const delta = folderPollDelta([...known], disk);
+  folderSnapshots.set(parentPath, delta.next.join("\n"));
+  return delta.reported.map(pathOf);
 }
