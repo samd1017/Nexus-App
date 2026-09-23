@@ -30,6 +30,7 @@ import {
   promoteQueryBlocks,
   restoreMathTokens,
 } from "@/lib/editor/special-blocks";
+import { splitFrontmatter } from "@/lib/editor/frontmatter";
 
 marked.setOptions({
   gfm: true,
@@ -420,15 +421,9 @@ export function markdownToHtml(md: string): string {
   const raw = (md || "").replace(/\r\n/g, "\n");
   if (!raw.trim()) return "<p></p>";
 
-  // Wave 1: peel YAML frontmatter so marked never turns --- into <hr>
-  let frontmatterHtml = "";
-  let body = raw;
-  const fm = raw.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (fm) {
-    const yaml = fm[1] ?? "";
-    frontmatterHtml = `<pre data-frontmatter="true" class="nexus-frontmatter"><code>${escapeHtml(yaml)}</code></pre>`;
-    body = raw.slice(fm[0].length);
-  }
+  // Properties live in the properties bar. Leaving them in the doc makes
+  // TipTap store them as a code block and the note opens on a config dump.
+  let body = splitFrontmatter(raw).body;
 
   // Protect fenced + inline code from wikilink promotion
   const codeHold: string[] = [];
@@ -518,9 +513,6 @@ export function markdownToHtml(md: string): string {
   // Second pass after we inject wikilink HTML (keep allowlisted data-* only)
   html = sanitizeNoteHtml(html);
 
-  if (frontmatterHtml) {
-    return frontmatterHtml + (html || "<p></p>");
-  }
   return html || "<p></p>";
 }
 

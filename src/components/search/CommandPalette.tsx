@@ -1139,7 +1139,7 @@ function CommandPaletteOpen() {
           data-search-engine={searchEngine.id}
           data-search-engine-label={searchEngine.shortLabel}
           data-search-index-state={searchEngine.indexState}
-          title={searchEngine.label}
+          title={searchEngine.uiLabel}
         >
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
@@ -1149,6 +1149,20 @@ function CommandPaletteOpen() {
             placeholder="Search, path: folder:, or ask: what links Hermes…"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
+            onKeyDownCapture={(e) => {
+              if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              const root = e.currentTarget.closest("[cmdk-root]");
+              const selected = root?.querySelector(
+                "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
+              );
+              if (selected) return;
+              const top = hits[0];
+              if (!top || !q || isAskMode || isCommandMode || isTagBrowse) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setActiveNote(top.noteId);
+              setCommandOpen(false);
+            }}
           />
           <button
             type="button"
@@ -1418,8 +1432,11 @@ function CommandPaletteOpen() {
                   <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
                   <span>
                     {searchEmptyStateMessage({
-                      titleSearchLive,
-                      headsReady: isNoteHeadSearchLive(searchIndexState),
+                      titleSearchLive:
+                        titleSearchLive || searchEngine.id !== "sqlite-fts5-bm25",
+                      headsReady:
+                        isNoteHeadSearchLive(searchIndexState) ||
+                        searchEngine.id !== "sqlite-fts5-bm25",
                     })}
                   </span>
                 </Command.Item>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { isContentLoaded } from "@/lib/vault/content";
+import { getBodyGen, isContentLoaded, subscribeBodyGen } from "@/lib/vault/content";
 import {
   getUnreadPulseCount,
   subscribePulse,
@@ -80,13 +80,15 @@ export function RightPanel() {
 
   const setTab = (id: RightTab) => setRightTab(id);
 
+  // Lazy hydrate writes into the same nodes object. This tick is the re-render.
+  const bodyGen = useSyncExternalStore(subscribeBodyGen, getBodyGen, getBodyGen);
   const note = activeNoteId ? nodes[activeNoteId] : null;
   const bodyReady = !note || note.kind !== "note" || isContentLoaded(note);
 
   const backlinks = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getBacklinks(note, nodes);
-  }, [tab, note, nodes]);
+  }, [tab, note, nodes, bodyGen]);
 
   /** Wave 4: group multi-mentions by source note, show count */
   const groupedBacklinks = useMemo((): GroupedBacklink[] => {
@@ -113,25 +115,34 @@ export function RightPanel() {
     );
   }, [backlinks]);
 
+  // One incoming mention should show the sentence, not "(body not loaded)".
+  useEffect(() => {
+    if (tab !== "backlinks") return;
+    const pending = groupedBacklinks
+      .filter((b) => b.contexts.some((c) => c.includes("body not loaded")))
+      .slice(0, 8);
+    for (const b of pending) void ensureNoteBody(b.fromId);
+  }, [tab, groupedBacklinks, ensureNoteBody]);
+
   const brokenLinks = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getBrokenLinksForNote(note, nodes);
-  }, [tab, note, nodes]);
+  }, [tab, note, nodes, bodyGen]);
 
   const unlinkedMentions = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];
     return getUnlinkedMentions(note, nodes);
-  }, [tab, note, nodes]);
+  }, [tab, note, nodes, bodyGen]);
 
   const tags = useMemo(() => {
     if (!note || note.kind !== "note") return [];
     return extractTagsFromMarkdown(note.content ?? "");
-  }, [note]);
+  }, [note, bodyGen]);
 
   const outline = useMemo(() => {
     if (!note || note.kind !== "note") return [];
     return extractOutline(note.content ?? "");
-  }, [note]);
+  }, [note, bodyGen]);
 
   const handleTagClick = (tag: string) => {
     const hits = notesForTag(nodes, tag);

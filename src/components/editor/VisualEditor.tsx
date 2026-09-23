@@ -45,6 +45,7 @@ import {
   markdownWithWikilinksToHtml,
   htmlDocToMarkdown,
 } from "@/lib/markdown/serialize";
+import { splitFrontmatter } from "@/lib/editor/frontmatter";
 import { useVaultStore } from "@/lib/vault/store";
 import {
   dailyNotePath,
@@ -383,6 +384,9 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     (ed: Editor, opts?: { force?: boolean }) => {
       // Mid setContent: skip unless force flush after real user input
       if (applying.current && !(opts?.force && userEdited.current)) return;
+      // Navigation and unmount also call commit. The visual doc omits
+      // properties, so an unedited flush would save the body and drop them.
+      if (!userEdited.current) return;
       if (!ed || ed.isDestroyed) return;
       const id = noteIdRef.current;
       let serialized: string;
@@ -393,6 +397,11 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       }
       const prev =
         useVaultStore.getState().nodes[id]?.content ?? baselineMd.current;
+      const { yaml } = splitFrontmatter(prev);
+      if (yaml != null) {
+        const bodyOut = serialized.replace(/^\n+/, "");
+        serialized = `---\n${yaml.replace(/\n+$/, "")}\n---\n\n${bodyOut}`;
+      }
       const edited = userEdited.current;
       const noise = isOnlySerializationNoise(prev, serialized);
 

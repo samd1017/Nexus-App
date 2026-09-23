@@ -169,6 +169,7 @@ const TreeRow = memo(function TreeRow({
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
+      inputRef.current?.scrollIntoView({ block: "nearest" });
     });
   }, [renaming, nodeId, node]);
 
@@ -445,6 +446,21 @@ export const FileTree = memo(function FileTree() {
     getItemKey: (index) => flatRows[index]?.id ?? index,
     enabled: useVirtual,
   });
+
+  useEffect(() => {
+    const onRename = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (!id) return;
+      setRenamingId(id);
+      const idx = flatRowsRef.current.findIndex((r) => r.id === id);
+      if (idx >= 0) {
+        setFocusedIndex(idx);
+        virtualizer.scrollToIndex(idx, { align: "center" });
+      }
+    };
+    window.addEventListener("nexus-rename-node", onRename);
+    return () => window.removeEventListener("nexus-rename-node", onRename);
+  }, [virtualizer]);
 
   const focusedId = flatRows[focusedIndex]?.id ?? null;
 

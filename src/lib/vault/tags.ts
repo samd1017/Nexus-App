@@ -14,6 +14,7 @@ import type { VaultNode } from "./types";
 import { noteTitle } from "./types";
 import { ensureVaultIndex } from "./indexes";
 import { getDurableIndex } from "./durable-index";
+import { splitFrontmatter } from "@/lib/editor/frontmatter";
 
 const TAG_RE = /(?:^|[\s([{])#([a-zA-Z][\w/-]{0,48})\b/g;
 const FRONTMATTER_TAGS =
@@ -28,9 +29,12 @@ function stripCode(md: string): string {
 
 export function extractTagsFromMarkdown(markdown: string): string[] {
   const tags = new Set<string>();
-  const fm = FRONTMATTER_TAGS.exec(markdown);
-  if (fm) {
-    const block = fm[1];
+  const peeled = splitFrontmatter(markdown);
+  const block =
+    peeled.yaml != null
+      ? peeled.yaml
+      : (FRONTMATTER_TAGS.exec(markdown)?.[1] ?? null);
+  if (block) {
     const tagsLine = /^tags:\s*(.+)$/im.exec(block);
     if (tagsLine) {
       const raw = tagsLine[1].trim();

@@ -212,5 +212,5 @@ export function searchEmptyStateMessage(args: {
   if (!args.headsReady) {
     return "No title matches. Note-head search is still filling.";
   }
-  return "No matches in the current search index.";
+  return "No notes match.";
 }

@@ -169,7 +169,7 @@ export function WelcomeScreen() {
       </div>
 
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-3xl flex-col px-6">
-        <section className="flex min-h-full flex-col justify-center py-14 sm:py-18">
+        <section className="flex flex-col pb-8 pt-16 sm:pt-20">
           <div
             className="welcome-hero-brand flex flex-col items-start gap-5"
             style={{ animation: "welcomeFadeUp 520ms ease-out both" }}
@@ -194,7 +194,7 @@ export function WelcomeScreen() {
           </div>
 
           <h1
-            className="mt-10 max-w-xl text-[28px] font-semibold leading-[1.15] tracking-tight text-[var(--text-primary)] sm:text-[34px]"
+            className="mt-7 max-w-xl text-[28px] font-semibold leading-[1.15] tracking-tight text-[var(--text-primary)] sm:text-[34px]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 80ms both" }}
           >
             Ask the vault.

@@ -2,6 +2,25 @@
 
 **Goal:** Comfortably handle **300k–500k** notes on Desktop (plain-folder markdown), with headroom beyond. Web = demo/QA only. Mobile later via shared DurableIndex schema.
 
+## Scale continuum (product law)
+
+Nexus is one product from a handful of notes through about 500,000. Same craft. There is no toy mode that breaks at scale, and no enterprise mode that feels heavy or empty on a small vault. The switch is automatic. Drawing 500k orbs is the wrong picture: the folder map and the ego neighborhood stay buttery, and a 12-note vault still gets the full galaxy.
+
+| Band | Vault | Flawless means |
+|------|--------|----------------|
+| Small | a handful, under 400 notes | Instant open. Full note graph, not a folder stub. First-run is the product. No dead chrome. |
+| Mid | ~20k–45k | No freezes. Links and backlinks match the notes. Graph Exit and HUD stay solid. Folder map or ego, not every note. |
+| Huge | ~100k–500k desktop | Cold open is useful in seconds. Search fills progressively without freezing the UI. Graph stays inside the folder budget (320) and the ego budget (400). Clicks stay snappy while the index fills. |
+
+This law binds the release gates:
+
+- **Gate A — reliability.** The graph does not throw, and `[[wikilinks]]` are indexed before large-vault bodies are stripped. AppShell stays the real shell.
+- **Gate B — craft.** Prove the same craft on a demo/small vault and on a large soak vault before calling craft done.
+- **Gate C — scale.** Cold open and progressive keyword search at 100k. Honest retrieval (no fake semantic rank). Desktop is the 500k path. The browser stays capped.
+- **Gate D — soak.** A human pass on both ends of the continuum. Stay draft until that pass.
+
+Browser vaults refuse around 25k notes. A 500k vault is a desktop folder.
+
 ---
 
 ## Public-release plan (99%)

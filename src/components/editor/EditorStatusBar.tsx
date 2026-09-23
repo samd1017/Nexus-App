@@ -5,7 +5,7 @@ import { vaultLinkIndex } from "@/lib/vault/link-index";
 import { noteTargetKeys } from "@/lib/vault/backlink-index";
 import { getBacklinks } from "@/lib/vault/backlinks";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
-import { shouldUseEgoGraph } from "@/lib/vault/scale-flags";
+import { isLargeMemoryVault, shouldUseEgoGraph } from "@/lib/vault/scale-flags";
 import { extractWikilinkTargets, normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import type { VaultNode } from "@/lib/vault/types";
 import { formatWordCount, noteMass } from "@/lib/editor/note-mass";
@@ -50,6 +50,7 @@ export function EditorStatusBar({ noteId }: { noteId: string }) {
   const note = useVaultStore((s) => s.nodes[noteId] ?? null);
   const content = note?.kind === "note" ? (note.content ?? "") : "";
   const mode = useVaultStore((s) => s.mode);
+  const vaultId = useVaultStore((s) => s.vaultId);
   const dirty = useVaultStore((s) => s.dirtyNoteIds.includes(noteId));
   const nodes = useVaultStore((s) => s.nodes);
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
@@ -75,8 +76,11 @@ export function EditorStatusBar({ noteId }: { noteId: string }) {
     );
   }
 
-  const kept =
-    dirty ? "Unsaved" : mode === "demo" ? "In session" : "Saved";
+  const kept = dirty
+    ? "Unsaved"
+    : mode === "demo" || isLargeMemoryVault(vaultId)
+      ? "In session"
+      : "Saved";
   const read =
     mass.words >= 40
       ? mass.minutes === 1

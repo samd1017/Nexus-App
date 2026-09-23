@@ -217,7 +217,16 @@ export function LeftSidebar() {
             className="icon-btn"
             title="New folder"
             aria-label="New folder"
-            onClick={() => createFolder(null)}
+            onClick={() => {
+              const id = createFolder(null);
+              if (!id) return;
+              // Stage flush is ~48ms; wait so the row exists, then rename in place.
+              window.setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent("nexus-rename-node", { detail: id }),
+                );
+              }, 80);
+            }}
           >
             <FolderPlus size={16} />
           </button>
