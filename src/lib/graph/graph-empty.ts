@@ -1,6 +1,6 @@
 /**
  * Graph empty / pending copy. Links mode must explain when the index
- * is not ready — a lone ego orb is not "this note has no [[wikilinks]]".
+ * is not ready — a lone ego orb is not "this note has no wikilinks".
  */
 
 import type { GraphViewMode } from "./build-graph";
