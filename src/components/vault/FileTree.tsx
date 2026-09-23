@@ -131,6 +131,7 @@ const TreeRow = memo(function TreeRow({
   onPointerDragStart,
   isFocused,
   onFocusRow,
+  onToggleFolder,
 }: {
   nodeId: string;
   depth: number;
@@ -142,6 +143,7 @@ const TreeRow = memo(function TreeRow({
   onPointerDragStart: (id: string, e: React.PointerEvent) => void;
   isFocused?: boolean;
   onFocusRow?: (id: string) => void;
+  onToggleFolder: (id: string) => void;
 }) {
   // Narrow selectors — avoid whole-nodes subscription
   const node = useVaultStore((s) => s.nodes[nodeId]);
@@ -149,7 +151,6 @@ const TreeRow = memo(function TreeRow({
     (s) => s.activeNoteId === nodeId && s.nodes[nodeId]?.kind === "note",
   );
   const expanded = useVaultStore((s) => s.expandedFolders.includes(nodeId));
-  const toggleFolder = useVaultStore((s) => s.toggleFolder);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const renameNode = useVaultStore((s) => s.renameNode);
 
@@ -212,7 +213,7 @@ const TreeRow = memo(function TreeRow({
       return;
     }
     if (node.kind === "folder") {
-      toggleFolder(node.id);
+      onToggleFolder(node.id);
       return;
     }
     if (e?.altKey || (e?.metaKey && e?.shiftKey)) {
@@ -410,6 +411,7 @@ export const FileTree = memo(function FileTree() {
   const sessionRef = useRef<DragSession | null>(null);
   const dropTargetRef = useRef<DropTarget>(null);
   const expandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRevealRef = useRef<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const ghostElRef = useRef<HTMLDivElement>(null);
   const ghostRafRef = useRef<number | null>(null);
@@ -457,6 +459,61 @@ export const FileTree = memo(function FileTree() {
     enabled: useVirtual,
     useFlushSync: false,
   });
+
+  const armFolderReveal = useCallback((id: string) => {
+    if (!useVaultStore.getState().expandedFolders.includes(id)) {
+      pendingRevealRef.current = id;
+    }
+  }, []);
+
+  const toggleFolderReveal = useCallback(
+    (id: string) => {
+      armFolderReveal(id);
+      toggleFolder(id);
+    },
+    [armFolderReveal, toggleFolder],
+  );
+
+  // A folder parked on the bottom edge used to flip its chevron while every
+  // new child stayed below the scrollport, so expand looked empty.
+  useEffect(() => {
+    const id = pendingRevealRef.current;
+    if (!id) return;
+    if (!expandedFolders.includes(id)) return;
+    pendingRevealRef.current = null;
+    const idx = flatRows.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    const parentDepth = flatRows[idx].depth;
+    let last = idx;
+    const limit = Math.min(flatRows.length - 1, idx + 5);
+    for (let i = idx + 1; i <= limit; i++) {
+      if (flatRows[i].depth <= parentDepth) break;
+      last = i;
+    }
+    if (last === idx) return;
+    const tree = parentRef.current;
+    if (!tree) return;
+    const childId = flatRows[idx + 1]?.id;
+    const lastId = flatRows[last]?.id;
+    requestAnimationFrame(() => {
+      const tr = tree.getBoundingClientRect();
+      const childEl = childId ? document.getElementById(`tree-row-${childId}`) : null;
+      const lastEl = lastId ? document.getElementById(`tree-row-${lastId}`) : null;
+      const childRect = childEl?.getBoundingClientRect();
+      const lastRect = lastEl?.getBoundingClientRect();
+      const childVisible =
+        !!childRect &&
+        childRect.height > 8 &&
+        childRect.top >= tr.top - 1 &&
+        childRect.bottom <= tr.bottom - 4;
+      const tailVisible =
+        !!lastRect && lastRect.top >= tr.top && lastRect.bottom <= tr.bottom - 2;
+      if (childVisible && tailVisible) return;
+      const lastBottom = (last + 1) * ROW_H;
+      const target = Math.max(0, lastBottom - tree.clientHeight + 8);
+      if (target > tree.scrollTop + 1) tree.scrollTop = target;
+    });
+  }, [expandedFolders, flatRows]);
 
   useEffect(() => {
     const onRename = (e: Event) => {
@@ -509,7 +566,7 @@ export const FileTree = memo(function FileTree() {
         if (node.kind === "folder") {
           const expanded = useVaultStore.getState().expandedFolders;
           if (!expanded.includes(node.id)) {
-            toggleFolder(node.id);
+            toggleFolderReveal(node.id);
           } else if (focusedIndex < rows.length - 1) {
             const next = focusedIndex + 1;
             setFocusedIndex(next);
@@ -523,7 +580,7 @@ export const FileTree = memo(function FileTree() {
         if (node.kind === "folder") {
           const expanded = useVaultStore.getState().expandedFolders;
           if (expanded.includes(node.id)) {
-            toggleFolder(node.id);
+            toggleFolderReveal(node.id);
             return;
           }
         }
@@ -539,7 +596,7 @@ export const FileTree = memo(function FileTree() {
       if (e.key === "Enter") {
         e.preventDefault();
         if (node.kind === "folder") {
-          toggleFolder(node.id);
+          toggleFolderReveal(node.id);
         } else {
           setActiveNote(node.id);
           closeDrawersIfNarrow();
@@ -549,7 +606,7 @@ export const FileTree = memo(function FileTree() {
     [
       renamingId,
       focusedIndex,
-      toggleFolder,
+      toggleFolderReveal,
       setActiveNote,
       virtualizer,
     ],
@@ -636,10 +693,11 @@ export const FileTree = memo(function FileTree() {
               ) {
                 const exp = useVaultStore.getState().expandedFolders;
                 if (!exp.includes(fid)) {
+                  pendingRevealRef.current = fid;
                   useVaultStore.getState().toggleFolder(fid);
                 }
               }
-            }, 420);
+            }, 220);
           }
         }
       } else if (expandTimer.current) {
@@ -685,6 +743,9 @@ export const FileTree = memo(function FileTree() {
         const node = nodes[s.id];
         if (!node) return;
         if (node.kind === "folder") {
+          if (!useVaultStore.getState().expandedFolders.includes(s.id)) {
+            pendingRevealRef.current = s.id;
+          }
           useVaultStore.getState().toggleFolder(s.id);
         } else if (node.kind === "note") {
           useVaultStore.getState().setActiveNote(s.id);
@@ -746,7 +807,7 @@ export const FileTree = memo(function FileTree() {
     setCtx(null);
     if (parentId) {
       const expanded = useVaultStore.getState().expandedFolders;
-      if (!expanded.includes(parentId)) toggleFolder(parentId);
+      if (!expanded.includes(parentId)) toggleFolderReveal(parentId);
     }
     const id =
       kind === "note"
@@ -765,7 +826,7 @@ export const FileTree = memo(function FileTree() {
     setCtx(null);
     if (parentId) {
       const expanded = useVaultStore.getState().expandedFolders;
-      if (!expanded.includes(parentId)) toggleFolder(parentId);
+      if (!expanded.includes(parentId)) toggleFolderReveal(parentId);
     }
     createFromTemplate(templateId, parentId);
   };
@@ -785,6 +846,7 @@ export const FileTree = memo(function FileTree() {
       onPointerDragStart={onPointerDragStart}
       isFocused={focusedId === row.id}
       onFocusRow={onFocusRow}
+      onToggleFolder={toggleFolderReveal}
     />
   );
 
