@@ -1,6 +1,6 @@
 /**
- * Graph nodes as small planets in a starfield.
- * A lit face, a darker limb, and a visible cool atmosphere on the silhouette.
+ * Graph nodes as small planets.
+ * A lit face, a dark limb, and a cool atmosphere on the silhouette.
  * No bright core, and no plastic highlight.
  */
 
@@ -34,20 +34,16 @@ function hashUnit(key: string): number {
 }
 
 /**
- * Teal through lavender. The span is wide on purpose so neighbors
- * are not one dusty teal. Warm hues are left out.
+ * Deep teal through indigo. Mint and warm hues wash out or read as candy.
  */
 function hashHue(key: string): number {
-  return (156 + hashUnit(key) * 122) / 360;
+  return (188 + hashUnit(key) * 68) / 360;
 }
 
-/**
- * Face color, written straight out. Folders sit a little lighter than notes.
- * Saturation stays in the cool range so the desktop window does not wash them gray.
- */
+/** Day-side albedo. Mid lightness keeps the chroma rich instead of pastel. */
 function bodyColor(key: string, folder: boolean, active: boolean): THREE.Color {
-  const light = active ? 0.78 : folder ? 0.76 : 0.72;
-  const sat = active ? 0.62 : folder ? 0.64 : 0.6;
+  const light = active ? 0.64 : folder ? 0.58 : 0.52;
+  const sat = active ? 0.55 : folder ? 0.62 : 0.5;
   return new THREE.Color().setHSL(hashHue(key), sat, light);
 }
 
@@ -73,12 +69,18 @@ void main() {
   vec3 viewDir = normalize(cameraPosition - vWorld);
   float facing = clamp(dot(n, viewDir), 0.0, 1.0);
   // Broad, dull sunlight. No specular hotspot.
-  float key = clamp(dot(n, normalize(vec3(-0.45, 0.42, 0.55))), 0.0, 1.0);
-  float wrap = clamp(key * 0.75 + 0.25, 0.0, 1.0);
-  float shade = mix(0.74, 1.0, pow(wrap, 0.8));
-  float edge = pow(1.0 - facing, 3.2);
+  // Sun stays off to the side of the camera, so every view has a dark limb.
+  vec3 up = vec3(0.0, 1.0, 0.0);
+  vec3 side = cross(viewDir, up);
+  if (dot(side, side) < 0.0001) side = cross(viewDir, vec3(1.0, 0.0, 0.0));
+  side = normalize(side);
+  vec3 sunDir = normalize(side * 0.9 + up * 0.42 + viewDir * 0.12);
+  float key = clamp(dot(n, sunDir), 0.0, 1.0);
+  float sun = pow(key, 0.9);
+  float shade = mix(0.14, 1.0, sun);
+  float air = pow(1.0 - facing, 4.0);
   vec3 col = uColor * shade;
-  col += vec3(0.04, 0.07, 0.1) * edge;
+  col += vec3(0.02, 0.06, 0.12) * air * mix(0.25, 1.0, sun);
   gl_FragColor = vec4(col, uOpacity);
 }
 `;
@@ -93,8 +95,8 @@ void main() {
   vec3 n = normalize(vNormal);
   vec3 viewDir = normalize(cameraPosition - vWorld);
   float facing = clamp(abs(dot(n, viewDir)), 0.0, 1.0);
-  float rim = pow(1.0 - facing, 3.4);
-  float band = smoothstep(0.32, 0.9, rim);
+  float rim = pow(1.0 - facing, 4.4);
+  float band = smoothstep(0.42, 0.96, rim);
   float alpha = band * uOpacity;
   if (alpha < 0.02) discard;
   gl_FragColor = vec4(uColor, alpha);
@@ -244,10 +246,10 @@ export function createInstrumentNode(
   group.add(body);
 
   if (!isGhost) {
-    const haze = new THREE.Color().setRGB(0.55, 0.68, 0.78).lerp(tint, 0.35);
-    const limbMat = limbMaterial(haze, dim ? 0.22 : isActive ? 0.92 : 0.84);
+    const haze = new THREE.Color().setRGB(0.32, 0.58, 0.95).lerp(tint, 0.18);
+    const limbMat = limbMaterial(haze, dim ? 0.16 : isActive ? 0.78 : 0.62);
     const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 1.22, Math.max(18, segs - 4), Math.max(14, segs - 6)),
+      new THREE.SphereGeometry(radius * 1.16, Math.max(18, segs - 4), Math.max(14, segs - 6)),
       limbMat,
     );
     atmo.renderOrder = 2;
@@ -258,9 +260,9 @@ export function createInstrumentNode(
     const indicator = new THREE.Mesh(
       new THREE.TorusGeometry(radius * 1.2, Math.max(0.02, radius * 0.008), 4, full ? 56 : 40),
       new THREE.MeshBasicMaterial({
-        color: new THREE.Color().setHex(0x9eb0c4),
+        color: new THREE.Color().setHex(0x6a7e92),
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.55,
         depthWrite: false,
       }),
     );
