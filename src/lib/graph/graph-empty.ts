@@ -1,6 +1,6 @@
 /**
  * Graph empty / pending copy. Links mode must explain when the index
- * is not ready — a lone ego orb is not "this note has no wikilinks".
+ * is not ready — a lone ego orb is not "this note has no [[wikilinks]]".
  */
 
 import type { GraphViewMode } from "./build-graph";
@@ -71,7 +71,7 @@ export function graphEmptyCopy(input: GraphEmptyInput): GraphEmptyCopy {
         show: true,
         title: "Pick a note",
         description:
-          "Open a note to see its neighborhood. The map never draws the whole vault.",
+          "Open a note and fly its neighborhood. A huge vault stays a folder map until you ask.",
       };
     }
     if (linkEdgeCount === 0) {
