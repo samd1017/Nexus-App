@@ -23,8 +23,11 @@ import { composeGraphTick } from "@/lib/graph/graph-select";
 let cachedNodesRef: Record<string, unknown> | null = null;
 let cachedTick = "0";
 
+const EMPTY_TICK_NODES: Record<string, unknown> = {};
+
 function syncIndexIfNeeded(): void {
-  const nodes = useVaultStore.getState().nodes as Record<string, unknown>;
+  const raw = useVaultStore.getState().nodes as Record<string, unknown> | null;
+  const nodes = raw && typeof raw === "object" ? raw : EMPTY_TICK_NODES;
   if (nodes === cachedNodesRef) return;
   ensureVaultIndex(nodes as Parameters<typeof ensureVaultIndex>[0]);
   cachedNodesRef = nodes;
