@@ -590,7 +590,7 @@ function CommandPaletteOpen() {
         }
         applyCatalog(hits);
       });
-      if (titleLive && idx?.ready && idx.searchFtsAsync) {
+      if (idx?.ready && idx.searchFtsAsync) {
         void (async () => {
           const rows = await searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT);
           if (cancelled) return;

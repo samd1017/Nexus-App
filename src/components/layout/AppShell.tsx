@@ -44,7 +44,7 @@ import {
   chromeFsaWarnMessage,
 } from "@/lib/vault/chrome-fsa-cap";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
-import { fillProgressRatio } from "@/lib/vault/sqlite-fill-progress";
+import { fillProgressRatio, openProgressTail } from "@/lib/vault/sqlite-fill-progress";
 
 function OpenProgressBanner() {
   // Subscribe here — not in AppShell — so 400ms fill ticks do not
@@ -55,6 +55,9 @@ function OpenProgressBanner() {
   // Auto-dismiss ready flash so the banner doesn't stick forever
   useEffect(() => {
     if (progress.phase !== "ready") return;
+    // This Ready is the open page. Leave it up while the rest of the
+    // folder is still being listed, so it is not mistaken for a flash.
+    if (progress.message.includes("titles and open notes")) return;
     const t = window.setTimeout(() => {
       const cur = getOpenProgress();
       if (cur.phase === "ready") {
@@ -130,12 +133,7 @@ function OpenProgressBanner() {
         </span>
         {progress.scanned > 0 ? (
           <span className={isReady ? "text-[var(--success)]/80" : "text-[var(--text-muted)]"}>
-            · {progress.scanned.toLocaleString()} items
-            {ratio != null
-              ? ` · ${isReady ? 100 : Math.round(ratio * 100)}%`
-              : isReady
-                ? " · 100%"
-                : ""}
+            {openProgressTail(progress.phase, progress.scanned, progress.totalHint)}
           </span>
         ) : null}
         {isError ? (

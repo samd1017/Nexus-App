@@ -1134,18 +1134,21 @@ async function runCompleteDiskSearchIndex(opts?: {
 							}
 						}
 					}
-					if (p.phase === "done") {
+					if (p.phase === "ready-meta" || p.phase === "done") {
+						const windowScanned = p.scanned > 0 ? p.scanned : 0;
+						const alreadyReady = getOpenProgress().phase === "ready";
 						interactiveFillSettled = true;
 						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
-						const doneTotal = reportedTotal > 0 ? reportedTotal : noteCount;
-						setOpenProgress({
-							phase: "ready",
-							scanned: doneTotal,
-							totalHint: doneTotal > 1 ? doneTotal : null,
-							message: sqliteFillSettledMessage(p.searchState, p.skipped, doneTotal),
-						});
-						indexLoadedDesktopNotes();
+						if (!alreadyReady) {
+							setOpenProgress({
+								phase: "ready",
+								scanned: windowScanned,
+								totalHint: null,
+								message: "Ready · titles and open notes",
+							});
+						}
+						if (p.phase === "done") indexLoadedDesktopNotes();
 						return;
 					}
 					if (p.phase === "error") {

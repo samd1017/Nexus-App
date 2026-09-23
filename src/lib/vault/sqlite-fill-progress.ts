@@ -121,6 +121,24 @@ export function fillCountLabel(scanned: number, total: number): string {
   return `${scanned.toLocaleString()} / ${honest.toLocaleString()}`;
 }
 
+/**
+ * Count shown beside the open banner. Ready never claims 100% of a total:
+ * a full-vault denominator made a window-sized Ready look like the listing
+ * had finished.
+ */
+export function openProgressTail(
+  phase: string,
+  scanned: number,
+  totalHint: number | null | undefined,
+): string {
+  if (!(scanned > 0)) return "";
+  const count = ` · ${scanned.toLocaleString()} items`;
+  if (phase === "ready" || phase === "error") return count;
+  const ratio = fillProgressRatio(scanned, totalHint);
+  if (ratio == null) return count;
+  return `${count} · ${Math.round(ratio * 100)}%`;
+}
+
 export function fillProgressRatio(
   scanned: number,
   totalHint: number | null | undefined,

@@ -63,6 +63,10 @@ pub const TITLE_FTS_SEED: usize = 2048;
 /// the vault. The rest of the folder is listed afterward, with a hard yield
 /// between batches, and that listing is not the interactive path.
 pub const TITLE_INTERACTIVE_CAP: usize = 512;
+/// First title commit. Small enough that cold open can search before the
+/// rest of a directory is stated. Folder names are visited in order, so
+/// `00-Inbox` lands in this batch.
+pub const TITLE_READY_FLUSH: usize = 32;
 /// Sleep between title batches after the interactive window. Long enough
 /// that note open, scroll, and the graph can use the disk.
 pub const DISCOVER_TAIL_YIELD_MS: u64 = 32;
@@ -629,9 +633,12 @@ fn list_dir_children(dir: &Path, rel: &str) -> (Vec<LiteEntry>, Vec<LiteEntry>) 
         }
     }
     files.sort_by(|a, b| {
-        is_title_seed_hot_name(&b.name).cmp(&is_title_seed_hot_name(&a.name))
+        is_title_seed_hot_name(&b.name)
+            .cmp(&is_title_seed_hot_name(&a.name))
+            .then_with(|| a.name.cmp(&b.name))
     });
-    // `pop` takes the tail. Hot names were sorted to the front.
+    // `pop` takes the tail. Hot names, smallest first (`Hub 0` before
+    // `Hub 1400` in the same folder), were sorted to the front.
     files.reverse();
     (files, dirs)
 }
@@ -679,12 +686,36 @@ fn collect_md_notes_publishing<'a>(
     mut publish: Option<DiscoverPublish<'_>>,
     prefixes: &[String],
     cap: usize,
+    ready_at: usize,
     is_cancelled: &RefCell<Box<dyn FnMut() -> bool + 'a>>,
+    on_ready: &mut dyn FnMut(&mut DiscoverPublish<'_>, &[DiskNote]),
     on_cap: &mut dyn FnMut(&mut DiscoverPublish<'_>, &[DiskNote]),
 ) -> (Vec<DiskNote>, bool) {
     let mut out = Vec::new();
+    let mut seen_rel: HashSet<String> = HashSet::new();
+    // A note the user already has open is part of the first page even when
+    // its folder sorts later.
+    for raw in prefixes {
+        let rel = normalize_rel(raw).trim_matches('/').to_string();
+        if !rel.to_ascii_lowercase().ends_with(".md") {
+            continue;
+        }
+        let abs = root.join(&rel);
+        if !abs.is_file() {
+            continue;
+        }
+        let name = abs
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.is_empty() || !seen_rel.insert(rel.clone()) {
+            continue;
+        }
+        out.push(disk_note_from_lite(LiteEntry { abs, rel, name }));
+    }
     let mut published = 0usize;
     let mut capped = cap == usize::MAX;
+    let mut announced = false;
     let mut tail = false;
     let mut stack: Vec<(PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
     let mut pending_files: Vec<LiteEntry> = Vec::new();
@@ -706,18 +737,36 @@ fn collect_md_notes_publishing<'a>(
                 break;
             };
             let (files, mut dirs) = list_dir_children(&dir, &rel);
+            // Pop takes the last entry. Before the first title page, smallest
+            // names come out first (`00-Inbox`, then bucket `00`) so a cold
+            // open does not title-index later folders before Hub 0.
             dirs.sort_by(|a, b| {
-                let ap = is_priority_rel(&a.rel, prefixes);
-                let bp = is_priority_rel(&b.rel, prefixes);
-                ap.cmp(&bp)
+                if announced {
+                    let ap = is_priority_rel(&a.rel, prefixes);
+                    let bp = is_priority_rel(&b.rel, prefixes);
+                    ap.cmp(&bp).then_with(|| b.name.cmp(&a.name))
+                } else {
+                    b.name.cmp(&a.name)
+                }
             });
             pending_files = files;
             pending_dirs = dirs;
         }
         if let Some(lite) = pending_files.pop() {
+            if !seen_rel.insert(lite.rel.clone()) {
+                continue;
+            }
             out.push(disk_note_from_lite(lite));
-            if out.len() % DISCOVER_BATCH == 0 {
+            let batch_due = out.len() % DISCOVER_BATCH == 0;
+            let ready_due = !announced && ready_at != usize::MAX && out.len() >= ready_at;
+            if batch_due || ready_due {
                 flush_unpublished(&mut publish, &out, &mut published);
+            }
+            if ready_due {
+                if let Some(sink) = publish.as_mut() {
+                    on_ready(sink, &out);
+                }
+                announced = true;
             }
             if !capped && out.len() >= cap {
                 flush_unpublished(&mut publish, &out, &mut published);
@@ -1689,16 +1738,18 @@ pub fn fill_from_disk_with_opts<'a>(
     let mut prefix_batch: Vec<FillNote> = Vec::new();
     let is_cancelled: RefCell<Box<dyn FnMut() -> bool + 'a>> =
         RefCell::new(Box::new(is_cancelled));
-    let title_cap = if opts.until == FillUntil::Deep {
+    let deep = opts.until == FillUntil::Deep;
+    let title_cap = if deep {
         TITLE_INTERACTIVE_CAP
     } else {
         usize::MAX
     };
+    let ready_at = if deep { TITLE_READY_FLUSH } else { usize::MAX };
     let (files, walk_done) = collect_md_notes_publishing(
         vault_root,
         Some(DiscoverPublish {
             conn,
-            allow_heads: allow_early,
+            allow_heads: allow_early && !deep,
             head_chars: short_head,
             vault: vault_root,
             headed: &mut headed,
@@ -1729,24 +1780,39 @@ pub fn fill_from_disk_with_opts<'a>(
         }),
         opts.priority_rels,
         title_cap,
+        ready_at,
         &is_cancelled,
         &mut |sink, prefix| {
             let scanned = prefix.len() as i64;
-            {
-                let mut bridge = bridge.borrow_mut();
-                let b = &mut *bridge;
-                emit(
-                    &mut b.progress,
-                    "ready-meta",
-                    "ready-meta",
-                    scanned,
-                    *sink.indexed,
-                    0,
-                    *sink.errors,
-                    Some("Title/path search ready".into()),
-                    &mut *b.on_progress,
-                );
-            }
+            let mut bridge = bridge.borrow_mut();
+            let b = &mut *bridge;
+            emit(
+                &mut b.progress,
+                "ready-meta",
+                "ready-meta",
+                scanned,
+                *sink.indexed,
+                0,
+                *sink.errors,
+                Some("Title/path search ready".into()),
+                &mut *b.on_progress,
+            );
+            emit(
+                &mut b.progress,
+                "done",
+                "ready-fts-partial",
+                scanned,
+                *sink.indexed,
+                0,
+                *sink.errors,
+                Some("Titles and open notes are searchable".into()),
+                &mut *b.on_progress,
+            );
+            // Let the UI paint Ready before the next directory is stated.
+            std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
+        },
+        &mut |sink, prefix| {
+            let scanned = prefix.len() as i64;
             {
                 let mut cancel = is_cancelled.borrow_mut();
                 index_prefix_deep(
@@ -1781,17 +1847,6 @@ pub fn fill_from_disk_with_opts<'a>(
                     0,
                     *sink.errors,
                     Some("Open-set heads are searchable".into()),
-                    &mut *b.on_progress,
-                );
-                emit(
-                    &mut b.progress,
-                    "done",
-                    "ready-fts-partial",
-                    scanned,
-                    *sink.indexed,
-                    0,
-                    *sink.errors,
-                    Some("Titles and open notes are searchable".into()),
                     &mut *b.on_progress,
                 );
                 edges
@@ -2418,6 +2473,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         fts_has(&open_reader(db), query)
     }
 
+    fn fts_path_at(db: &Path, path: &str) -> bool {
+        open_reader(db)
+            .query_row(
+                "SELECT 1 FROM note_fts WHERE path = ?1 LIMIT 1",
+                params![path],
+                |_| Ok(1i64),
+            )
+            .is_ok()
+    }
+
     fn fts_match_count_at(db: &Path, query: &str) -> i64 {
         open_reader(db)
             .query_row(
@@ -2878,6 +2943,101 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     }
 
     #[test]
+    fn hub_0_is_searchable_before_later_folders() {
+        let (vault, db) = temp_pair("hub0");
+        write_official_shaped(&vault, 1_500);
+        let mut conn = open_test_conn(&db);
+        let mut ready_scanned = -1i64;
+        let mut hub_at_ready = false;
+        let mut late_at_ready = false;
+        let mut done_scanned = -1i64;
+        fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && ready_scanned < 0 {
+                    ready_scanned = p.scanned;
+                    hub_at_ready = fts_path_at(&db, "00-Inbox/00/Hub 0.md");
+                    late_at_ready = fts_path_at(&db, "60-Systems/00/Topic 6.md");
+                }
+                if p.phase == "done" && done_scanned < 0 {
+                    done_scanned = p.scanned;
+                }
+            },
+        )
+        .unwrap();
+        assert!(
+            ready_scanned > 0 && ready_scanned <= TITLE_READY_FLUSH as i64,
+            "ready-meta scanned {ready_scanned} must be the first page"
+        );
+        assert!(hub_at_ready, "Hub 0 is in the first title page");
+        assert!(
+            !late_at_ready,
+            "a later folder is not required before title search"
+        );
+        assert!(
+            done_scanned > 0 && done_scanned <= TITLE_READY_FLUSH as i64,
+            "Ready scanned {done_scanned} must not wait for the full listing"
+        );
+        assert!(fts_path_at(&db, "60-Systems/00/Topic 6.md"));
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn hub_0_leads_a_fat_inbox_folder() {
+        let (vault, db) = temp_pair("hubfat");
+        for i in 0..80 {
+            write_note(&vault, &format!("00-Inbox/00/Hub {i}.md"), "hub\n");
+        }
+        write_note(&vault, "60-Systems/00/Topic 6.md", "later\n");
+        let mut conn = open_test_conn(&db);
+        let mut hub_at_ready = false;
+        let mut late_hub_at_ready = false;
+        let mut ready_scanned = -1i64;
+        fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && ready_scanned < 0 {
+                    ready_scanned = p.scanned;
+                    hub_at_ready = fts_path_at(&db, "00-Inbox/00/Hub 0.md");
+                    late_hub_at_ready = fts_path_at(&db, "00-Inbox/00/Hub 79.md");
+                }
+            },
+        )
+        .unwrap();
+        assert!(
+            ready_scanned > 0 && ready_scanned <= TITLE_READY_FLUSH as i64,
+            "ready-meta scanned {ready_scanned} must be the first page"
+        );
+        assert!(hub_at_ready, "Hub 0 is the first title in a fat inbox folder");
+        assert!(
+            !late_hub_at_ready,
+            "a later hub in the same folder is not required before Ready"
+        );
+        assert!(fts_path_at(&db, "00-Inbox/00/Hub 79.md"));
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
     fn cancelled_title_tail_keeps_notes_it_has_not_listed_yet() {
         let (vault, db) = temp_pair("tail-cancel");
         for i in 0..TITLE_INTERACTIVE_CAP + 8 {
@@ -3076,6 +3236,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "open-set head cap {EAGER_CONTENT_CAP} must stay a page, not the vault"
         );
         assert_eq!(TITLE_INTERACTIVE_CAP, EAGER_CONTENT_CAP);
+        assert!(
+            TITLE_READY_FLUSH >= 16 && TITLE_READY_FLUSH <= 64,
+            "first title page {TITLE_READY_FLUSH} must stay a page"
+        );
+        assert!(TITLE_READY_FLUSH < TITLE_INTERACTIVE_CAP);
         assert!(
             DISCOVER_TAIL_YIELD_MS >= 16 && DISCOVER_TAIL_YIELD_MS <= 80,
             "title tail yield {DISCOVER_TAIL_YIELD_MS}ms must leave the disk free without stalling the listing"

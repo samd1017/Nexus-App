@@ -24,6 +24,7 @@ const {
   sqliteEngineShortLabel,
   fillCountLabel,
   fillProgressRatio,
+  openProgressTail,
   honestFillTotal,
   mergeCatalogAndFtsHits,
   sqliteFillPhaseMessage,
@@ -191,6 +192,10 @@ assert.equal(fillProgressRatio(24064, 1), null);
 assert.equal(fillProgressRatio(1, 1), null);
 assert.equal(fillProgressRatio(0, 10001), null);
 assert.ok(Math.abs((fillProgressRatio(32768, 100002) ?? 0) - 32768 / 100002) < 1e-9);
+assert.equal(openProgressTail("ready", 100006, 100006).includes("100%"), false);
+assert.equal(openProgressTail("ready", 100006, null).includes("%"), false);
+assert.match(openProgressTail("ready", 32, null), /32 items/);
+assert.match(openProgressTail("indexing", 500, 1000), /50%/);
 
 const lying = sqliteFillPhaseMessage({
   phase: "meta",
