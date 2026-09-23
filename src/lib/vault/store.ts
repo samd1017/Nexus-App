@@ -218,7 +218,7 @@ import {
 } from "./conflicts";
 import type { TrashEntry } from "./trash";
 import { trashEntryFromRel } from "./trash";
-import { assertBodyLoaded } from "./content";
+import { assertBodyLoaded, bumpBodyGen } from "./content";
 import {
   nativeMetaWalk,
   vaultScanFromNodeMeta,
@@ -2055,6 +2055,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					: "Preparing workspace…"
 			});
 
+			// Index [[wikilinks]] while bodies are still attached. Stripping next
+			// drops content; prepareMountedNodes will not rebuild this vault,
+			// and indexing only the open note would mark the map ready with
+			// zero edges ("No [[wikilinks]] indexed" on a vault that has them).
+			rebuildLinkIndex(data.nodes);
 			// One 45k walk: archive + strip. A second strip pass was ~80–120ms.
 			archiveAndStripBodiesInPlace(data.nodes, [firstNote?.id ?? ""]);
 			if (gen !== vaultGen) return;
@@ -3139,14 +3144,33 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	},
 	setGraphMode: (mode) => {
 		const prev = get().settings.graphMode;
+		const cur = get().settings;
+		let leftOpen = cur.leftOpen;
+		let rightOpen = cur.rightOpen;
+		if (mode === "fullscreen" && prev !== "fullscreen") {
+			fullscreenPanelSnapshot = {
+				leftOpen: cur.leftOpen,
+				rightOpen: cur.rightOpen,
+			};
+			leftOpen = false;
+			rightOpen = false;
+		} else if (
+			prev === "fullscreen" &&
+			mode !== "fullscreen" &&
+			fullscreenPanelSnapshot
+		) {
+			leftOpen = fullscreenPanelSnapshot.leftOpen;
+			rightOpen = mode === "panel" ? true : fullscreenPanelSnapshot.rightOpen;
+			fullscreenPanelSnapshot = null;
+		}
 		set({
 			settings: {
-				...get().settings,
+				...cur,
 				graphMode: mode,
-				// Keep graph visible in the right rail when leaving fullscreen
-				...(mode === "panel" ? { rightOpen: true } : {})
+				leftOpen,
+				rightOpen,
 			},
-			...(mode === "panel" ? { rightTab: "graph" as const } : {})
+			...(mode === "panel" ? { rightTab: "graph" as const } : {}),
 		});
 		if (mode === "fullscreen" && prev !== "fullscreen") {
 			get().setToast("Fullscreen graph · Esc or Exit to leave");
@@ -4624,6 +4648,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				const dirtyIds = [id, ...victims.filter((v) => v !== id)];
 				patchVaultIndex(live, dirtyIds);
 				set({ nodes: live });
+				bumpBodyGen();
 				if (!vaultFillBusy()) {
 					vaultLinkIndex.setNoteLinks(id, content);
 				}
@@ -5037,6 +5062,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	},
   };
 }
+
+/** Panels parked while the galaxy is fullscreen. Not persisted. */
+let fullscreenPanelSnapshot: { leftOpen: boolean; rightOpen: boolean } | null =
+  null;
 
 export const useVaultStore = create(
   persist(createVaultState as never, {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type KeyboardEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import SpriteText from "three-spritetext";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveGraphData, type GraphViewMode } from "@/lib/graph/build-graph";
@@ -47,6 +48,9 @@ import {
   type GraphFilterState,
 } from "@/lib/graph/graph-filters";
 import { graphEmptyCopy } from "@/lib/graph/graph-empty";
+
+/** Stable empty map so a null store snapshot cannot throw during graph render. */
+const EMPTY_GRAPH_NODES: Record<string, VaultNode> = {};
 
 interface Props {
   mode: "panel" | "fullscreen";
@@ -112,6 +116,119 @@ function hopKeepSet(
 
 const LOD_SEGMENT_THRESHOLD = 250;
 const LOD_CAP = 400;
+/** Idle orbit waits out the opening zoom-to-fit, then a short quiet. */
+const IDLE_ORBIT_START_S = 3.2;
+const IDLE_ORBIT_QUIET_MS = 1600;
+const IDLE_ORBIT_SPEED = 0.55;
+/** Filaments on small constellations only — large maps stay a clean field. */
+const FILAMENT_LINK_MAX = 160;
+
+/**
+ * Folder mass is a point cloud, not one sphere per note.
+ * Count and radius grow with the log of the note count so a 50-note
+ * folder and an 80,000-note folder both read as systems, and a 500k
+ * vault never allocates a vertex per note.
+ */
+function massPointCount(notes: number, lowDetail: boolean): number {
+  if (!Number.isFinite(notes) || notes <= 0) return 0;
+  const n = Math.round(12 + Math.log2(notes) * 18);
+  const cap = lowDetail ? 28 : 140;
+  return Math.max(10, Math.min(cap, n));
+}
+
+function massCloudRadius(orbRadius: number, notes: number): number {
+  const span = 1.28 + Math.min(1.15, Math.log10(notes + 1) * 0.32);
+  return orbRadius * span;
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashString(value: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+let massSprite: THREE.CanvasTexture | null = null;
+function massSpriteTexture(): THREE.Texture {
+  if (massSprite) return massSprite;
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    massSprite = new THREE.CanvasTexture(canvas);
+    return massSprite;
+  }
+  const glow = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  glow.addColorStop(0, "rgba(255,255,255,1)");
+  glow.addColorStop(0.18, "rgba(214,244,255,0.95)");
+  glow.addColorStop(0.45, "rgba(120,200,255,0.35)");
+  glow.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 64, 64);
+  massSprite = new THREE.CanvasTexture(canvas);
+  massSprite.colorSpace = THREE.SRGBColorSpace;
+  return massSprite;
+}
+
+function addMassCloud(
+  group: THREE.Group,
+  node: GNode,
+  orbRadius: number,
+  accent: THREE.Color,
+  bodyColor: THREE.Color,
+  lowDetail: boolean,
+  full: boolean,
+  dim: boolean,
+) {
+  const notes = node.noteCount ?? 0;
+  const count = massPointCount(notes, lowDetail);
+  if (count <= 0 || typeof document === "undefined") return;
+  const positions = new Float32Array(count * 3);
+  const rand = mulberry32(hashString(node.id || node.name || "mass"));
+  const reach = massCloudRadius(orbRadius, notes);
+  for (let i = 0; i < count; i++) {
+    // Fibonacci shell with a little radial depth, so the mass has volume.
+    const y = 1 - (i / Math.max(1, count - 1)) * 2;
+    const ring = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = i * 2.399963229728653;
+    const radial = reach * (0.72 + rand() * 0.38);
+    positions[i * 3] = Math.cos(theta) * ring * radial;
+    positions[i * 3 + 1] = y * radial * (0.82 + rand() * 0.18);
+    positions[i * 3 + 2] = Math.sin(theta) * ring * radial;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const color = accent.clone().lerp(bodyColor, 0.35);
+  const points = new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      color,
+      map: massSpriteTexture(),
+      size: full ? 0.72 : 0.5,
+      transparent: true,
+      opacity: dim ? 0.28 : 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    }),
+  );
+  points.userData.nexusCloud = notes >= 1000 ? 0.22 : 0.12;
+  points.renderOrder = 3;
+  group.add(points);
+}
 
 type GLink = {
   source: string | GNode;
@@ -365,10 +482,102 @@ function buildSpaceBackdrop(
   return { root, layers };
 }
 
-function truncateLabel(name: string, max = 22): string {
-  const clean = name.replace(/\s+/g, " ").trim();
+function truncateLabel(name: string | undefined | null, max = 22): string {
+  const clean = String(name ?? "Note").replace(/\s+/g, " ").trim() || "Note";
   if (clean.length <= max) return clean;
   return clean.slice(0, max - 1) + "…";
+}
+
+/**
+ * WebKit pointerup/pointercancel can reach OrbitControls with a tracked
+ * pointer and no stored position. The control then throws on `position.x`
+ * while React is committing the graph, and the panel becomes
+ * "Graph hit a display error."
+ */
+function guardOrbitPointer(graph: ForceGraph3DInstance) {
+  const controls = graph.controls() as {
+    domElement?: HTMLElement | null;
+    connect?: (element: HTMLElement) => void;
+    disconnect?: () => void;
+    _onPointerUp?: ((event: PointerEvent) => void) & { nexusGuard?: boolean };
+    _getSecondPointerPosition?: ((event: PointerEvent) => { x: number; y: number }) & {
+      nexusGuard?: boolean;
+    };
+    _pointers?: number[];
+    _pointerPositions?: Record<number, { x: number; y: number } | undefined>;
+  } | null;
+  if (!controls) return;
+  const el = controls.domElement ?? null;
+  // connect() already bound pointercancel to the raw handler. Detach first
+  // so the rebound listeners are the guards, not the throwing originals.
+  let detached = false;
+  if (el && typeof controls.disconnect === "function") {
+    try {
+      controls.disconnect();
+      detached = true;
+    } catch {
+      detached = false;
+    }
+  }
+  const originalSecond = controls._getSecondPointerPosition;
+  if (originalSecond && !originalSecond.nexusGuard) {
+    const wrappedSecond = function (
+      this: {
+        _pointers?: number[];
+        _pointerPositions?: Record<number, { x: number; y: number } | undefined>;
+      },
+      event: PointerEvent,
+    ) {
+      const position = originalSecond.call(this, event);
+      if (position && Number.isFinite(position.x) && Number.isFinite(position.y)) {
+        return position;
+      }
+      return { x: event.pageX || 0, y: event.pageY || 0 };
+    };
+    wrappedSecond.nexusGuard = true;
+    controls._getSecondPointerPosition = wrappedSecond;
+  }
+  const original = controls._onPointerUp;
+  if (original && !original.nexusGuard) {
+    const wrapped = function (
+      this: {
+        _pointers?: number[];
+        _pointerPositions?: Record<number, { x: number; y: number } | undefined>;
+      },
+      event: PointerEvent,
+    ) {
+      const positions = this._pointerPositions;
+      if (positions && this._pointers) {
+        for (const id of this._pointers) {
+          if (!positions[id]) {
+            positions[id] = { x: event.pageX || 0, y: event.pageY || 0 };
+          }
+        }
+      }
+      try {
+        original.call(this, event);
+      } catch (err) {
+        const name =
+          err && typeof err === "object" && "name" in err ? String(err.name) : "";
+        const message = err instanceof Error ? err.message : String(err);
+        // Synthetic pointerup has no stored position (NotFoundError on capture,
+        // TypeError on position.x). Swallow that miss; keep real faults.
+        const knownMiss =
+          name === "NotFoundError" ||
+          (name === "TypeError" && /reading 'x'/.test(message));
+        if (!knownMiss) console.warn("[nexus] graph pointer", err);
+      }
+    };
+    wrapped.nexusGuard = true;
+    controls._onPointerUp = wrapped;
+  }
+  if (detached && el && typeof controls.connect === "function") {
+    try {
+      controls.connect(el);
+    } catch (err) {
+      console.warn("[nexus] graph pointer", err);
+    }
+  }
 }
 
 function linkIds(link: GLink): [string, string] {
@@ -468,6 +677,7 @@ function createOrb(
   colorBy: "folder" | "tag" = "folder",
 ): THREE.Object3D {
   const group = new THREE.Group();
+  if (!node?.id) return group;
   const isGhost = !!node.ghost;
   const isAggregate = node.kind === "aggregate" || !!node.aggregate;
   const isFolderNode = node.kind === "folder";
@@ -497,9 +707,11 @@ function createOrb(
 
   const base = (full ? 3.15 : panel ? 2.55 : 2.4) * sizeBoost;
   const rank = isActive || isHover ? 1 : isHub || isFolderNode ? 0.84 : 0.68;
+  const mass =
+    typeof node.val === "number" && Number.isFinite(node.val) ? node.val : 1;
   const radius =
     base +
-    Math.pow(Math.max(1, node.val), 0.55) * (full ? 1.75 : 1.4) * rank +
+    Math.pow(Math.max(1, mass), 0.55) * (full ? 1.75 : 1.4) * rank +
     (isActive || isHover ? 0.5 : 0);
 
   let bodyColor =
@@ -537,6 +749,9 @@ function createOrb(
   if (isActive || isHover) {
     emissive = accent.clone();
     emissiveIntensity = desktopBoost ? 0.16 : 0.1;
+  } else if (isFolderNode) {
+    emissive = accent.clone().multiplyScalar(0.85);
+    emissiveIntensity = desktopBoost ? 0.14 : 0.09;
   } else if (neighbors?.has(node.id)) {
     emissive = accent.clone().multiplyScalar(0.55);
     emissiveIntensity = desktopBoost ? 0.1 : 0.055;
@@ -604,6 +819,50 @@ function createOrb(
     group.add(shell);
   }
 
+  if (isFolderNode && (!dim || dimStrength < 0.55)) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(
+        radius * 1.22,
+        Math.max(0.045, radius * 0.012),
+        8,
+        full ? 72 : 56,
+      ),
+      new THREE.MeshBasicMaterial({
+        color: accent,
+        transparent: true,
+        opacity: dim ? 0.14 : 0.38,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = Math.PI / 2.4;
+    ring.userData.nexusRing = 0.25;
+    ring.renderOrder = 2;
+    group.add(ring);
+    addMassCloud(
+      group,
+      node,
+      radius,
+      accent,
+      bodyColor,
+      lowDetail,
+      full,
+      dim,
+    );
+  }
+
+  if (isAggregate && (node.noteCount ?? 0) > 0 && (!dim || dimStrength < 0.55)) {
+    addMassCloud(
+      group,
+      node,
+      radius * 0.85,
+      accent,
+      bodyColor,
+      lowDetail,
+      full,
+      dim,
+    );
+  }
+
   if (isActive || isHover) {
     const tube = radius * 0.014;
     const ring = new THREE.Mesh(
@@ -618,6 +877,7 @@ function createOrb(
       }),
     );
     ring.rotation.x = Math.PI / 2;
+    ring.userData.nexusRing = 0.8;
     ring.renderOrder = 2;
     group.add(ring);
   }
@@ -885,7 +1145,9 @@ export function GraphView({ mode, className }: Props) {
   const graphTick = useGraphTick();
   // Read nodes only on render forced by graphTick / other selectors — not a
   // continuous subscription to the whole map (avoids body-hydrate thrash).
-  const nodes = useVaultStore.getState().nodes;
+  const rawNodes = useVaultStore.getState().nodes;
+  const nodes =
+    rawNodes && typeof rawNodes === "object" ? rawNodes : EMPTY_GRAPH_NODES;
   const deferredNodes = useDeferredValue(nodes);
   void graphTick;
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
@@ -1366,6 +1628,11 @@ export function GraphView({ mode, className }: Props) {
       return obj;
     };
 
+    const filamentParticles =
+      particleCount > 0 && displayData.links.length <= FILAMENT_LINK_MAX
+        ? 1
+        : 0;
+
     const edgeStyle = (
       link: GLink,
     ): { color: string; width: number; particles: number } => {
@@ -1411,10 +1678,10 @@ export function GraphView({ mode, className }: Props) {
       return {
         color:
           mode === "fullscreen"
-            ? `rgba(${ar},${ag},${ab},0.28)`
-            : `rgba(${ar},${ag},${ab},0.2)`,
-        width: mode === "fullscreen" ? 0.48 : 0.36,
-        particles: 0,
+            ? `rgba(${ar},${ag},${ab},0.42)`
+            : `rgba(${ar},${ag},${ab},0.32)`,
+        width: mode === "fullscreen" ? 0.62 : 0.42,
+        particles: filamentParticles,
       };
     };
 
@@ -1422,8 +1689,8 @@ export function GraphView({ mode, className }: Props) {
       g.linkColor((link) => edgeStyle(link as GLink).color)
         .linkWidth((link) => edgeStyle(link as GLink).width)
         .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles)
-        .linkDirectionalParticleWidth(0.55)
-        .linkDirectionalParticleSpeed(0.004)
+        .linkDirectionalParticleWidth(0.9)
+        .linkDirectionalParticleSpeed(0.006)
         .linkDirectionalParticleColor(() => {
           const mix = (c: number) => Math.round(c * 0.45 + 255 * 0.55);
           return `rgb(${mix(ar)},${mix(ag)},${mix(ab)})`;
@@ -1474,14 +1741,14 @@ export function GraphView({ mode, className }: Props) {
             .replace(/^\/+|\/+$/g, "");
           // Enter folder if aggregate points at a path we aren't browsing
           if (folderPath && folderPath !== browsing) {
-            const hit = Object.values(st.nodes).find(
+            const hit = Object.values(st.nodes ?? {}).find(
               (x) => x.kind === "folder" && x.path === folderPath,
             );
             if (hit) {
               st.enterGraphFolder?.(folderPath);
               st.setToast?.(
                 omitted > 0
-                  ? `Entered folder · ${omitted}+ items may still be capped`
+                  ? `Entered folder · ${omitted} more on the next level`
                   : "Entered folder",
               );
               setLiveRegion(`Entered ${folderPath}`);
@@ -1490,8 +1757,8 @@ export function GraphView({ mode, className }: Props) {
           }
           st.setToast?.(
             omitted > 0
-              ? `Not expanded — ${omitted} more item${omitted === 1 ? "" : "s"} hidden by the folder map cap. Enter a folder or open a note for links.`
-              : "Not expanded — folder map is capped. Enter a folder or open a note for links.",
+              ? `${omitted} more on this level. Enter a folder, or open a note to fly its links.`
+              : "Enter a folder, or open a note to fly its links.",
           );
           setLiveRegion("Aggregate not expanded");
           return;
@@ -1518,7 +1785,7 @@ export function GraphView({ mode, className }: Props) {
             st.setRightOpen(true);
           }
         }
-        ensureVaultIndex(st.nodes);
+        ensureVaultIndex(st.nodes ?? {});
         const noteCount = vaultIndex.noteCount;
         if (shouldUseFolderGraph(noteCount)) {
           st.enterGraphEgo?.({ returnPath: st.graphBrowsePath || "" });
@@ -1598,6 +1865,7 @@ export function GraphView({ mode, className }: Props) {
       })
       .onBackgroundClick(() => setHintVisible(false));
 
+    guardOrbitPointer(graph);
     applyEdgeStyles(graph);
 
     let envMap: THREE.Texture | null = null;
@@ -1619,6 +1887,26 @@ export function GraphView({ mode, className }: Props) {
       graph.scene().environment = envMap;
     } catch {
       /* ok */
+    }
+
+    let bloomPass: UnrealBloomPass | null = null;
+    if (!usePrefsStore.getState().reducedMotion) {
+      try {
+        const composer = graph.postProcessingComposer();
+        const bloom = new UnrealBloomPass(
+          new THREE.Vector2(
+            Math.max(1, el.clientWidth),
+            Math.max(1, el.clientHeight),
+          ),
+          mode === "fullscreen" ? 0.52 : 0.28,
+          0.48,
+          0.58,
+        );
+        composer.addPass(bloom);
+        bloomPass = bloom;
+      } catch {
+        /* software GL can refuse the bloom target */
+      }
     }
 
     try {
@@ -1726,11 +2014,38 @@ export function GraphView({ mode, className }: Props) {
     let raf = 0;
     let cancelled = false;
     const t0 = performance.now();
+    let driftAt = t0;
     const drift = () => {
       if (cancelled) return;
-      const t = (performance.now() - t0) * 0.001;
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - driftAt) * 0.001);
+      driftAt = now;
+      const t = (now - t0) * 0.001;
       for (const layer of parallaxLayers) {
         layer.obj.rotation.y = t * layer.speed;
+      }
+      nodeObjMapRef.current.forEach((obj) => {
+        for (const child of obj.children) {
+          const data = child.userData as { nexusRing?: number; nexusCloud?: number };
+          if (typeof data.nexusRing === "number") child.rotation.z += data.nexusRing * dt;
+          if (typeof data.nexusCloud === "number") child.rotation.y += data.nexusCloud * dt;
+        }
+      });
+      try {
+        const controls = graph.controls() as {
+          autoRotate?: boolean;
+          autoRotateSpeed?: number;
+        } | null;
+        if (controls) {
+          const idle =
+            !userInteractingRef.current &&
+            now - lastInteractAtRef.current > IDLE_ORBIT_QUIET_MS &&
+            t > IDLE_ORBIT_START_S;
+          controls.autoRotate = idle;
+          if (idle) controls.autoRotateSpeed = IDLE_ORBIT_SPEED;
+        }
+      } catch {
+        /* ok */
       }
       raf = requestAnimationFrame(drift);
     };
@@ -1823,7 +2138,11 @@ export function GraphView({ mode, className }: Props) {
     ro.observe(el);
     const { width, height } = el.getBoundingClientRect();
     graph.width(width).height(height);
-    graph.graphData(displayData);
+    try {
+      graph.graphData(displayData);
+    } catch (err) {
+      console.warn("[nexus] graph data", err);
+    }
     lastGraphTopoKeyRef.current = graphTopologyKey(
       displayData.nodes,
       displayData.links,
@@ -1833,11 +2152,24 @@ export function GraphView({ mode, className }: Props) {
     const fitMs = usePrefsStore.getState().reducedMotion ? 0 : 650;
     const zoomTimer = window.setTimeout(() => {
       try {
-        graph.zoomToFit(fitMs, mode === "fullscreen" ? 70 : 48);
+        graph.zoomToFit(fitMs, mode === "fullscreen" ? 120 : 72);
       } catch {
         /* ok */
       }
     }, usePrefsStore.getState().reducedMotion ? 80 : 900);
+
+    graph.onEngineStop(() => {
+      if (cancelled || userInteractingRef.current) return;
+      if (recentlyInteracted(lastInteractAtRef.current, performance.now())) return;
+      try {
+        graph.zoomToFit(
+          usePrefsStore.getState().reducedMotion ? 0 : 800,
+          mode === "fullscreen" ? 140 : 88,
+        );
+      } catch {
+        /* ok */
+      }
+    });
 
     teardown = () => {
       cancelled = true;
@@ -1858,6 +2190,12 @@ export function GraphView({ mode, className }: Props) {
       flyGenRef.current += 1;
       if (zoomRaf) cancelAnimationFrame(zoomRaf);
       ro.disconnect();
+      try {
+        bloomPass?.dispose();
+        bloomPass = null;
+      } catch {
+        /* ok */
+      }
       try {
         if (envMap) {
           graph.scene().environment = null;
@@ -1925,7 +2263,11 @@ export function GraphView({ mode, className }: Props) {
     };
     lastGraphDataRef.current = displayData;
     lastGraphTopoKeyRef.current = nextKey;
-    graphRef.current.graphData(merged);
+    try {
+      graphRef.current.graphData(merged);
+    } catch (err) {
+      console.warn("[nexus] graph data", err);
+    }
     try {
       // Soft continue — do not reheat the whole simulation on every swap.
       const sim = graphRef.current as ForceGraph3DInstance & {
@@ -1951,7 +2293,7 @@ export function GraphView({ mode, className }: Props) {
       const g = graphRef.current;
       if (!g) return;
       try {
-        g.zoomToFit(420, mode === "fullscreen" ? 70 : 48);
+        g.zoomToFit(420, mode === "fullscreen" ? 120 : 72);
       } catch {
         /* ok */
       }
@@ -1968,7 +2310,7 @@ export function GraphView({ mode, className }: Props) {
       const g = graphRef.current;
       if (!g) return;
       try {
-        g.zoomToFit(280, mode === "fullscreen" ? 70 : 48);
+        g.zoomToFit(280, mode === "fullscreen" ? 120 : 72);
       } catch {
         /* ok */
       }
@@ -2040,6 +2382,9 @@ export function GraphView({ mode, className }: Props) {
         ? 1
         : 3
       : 0;
+    const liveLinks = graphRef.current.graphData()?.links?.length ?? 0;
+    const filamentParticles =
+      particleCount > 0 && liveLinks <= FILAMENT_LINK_MAX ? 1 : 0;
 
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
@@ -2133,10 +2478,10 @@ export function GraphView({ mode, className }: Props) {
       return {
         color:
           mode === "fullscreen"
-            ? `rgba(${ar},${ag},${ab},0.28)`
-            : `rgba(${ar},${ag},${ab},0.2)`,
-        width: mode === "fullscreen" ? 0.48 : 0.36,
-        particles: 0,
+            ? `rgba(${ar},${ag},${ab},0.42)`
+            : `rgba(${ar},${ag},${ab},0.32)`,
+        width: mode === "fullscreen" ? 0.62 : 0.42,
+        particles: filamentParticles,
       };
     };
 
@@ -2177,7 +2522,12 @@ export function GraphView({ mode, className }: Props) {
 
   const inspectId = hoverTip?.id || activeNoteId;
   const inspect = useMemo(
-    () => inspectGraphNote(useVaultStore.getState().nodes, inspectId, 6),
+    () =>
+      inspectGraphNote(
+        useVaultStore.getState().nodes ?? EMPTY_GRAPH_NODES,
+        inspectId,
+        6,
+      ),
     [inspectId, graphTick],
   );
   const tagOptions = useMemo(
@@ -2277,10 +2627,10 @@ export function GraphView({ mode, className }: Props) {
               this level
             </>
           )}
-          {stats.capped ? (
+          {vaultNoteCount > badgeNoteCount ? (
             <>
               <span className="mx-1.5 opacity-40">·</span>
-              capped
+              {vaultNoteCount.toLocaleString()} in vault
             </>
           ) : null}
         </>
