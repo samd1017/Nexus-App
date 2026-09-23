@@ -22,28 +22,32 @@ export type InstrumentNodeInput = {
   noteCount?: number;
 };
 
-/**
- * Cool teal through lavender. Warm hues read as a beige lamp.
- */
-function hashHue(key: string): number {
+/** 0–1 hash. */
+function hashUnit(key: string): number {
   let h = 2166136261;
   const text = key || "__root__";
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  const hues = [168, 186, 198, 214, 232, 252];
-  return hues[Math.abs(h) % hues.length] / 360;
+  return (Math.abs(h) % 10000) / 10000;
 }
 
 /**
- * Written straight to the framebuffer. The desktop window shows these
- * quieter than a browser still of the same numbers, so the face sits
- * high enough to stay colorful there.
+ * Teal through lavender. The span is wide on purpose so neighbors
+ * are not one dusty teal. Warm hues are left out.
+ */
+function hashHue(key: string): number {
+  return (156 + hashUnit(key) * 122) / 360;
+}
+
+/**
+ * Face color, written straight out. Folders sit a little lighter than notes.
+ * Saturation stays in the cool range so the desktop window does not wash them gray.
  */
 function bodyColor(key: string, folder: boolean, active: boolean): THREE.Color {
-  const light = active ? 0.66 : folder ? 0.6 : 0.54;
-  const sat = active ? 0.5 : folder ? 0.56 : 0.48;
+  const light = active ? 0.78 : folder ? 0.76 : 0.72;
+  const sat = active ? 0.62 : folder ? 0.64 : 0.6;
   return new THREE.Color().setHSL(hashHue(key), sat, light);
 }
 
@@ -71,10 +75,10 @@ void main() {
   // Broad, dull sunlight. No specular hotspot.
   float key = clamp(dot(n, normalize(vec3(-0.45, 0.42, 0.55))), 0.0, 1.0);
   float wrap = clamp(key * 0.75 + 0.25, 0.0, 1.0);
-  float shade = mix(0.5, 1.0, pow(wrap, 0.8));
+  float shade = mix(0.74, 1.0, pow(wrap, 0.8));
   float edge = pow(1.0 - facing, 3.2);
   vec3 col = uColor * shade;
-  col += vec3(0.05, 0.09, 0.14) * edge;
+  col += vec3(0.04, 0.07, 0.1) * edge;
   gl_FragColor = vec4(col, uOpacity);
 }
 `;
@@ -220,7 +224,7 @@ export function createInstrumentNode(
       : node.folder || "__root__";
   const tint = isGhost
     ? new THREE.Color(0x2a3340)
-    : bodyColor(tintKey, isFolderNode, isActive || isHover);
+    : bodyColor(`${tintKey}:${node.id}`, isFolderNode, isActive || isHover);
   if (dim) tint.multiplyScalar(1 - dimStrength * 0.45);
 
   const bodyOpacity = dim
@@ -240,10 +244,10 @@ export function createInstrumentNode(
   group.add(body);
 
   if (!isGhost) {
-    const haze = tint.clone().lerp(new THREE.Color().setRGB(0.42, 0.6, 0.88), 0.4);
-    const limbMat = limbMaterial(haze, dim ? 0.16 : isActive ? 0.72 : 0.58);
+    const haze = new THREE.Color().setRGB(0.55, 0.68, 0.78).lerp(tint, 0.35);
+    const limbMat = limbMaterial(haze, dim ? 0.22 : isActive ? 0.92 : 0.84);
     const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 1.16, Math.max(16, segs - 4), Math.max(14, segs - 6)),
+      new THREE.SphereGeometry(radius * 1.22, Math.max(18, segs - 4), Math.max(14, segs - 6)),
       limbMat,
     );
     atmo.renderOrder = 2;
