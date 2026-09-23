@@ -1,0 +1,17 @@
+t** |",
+        "| `fixtures/large-test-vault.zip` | Optional local archive under gitignored `fixtures/`. Unzip for desktop **Open folder\u2026**. Do not commit. |\n| `public/large-test-vault/*` | Local gitignored seed for in-app **Open 45k test vault**. Generate on disk. Do not commit. |",
+    )
+    must_sub(
+        "scripts/verify-large-test-vault.mjs",
+        " * Fixture integrity for public/large-test-vault (45k seed).\n * Verifies manifest + chunk files exist and are non-empty without loading all bodies.\n * Run: node scripts/verify-large-test-vault.mjs\n",
+        " * Fixture integrity for a local public/large-test-vault (45k seed).\n * The seed is gitignored. When the folder is absent this check skips.\n * When present, verifies manifest + chunk files exist and are non-empty\n * without loading all bodies.\n * Run: node scripts/verify-large-test-vault.mjs\n",
+    )
+    must_sub(
+        "scripts/verify-large-test-vault.mjs",
+        "if (!existsSync(manifestPath)) {\n  fail(`manifest missing: ${manifestPath}`);\n}",
+        "if (!existsSync(vaultDir)) {\n  console.log(\n    \"verify-large-test-vault: SKIP (public/large-test-vault is gitignored; generate the 45k seed on disk to check it)\",\n  );\n  process.exit(0);\n}\n\nif (!existsSync(manifestPath)) {\n  fail(`manifest missing: ${manifestPath}`);\n}",
+    )
+    must_sub(
+        "src/lib/vault/large-test-vault.ts",
+        " * Load the attached 45k-note large-test-vault seed (public/large-test-vault)\n * into in-memory VaultNodes for real app testing (same shape as demo vault).\n",
+        " * Load the local 45k-note seed from /large-test-vault\n * (gitignored public/large-test-vault; generate on disk, do not commit)\n * into in-memory VaultNodes

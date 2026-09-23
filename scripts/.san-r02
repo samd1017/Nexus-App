@@ -1,0 +1,29 @@
+   )
+    must_sub(
+        "scripts/gen-soak-vault.mjs",
+        "The unofficial\n * /workspace/gen-soak-vault.mjs (not in this repo) wrote Meeting-* files\n * with cluster_files=100000 and hub_files=0 \u2014 `hub` search is a false alarm\n * on that folder. Probe that vault with `cluster` only, or regenerate.",
+        "An unofficial generator\n * outside this repo wrote Meeting-* files with cluster_files=100000 and\n * hub_files=0 \u2014 `hub` search is a false alarm on that folder. Probe that\n * vault with `cluster` only, or regenerate.",
+    )
+    must_sub(
+        "scripts/stress-fsa-cdp.mjs",
+        "for /workspace/nexus-soak-100k.",
+        "for a soak folder outside the repo.",
+    )
+    must_sub(
+        "package.json",
+        " http://127.0.0.1:8080/ /workspace/screenshots/app-builder-preview.png",
+        " http://127.0.0.1:8080/",
+    )
+    must_sub(
+        "CONTRIBUTING.md",
+        "There is a large test vault under `public/large-test-vault/` for stress-testing search, graph, and indexing. Prefer exercising real flows against it when changing search or vault code.",
+        "Generate the 45k stress seed locally into `public/large-test-vault/` (gitignored). Do not commit it. Prefer exercising real flows against it when changing search or vault code.",
+    )
+    must_sub(
+        "README.md",
+        "Included under `public/large-test-vault/` for stress testing.",
+        "Generate locally into gitignored `public/large-test-vault/` for stress testing. Not stored in git.",
+    )
+    must_sub(
+        "docs/SCALING.md",
+        "| `fixtures/large-test-vault.zip` | Source archive (unzip for desktop **Open folder\u2026**) |\n| `public/large-test-vault/*` | Prebuilt seed for in-app **Open 45k test vaul
