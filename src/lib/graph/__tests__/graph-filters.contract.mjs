@@ -131,11 +131,24 @@ async function main() {
       content: "# Spoke\n[[Hub]]\n",
     },
   };
+  vault.n3 = {
+    id: "n3",
+    path: "Twice.md",
+    name: "Twice.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "# Twice\n[[Hub]]\nagain [[Hub]]\n",
+  };
   const card = insp.inspectGraphNote(vault, "n1", 6);
   assert.ok(card);
   assert.equal(card.kind, "note");
   assert.ok(card.outCount >= 1);
   assert.ok(card.out.some((l) => l.id === "n2"));
+  const innIds = card.inn.map((l) => l.id);
+  assert.equal(new Set(innIds).size, innIds.length, "inspector chips are unique notes");
+  assert.equal(card.inCount, innIds.length);
+  assert.ok(innIds.includes("n3"));
 
   console.log("graph-filters.contract: ok");
   rmSync(outDir, { recursive: true, force: true });
