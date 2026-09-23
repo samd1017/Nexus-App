@@ -25,5 +25,7 @@ jobs:
           git add package.json src/styles.css src/components/settings/SettingsPanel.tsx scripts/test-tree-tick.mjs
           git diff --cached --name-only | grep -qx 'scripts/test-tree-tick.mjs'
           git rm -f --ignore-unmatch scripts/settings-craft.d/p0 scripts/settings-craft.d/p1 scripts/settings-craft.d/p2 scripts/settings-craft.d/p3 .github/workflows/land-settings-craft.yml
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           git commit -m "fix: finish light settings and lock the file-tree tick"
           git push origin HEAD:cursor/graph-hud-release-690a
