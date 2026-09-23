@@ -13,6 +13,7 @@ import {
 } from "@/lib/vault/tags";
 import { extractOutline } from "@/lib/markdown/serialize";
 import { noteTitle } from "@/lib/vault/types";
+import { presentLinkContext } from "@/lib/markdown/wikilinks";
 import { jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { PulseRail } from "@/components/right/PulseRail";
 import { AttachmentsRail } from "@/components/right/AttachmentsRail";
@@ -329,12 +330,11 @@ export function RightPanel() {
                           {b.contexts.length > 0 ? (
                             <div className="mt-0.5 flex flex-col gap-0.5">
                               {b.contexts.slice(0, 3).map((ctx, i) => (
-                                <div
+                                <MentionLine
                                   key={i}
-                                  className="line-clamp-2 text-[11.5px] text-[var(--text-muted)]"
-                                >
-                                  {ctx}
-                                </div>
+                                  text={presentLinkContext(ctx)}
+                                  highlight={note ? noteTitle(note) : ""}
+                                />
                               ))}
                               {b.contexts.length > 3 ? (
                                 <div className="text-[10px] text-[var(--text-muted)]">
@@ -371,9 +371,10 @@ export function RightPanel() {
                             <div className="truncate text-[13px] font-medium text-[var(--text-primary)]">
                               {u.fromTitle}
                             </div>
-                            <div className="mt-0.5 line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
-                              {u.context}
-                            </div>
+                            <MentionLine
+                              text={presentLinkContext(u.context)}
+                              highlight={u.title}
+                            />
                           </button>
                           <button
                             type="button"
@@ -542,5 +543,28 @@ export function RightPanel() {
         </div>
       </aside>
     </>
+  );
+}
+
+/** One mention sentence, with this note's name lifted out of the gray. */
+function MentionLine({ text, highlight }: { text: string; highlight: string }) {
+  const needle = highlight.trim();
+  const at = needle ? text.toLowerCase().indexOf(needle.toLowerCase()) : -1;
+  const body =
+    at < 0 ? (
+      text
+    ) : (
+      <>
+        {text.slice(0, at)}
+        <span className="text-[var(--text-primary)]">
+          {text.slice(at, at + needle.length)}
+        </span>
+        {text.slice(at + needle.length)}
+      </>
+    );
+  return (
+    <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--text-muted)]">
+      {body}
+    </div>
   );
 }
