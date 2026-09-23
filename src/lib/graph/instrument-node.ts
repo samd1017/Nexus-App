@@ -40,10 +40,10 @@ function hashHue(key: string): number {
   return (188 + hashUnit(key) * 68) / 360;
 }
 
-/** Day-side albedo. Mid lightness keeps the chroma rich instead of pastel. */
+/** Day-side albedo. High enough to read in the desktop window. The limb stays dark. */
 function bodyColor(key: string, folder: boolean, active: boolean): THREE.Color {
-  const light = active ? 0.64 : folder ? 0.58 : 0.52;
-  const sat = active ? 0.55 : folder ? 0.62 : 0.5;
+  const light = active ? 0.78 : folder ? 0.74 : 0.68;
+  const sat = active ? 0.52 : folder ? 0.58 : 0.5;
   return new THREE.Color().setHSL(hashHue(key), sat, light);
 }
 
@@ -77,10 +77,11 @@ void main() {
   vec3 sunDir = normalize(side * 0.9 + up * 0.42 + viewDir * 0.12);
   float key = clamp(dot(n, sunDir), 0.0, 1.0);
   float sun = pow(key, 0.9);
-  float shade = mix(0.14, 1.0, sun);
-  float air = pow(1.0 - facing, 4.0);
+  float shade = mix(0.16, 1.0, sun);
+  // Wide cool edge on the body itself, so the haze survives if the shell is faint.
+  float air = pow(1.0 - facing, 1.7);
   vec3 col = uColor * shade;
-  col += vec3(0.02, 0.06, 0.12) * air * mix(0.25, 1.0, sun);
+  col += vec3(0.1, 0.22, 0.42) * air;
   gl_FragColor = vec4(col, uOpacity);
 }
 `;
@@ -95,8 +96,8 @@ void main() {
   vec3 n = normalize(vNormal);
   vec3 viewDir = normalize(cameraPosition - vWorld);
   float facing = clamp(abs(dot(n, viewDir)), 0.0, 1.0);
-  float rim = pow(1.0 - facing, 4.4);
-  float band = smoothstep(0.42, 0.96, rim);
+  float rim = pow(1.0 - facing, 1.65);
+  float band = smoothstep(0.04, 0.55, rim);
   float alpha = band * uOpacity;
   if (alpha < 0.02) discard;
   gl_FragColor = vec4(uColor, alpha);
@@ -246,10 +247,10 @@ export function createInstrumentNode(
   group.add(body);
 
   if (!isGhost) {
-    const haze = new THREE.Color().setRGB(0.32, 0.58, 0.95).lerp(tint, 0.18);
-    const limbMat = limbMaterial(haze, dim ? 0.16 : isActive ? 0.78 : 0.62);
+    const haze = new THREE.Color().setRGB(0.42, 0.68, 1.0);
+    const limbMat = limbMaterial(haze, dim ? 0.28 : isActive ? 1 : 0.95);
     const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 1.16, Math.max(18, segs - 4), Math.max(14, segs - 6)),
+      new THREE.SphereGeometry(radius * 1.34, Math.max(20, segs - 2), Math.max(16, segs - 4)),
       limbMat,
     );
     atmo.renderOrder = 2;
