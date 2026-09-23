@@ -1,0 +1,51 @@
+name: apply-backlink-cover
+
+on:
+  push:
+    paths:
+      - scripts/backlink-cover.d/part00.txt
+      - .github/workflows/apply-backlink-cover.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/graph-hud-release-690a
+          fetch-depth: 1
+      - name: apply
+        run: |
+          python3 scripts/backlink-cover.d/apply.py
+          echo "2f2372336aee7bb4ea663f53ec45a273154c13cd5fde9902ed1979dce2328630  /tmp/patch.diff" | sha256sum -c
+          git apply --check /tmp/patch.diff
+          git apply /tmp/patch.diff
+          git add \
+            src/components/editor/EditorStatusBar.tsx \
+            src/components/search/CommandPalette.tsx \
+            src/components/vault/WelcomeScreen.tsx \
+            src/lib/graph/__tests__/wikilink-index.contract.mjs \
+            src/lib/graph/graph-inspect.ts \
+            src/lib/vault/__tests__/link-index.contract.mjs \
+            src/lib/vault/backlink-index.ts \
+            src/lib/vault/backlinks.ts \
+            src/lib/vault/link-index.ts \
+            src/lib/vault/store.ts
+          git rm -f \
+            scripts/backlink-cover.d/apply.py \
+            scripts/backlink-cover.d/part00.txt \
+            scripts/backlink-cover.d/part01.txt \
+            scripts/backlink-cover.d/part02.txt \
+            scripts/backlink-cover.d/part03.txt \
+            scripts/backlink-cover.d/part04.txt \
+            .github/workflows/apply-backlink-cover.yml
+          rmdir scripts/backlink-cover.d || true
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git commit -m "fix: incoming links and large-vault search labels"
+          git push origin HEAD:cursor/graph-hud-release-690a
