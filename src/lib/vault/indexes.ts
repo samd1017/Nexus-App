@@ -207,6 +207,20 @@ export class VaultStructuralIndex {
       return;
     }
 
+    // Hints were recorded against the previous map. A vault switch
+    // (demo session → 45k) carries a short hint list and a huge size
+    // delta. Applying those hints would point lastNodesRef at the new
+    // map and skip the rebuild, so the tree walks a stale adjacency.
+    if (this.pendingDirtyIds?.length) {
+      let nextSize = 0;
+      for (const _k in nodes) nextSize += 1;
+      if (Math.abs(nextSize - this.nodeCount) > 64) {
+        this.pendingDirtyIds = null;
+        this.rebuild(nodes);
+        return;
+      }
+    }
+
     const prev = this.lastNodesRef;
     if (this.applyHintedDirty(prev, nodes)) return;
     this.pendingDirtyIds = null;
@@ -274,6 +288,7 @@ export class VaultStructuralIndex {
 
   rebuild(nodes: Record<string, VaultNode> | null | undefined): void {
     nodes = asNodeMap(nodes);
+    this.pendingDirtyIds = null;
     this.childrenByParent = new Map();
     this.pathToId = new Map();
     this.titleToIds = new Map();

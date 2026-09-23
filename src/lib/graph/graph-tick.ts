@@ -1,64 +1,50 @@
 /**
  * Stable graph invalidation tick for GraphView.
  *
- * NEVER call ensureVaultIndex inside a Zustand selector — with Zustand v5
- * (useSyncExternalStore), a selector that mutates module globals or returns
- * a freshly derived unstable snapshot can force infinite re-renders
- * (Maximum update depth exceeded / forceStoreRerender).
+ * getSnapshot must be pure. Indexing or reading structureGeneration here
+ * races the render: GraphView's memos call ensureVaultIndex on a deferred
+ * nodes map, which bumps the generation before the passive
+ * useSyncExternalStore check. React then forceStoreRerenders until
+ * "Maximum update depth" (hot 45k open with the graph panel still mounted).
  *
- * This module:
- *  - subscribes only via useVaultStore.subscribe (store notify)
- *  - reads primitive store fields + already-published index generations
- *  - syncs the structural index at most once per nodes-map identity
- *  - returns a cached string so consecutive getSnapshot calls are Object.is-equal
+ * The tick changes only when vault inputs change. GraphView memos index
+ * and build from the nodes map on that render.
  */
 
 import { useSyncExternalStore } from "react";
 import { useVaultStore } from "@/lib/vault/store";
-import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
-import { vaultLinkIndex } from "@/lib/vault/link-index";
-import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
-import { composeGraphTick } from "@/lib/graph/graph-select";
-
-let cachedNodesRef: Record<string, unknown> | null = null;
-let cachedTick = "0";
 
 const EMPTY_TICK_NODES: Record<string, unknown> = {};
 
-function syncIndexIfNeeded(): void {
-  const raw = useVaultStore.getState().nodes as Record<string, unknown> | null;
-  const nodes = raw && typeof raw === "object" ? raw : EMPTY_TICK_NODES;
-  if (nodes === cachedNodesRef) return;
-  ensureVaultIndex(nodes as Parameters<typeof ensureVaultIndex>[0]);
-  cachedNodesRef = nodes;
-}
+let seenNodes: object = EMPTY_TICK_NODES;
+let seenScope = "";
+let seenBrowse = "";
+let seenActive = "";
+let epoch = 0;
+let cachedTick = "0";
 
-/** Pure-ish snapshot: may sync index once when nodes identity changes. */
+/** Pure snapshot: store identity only. Never touches the vault index. */
 export function getGraphTickSnapshot(): string {
-  syncIndexIfNeeded();
   const s = useVaultStore.getState();
-  const n = vaultIndex.noteCount;
-  const large = shouldUseFolderGraph(n);
+  const raw = s.nodes as object | null | undefined;
+  const nodes = raw && typeof raw === "object" ? raw : EMPTY_TICK_NODES;
   const scope = s.graphScopeMode ?? "vault";
-  const struct = vaultIndex.structureGeneration;
-  const content = vaultIndex.contentGeneration;
-  const links = vaultLinkIndex.generation;
   const browse = s.graphBrowsePath ?? "";
   const active = s.activeNoteId ?? "";
-
-  const next = composeGraphTick({
-    large,
-    scope: scope === "ego" || scope === "folder" ? scope : "vault",
-    structureGeneration: struct,
-    contentGeneration: content,
-    linkGeneration: links,
-    browsePath: browse,
-    activeNoteId: active,
-    noteCount: n,
-  });
-
-  if (next === cachedTick) return cachedTick;
-  cachedTick = next;
+  if (
+    nodes === seenNodes &&
+    scope === seenScope &&
+    browse === seenBrowse &&
+    active === seenActive
+  ) {
+    return cachedTick;
+  }
+  seenNodes = nodes;
+  seenScope = scope;
+  seenBrowse = browse;
+  seenActive = active;
+  epoch += 1;
+  cachedTick = `${epoch}|${scope}|${browse}|${active}`;
   return cachedTick;
 }
 
@@ -66,7 +52,7 @@ export function subscribeGraphTick(onStoreChange: () => void): () => void {
   return useVaultStore.subscribe(onStoreChange);
 }
 
-/** React hook — stable graph tick from store + index generations. */
+/** React hook — stable graph tick from store inputs. */
 export function useGraphTick(): string {
   return useSyncExternalStore(
     subscribeGraphTick,
@@ -77,6 +63,10 @@ export function useGraphTick(): string {
 
 /** Test / vault-close helper */
 export function resetGraphTickCache(): void {
-  cachedNodesRef = null;
+  seenNodes = EMPTY_TICK_NODES;
+  seenScope = "";
+  seenBrowse = "";
+  seenActive = "";
+  epoch = 0;
   cachedTick = "0";
 }

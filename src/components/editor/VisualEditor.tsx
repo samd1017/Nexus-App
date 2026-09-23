@@ -227,6 +227,8 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const lastWrittenRef = useRef(baselineMd.current);
   const noteIdRef = useRef(noteId);
   const contentRef = useRef(content);
+  // Bumps so a note switch does not apply a stale setContent.
+  const contentApplyGen = useRef(0);
   /** Morning autofocus: once per note id open */
   const morningFocusedFor = useRef<string | null>(null);
   contentRef.current = content;
@@ -839,10 +841,23 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     lastWrittenRef.current = incoming;
     contentRef.current = incoming;
     const html = markdownWithWikilinksToHtml(incoming);
-    editor.commands.setContent(html, { emitUpdate: false });
-    requestAnimationFrame(() => {
-      paintEditorExtras(editor);
-      applying.current = false;
+    // TipTap mounts React node views with flushSync. Doing that inside this
+    // effect is a React lifecycle, and React 19 logs "flushSync was called
+    // from inside a lifecycle method" on every note switch. A microtask is
+    // outside the commit, so the paint still happens before the next frame.
+    const applyGen = ++contentApplyGen.current;
+    const noteAtSchedule = noteId;
+    queueMicrotask(() => {
+      if (applyGen !== contentApplyGen.current) return;
+      if (noteIdRef.current !== noteAtSchedule) return;
+      if (editor.isDestroyed) return;
+      applying.current = true;
+      editor.commands.setContent(html, { emitUpdate: false });
+      requestAnimationFrame(() => {
+        if (applyGen !== contentApplyGen.current) return;
+        paintEditorExtras(editor);
+        applying.current = false;
+      });
     });
   }, [editor, content, noteId, updateNoteContent, commit]);
 

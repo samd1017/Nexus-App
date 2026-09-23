@@ -438,13 +438,24 @@ export const FileTree = memo(function FileTree() {
     setFocusedIndex((i) => Math.min(Math.max(0, i), flatRows.length - 1));
   }, [flatRows.length]);
 
+  // Stable options. A fresh getItemKey closure plus useFlushSync (the
+  // virtualizer default) calls flushSync during commit when the row count
+  // jumps — nested inside the tree-tick store check on a hot 45k open.
+  const getScrollElement = useCallback(() => parentRef.current, []);
+  const estimateSize = useCallback(() => ROW_H, []);
+  const getItemKey = useCallback(
+    (index: number) => flatRowsRef.current[index]?.id ?? index,
+    [],
+  );
+
   const virtualizer = useVirtualizer({
     count: flatRows.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_H,
+    getScrollElement,
+    estimateSize,
     overscan: 12,
-    getItemKey: (index) => flatRows[index]?.id ?? index,
+    getItemKey,
     enabled: useVirtual,
+    useFlushSync: false,
   });
 
   useEffect(() => {

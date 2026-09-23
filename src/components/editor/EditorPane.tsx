@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
 import { useTreeStructureTick } from "@/lib/vault/tree-tick";
-import { vaultIndex } from "@/lib/vault/indexes";
+import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
 import {
@@ -193,7 +193,7 @@ export function EditorPane({
 
   const noteCount = useMemo(() => {
     void structureTick;
-    return vaultIndex.noteCount;
+    return ensureVaultIndex(useVaultStore.getState().nodes).noteCount;
   }, [structureTick]);
   const createNote = useVaultStore((s) => s.createNote);
 
