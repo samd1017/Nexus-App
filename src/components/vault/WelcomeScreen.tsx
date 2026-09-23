@@ -468,8 +468,10 @@ export function WelcomeScreen() {
           </div>
 
           <p className="mt-6 max-w-xl text-[12.5px] leading-relaxed text-[var(--text-muted)]">
-            Browser vaults stay near 20,000 notes. A 100k–300k vault opens in
-            Nexus Desktop — the same Markdown folder, with SQLite search.
+            Chrome folders warn around 15,000 notes and stop at 25,000.
+            100,000 to 500,000 notes open in Nexus Desktop — the same Markdown
+            folder, SQLite search, and a folder map or neighborhood. Never one
+            orb per note.
           </p>
 
           <p className="mt-8 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">

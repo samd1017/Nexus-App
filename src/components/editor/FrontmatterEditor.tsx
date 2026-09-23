@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { isPhoneViewport } from "@/lib/layout/viewport";
 import {
   applyFrontmatter,
   parseFrontmatterFields,
@@ -16,18 +18,23 @@ export function FrontmatterEditor({
   content: string;
 }) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
+  const focusMode = usePrefsStore((s) => s.focusMode);
   const { yaml } = useMemo(() => splitFrontmatter(content || ""), [content]);
   const parsed = useMemo(
     () => (yaml != null ? parseFrontmatterFields(yaml) : []),
     [yaml],
   );
-  const [open, setOpen] = useState(yaml != null);
+  // Phone width keeps the note in view. Desktop opens properties when they exist.
+  const [open, setOpen] = useState(() => yaml != null && !isPhoneViewport());
   const [rows, setRows] = useState<FrontmatterField[]>(parsed);
 
   useEffect(() => {
     setRows(parsed.length ? parsed : yaml != null ? [{ key: "", value: "" }] : []);
-    if (yaml != null) setOpen(true);
+    if (yaml == null) setOpen(false);
+    else setOpen(!isPhoneViewport());
   }, [noteId, yaml, parsed]);
+
+  if (focusMode) return null;
 
   if (yaml == null && !open) {
     return (

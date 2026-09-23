@@ -84,12 +84,12 @@ export function FirstRunCoach() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[13.5px] font-semibold text-[var(--text-primary)]">
-              {mode === "demo" ? "Demo vault — same instrument as disk" : "Three moves. Then it sticks."}
+              Three moves. Then it sticks.
             </div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-secondary)]">
               {mode === "demo"
-                ? "Search, heading links, dual pane, and Pulse. Simulate an agent write from the vault menu when you want the Grok loop."
-                : "Search or ask: your notes. Link [[Note#Heading]]. Watch Pulse when agents write the same folder."}
+                ? "Search the vault. Follow a [[link]]. Open the graph and fly."
+                : "Search or ask. Link a heading. Open the graph when you want the neighborhood."}
             </p>
           </div>
           <button

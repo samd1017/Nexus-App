@@ -21,6 +21,20 @@ This law binds the release gates:
 
 Browser vaults refuse around 25k notes. A 500k vault is a desktop folder.
 
+## Honest limits (measured)
+
+These are the budgets the app actually uses, and what has been opened.
+
+| Vault | What you see | Status |
+|-------|----------------|--------|
+| Under 400 notes | Full note graph. Not a folder stub. | Demo vault, checked. |
+| 400 notes and up | Folder map, at most 320 nodes, or an ego neighborhood, at most 400 nodes and 2 hops. | 45k in-browser seed draws a folder map (9 folders, 0 note orbs) and an ego of the open note. |
+| Browser folder | Warns around 15,000 notes. Refuses at 25,000. | Cap in `chrome-fsa-cap.ts`. The 45k seed is a dev fixture, not a Chrome folder. |
+| Desktop 100k | Cold open stays usable while search heads fill. SQLite FTS5 BM25. Folder map, not one orb per note. | A local 100k folder opened, stayed clickable during the fill, and search returned hits before the fill finished. |
+| Desktop 500k | Same path as 100k: folder map or ego, progressive FTS, bodies on demand. | Not opened. Do not treat 500k as a timed result. |
+
+A hot 45k open (demo session, then the large seed, graph panel still mounted) used to loop React until "Maximum update depth." The file-tree and graph snapshots no longer touch the vault index during render. Fresh and hot opens of that seed stay up.
+
 ---
 
 ## Public-release plan (99%)
