@@ -145,7 +145,7 @@ export function presentLinkContext(raw: string): string {
   s = s.replace(/#{1,6}\s+/g, "");
   s = s.replace(/>\s*\[![A-Za-z]+\]\s*/g, "");
   s = s.replace(/(^|\s)>\s+/g, "$1");
-  s = s.replace(/\s+[–-]\s+/g, " · ");
+  s = s.replace(/\s+[-–]\s+/g, " · ");
   s = s.replace(/\*\*|__|~~|`/g, "");
   s = s.replace(/(^|\s)[*_](.+?)[*_](?=\s|$)/g, "$1$2");
   s = s.replace(/\s*\|\s*/g, " · ");
