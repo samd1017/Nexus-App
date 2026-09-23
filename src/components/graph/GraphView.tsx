@@ -1,8 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type KeyboardEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import SpriteText from "three-spritetext";
+import { createInstrumentNode } from "@/lib/graph/instrument-node";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveGraphData, type GraphViewMode, type ResolvedGraphData } from "@/lib/graph/build-graph";
 import { emptyShellGraph, graphFromShellEgo, graphFromShellLevel, pinFolderLayout } from "@/lib/graph/shell-graph";
@@ -125,115 +124,6 @@ const LOD_CAP = 400;
 const IDLE_ORBIT_START_S = 3.2;
 const IDLE_ORBIT_QUIET_MS = 1600;
 const IDLE_ORBIT_SPEED = 0.55;
-/** Filaments on small constellations only — large maps stay a clean field. */
-const FILAMENT_LINK_MAX = 160;
-
-/**
- * Folder mass is a point cloud, not one sphere per note.
- * Count and radius grow with the log of the note count so a 50-note
- * folder and an 80,000-note folder both read as systems, and a 500k
- * vault never allocates a vertex per note.
- */
-function massPointCount(notes: number, lowDetail: boolean): number {
-  if (!Number.isFinite(notes) || notes <= 0) return 0;
-  const n = Math.round(12 + Math.log2(notes) * 18);
-  const cap = lowDetail ? 28 : 140;
-  return Math.max(10, Math.min(cap, n));
-}
-
-function massCloudRadius(orbRadius: number, notes: number): number {
-  const span = 1.28 + Math.min(1.15, Math.log10(notes + 1) * 0.32);
-  return orbRadius * span;
-}
-
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function hashString(value: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < value.length; i++) {
-    h ^= value.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-let massSprite: THREE.CanvasTexture | null = null;
-function massSpriteTexture(): THREE.Texture {
-  if (massSprite) return massSprite;
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 64;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    massSprite = new THREE.CanvasTexture(canvas);
-    return massSprite;
-  }
-  const glow = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  glow.addColorStop(0, "rgba(255,255,255,1)");
-  glow.addColorStop(0.18, "rgba(214,244,255,0.95)");
-  glow.addColorStop(0.45, "rgba(120,200,255,0.35)");
-  glow.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 64, 64);
-  massSprite = new THREE.CanvasTexture(canvas);
-  massSprite.colorSpace = THREE.SRGBColorSpace;
-  return massSprite;
-}
-
-function addMassCloud(
-  group: THREE.Group,
-  node: GNode,
-  orbRadius: number,
-  accent: THREE.Color,
-  bodyColor: THREE.Color,
-  lowDetail: boolean,
-  full: boolean,
-  dim: boolean,
-) {
-  const notes = node.noteCount ?? 0;
-  const count = massPointCount(notes, lowDetail);
-  if (count <= 0 || typeof document === "undefined") return;
-  const positions = new Float32Array(count * 3);
-  const rand = mulberry32(hashString(node.id || node.name || "mass"));
-  const reach = massCloudRadius(orbRadius, notes);
-  for (let i = 0; i < count; i++) {
-    // Fibonacci shell with a little radial depth, so the mass has volume.
-    const y = 1 - (i / Math.max(1, count - 1)) * 2;
-    const ring = Math.sqrt(Math.max(0, 1 - y * y));
-    const theta = i * 2.399963229728653;
-    const radial = reach * (0.72 + rand() * 0.38);
-    positions[i * 3] = Math.cos(theta) * ring * radial;
-    positions[i * 3 + 1] = y * radial * (0.82 + rand() * 0.18);
-    positions[i * 3 + 2] = Math.sin(theta) * ring * radial;
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const color = accent.clone().lerp(bodyColor, 0.35);
-  const points = new THREE.Points(
-    geo,
-    new THREE.PointsMaterial({
-      color,
-      map: massSpriteTexture(),
-      size: full ? 0.72 : 0.5,
-      transparent: true,
-      opacity: dim ? 0.28 : 0.9,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      sizeAttenuation: true,
-    }),
-  );
-  points.userData.nexusCloud = notes >= 1000 ? 0.22 : 0.12;
-  points.renderOrder = 3;
-  group.add(points);
-}
 
 type GLink = {
   source: string | GNode;
@@ -261,25 +151,6 @@ function physicsParams(intensity: PhysicsIntensity) {
   return { charge: -85, distance: 36, velocity: 0.3, alpha: 0.02 };
 }
 
-
-/** G3: stronger folder hue separation via distinct HSL palette slots */
-function tagTintColor(tag: string, desktopBoost: boolean): THREE.Color {
-  return folderTintColor(`tag:${tag || "__none__"}`, desktopBoost);
-}
-
-function folderTintColor(folder: string, desktopBoost: boolean): THREE.Color {
-  let h = 2166136261;
-  const key = folder || "__root__";
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const hues = [205, 160, 285, 35, 125, 330, 50, 240, 15, 175];
-  const hue = hues[Math.abs(h) % hues.length] / 360;
-  const sat = desktopBoost ? 0.42 : 0.36;
-  const light = desktopBoost ? 0.4 : 0.34;
-  return new THREE.Color().setHSL(hue, sat, light);
-}
 
 function buildStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -321,9 +192,9 @@ function buildStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
     (m.material as THREE.MeshBasicMaterial).color.multiplyScalar(intensity);
     scene.add(m);
   };
-  addPanel(0xe8eef6, 1.8, 18, 14, [20, 12, 10], -0.6);
-  addPanel(0x7a8a9e, 0.75, 14, 12, [-18, 4, -8], 0.7);
-  addPanel(0x4a5a6a, 0.45, 20, 8, [0, -14, 5], 0);
+  addPanel(0xc5ced8, 0.42, 18, 14, [20, 12, 10], -0.6);
+  addPanel(0x6a7684, 0.28, 14, 12, [-18, 4, -8], 0.7);
+  addPanel(0x3a4450, 0.18, 20, 8, [0, -14, 5], 0);
 
   const env = pmrem.fromScene(scene, 0.03).texture;
   pmrem.dispose();
@@ -487,12 +358,6 @@ function buildSpaceBackdrop(
   return { root, layers };
 }
 
-function truncateLabel(name: string | undefined | null, max = 22): string {
-  const clean = String(name ?? "Note").replace(/\s+/g, " ").trim() || "Note";
-  if (clean.length <= max) return clean;
-  return clean.slice(0, max - 1) + "…";
-}
-
 /**
  * WebKit pointerup/pointercancel can reach OrbitControls with a tracked
  * pointer and no stored position. The control then throws on `position.x`
@@ -585,6 +450,7 @@ function guardOrbitPointer(graph: ForceGraph3DInstance) {
   }
 }
 
+
 function linkIds(link: GLink): [string, string] {
   const s =
     typeof link.source === "object" ? link.source.id : String(link.source);
@@ -607,65 +473,6 @@ function buildNeighbors(links: GLink[]): Map<string, Set<string>> {
   return m;
 }
 
-function makeLabel(
-  text: string,
-  opts: {
-    active: boolean;
-    hover: boolean;
-    dim: boolean;
-    full: boolean;
-    radius: number;
-  },
-): THREE.Object3D {
-  const { active, hover, dim, full, radius } = opts;
-  const label = new SpriteText(text) as SpriteText & {
-    position: THREE.Vector3;
-    material: THREE.SpriteMaterial;
-  };
-
-  label.fontFace =
-    typeof document !== "undefined"
-      ? getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
-        "system-ui, sans-serif"
-      : "system-ui, sans-serif";
-  label.fontWeight = active || hover ? "bold" : "normal";
-  label.fontSize = 120;
-  label.color = active
-    ? "#f4f7fb"
-    : hover
-      ? "#e8eef6"
-      : dim
-        ? "#6a7280"
-        : "#c0c8d4";
-  label.backgroundColor = "rgba(0,0,0,0)";
-  label.padding = 2;
-  label.borderWidth = 0;
-  label.borderRadius = 0;
-  label.strokeWidth = active || hover ? 0.28 : 0.2;
-  label.strokeColor = "#000000";
-
-  const th = active
-    ? full
-      ? 3.2
-      : 2.4
-    : hover
-      ? full
-        ? 2.8
-        : 2.1
-      : full
-        ? 2.2
-        : 1.7;
-  label.textHeight = th;
-  label.position.y = radius + th * 0.65 + (full ? 0.4 : 0.25);
-  label.renderOrder = active || hover ? 20 : 8;
-  label.material.depthTest = false;
-  label.material.depthWrite = false;
-  label.material.transparent = true;
-  label.material.opacity = active ? 1 : hover ? 0.98 : dim ? 0.45 : 0.82;
-  label.material.sizeAttenuation = true;
-
-  return label;
-}
 
 function createOrb(
   node: GNode,
@@ -681,227 +488,21 @@ function createOrb(
   lowDetail = false,
   colorBy: "folder" | "tag" = "folder",
 ): THREE.Object3D {
-  const group = new THREE.Group();
-  if (!node?.id) return group;
-  const isGhost = !!node.ghost;
-  const isAggregate = node.kind === "aggregate" || !!node.aggregate;
-  const isFolderNode = node.kind === "folder";
-  const isActive = node.id === activeId;
-  const isHover = node.id === hoverId;
-  const isHub = !isGhost && !isAggregate && node.degree >= 3;
-  const inFocus =
-    !focusId || node.id === focusId || (neighbors?.has(node.id) ?? false);
-  const dim = !!focusId && !inFocus && dimStrength > 0;
-  const full = mode === "fullscreen";
-  const panel = mode === "panel";
-  // G5 LOD segments
-  const segs = lowDetail
-    ? isGhost
-      ? 12
-      : full
-        ? 28
-        : 20
-    : isGhost
-      ? full
-        ? 32
-        : 24
-      : full
-        ? 72
-        : 56;
-  const sizeBoost = desktopBoost ? 1.14 : 1;
-
-  const base = (full ? 3.15 : panel ? 2.55 : 2.4) * sizeBoost;
-  const rank = isActive || isHover ? 1 : isHub || isFolderNode ? 0.84 : 0.68;
-  const mass =
-    typeof node.val === "number" && Number.isFinite(node.val) ? node.val : 1;
-  const radius =
-    base +
-    Math.pow(Math.max(1, mass), 0.55) * (full ? 1.75 : 1.4) * rank +
-    (isActive || isHover ? 0.5 : 0);
-
-  let bodyColor =
-    colorBy === "tag" && node.tag
-      ? tagTintColor(node.tag, desktopBoost)
-      : folderTintColor(node.folder, desktopBoost);
-  if (node.ghost) {
-    bodyColor = new THREE.Color(desktopBoost ? 0x2a323c : 0x222830);
-  } else if (isAggregate) {
-    bodyColor = bodyColor.clone().multiplyScalar(0.55);
-  } else if (isActive || isHover) {
-    bodyColor = bodyColor
-      .clone()
-      .lerp(new THREE.Color(desktopBoost ? 0x5c6678 : 0x4a5260), 0.55);
-  } else if (isHub || isFolderNode) {
-    bodyColor = bodyColor
-      .clone()
-      .lerp(new THREE.Color(desktopBoost ? 0x4a5466 : 0x3c4452), 0.35);
-  }
-
-  if (dim) {
-    bodyColor.multiplyScalar(1 - dimStrength * 0.5);
-  }
-
-  const bodyOpacity = dim
-    ? Math.max(0.08, 1 - dimStrength * 0.92)
-    : isGhost
-      ? 0.38
-      : isAggregate
-        ? 0.48
-        : 1;
-
-  let emissive = accent.clone().multiplyScalar(desktopBoost ? 0.22 : 0.12);
-  let emissiveIntensity = desktopBoost ? 0.055 : 0.028;
-  if (isActive || isHover) {
-    emissive = accent.clone();
-    emissiveIntensity = desktopBoost ? 0.16 : 0.1;
-  } else if (isFolderNode) {
-    emissive = accent.clone().multiplyScalar(0.85);
-    emissiveIntensity = desktopBoost ? 0.14 : 0.09;
-  } else if (neighbors?.has(node.id)) {
-    emissive = accent.clone().multiplyScalar(0.55);
-    emissiveIntensity = desktopBoost ? 0.1 : 0.055;
-  }
-
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, segs, segs),
-    new THREE.MeshPhysicalMaterial({
-      color: bodyColor,
-      metalness: desktopBoost ? 0.88 : 0.94,
-      roughness: isActive || isHover
-        ? 0.14
-        : isHub || isFolderNode
-          ? 0.22
-          : 0.3,
-      clearcoat: isActive || isHover
-        ? 0.75
-        : isFolderNode
-          ? Math.min(0.72, (desktopBoost ? 0.55 : 0.42) + 0.08)
-          : desktopBoost
-            ? 0.55
-            : 0.42,
-      clearcoatRoughness: isActive || isHover ? 0.06 : 0.16,
-      transparent: dim || isGhost || isAggregate,
-      opacity: bodyOpacity,
-      depthWrite: !(dim || isGhost || isAggregate),
-      transmission: 0,
-      specularIntensity: isActive || isHover ? 1.5 : desktopBoost ? 1.35 : 1.15,
-      specularColor: new THREE.Color(0xe8eef6),
-      emissive,
-      emissiveIntensity,
-      envMapIntensity: isActive || isHover
-        ? desktopBoost
-          ? 1.85
-          : 1.55
-        : isHub
-          ? desktopBoost
-            ? 1.45
-            : 1.2
-          : desktopBoost
-            ? 1.3
-            : 1.05,
-      side: THREE.FrontSide,
-    }),
+  return createInstrumentNode(
+    node,
+    activeId,
+    hoverId,
+    focusId,
+    neighbors,
+    dimStrength,
+    mode,
+    accent,
+    showLabel,
+    desktopBoost,
+    lowDetail,
+    colorBy,
   );
-  body.renderOrder = dim && dimStrength > 0.5 ? 0 : 1;
-  group.add(body);
-
-  if (!dim || dimStrength < 0.4) {
-    const shell = new THREE.Mesh(
-      new THREE.SphereGeometry(
-        radius * 1.045,
-        Math.min(segs, 48),
-        Math.min(segs, 48),
-      ),
-      new THREE.MeshBasicMaterial({
-        color: accent.clone().multiplyScalar(desktopBoost ? 0.55 : 0.35),
-        transparent: true,
-        opacity: desktopBoost ? 0.09 : 0.05,
-        depthWrite: false,
-        side: THREE.BackSide,
-      }),
-    );
-    shell.renderOrder = 0;
-    group.add(shell);
-  }
-
-  if (isFolderNode && (!dim || dimStrength < 0.55)) {
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(
-        radius * 1.22,
-        Math.max(0.045, radius * 0.012),
-        8,
-        full ? 72 : 56,
-      ),
-      new THREE.MeshBasicMaterial({
-        color: accent,
-        transparent: true,
-        opacity: dim ? 0.14 : 0.38,
-        depthWrite: false,
-      }),
-    );
-    ring.rotation.x = Math.PI / 2.4;
-    ring.userData.nexusRing = 0.25;
-    ring.renderOrder = 2;
-    group.add(ring);
-    addMassCloud(
-      group,
-      node,
-      radius,
-      accent,
-      bodyColor,
-      lowDetail,
-      full,
-      dim,
-    );
-  }
-
-  if (isAggregate && (node.noteCount ?? 0) > 0 && (!dim || dimStrength < 0.55)) {
-    addMassCloud(
-      group,
-      node,
-      radius * 0.85,
-      accent,
-      bodyColor,
-      lowDetail,
-      full,
-      dim,
-    );
-  }
-
-  if (isActive || isHover) {
-    const tube = radius * 0.014;
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(radius * 1.08, tube, 12, full ? 88 : 64),
-      new THREE.MeshPhysicalMaterial({
-        color: accent.clone().lerp(new THREE.Color(0xd0d8e4), 0.3),
-        metalness: 0.92,
-        roughness: 0.14,
-        emissive: accent.clone(),
-        emissiveIntensity: isHover && !isActive ? 0.32 : 0.24,
-        envMapIntensity: 1.25,
-      }),
-    );
-    ring.rotation.x = Math.PI / 2;
-    ring.userData.nexusRing = 0.8;
-    ring.renderOrder = 2;
-    group.add(ring);
-  }
-
-  if (showLabel) {
-    group.add(
-      makeLabel(truncateLabel(node.name, full ? 24 : 18), {
-        active: isActive,
-        hover: isHover,
-        dim,
-        full,
-        radius,
-      }),
-    );
-  }
-
-  return group;
 }
-
 
 /** W5: mutate materials on existing orbs — avoids full nodeThreeObject rebuild on hover */
 function tintOrbHover(
@@ -912,8 +513,8 @@ function tintOrbHover(
   if (!obj) return;
   obj.traverse((child) => {
     const mesh = child as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const mat = mesh.material as THREE.MeshPhysicalMaterial & {
+    if (!mesh.isMesh || !mesh.userData.nexusBody) return;
+    const mat = mesh.material as THREE.MeshStandardMaterial & {
       userData: Record<string, unknown>;
     };
     if (!mat || typeof mat.emissiveIntensity !== "number") return;
@@ -921,26 +522,21 @@ function tintOrbHover(
       if (mat.userData.__w5HoverBase == null) {
         mat.userData.__w5HoverBase = {
           ei: mat.emissiveIntensity,
-          rough: mat.roughness,
           er: mat.emissive?.r ?? 0,
           eg: mat.emissive?.g ?? 0,
           eb: mat.emissive?.b ?? 0,
         };
       }
-      mat.emissiveIntensity = Math.max(mat.emissiveIntensity, 0.14);
-      if (mat.emissive) mat.emissive.copy(accent);
-      if (typeof mat.roughness === "number") {
-        mat.roughness = Math.min(mat.roughness, 0.16);
-      }
+      mat.emissiveIntensity = Math.max(mat.emissiveIntensity, 0.05);
+      if (mat.emissive) mat.emissive.copy(accent).multiplyScalar(0.35);
       mat.needsUpdate = true;
     } else {
       const b = mat.userData.__w5HoverBase as
-        | { ei: number; rough: number; er: number; eg: number; eb: number }
+        | { ei: number; er: number; eg: number; eb: number }
         | undefined;
       if (!b) return;
       mat.emissiveIntensity = b.ei;
       if (mat.emissive) mat.emissive.setRGB(b.er, b.eg, b.eb);
-      if (typeof mat.roughness === "number") mat.roughness = b.rough;
       delete mat.userData.__w5HoverBase;
       mat.needsUpdate = true;
     }
@@ -1629,11 +1225,6 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
     const phys = physicsParams(physicsIntensity);
-    const particleCount = particlesLive
-      ? mode === "panel"
-        ? 1
-        : 3
-      : 0;
 
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
@@ -1688,30 +1279,27 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       return obj;
     };
 
-    const filamentParticles =
-      particleCount > 0 && displayData.links.length <= FILAMENT_LINK_MAX
-        ? 1
-        : 0;
-
     const edgeStyle = (
       link: GLink,
     ): { color: string; width: number; particles: number } => {
       const [s, t] = linkIds(link);
       const hover = hoverRef.current;
       const active = activeRef.current;
+      const steel = "176,184,194";
+      const thin = mode === "fullscreen" ? 0.26 : 0.18;
 
       if (hover) {
         const hot = s === hover || t === hover;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.92)`,
-            width: mode === "fullscreen" ? 1.35 : 1.0,
-            particles: particleCount > 0 ? particleCount + 1 : 0,
+            color: `rgba(${ar},${ag},${ab},0.7)`,
+            width: thin + 0.16,
+            particles: 0,
           };
         }
         return {
-          color: `rgba(${ar},${ag},${ab},0.05)`,
-          width: mode === "fullscreen" ? 0.2 : 0.14,
+          color: `rgba(${steel},0.14)`,
+          width: thin * 0.55,
           particles: 0,
         };
       }
@@ -1720,28 +1308,22 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
         const hot = s === active || t === active;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.62)`,
-            width: mode === "fullscreen" ? 0.9 : 0.65,
-            particles: particleCount,
+            color: `rgba(${ar},${ag},${ab},0.5)`,
+            width: thin + 0.08,
+            particles: 0,
           };
         }
         return {
-          color:
-            mode === "fullscreen"
-              ? `rgba(${ar},${ag},${ab},0.14)`
-              : `rgba(${ar},${ag},${ab},0.11)`,
-          width: mode === "fullscreen" ? 0.36 : 0.28,
+          color: `rgba(${steel},0.22)`,
+          width: thin * 0.7,
           particles: 0,
         };
       }
 
       return {
-        color:
-          mode === "fullscreen"
-            ? `rgba(${ar},${ag},${ab},0.42)`
-            : `rgba(${ar},${ag},${ab},0.32)`,
-        width: mode === "fullscreen" ? 0.62 : 0.42,
-        particles: filamentParticles,
+        color: `rgba(${steel},${mode === "fullscreen" ? 0.46 : 0.4})`,
+        width: thin,
+        particles: 0,
       };
     };
 
@@ -1749,7 +1331,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       g.linkColor((link) => edgeStyle(link as GLink).color)
         .linkWidth((link) => edgeStyle(link as GLink).width)
         .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles)
-        .linkDirectionalParticleWidth(0.9)
+        .linkDirectionalParticleWidth(0.35)
         .linkDirectionalParticleSpeed(0.006)
         .linkDirectionalParticleColor(() => {
           const mix = (c: number) => Math.round(c * 0.45 + 255 * 0.55);
@@ -1932,7 +1514,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     try {
       const renderer = graph.renderer();
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = desktopBoost ? 1.32 : 1.12;
+      renderer.toneMappingExposure = 1;
       renderer.setPixelRatio(
         Math.min(window.devicePixelRatio || 1, desktopBoost ? 1 : 2),
       );
@@ -1944,27 +1526,6 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       graph.scene().environment = envMap;
     } catch {
       /* ok */
-    }
-
-    let bloomPass: UnrealBloomPass | null = null;
-    // Panel bloom is a full-frame pass on every orbit tick. Fullscreen keeps it.
-    if (!usePrefsStore.getState().reducedMotion && mode === "fullscreen") {
-      try {
-        const composer = graph.postProcessingComposer();
-        const bloom = new UnrealBloomPass(
-          new THREE.Vector2(
-            Math.max(1, el.clientWidth),
-            Math.max(1, el.clientHeight),
-          ),
-          mode === "fullscreen" ? 0.52 : 0.28,
-          0.48,
-          0.58,
-        );
-        composer.addPass(bloom);
-        bloomPass = bloom;
-      } catch {
-        /* software GL can refuse the bloom target */
-      }
     }
 
     try {
@@ -1988,22 +1549,16 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       });
       remove.forEach((l) => scene.remove(l));
 
-      const ambI = desktopBoost ? 0.28 : 0.14;
-      const hemiI = desktopBoost ? 0.55 : 0.38;
-      const keyI = desktopBoost ? 1.45 : 1.15;
-      const ambient = new THREE.AmbientLight(0x5a6474, ambI);
-      const hemi = new THREE.HemisphereLight(0x2a3a50, 0x03050a, hemiI);
-      const key = new THREE.DirectionalLight(0xf0f4f8, keyI);
+      const ambI = desktopBoost ? 0.5 : 0.4;
+      const hemiI = desktopBoost ? 0.28 : 0.22;
+      const keyI = desktopBoost ? 0.62 : 0.52;
+      const ambient = new THREE.AmbientLight(0x8a93a0, ambI);
+      const hemi = new THREE.HemisphereLight(0x243040, 0x05070a, hemiI);
+      const key = new THREE.DirectionalLight(0xd5dde6, keyI);
       key.position.set(60, 95, 45);
-      const fill = new THREE.DirectionalLight(
-        0x4a5a70,
-        desktopBoost ? 0.58 : 0.42,
-      );
+      const fill = new THREE.DirectionalLight(0x4a5a70, 0.24);
       fill.position.set(-55, 10, -40);
-      const rim = new THREE.DirectionalLight(
-        0xb0c8e0,
-        desktopBoost ? 0.48 : 0.32,
-      );
+      const rim = new THREE.DirectionalLight(0x9aabbc, 0.14);
       rim.position.set(-40, 30, -60);
 
       scene.add(ambient, hemi, key, fill, rim);
@@ -2257,12 +1812,6 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       if (zoomRaf) cancelAnimationFrame(zoomRaf);
       ro.disconnect();
       try {
-        bloomPass?.dispose();
-        bloomPass = null;
-      } catch {
-        /* ok */
-      }
-      try {
         if (envMap) {
           graph.scene().environment = null;
           envMap.dispose();
@@ -2449,15 +1998,6 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     if (!graphRef.current) return;
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
-    const particleCount = particlesLive
-      ? mode === "panel"
-        ? 1
-        : 3
-      : 0;
-    const liveLinks = graphRef.current.graphData()?.links?.length ?? 0;
-    const filamentParticles =
-      particleCount > 0 && liveLinks <= FILAMENT_LINK_MAX ? 1 : 0;
-
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
       if (hoverRef.current) return 1;
@@ -2514,18 +2054,20 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     const edgeStyle = (link: GLink) => {
       const [s, t] = linkIds(link);
       const hover = hoverRef.current;
+      const steel = "176,184,194";
+      const thin = mode === "fullscreen" ? 0.26 : 0.18;
       if (hover) {
         const hot = s === hover || t === hover;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.92)`,
-            width: mode === "fullscreen" ? 1.35 : 1.0,
-            particles: particleCount > 0 ? particleCount + 1 : 0,
+            color: `rgba(${ar},${ag},${ab},0.7)`,
+            width: thin + 0.16,
+            particles: 0,
           };
         }
         return {
-          color: `rgba(${ar},${ag},${ab},0.05)`,
-          width: mode === "fullscreen" ? 0.2 : 0.14,
+          color: `rgba(${steel},0.14)`,
+          width: thin * 0.55,
           particles: 0,
         };
       }
@@ -2533,27 +2075,21 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
         const hot = s === activeRef.current || t === activeRef.current;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.62)`,
-            width: mode === "fullscreen" ? 0.9 : 0.65,
-            particles: particleCount,
+            color: `rgba(${ar},${ag},${ab},0.5)`,
+            width: thin + 0.08,
+            particles: 0,
           };
         }
         return {
-          color:
-            mode === "fullscreen"
-              ? `rgba(${ar},${ag},${ab},0.14)`
-              : `rgba(${ar},${ag},${ab},0.11)`,
-          width: mode === "fullscreen" ? 0.36 : 0.28,
+          color: `rgba(${steel},0.22)`,
+          width: thin * 0.7,
           particles: 0,
         };
       }
       return {
-        color:
-          mode === "fullscreen"
-            ? `rgba(${ar},${ag},${ab},0.42)`
-            : `rgba(${ar},${ag},${ab},0.32)`,
-        width: mode === "fullscreen" ? 0.62 : 0.42,
-        particles: filamentParticles,
+        color: `rgba(${steel},${mode === "fullscreen" ? 0.46 : 0.4})`,
+        width: thin,
+        particles: 0,
       };
     };
 
