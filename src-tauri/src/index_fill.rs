@@ -7,7 +7,9 @@
 //! only. No Tauri imports — also compiled by `src-tauri/fill-test`.
 //!
 //! Mid-fill UI (tree / note open / graph) must stay interactive: small WAL
-//! write batches, ≤2 head readers, yield after real I/O, time-gated progress.
+//! write batches, at most four head readers, a yield after a real write,
+//! and time-gated progress. The next short-head or deep chunk is read while
+//! the previous chunk is committed.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -39,8 +41,8 @@ pub const FILL_DEPTH_DEEP: i64 = 2;
 const META_BATCH: usize = 256;
 /// FTS writes hold the WAL writer lock. Rows are replaced by `rowid` (see
 /// `note_fts_row`), so a few hundred per commit stays short for readers.
-pub const FTS_WRITE_BATCH: usize = 256;
-pub const READ_CHUNK: usize = 256;
+pub const FTS_WRITE_BATCH: usize = 512;
+pub const READ_CHUNK: usize = 512;
 /// Sleep after a write that actually took work, so the WebView and note
 /// reads can sneak in on Linux desktop during a 100k fill.
 pub const FILL_YIELD_MS: u64 = 4;
@@ -55,7 +57,7 @@ pub const TITLE_FTS_SEED: usize = 2048;
 pub const EARLY_HEAD_CAP: usize = 256;
 /// Path and title rows committed during the walk so the tree and title
 /// search grow before it finishes.
-const DISCOVER_BATCH: usize = 256;
+const DISCOVER_BATCH: usize = 512;
 /// Intra-phase banner ticks. Phase transitions still emit immediately.
 /// Scan-delta emits (256) re-rendered AppShell/graph at 10–20Hz on fast fills.
 pub const PROGRESS_EMIT_MS: u64 = 400;
@@ -350,18 +352,20 @@ fn set_tags_indexed_flag(conn: &Connection) {
     );
 }
 
-fn ensure_tags_from_bodies(conn: &mut Connection) {
+fn ensure_tags_from_bodies(conn: &mut Connection, indexed: i64) {
     if tags_indexed_flag(conn) {
         return;
     }
-    let tags: i64 = conn
-        .query_row("SELECT COUNT(*) FROM tag_map", [], |r| r.get(0))
-        .unwrap_or(0);
-    let fts: i64 = conn
-        .query_row("SELECT COUNT(*) FROM note_fts", [], |r| r.get(0))
-        .unwrap_or(0);
-    if tags == 0 && fts > 0 {
-        if backfill_tags_from_fts(conn).is_err() {
+    // A fill that just wrote heads already extracted tags. Scanning every
+    // body again is only for an older index that never did.
+    if indexed == 0 {
+        let tags: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tag_map", [], |r| r.get(0))
+            .unwrap_or(0);
+        let fts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM note_fts", [], |r| r.get(0))
+            .unwrap_or(0);
+        if tags == 0 && fts > 0 && backfill_tags_from_fts(conn).is_err() {
             return;
         }
     }
@@ -432,7 +436,8 @@ fn finalize_link_edges(
     if !links_indexed_flag(conn) {
         // Incremental skip of a pre-patch FTS index still needs a one-shot
         // extract from existing note_fts heads — no JS body hydrate.
-        if skipped > 0 || indexed == 0 {
+        // A fill that wrote rows already extracted links; do not scan them again.
+        if indexed == 0 && skipped > 0 && count_link_edges(conn) == 0 {
             if let Err(err) = backfill_links_from_fts(conn) {
                 progress.message = Some(format!("link backfill failed: {err}"));
             }
@@ -442,7 +447,7 @@ fn finalize_link_edges(
         }
     }
     if mark_ready {
-        ensure_tags_from_bodies(conn);
+        ensure_tags_from_bodies(conn, indexed);
     }
     count_link_edges(conn)
 }
@@ -562,6 +567,7 @@ struct DiscoverPublish<'a> {
     indexed: &'a mut i64,
     errors: &'a mut i64,
     written: &'a mut HashSet<String>,
+    fresh_titles: &'a mut HashSet<String>,
     existing: &'a HashMap<String, ExistingNote>,
     on_scanned: &'a mut dyn FnMut(i64, i64, i64),
 }
@@ -645,6 +651,7 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
         sink.indexed,
         sink.errors,
         sink.written,
+        sink.fresh_titles,
     );
     if sink.allow_heads && *sink.headed < EARLY_HEAD_CAP {
         let wrote = commit_early_heads(
@@ -655,6 +662,7 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
             sink.indexed,
             sink.errors,
             sink.written,
+            sink.fresh_titles,
         );
         *sink.headed += wrote;
     }
@@ -671,6 +679,7 @@ fn commit_discovered_titles(
     indexed: &mut i64,
     errors: &mut i64,
     written: &mut HashSet<String>,
+    fresh_titles: &mut HashSet<String>,
 ) {
     let mut batch = Vec::with_capacity(notes.len());
     for note in notes {
@@ -683,7 +692,7 @@ fn commit_discovered_titles(
         }
         batch.push(meta_fill_note(note));
     }
-    flush_note_batch(conn, &mut batch, indexed, errors, written);
+    flush_note_batch(conn, &mut batch, indexed, errors, written, fresh_titles);
 }
 
 fn commit_early_heads(
@@ -694,6 +703,7 @@ fn commit_early_heads(
     indexed: &mut i64,
     errors: &mut i64,
     written: &mut HashSet<String>,
+    fresh_titles: &mut HashSet<String>,
 ) -> usize {
     if room == 0 {
         return 0;
@@ -762,7 +772,7 @@ fn commit_early_heads(
         });
     }
     let n = batch.len();
-    flush_note_batch(conn, &mut batch, indexed, errors, written);
+    flush_note_batch(conn, &mut batch, indexed, errors, written, fresh_titles);
     n
 }
 
@@ -792,14 +802,6 @@ fn should_emit_progress(last_at: Instant, _last_scanned: i64, _scanned: i64) -> 
 
 fn cooperate_after_write(started: Instant) {
     if started.elapsed() >= Duration::from_millis(2) {
-        std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
-    } else {
-        std::thread::yield_now();
-    }
-}
-
-fn cooperate_after_io(started: Instant) {
-    if started.elapsed() >= Duration::from_millis(12) {
         std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
     } else {
         std::thread::yield_now();
@@ -937,6 +939,52 @@ fn read_heads(files: &[DiskNote], indices: &[usize], head_chars: usize) -> Vec<(
     })
 }
 
+/// Read the next chunk of heads while the caller writes the previous one.
+/// The yield stays on that write. Cancel is checked between chunks; one
+/// in-flight read may finish and is discarded.
+fn pipeline_head_reads(
+    files: &[DiskNote],
+    indices: &[usize],
+    head_chars: usize,
+    is_cancelled: &mut impl FnMut() -> bool,
+    mut on_heads: impl FnMut(Vec<(usize, String)>),
+) {
+    let chunks: Vec<&[usize]> = indices.chunks(READ_CHUNK).collect();
+    if chunks.is_empty() {
+        return;
+    }
+    std::thread::scope(|scope| {
+        let mut current = scope
+            .spawn(|| read_heads(files, chunks[0], head_chars))
+            .join()
+            .unwrap_or_default();
+        let mut idx = 1usize;
+        loop {
+            if is_cancelled() {
+                break;
+            }
+            let next_handle = if idx < chunks.len() {
+                let chunk = chunks[idx];
+                idx += 1;
+                Some(scope.spawn(move || read_heads(files, chunk, head_chars)))
+            } else {
+                None
+            };
+            on_heads(std::mem::take(&mut current));
+            match next_handle {
+                Some(handle) => {
+                    if is_cancelled() {
+                        let _ = handle.join();
+                        break;
+                    }
+                    current = handle.join().unwrap_or_default();
+                }
+                None => break,
+            }
+        }
+    });
+}
+
 fn parent_id_for(rel: &str) -> Option<String> {
     rel.rsplit_once('/').map(|(p, _)| desk_node_id(p))
 }
@@ -1019,6 +1067,7 @@ fn flush_note_batch(
     indexed: &mut i64,
     errors: &mut i64,
     written: &mut HashSet<String>,
+    fresh_titles: &mut HashSet<String>,
 ) {
     if batch.is_empty() {
         return;
@@ -1108,13 +1157,19 @@ fn flush_note_batch(
             let prev_rowid: Option<i64> = fts_row
                 .query_row(params![note.id], |r| r.get(0))
                 .ok();
-            let prev_body_len = prev_rowid
-                .map(|rowid| {
-                    fts_len
-                        .query_row(params![rowid], |r| r.get::<_, i64>(0))
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0);
+            // Title rows written earlier in this fill have an empty body.
+            // Skip the length lookup on that path.
+            let prev_body_len = if fresh_titles.contains(&note.id) {
+                0
+            } else {
+                prev_rowid
+                    .map(|rowid| {
+                        fts_len
+                            .query_row(params![rowid], |r| r.get::<_, i64>(0))
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0)
+            };
             let keep_head =
                 note.fill_depth <= FILL_DEPTH_META && note.body.is_empty() && prev_body_len > 0;
             if !keep_head {
@@ -1163,6 +1218,13 @@ fn flush_note_batch(
                     if tag_ins.execute(params![tag, note.id]).is_err() {
                         *errors += 1;
                     }
+                }
+            }
+            if !keep_head {
+                if note.body.is_empty() && note.fill_depth <= FILL_DEPTH_META {
+                    fresh_titles.insert(note.id.clone());
+                } else {
+                    fresh_titles.remove(&note.id);
                 }
             }
             if written.insert(note.id.clone()) {
@@ -1287,6 +1349,7 @@ pub fn fill_from_disk_with_opts(
     let mut indexed: i64 = 0;
     let mut errors: i64 = 0;
     let mut written: HashSet<String> = HashSet::new();
+    let mut fresh_titles: HashSet<String> = HashSet::new();
     let mut headed: usize = 0;
     let allow_early = opts.until != FillUntil::Meta && !opts.force_rebuild;
     let mut progress = IndexFillProgress {
@@ -1312,6 +1375,7 @@ pub fn fill_from_disk_with_opts(
             &mut indexed,
             &mut errors,
             &mut written,
+            &mut fresh_titles,
         );
         headed = n;
         if n > 0 {
@@ -1341,6 +1405,7 @@ pub fn fill_from_disk_with_opts(
             indexed: &mut indexed,
             errors: &mut errors,
             written: &mut written,
+            fresh_titles: &mut fresh_titles,
             existing: &existing,
             on_scanned: &mut |scanned, indexed_now, errors_now| {
                 if last_discover.elapsed() >= Duration::from_millis(PROGRESS_EMIT_MS) {
@@ -1512,7 +1577,14 @@ pub fn fill_from_disk_with_opts(
         }
         batch.push(meta_fill_note(&files[i]));
         if batch.len() >= META_BATCH {
-            flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+            flush_note_batch(
+                conn,
+                &mut batch,
+                &mut indexed,
+                &mut errors,
+                &mut written,
+                &mut fresh_titles,
+            );
         }
         let scanned = (n + 1) as i64;
         if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
@@ -1531,7 +1603,14 @@ pub fn fill_from_disk_with_opts(
             last_emitted_scanned = scanned;
         }
     }
-    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+    flush_note_batch(
+                conn,
+                &mut batch,
+                &mut indexed,
+                &mut errors,
+                &mut written,
+                &mut fresh_titles,
+            );
     if !title_seed.is_empty() {
         emit(
             &mut progress,
@@ -1603,13 +1682,8 @@ pub fn fill_from_disk_with_opts(
     );
 
     let mut phase_scanned: i64 = 0;
-    for chunk in need_partial.chunks(READ_CHUNK) {
-        if is_cancelled() {
-            break;
-        }
-        let io_started = Instant::now();
-        let heads = read_heads(&files, chunk, short_head);
-        cooperate_after_io(io_started);
+    pipeline_head_reads(&files, &need_partial, short_head, &mut is_cancelled, |heads| {
+        let n = heads.len() as i64;
         for (i, body) in heads {
             let disk = &files[i];
             batch.push(FillNote {
@@ -1626,10 +1700,17 @@ pub fn fill_from_disk_with_opts(
                 fill_depth: FILL_DEPTH_PARTIAL,
             });
             if batch.len() >= FTS_WRITE_BATCH {
-                flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+                flush_note_batch(
+                    conn,
+                    &mut batch,
+                    &mut indexed,
+                    &mut errors,
+                    &mut written,
+                    &mut fresh_titles,
+                );
             }
         }
-        phase_scanned += chunk.len() as i64;
+        phase_scanned += n;
         if should_emit_progress(last_emit, last_emitted_scanned, phase_scanned) {
             emit(
                 &mut progress,
@@ -1645,8 +1726,15 @@ pub fn fill_from_disk_with_opts(
             last_emit = Instant::now();
             last_emitted_scanned = phase_scanned;
         }
-    }
-    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+    });
+    flush_note_batch(
+        conn,
+        &mut batch,
+        &mut indexed,
+        &mut errors,
+        &mut written,
+        &mut fresh_titles,
+    );
     emit(
         &mut progress,
         "ready-fts-partial",
@@ -1689,13 +1777,8 @@ pub fn fill_from_disk_with_opts(
     );
 
     let mut deep_scanned: i64 = 0;
-    for chunk in need_deep.chunks(READ_CHUNK) {
-        if is_cancelled() {
-            break;
-        }
-        let io_started = Instant::now();
-        let heads = read_heads(&files, chunk, deep_head);
-        cooperate_after_io(io_started);
+    pipeline_head_reads(&files, &need_deep, deep_head, &mut is_cancelled, |heads| {
+        let n = heads.len() as i64;
         for (i, body) in heads {
             let disk = &files[i];
             batch.push(FillNote {
@@ -1712,10 +1795,17 @@ pub fn fill_from_disk_with_opts(
                 fill_depth: FILL_DEPTH_DEEP,
             });
             if batch.len() >= FTS_WRITE_BATCH {
-                flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+                flush_note_batch(
+                    conn,
+                    &mut batch,
+                    &mut indexed,
+                    &mut errors,
+                    &mut written,
+                    &mut fresh_titles,
+                );
             }
         }
-        deep_scanned += chunk.len() as i64;
+        deep_scanned += n;
         if should_emit_progress(last_emit, last_emitted_scanned, deep_scanned) {
             emit(
                 &mut progress,
@@ -1731,8 +1821,15 @@ pub fn fill_from_disk_with_opts(
             last_emit = Instant::now();
             last_emitted_scanned = deep_scanned;
         }
-    }
-    flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
+    });
+    flush_note_batch(
+        conn,
+        &mut batch,
+        &mut indexed,
+        &mut errors,
+        &mut written,
+        &mut fresh_titles,
+    );
 
     crate::shell_catalog::mark_catalog_walk_done(conn);
     // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
@@ -2288,11 +2385,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     #[test]
     fn cooperative_fill_limits_leave_room_for_ui() {
         assert!(
-            FTS_WRITE_BATCH <= 256,
+            FTS_WRITE_BATCH <= 512,
             "FTS write batch {FTS_WRITE_BATCH} re-creates multi-second WAL locks"
         );
         assert!(
-            READ_CHUNK <= 256,
+            READ_CHUNK <= 512,
             "read chunk {READ_CHUNK} saturates disk ahead of note open"
         );
         assert!(
