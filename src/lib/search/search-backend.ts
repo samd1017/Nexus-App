@@ -114,6 +114,8 @@ export function describeSearchEngine(): {
   id: SearchEngineId;
   label: string;
   shortLabel: string;
+  /** Calm heading copy. Desktop keeps the SQLite name the soak checks for. */
+  uiLabel: string;
   ranked: boolean;
   indexState: SearchIndexState;
 } {
@@ -123,6 +125,7 @@ export function describeSearchEngine(): {
       id: "fuse",
       label: "Fuse.js",
       shortLabel: "Fuse",
+      uiLabel: "In this vault",
       ranked: false,
       indexState: "idle",
     };
@@ -132,6 +135,7 @@ export function describeSearchEngine(): {
       id: "inverted",
       label: "In-process inverted index",
       shortLabel: "Inverted",
+      uiLabel: "In this vault",
       ranked: false,
       indexState: "idle",
     };
@@ -139,10 +143,12 @@ export function describeSearchEngine(): {
   const idx = getDurableIndex();
   if (idx?.ready && (idx.kind === "sqlite" || idx.kind === "native") && idx.searchFtsAsync) {
     const indexState = getSearchIndexState();
+    const sqlite = sqliteEngineShortLabel(indexState);
     return {
       id: "sqlite-fts5-bm25",
       label: "SQLite FTS5 BM25 (desktop)",
-      shortLabel: sqliteEngineShortLabel(indexState),
+      shortLabel: sqlite,
+      uiLabel: sqlite,
       ranked: true,
       indexState,
     };
@@ -152,6 +158,7 @@ export function describeSearchEngine(): {
       id: "memory-fts-capped",
       label: "In-memory FTS (800-candidate cap, not SQLite BM25)",
       shortLabel: "Memory FTS (capped)",
+      uiLabel: "In this vault",
       ranked: false,
       indexState: "idle",
     };
@@ -160,6 +167,7 @@ export function describeSearchEngine(): {
     id: "inverted",
     label: "In-process inverted index",
     shortLabel: "Inverted",
+    uiLabel: "In this vault",
     ranked: false,
     indexState: "idle",
   };
