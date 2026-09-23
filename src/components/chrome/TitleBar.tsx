@@ -172,11 +172,8 @@ export function TitleBar() {
         <div className="flex max-w-[48%] items-center gap-2 truncate px-1 sm:max-w-none">
           <NexusWordmark
             size="sm"
-            className="text-[var(--text-primary)] max-[420px]:hidden"
+            className="text-[var(--text-primary)] max-[420px]:[&_.nexus-mark]:hidden"
           />
-          <span className="text-[13px] font-medium tracking-tight text-[var(--text-primary)] min-[421px]:hidden">
-            Nexus
-          </span>
           {vaultName && !focusMode ? (
             <>
               <span className="hidden text-[var(--text-muted)] sm:inline">·</span>
