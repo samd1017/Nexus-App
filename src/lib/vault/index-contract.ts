@@ -143,7 +143,11 @@ export const DURABLE_INDEX_REBUILD_RULES = {
   ] as const,
   migrateStrategy: "wipe-derived-tables-and-reapply-ddl" as const,
   upsertPreserveBodyWhenUnloaded: true,
-  bodySnippetMaxChars: 4000,
+  /**
+   * Loaded note text kept for in-memory search. A 4,000-character cut
+   * hid a word that sits further into an opened note.
+   */
+  bodySnippetMaxChars: 262_144,
 } as const;
 
 export const DESKTOP_INDEX_PATHS = {

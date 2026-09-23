@@ -1262,6 +1262,12 @@ async function runCompleteDiskSearchIndex(opts?: {
 		throw err;
 	}
 	if (gen !== vaultGen) return { ...result, skipped: true };
+	// The file pass above stores a short slim head and drops words that
+	// contain digits. A note already open has the rest of its text; put
+	// that text into the same index so search can see it.
+	for (const n of Object.values(useVaultStore.getState().nodes)) {
+		if (n.kind === "note" && n.content !== undefined) upsertDurableNoteFromNode(n);
+	}
 	if (noteCount > 0 && result.indexed === 0 && result.errors > 0) {
 		const root = desktopRoot || st.vaultPath || "vault";
 		const message = desktopFsForbiddenMessage(root);

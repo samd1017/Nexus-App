@@ -19,6 +19,7 @@ import {
 import {
   openMemoryDurableIndex,
   closeDurableIndex,
+  upsertDurableNoteFromNode,
 } from "./src/lib/vault/durable-index.ts";
 
 const body =
@@ -80,6 +81,31 @@ assert.ok(
   hits[0].snippet.toLowerCase().includes("nebulium"),
   "FTS snippet includes match from durable body",
 );
+
+idx.upsertNote({
+  id: "deep",
+  path: "DeepProbe.md",
+  name: "DeepProbe.md",
+  kind: "note",
+  parentId: null,
+  mtime: 1,
+  title: "DeepProbe",
+  ftsText: "a".repeat(2000),
+  slim: true,
+});
+assert.equal(idx.searchFts("zxqwv_nexus_deepbody_991", 5).length, 0);
+upsertDurableNoteFromNode({
+  id: "deep",
+  path: "DeepProbe.md",
+  name: "DeepProbe.md",
+  kind: "note",
+  parentId: null,
+  mtime: 1,
+  content: "b".repeat(8295) + " zxqwv_nexus_deepbody_991",
+});
+const deepHits = idx.searchFts("zxqwv_nexus_deepbody_991", 5);
+assert.equal(deepHits.length, 1, "opened note indexes a digit token past 4000 chars");
+assert.equal(deepHits[0].path, "DeepProbe.md");
 
 // Early-cap intersection: a ubiquitous token must not materialize every posting.
 const many = {};

@@ -20,6 +20,7 @@ import {
   DURABLE_INDEX_SCHEMA_VERSION as CONTRACT_SCHEMA_VERSION,
   DURABLE_INDEX_SQL as CONTRACT_SQL,
   DURABLE_INDEX_CONTRACT,
+  DURABLE_INDEX_REBUILD_RULES,
   MOBILE_VAULT_PATHS as CONTRACT_MOBILE_PATHS,
   DESKTOP_INDEX_PATHS as CONTRACT_DESKTOP_PATHS,
   assertContractInvariants,
@@ -286,7 +287,10 @@ class MemoryDurableIndex implements DurableIndex {
 
   private indexOneNode(n: VaultNode): { folders: number; edges: number; tags: number } {
     if (n.kind === "folder") return { folders: 1, edges: 0, tags: 0 };
-    const body = n.content !== undefined ? n.content.slice(0, 4000) : undefined;
+    const body =
+      n.content !== undefined
+        ? n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.bodySnippetMaxChars)
+        : undefined;
     const tags = n.content !== undefined ? extractTags(n.content) : [];
     const links = n.content !== undefined ? extractWikilinkTargets(n.content) : [];
     const meta: DurableNoteMeta = {
@@ -812,7 +816,9 @@ export function upsertDurableNoteFromNode(n: VaultNode): void {
     return;
   }
   const body =
-    n.content !== undefined ? n.content.slice(0, 4000) : undefined;
+    n.content !== undefined
+      ? n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.bodySnippetMaxChars)
+      : undefined;
   active.upsertNote({
     id: n.id,
     path: n.path,
@@ -848,7 +854,7 @@ export function createMemoryDurableIndex(): DurableIndex {
 export function noteMetaFromNode(n: VaultNode): DurableNoteMeta {
   const body =
     n.kind === "note" && n.content !== undefined
-      ? n.content.slice(0, 4000)
+      ? n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.bodySnippetMaxChars)
       : undefined;
   return {
     id: n.id,

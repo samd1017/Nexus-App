@@ -61,7 +61,7 @@ No client puts the whole vault into the renderer in order to paint a click, a sc
 
 These are real. The browser is paged. It is not desktop.
 
-- The open walk indexes a head of each file so the window can paint. The rest of the note is indexed afterward, up to a fixed ceiling, and the text is not kept. A link or word past that ceiling is still missing.
+- The open walk indexes a head of each file so the window can paint. The rest of the note is indexed afterward, up to a fixed ceiling, and the text is not kept. A link or word past that ceiling is still missing. A small folder shows every note and searches an in-memory index. Opening a note puts the rest of that note into the index, up to the same ceiling, including a rare word that contains digits.
 - A very common search word keeps a bounded list of note ids and does not crowd out a rarer word in the same note. A distinctive word, including one that contains digits, is taken from the start and the end of the note, inside the cap. A bare number is not a search word. Opening a note queues that same pass. The palette returns a page of hits.
 - A new or deleted path updates an open page when the browser reports that path. Without that report, one open folder is checked at a time. A new file in a folder that is not open, or in a directory too large to list that way, shows up when that folder is opened or the vault is opened again.
 - Recent modification times depend on reading file metadata during the open walk. The renderer does not keep those file objects.
