@@ -45,7 +45,7 @@ export function NexusMark({
       aria-label={decorative ? undefined : title}
       style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.45)) drop-shadow(0 0 10px rgba(0,200,255,0.18))" }}
     >
-      <title>{title}</title>
+      {decorative ? null : <title>{title}</title>}
       <defs>
         {/* Face metal */}
         <linearGradient id={`${uid}-face`} x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse">
