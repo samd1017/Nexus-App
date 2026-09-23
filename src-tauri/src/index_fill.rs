@@ -2,7 +2,8 @@
 //!
 //! Cold open must not wait for a full body index before title search.
 //! Desktop commits title/path FTS rows as each directory batch lands and
-//! emits `ready-meta` when that walk's titles are in. `FillUntil::Partial`
+//! emits `ready-meta` when the interactive title window is in, before the
+//! rest of the folder is listed. `FillUntil::Partial`
 //! then reads short heads. `FillUntil::Deep` (the desktop path) reads note
 //! text only for a bounded window: the priority open set, or the first
 //! page of the walk when no priority was passed, never more than
@@ -18,6 +19,7 @@
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -57,6 +59,13 @@ pub const FILL_READ_WORKERS_MAX: usize = 4;
 /// Hot-name titles still sort first if a batch is only partially flushed.
 /// The walk itself now writes a title row for every new path.
 pub const TITLE_FTS_SEED: usize = 2048;
+/// Titles committed before search is announced. The cap does not grow with
+/// the vault. The rest of the folder is listed afterward, with a hard yield
+/// between batches, and that listing is not the interactive path.
+pub const TITLE_INTERACTIVE_CAP: usize = 512;
+/// Sleep between title batches after the interactive window. Long enough
+/// that note open, scroll, and the graph can use the disk.
+pub const DISCOVER_TAIL_YIELD_MS: u64 = 32;
 /// Short heads committed while the directory walk is still running.
 /// Root notes first, so the open page has tags before the vault is listed.
 /// Once this many notes already have a head, later opens do not peek further.
@@ -580,72 +589,155 @@ struct DiscoverPublish<'a> {
     fresh_titles: &'a mut HashSet<String>,
     existing: &'a HashMap<String, ExistingNote>,
     on_scanned: &'a mut dyn FnMut(i64, i64, i64),
+    /// After the interactive title window, each batch sleeps.
+    tail_yield: bool,
 }
 
-fn collect_md_notes_publishing(
-    root: &Path,
-    mut publish: Option<DiscoverPublish<'_>>,
-) -> Vec<DiskNote> {
-    use std::time::SystemTime;
-    let mut out = Vec::new();
-    let mut stack: Vec<(PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
-    while let Some((dir, rel)) = stack.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let mut dirs: Vec<(PathBuf, String)> = Vec::new();
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
-                continue;
-            }
-            let ft = match entry.file_type() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let child_rel = if rel.is_empty() {
-                name.clone()
-            } else {
-                format!("{rel}/{name}")
-            };
-            if ft.is_dir() {
-                dirs.push((entry.path(), child_rel));
-                continue;
-            }
-            if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
-                continue;
-            }
-            let meta = entry.metadata().ok();
-            let mtime = meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            let size = meta.map(|m| m.len() as i64).unwrap_or(0);
-            out.push(DiskNote {
-                abs: entry.path(),
-                rel: child_rel,
-                name,
-                mtime,
-                size,
-            });
-            if out.len() % DISCOVER_BATCH == 0 {
-                if let Some(sink) = publish.as_mut() {
-                    publish_discovered(sink, &out[out.len() - DISCOVER_BATCH..], out.len() as i64);
-                }
-            }
+struct LiteEntry {
+    abs: PathBuf,
+    rel: String,
+    name: String,
+}
+
+fn list_dir_children(dir: &Path, rel: &str) -> (Vec<LiteEntry>, Vec<LiteEntry>) {
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return (files, dirs),
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
+            continue;
         }
-        stack.extend(dirs);
+        let Ok(ft) = entry.file_type() else { continue };
+        let child_rel = if rel.is_empty() {
+            name.clone()
+        } else {
+            format!("{rel}/{name}")
+        };
+        let lite = LiteEntry {
+            abs: entry.path(),
+            rel: child_rel,
+            name,
+        };
+        if ft.is_dir() {
+            dirs.push(lite);
+        } else if ft.is_file() && lite.name.to_ascii_lowercase().ends_with(".md") {
+            files.push(lite);
+        }
+    }
+    files.sort_by(|a, b| {
+        is_title_seed_hot_name(&b.name).cmp(&is_title_seed_hot_name(&a.name))
+    });
+    // `pop` takes the tail. Hot names were sorted to the front.
+    files.reverse();
+    (files, dirs)
+}
+
+fn disk_note_from_lite(lite: LiteEntry) -> DiskNote {
+    use std::time::SystemTime;
+    let meta = std::fs::metadata(&lite.abs).ok();
+    let mtime = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let size = meta.map(|m| m.len() as i64).unwrap_or(0);
+    DiskNote {
+        abs: lite.abs,
+        rel: lite.rel,
+        name: lite.name,
+        mtime,
+        size,
+    }
+}
+
+fn flush_unpublished(
+    publish: &mut Option<DiscoverPublish<'_>>,
+    out: &[DiskNote],
+    published: &mut usize,
+) {
+    if *published >= out.len() {
+        return;
     }
     if let Some(sink) = publish.as_mut() {
-        let rem = out.len() % DISCOVER_BATCH;
-        if rem > 0 {
-            publish_discovered(sink, &out[out.len() - rem..], out.len() as i64);
+        publish_discovered(sink, &out[*published..], out.len() as i64);
+    }
+    *published = out.len();
+}
+
+/// List the vault. `cap` stops the interactive portion: once that many notes
+/// are in hand the callback runs (title search, then the open-note bodies)
+/// and the rest of the names are listed with `tail_yield`. `usize::MAX`
+/// never pauses. Hot-named files in a directory are stated before the rest,
+/// and priority directories are entered first.
+fn collect_md_notes_publishing<'a>(
+    root: &Path,
+    mut publish: Option<DiscoverPublish<'_>>,
+    prefixes: &[String],
+    cap: usize,
+    is_cancelled: &RefCell<Box<dyn FnMut() -> bool + 'a>>,
+    on_cap: &mut dyn FnMut(&mut DiscoverPublish<'_>, &[DiskNote]),
+) -> (Vec<DiskNote>, bool) {
+    let mut out = Vec::new();
+    let mut published = 0usize;
+    let mut capped = cap == usize::MAX;
+    let mut tail = false;
+    let mut stack: Vec<(PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
+    let mut pending_files: Vec<LiteEntry> = Vec::new();
+    let mut pending_dirs: Vec<LiteEntry> = Vec::new();
+
+    loop {
+        if tail {
+            let stop = {
+                let mut cancel = is_cancelled.borrow_mut();
+                (*cancel)()
+            };
+            if stop {
+                flush_unpublished(&mut publish, &out, &mut published);
+                return (out, false);
+            }
+        }
+        if pending_files.is_empty() && pending_dirs.is_empty() {
+            let Some((dir, rel)) = stack.pop() else {
+                break;
+            };
+            let (files, mut dirs) = list_dir_children(&dir, &rel);
+            dirs.sort_by(|a, b| {
+                let ap = is_priority_rel(&a.rel, prefixes);
+                let bp = is_priority_rel(&b.rel, prefixes);
+                ap.cmp(&bp)
+            });
+            pending_files = files;
+            pending_dirs = dirs;
+        }
+        if let Some(lite) = pending_files.pop() {
+            out.push(disk_note_from_lite(lite));
+            if out.len() % DISCOVER_BATCH == 0 {
+                flush_unpublished(&mut publish, &out, &mut published);
+            }
+            if !capped && out.len() >= cap {
+                flush_unpublished(&mut publish, &out, &mut published);
+                if let Some(sink) = publish.as_mut() {
+                    on_cap(sink, &out);
+                    sink.tail_yield = true;
+                }
+                capped = true;
+                tail = true;
+            }
+            continue;
+        }
+        // Non-priority directories were sorted first, so they go under
+        // the priority directories on the stack.
+        for dir in pending_dirs.drain(..) {
+            stack.push((dir.abs, dir.rel));
         }
     }
-    out
+    flush_unpublished(&mut publish, &out, &mut published);
+    (out, true)
 }
 
 fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanned: i64) {
@@ -687,7 +779,11 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
         *sink.indexed = indexed_before;
         *sink.errors += titles.len() as i64;
     }
-    cooperate_after_write(started);
+    if sink.tail_yield {
+        std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+    } else {
+        cooperate_after_write(started);
+    }
     if sink.allow_heads && *sink.headed < EARLY_HEAD_CAP {
         let wrote = commit_early_heads(
             sink.conn,
@@ -1021,7 +1117,7 @@ fn pipeline_head_reads(
     files: &[DiskNote],
     indices: &[usize],
     head_chars: usize,
-    is_cancelled: &mut impl FnMut() -> bool,
+    is_cancelled: &mut dyn FnMut() -> bool,
     mut on_heads: impl FnMut(Vec<(usize, String)>),
 ) {
     let chunks: Vec<&[usize]> = indices.chunks(READ_CHUNK).collect();
@@ -1070,7 +1166,7 @@ fn index_note_heads(
     indices: &[usize],
     head_chars: usize,
     fill_depth: i64,
-    is_cancelled: &mut impl FnMut() -> bool,
+    is_cancelled: &mut dyn FnMut() -> bool,
     batch: &mut Vec<FillNote>,
     indexed: &mut i64,
     errors: &mut i64,
@@ -1103,6 +1199,58 @@ fn index_note_heads(
         }
         on_chunk(n, *indexed, *errors);
     });
+}
+
+/// Body-index the notes already listed. Returns whether every one of them
+/// is inside the open window (a later directory is a separate question).
+fn index_prefix_deep(
+    conn: &mut Connection,
+    files: &[DiskNote],
+    priority: &[String],
+    deep_head: usize,
+    is_cancelled: &mut dyn FnMut() -> bool,
+    batch: &mut Vec<FillNote>,
+    indexed: &mut i64,
+    errors: &mut i64,
+    written: &mut HashSet<String>,
+    fresh_titles: &mut HashSet<String>,
+) {
+    let headed = headed_depths(conn);
+    let mut need: Vec<usize> = Vec::new();
+    for (i, file) in files.iter().enumerate() {
+        let depth = headed.get(&file.rel).copied().unwrap_or(FILL_DEPTH_META);
+        if depth < FILL_DEPTH_DEEP {
+            need.push(i);
+        }
+    }
+    let rels: Vec<String> = files.iter().map(|f| f.rel.clone()).collect();
+    let pri_order = order_indices_for_fill(&rels, priority);
+    let pri_rank: HashMap<usize, usize> =
+        pri_order.iter().enumerate().map(|(r, i)| (*i, r)).collect();
+    let window = content_read_window(files.len(), priority, files, &pri_rank);
+    let window_set: HashSet<usize> = window.iter().copied().collect();
+    let mut eager: Vec<usize> = need
+        .into_iter()
+        .filter(|i| window_set.contains(i))
+        .collect();
+    eager.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
+    let mut headed_rows = 0i64;
+    index_note_heads(
+        conn,
+        files,
+        &eager,
+        deep_head,
+        FILL_DEPTH_DEEP,
+        is_cancelled,
+        batch,
+        indexed,
+        errors,
+        written,
+        fresh_titles,
+        &mut headed_rows,
+        |_, _, _| {},
+    );
+    flush_note_batch(conn, batch, indexed, errors, written, fresh_titles);
 }
 
 fn parent_id_for(rel: &str) -> Option<String> {
@@ -1420,7 +1568,7 @@ fn emit(
     skipped: i64,
     errors: i64,
     message: Option<String>,
-    on_progress: &mut impl FnMut(&IndexFillProgress),
+    on_progress: &mut dyn FnMut(&IndexFillProgress),
 ) {
     progress.phase = phase.into();
     progress.search_state = search_state.into();
@@ -1462,11 +1610,11 @@ pub fn fill_from_disk_on_conn(
 /// (not after cataloging every empty body). Deep does not read a short
 /// head and then the same file again. `is_cancelled` is checked between
 /// batches so a remount can preempt.
-pub fn fill_from_disk_with_opts(
+pub fn fill_from_disk_with_opts<'a>(
     conn: &mut Connection,
     vault_root: &Path,
     opts: FillOpts<'_>,
-    mut is_cancelled: impl FnMut() -> bool,
+    is_cancelled: impl FnMut() -> bool + 'a,
     mut on_progress: impl FnMut(&IndexFillProgress),
 ) -> Result<IndexFillResult, String> {
     ensure_fill_depth_column(conn);
@@ -1528,7 +1676,25 @@ pub fn fill_from_disk_with_opts(
     }
     let existing = load_existing_notes(conn);
     let mut last_discover = Instant::now();
-    let files = collect_md_notes_publishing(
+    struct ProgressBridge<'a> {
+        progress: IndexFillProgress,
+        on_progress: &'a mut dyn FnMut(&IndexFillProgress),
+    }
+    let bridge = RefCell::new(ProgressBridge {
+        progress,
+        on_progress: &mut on_progress,
+    });
+    let interactive_done = Cell::new(false);
+    let interactive_edges = Cell::new(0i64);
+    let mut prefix_batch: Vec<FillNote> = Vec::new();
+    let is_cancelled: RefCell<Box<dyn FnMut() -> bool + 'a>> =
+        RefCell::new(Box::new(is_cancelled));
+    let title_cap = if opts.until == FillUntil::Deep {
+        TITLE_INTERACTIVE_CAP
+    } else {
+        usize::MAX
+    };
+    let (files, walk_done) = collect_md_notes_publishing(
         vault_root,
         Some(DiscoverPublish {
             conn,
@@ -1541,10 +1707,13 @@ pub fn fill_from_disk_with_opts(
             written: &mut written,
             fresh_titles: &mut fresh_titles,
             existing: &existing,
+            tail_yield: false,
             on_scanned: &mut |scanned, indexed_now, errors_now| {
                 if last_discover.elapsed() >= Duration::from_millis(PROGRESS_EMIT_MS) {
+                    let mut bridge = bridge.borrow_mut();
+                    let b = &mut *bridge;
                     emit(
-                        &mut progress,
+                        &mut b.progress,
                         "meta",
                         "",
                         scanned,
@@ -1552,13 +1721,116 @@ pub fn fill_from_disk_with_opts(
                         0,
                         errors_now,
                         Some("Cataloging paths…".into()),
-                        &mut on_progress,
+                        &mut *b.on_progress,
                     );
                     last_discover = Instant::now();
                 }
             },
         }),
+        opts.priority_rels,
+        title_cap,
+        &is_cancelled,
+        &mut |sink, prefix| {
+            let scanned = prefix.len() as i64;
+            {
+                let mut bridge = bridge.borrow_mut();
+                let b = &mut *bridge;
+                emit(
+                    &mut b.progress,
+                    "ready-meta",
+                    "ready-meta",
+                    scanned,
+                    *sink.indexed,
+                    0,
+                    *sink.errors,
+                    Some("Title/path search ready".into()),
+                    &mut *b.on_progress,
+                );
+            }
+            {
+                let mut cancel = is_cancelled.borrow_mut();
+                index_prefix_deep(
+                    sink.conn,
+                    prefix,
+                    opts.priority_rels,
+                    deep_head,
+                    &mut **cancel,
+                    &mut prefix_batch,
+                    sink.indexed,
+                    sink.errors,
+                    sink.written,
+                    sink.fresh_titles,
+                );
+            }
+            let edges = {
+                let mut bridge = bridge.borrow_mut();
+                let b = &mut *bridge;
+                let edges = finalize_link_edges(
+                    sink.conn,
+                    0,
+                    *sink.indexed,
+                    true,
+                    &mut b.progress,
+                );
+                emit(
+                    &mut b.progress,
+                    "ready-fts-partial",
+                    "ready-fts-partial",
+                    scanned,
+                    *sink.indexed,
+                    0,
+                    *sink.errors,
+                    Some("Open-set heads are searchable".into()),
+                    &mut *b.on_progress,
+                );
+                emit(
+                    &mut b.progress,
+                    "done",
+                    "ready-fts-partial",
+                    scanned,
+                    *sink.indexed,
+                    0,
+                    *sink.errors,
+                    Some("Titles and open notes are searchable".into()),
+                    &mut *b.on_progress,
+                );
+                edges
+            };
+            interactive_edges.set(edges);
+            interactive_done.set(true);
+        },
     );
+    let mut progress = bridge.borrow().progress.clone();
+    drop(bridge);
+    if interactive_done.get() {
+        let notes = files.len() as i64;
+        if walk_done {
+            let seen: HashSet<String> = files.iter().map(|f| f.rel.clone()).collect();
+            let _ = remove_stale_notes(conn, &existing, &seen);
+            crate::shell_catalog::mark_catalog_walk_done(conn);
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+            emit(
+                &mut progress,
+                "catalog-counted",
+                "ready-fts-partial",
+                notes,
+                indexed,
+                0,
+                errors,
+                None,
+                &mut on_progress,
+            );
+        }
+        return Ok(IndexFillResult {
+            indexed,
+            skipped: 0,
+            errors,
+            notes,
+            edges: interactive_edges.get(),
+            search_state: "ready-fts-partial".into(),
+        });
+    }
+    let mut is_cancelled = is_cancelled.into_inner();
     let total = files.len() as i64;
     let headed = headed_depths(conn);
     progress.total = total;
@@ -2549,6 +2821,114 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     }
 
     #[test]
+    fn deep_titles_are_searchable_before_the_rest_of_the_folder() {
+        let (vault, db) = temp_pair("titles");
+        for i in 0..TITLE_INTERACTIVE_CAP + 40 {
+            write_note(&vault, &format!("aa/n{i:04}.md"), "early body\n");
+        }
+        write_note(&vault, "zz/LateTitleToken.md", &format!("{}latebodytokenzz\n", "x".repeat(900)));
+        let mut conn = open_test_conn(&db);
+        let mut at_ready = false;
+        let mut late_at_ready = false;
+        let mut late_at_done = false;
+        let mut done_scanned = -1i64;
+        let result = fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &["aa".into()],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && !at_ready {
+                    at_ready = true;
+                    late_at_ready = fts_has_at(&db, "LateTitleToken");
+                    assert!(
+                        p.scanned <= TITLE_INTERACTIVE_CAP as i64,
+                        "ready-meta scanned {} must stay inside the title window",
+                        p.scanned
+                    );
+                }
+                if p.phase == "done" {
+                    late_at_done = fts_has_at(&db, "LateTitleToken");
+                    done_scanned = p.scanned;
+                }
+            },
+        )
+        .unwrap();
+        assert!(at_ready, "title search must be announced before the walk finishes");
+        assert!(!late_at_ready, "a later folder is not required for title search");
+        assert!(!late_at_done, "Ready must not wait for the rest of the listing");
+        assert!(done_scanned <= TITLE_INTERACTIVE_CAP as i64);
+        assert_eq!(result.notes, (TITLE_INTERACTIVE_CAP as i64) + 41);
+        assert!(
+            fts_has(&conn, "LateTitleToken"),
+            "the rest of the titles still land after Ready"
+        );
+        assert!(
+            !fts_has(&conn, "latebodytokenzz"),
+            "the title tail does not read note bodies"
+        );
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn cancelled_title_tail_keeps_notes_it_has_not_listed_yet() {
+        let (vault, db) = temp_pair("tail-cancel");
+        for i in 0..TITLE_INTERACTIVE_CAP + 8 {
+            write_note(&vault, &format!("aa/n{i:04}.md"), "early body\n");
+        }
+        write_note(&vault, "zz/LateTitleToken.md", "late body\n");
+        let mut conn = open_test_conn(&db);
+        fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &["aa".into()],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |_| {},
+        )
+        .unwrap();
+        assert!(fts_has(&conn, "LateTitleToken"));
+        let mut cancel = true;
+        fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &["aa".into()],
+                until: FillUntil::Deep,
+            },
+            || {
+                let stop = cancel;
+                cancel = true;
+                stop
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert!(
+            fts_has(&conn, "LateTitleToken"),
+            "stopping the listing must not drop a note it has not reached"
+        );
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
     fn deep_fill_indexes_the_open_window_and_stops() {
         let (vault, db) = temp_pair("eager");
         let n = EAGER_CONTENT_CAP + 20;
@@ -2694,6 +3074,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert!(
             EAGER_CONTENT_CAP <= 1024 && EAGER_CONTENT_CAP >= 200,
             "open-set head cap {EAGER_CONTENT_CAP} must stay a page, not the vault"
+        );
+        assert_eq!(TITLE_INTERACTIVE_CAP, EAGER_CONTENT_CAP);
+        assert!(
+            DISCOVER_TAIL_YIELD_MS >= 16 && DISCOVER_TAIL_YIELD_MS <= 80,
+            "title tail yield {DISCOVER_TAIL_YIELD_MS}ms must leave the disk free without stalling the listing"
         );
         assert_eq!(worker_count(1), 1);
         assert_eq!(worker_count(10_000), FILL_READ_WORKERS_MAX);

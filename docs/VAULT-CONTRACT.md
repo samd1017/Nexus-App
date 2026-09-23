@@ -40,6 +40,7 @@ No client puts the whole vault into the renderer in order to paint a click, a sc
 
 - Copy `note_meta` or `link_edge` into the WebView on open.
 - Read every remaining note body after titles are searchable.
+- Wait until every file is listed before the open page can be searched by title.
 - Require a Nexus account.
 - Upload the folder to a Nexus server.
 

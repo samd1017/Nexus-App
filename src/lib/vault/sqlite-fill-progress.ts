@@ -63,8 +63,8 @@ export function searchStateFromPhase(phase: string): SearchIndexState {
   ) {
     return "ready-fts-partial";
   }
-  // "meta" is the path walk. Batches commit titles along the way, but
-  // FTS is not claimable until Rust emits ready-meta (walk finished).
+  // "meta" is the path walk. Batches commit titles along the way.
+  // ready-meta is the interactive window, not the end of the listing.
   if (phase === "ready-meta") return "ready-meta";
   return "idle";
 }

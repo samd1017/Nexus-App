@@ -964,12 +964,13 @@ fn fill_from_disk_job(
     )
 }
 
-/// Walk the vault on disk in phases: title/path FTS seed (`ready-meta`),
-/// then deep heads for a bounded open window. Desktop does not read every
-/// remaining note, and does not write every empty-body FTS row before title
-/// search is live. Runs on the blocking pool so the WebView stays responsive.
-/// Emits `vault-index-progress` (`ready-meta` / `ready-fts-partial` / `done`).
-/// Incremental: skip unchanged path+mtime+size at the already-reached depth.
+/// Walk the vault on disk in phases. Title search for a fixed window is
+/// announced before the rest of the folder is listed. That listing continues
+/// afterward and yields between batches. Note text is read only for the
+/// open window. Emits `vault-index-progress` (`ready-meta` /
+/// `ready-fts-partial` / `done`, then `catalog-counted` when the listing
+/// finishes). Incremental: skip unchanged path+mtime+size at the
+/// already-reached depth.
 #[tauri::command]
 pub async fn vault_index_fill_from_disk(
     app: tauri::AppHandle,

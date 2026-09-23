@@ -199,17 +199,24 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     const existing = fillInflightByDb.get(this.dbPath);
     if (existing) {
       try {
-        return await existing;
+        return await this.settleFill(existing, opts?.settleAtPhase ?? "done");
       } finally {
         detach();
       }
     }
-    const run = this.runFillFromDisk(headChars, {
+    let run!: Promise<FillResult>;
+    const releaseInteractive = () => {
+      if (fillInflightByDb.get(this.dbPath) === run) {
+        fillInflightByDb.delete(this.dbPath);
+      }
+    };
+    run = this.runFillFromDisk(headChars, {
       forceRebuild: opts?.forceRebuild === true,
       shortHeadChars: opts?.shortHeadChars,
       priorityPaths: opts?.priorityPaths,
+      onInteractive: releaseInteractive,
     }).finally(() => {
-      fillInflightByDb.delete(this.dbPath);
+      releaseInteractive();
       detach();
     });
     fillInflightByDb.set(this.dbPath, run);
@@ -267,6 +274,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       forceRebuild: boolean;
       shortHeadChars?: number;
       priorityPaths?: string[];
+      onInteractive?: () => void;
     },
   ): Promise<FillResult> {
     type FillPayload = {
@@ -334,7 +342,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
                   return;
                 }
                 if (phase === "done") {
-                  finish(resolve, toResult(p));
+                  opts.onInteractive?.();
                 }
               },
             );
@@ -364,11 +372,13 @@ export class NativeSqliteDurableIndex implements DurableIndex {
               settled = true;
               reject(err);
             }
+          } finally {
+            unlisten?.();
           }
         })();
       });
     } finally {
-      unlisten?.();
+      /* listener stays until the invoke returns, including the title tail */
     }
   }
 

@@ -1067,6 +1067,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 		try {
 			const seededBefore = await seedLinkIndexFromDurable(sqlite);
 			if (!seededBefore) vaultLinkIndex.markPending();
+			let interactiveFillSettled = false;
 			const native = await sqlite.fillFromDisk(8000, {
 				forceRebuild: opts?.forceRebuild === true,
 				settleAtPhase: opts?.waitFor === "done" ? "done" : "meta",
@@ -1074,6 +1075,21 @@ async function runCompleteDiskSearchIndex(opts?: {
 				priorityPaths: diskFillPriorityPaths(),
 				onProgress: (p) => {
 					if (gen !== vaultGen) return;
+					// Ready is the interactive window. Later title batches must
+					// not put the banner back on a full-folder listing.
+					if (interactiveFillSettled && p.phase !== "error") {
+						if (p.phase === "catalog-counted") {
+							const seen = p.total > 0 ? p.total : p.scanned;
+							if (seen > 0 && useVaultStore.getState().shellCatalog) {
+								const cur = useVaultStore.getState().catalogNoteCount;
+								useVaultStore.setState({
+									catalogNoteCount: Math.max(cur, seen),
+								});
+								noteShellFillProgress();
+							}
+						}
+						return;
+					}
 					// Rust leaves total at 0 until the walk finishes. A startup
 					// catalog count (often 1) must not become the denominator.
 					const reportedTotal = p.total > 0 ? p.total : 0;
@@ -1119,6 +1135,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 						}
 					}
 					if (p.phase === "done") {
+						interactiveFillSettled = true;
 						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
 						const doneTotal = reportedTotal > 0 ? reportedTotal : noteCount;
