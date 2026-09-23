@@ -846,7 +846,19 @@ async function seedLinkIndexFromDurable(
 	try {
 		const groups = await index.listLinkGroups();
 		if (!groups.length && !opts?.allowEmpty) return 0;
-		return seedLinkIndex(groups).edgeCount;
+		const seeded = seedLinkIndex(groups);
+		// A note created while the index was filling (today's daily) is in the
+		// store and not in the edge list. Put its loaded body back so one new
+		// file does not make the map look incomplete.
+		const nodes = useVaultStore.getState().nodes;
+		if (nodes) {
+			for (const n of Object.values(nodes)) {
+				if (n.kind !== "note" || n.content === undefined) continue;
+				if (vaultLinkIndex.outgoing.has(n.id)) continue;
+				vaultLinkIndex.setNoteLinks(n.id, n.content);
+			}
+		}
+		return seeded.edgeCount;
 	} catch (err) {
 		console.warn("[nexus] seed link index failed", err);
 		return 0;

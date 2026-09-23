@@ -32,16 +32,21 @@ function incomingCount(
 ): number {
   const ids = new Set<string>();
   const noteCount = ensureVaultIndex(nodes).noteCount;
-  const covered = vaultLinkIndex.coversNoteCount(noteCount);
-  if (covered) {
-    for (const key of noteTargetKeys(note)) {
-      for (const src of vaultLinkIndex.getBacklinkSources(key)) {
-        if (src !== note.id) ids.add(src);
-      }
+  // A seeded map can be one note short (today's daily, not in the index yet).
+  // That must not zero every incoming count. Read the map first; only a small
+  // vault with a cold map falls through to a body scan.
+  for (const key of noteTargetKeys(note)) {
+    for (const src of vaultLinkIndex.getBacklinkSources(key)) {
+      if (src !== note.id) ids.add(src);
     }
+  }
+  if (
+    ids.size > 0 ||
+    vaultLinkIndex.coversNoteCount(noteCount) ||
+    shouldUseEgoGraph(noteCount)
+  ) {
     return ids.size;
   }
-  if (shouldUseEgoGraph(noteCount)) return 0;
   for (const b of getBacklinks(note, nodes)) ids.add(b.fromId);
   return ids.size;
 }
