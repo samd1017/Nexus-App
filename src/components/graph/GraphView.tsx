@@ -514,24 +514,25 @@ function tintOrbHover(
   obj.traverse((child) => {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh || !mesh.userData.nexusCore) return;
-    const mat = mesh.material as THREE.MeshBasicMaterial & {
+    const mat = mesh.material as THREE.Material & {
+      color?: THREE.Color;
+      uniforms?: { uColor?: { value: THREE.Color } };
       userData: Record<string, unknown>;
     };
-    if (!mat?.color) return;
+    const color = mat.uniforms?.uColor?.value ?? mat.color;
+    if (!color) return;
     void accent;
     if (on) {
       if (mat.userData.__w5HoverBase == null) {
-        mat.userData.__w5HoverBase = mat.color.clone();
+        mat.userData.__w5HoverBase = color.clone();
       }
       const base = mat.userData.__w5HoverBase as THREE.Color;
-      mat.color.copy(base).multiplyScalar(1.22);
-      mat.needsUpdate = true;
+      color.copy(base).multiplyScalar(1.1);
     } else {
       const b = mat.userData.__w5HoverBase as THREE.Color | undefined;
       if (!b) return;
-      mat.color.copy(b);
+      color.copy(b);
       delete mat.userData.__w5HoverBase;
-      mat.needsUpdate = true;
     }
   });
 }
