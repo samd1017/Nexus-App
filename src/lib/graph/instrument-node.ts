@@ -1,6 +1,6 @@
 /**
- * Graph nodes as machined instrument tokens.
- * Matte gunmetal discs — no clearcoat spheres, no glow shells.
+ * Graph nodes as dark glass spheres.
+ * Light sits inside the volume. The shell stays soft — no clearcoat hotspot.
  */
 
 import * as THREE from "three";
@@ -21,10 +21,7 @@ export type InstrumentNodeInput = {
   noteCount?: number;
 };
 
-const GUNMETAL = new THREE.Color(0x12161b);
-const FACE = new THREE.Color(0x3c444e);
-const LIP = new THREE.Color(0x6a7380);
-const STEEL = new THREE.Color(0x2a313a);
+const SHELL = new THREE.Color(0x10161e);
 
 function hashHue(key: string): number {
   let h = 2166136261;
@@ -33,13 +30,12 @@ function hashHue(key: string): number {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  const hues = [205, 168, 222, 28, 132, 188, 248, 12];
+  const hues = [200, 168, 218, 26, 188, 242, 12, 152];
   return hues[Math.abs(h) % hues.length] / 360;
 }
 
-/** A small index pip so folders stay distinguishable without painting the token. */
-function indexTint(key: string): THREE.Color {
-  return new THREE.Color().setHSL(hashHue(key), 0.28, 0.42);
+function coreTint(key: string, folder: boolean): THREE.Color {
+  return new THREE.Color().setHSL(hashHue(key), folder ? 0.42 : 0.28, folder ? 0.46 : 0.4);
 }
 
 function truncateLabel(name: string | undefined | null, max = 22): string {
@@ -79,7 +75,7 @@ function makeLabel(
   label.strokeColor = "#05070a";
   const th = active ? (full ? 2.4 : 1.85) : full ? 1.7 : 1.35;
   label.textHeight = th;
-  label.position.y = radius * 0.22 + th * 0.85 + 0.35;
+  label.position.y = radius + th * 0.72 + 0.3;
   label.renderOrder = active || hover ? 20 : 8;
   label.material.depthTest = false;
   label.material.depthWrite = false;
@@ -89,24 +85,19 @@ function makeLabel(
   return label;
 }
 
-function metal(
-  color: THREE.Color,
-  roughness: number,
-  metalness = 0.78,
-): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness,
-    metalness,
-    envMapIntensity: 0.28,
-    emissive: new THREE.Color(0x000000),
-    emissiveIntensity: 0,
+/** Unlit shell. A lit glass shader puts a hard specular dot on the sphere. */
+function glassShell(opacity: number, tint: THREE.Color): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: SHELL.clone().lerp(tint, 0.22),
+    transparent: true,
+    opacity,
+    depthWrite: false,
   });
 }
 
 /**
- * One graph node. Folder, note, aggregate, and missing-link tokens share
- * the same machined disc so the map reads as one instrument.
+ * One graph node. A dim glass shell around a soft core, for folders,
+ * notes, aggregates, and missing links.
  */
 export function createInstrumentNode(
   node: InstrumentNodeInput,
@@ -136,7 +127,7 @@ export function createInstrumentNode(
   const dim = !!focusId && !inFocus && dimStrength > 0;
   const full = mode === "fullscreen";
 
-  const segs = lowDetail ? 18 : full ? 36 : 28;
+  const segs = lowDetail ? 18 : full ? 40 : 32;
   const sizeBoost = desktopBoost ? 1.08 : 1;
   const base = (full ? 2.7 : 2.15) * sizeBoost;
   const rank = isActive || isHover ? 1 : isHub || isFolderNode ? 0.86 : 0.7;
@@ -150,129 +141,79 @@ export function createInstrumentNode(
     colorBy === "tag" && node.tag
       ? `tag:${node.tag}`
       : node.folder || "__root__";
-  const pip = indexTint(tintKey);
+  const glow = isGhost
+    ? new THREE.Color(0x3a4452)
+    : coreTint(tintKey, isFolderNode).lerp(accent, isActive || isHover ? 0.28 : 0.08);
+  if (dim) glow.multiplyScalar(1 - dimStrength * 0.55);
 
-  const opacity = dim
-    ? Math.max(0.12, 1 - dimStrength * 0.88)
+  const shellOpacity = dim
+    ? Math.max(0.08, 0.34 * (1 - dimStrength * 0.75))
     : isGhost
-      ? 0.45
+      ? 0.22
       : isAggregate
-        ? 0.72
-        : 1;
-  const transparent = dim || isGhost || isAggregate;
+        ? 0.26
+        : 0.34;
 
-  const height = Math.max(0.28, radius * 0.14);
-  const faceLift = height * 0.5 + 0.02;
-
-  if (!isGhost && !isAggregate) {
-    const bodyColor = GUNMETAL.clone();
-    if (dim) bodyColor.multiplyScalar(1 - dimStrength * 0.45);
-    const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius, radius, height, segs, 1),
-      metal(bodyColor, 0.78, 0.62),
+  if (!isGhost) {
+    const coreScale = isAggregate ? 0.46 : 0.58;
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(radius * coreScale, Math.max(16, segs - 8), Math.max(12, segs - 10)),
+      new THREE.MeshBasicMaterial({
+        color: glow.clone().multiplyScalar(isActive ? 1.15 : isHover ? 1.0 : isFolderNode ? 0.85 : 0.7),
+      }),
     );
-    body.userData.nexusBody = true;
-    body.castShadow = false;
-    body.receiveShadow = false;
-    body.renderOrder = 1;
-    const bodyMat = body.material as THREE.MeshStandardMaterial;
-    bodyMat.transparent = transparent;
-    bodyMat.opacity = opacity;
-    bodyMat.depthWrite = !transparent;
-    group.add(body);
+    core.userData.nexusCore = true;
+    core.renderOrder = 1;
+    group.add(core);
 
-    const faceColor = FACE.clone().lerp(pip, isFolderNode ? 0.16 : 0.06);
-    if (isActive || isHover) faceColor.lerp(new THREE.Color(0xc5ced8), 0.12);
-    if (dim) faceColor.multiplyScalar(1 - dimStrength * 0.4);
-    const face = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius * 0.94, radius * 0.94, 0.06, segs, 1),
-      metal(faceColor, 0.84, 0.35),
+    const haze = new THREE.Mesh(
+      new THREE.SphereGeometry(radius * 0.84, Math.max(16, segs - 6), Math.max(12, segs - 8)),
+      new THREE.MeshBasicMaterial({
+        color: glow,
+        transparent: true,
+        opacity: dim ? 0.06 : isActive ? 0.22 : 0.16,
+        depthWrite: false,
+        blending: THREE.NormalBlending,
+      }),
     );
-    face.position.y = faceLift;
-    face.renderOrder = 2;
-    const faceMat = face.material as THREE.MeshStandardMaterial;
-    faceMat.transparent = transparent;
-    faceMat.opacity = opacity;
-    faceMat.depthWrite = !transparent;
-    group.add(face);
-
-    const lip = new THREE.Mesh(
-      new THREE.TorusGeometry(radius * 0.995, Math.max(0.02, radius * 0.012), 5, segs),
-      metal(LIP, 0.55, 0.72),
-    );
-    lip.rotation.x = Math.PI / 2;
-    lip.position.y = height * 0.5;
-    lip.renderOrder = 3;
-    const lipMat = lip.material as THREE.MeshStandardMaterial;
-    lipMat.transparent = transparent;
-    lipMat.opacity = dim ? opacity : 0.95;
-    group.add(lip);
-
-    if (isFolderNode) {
-      const groove = new THREE.Mesh(
-        new THREE.TorusGeometry(radius * 0.62, Math.max(0.02, radius * 0.008), 4, segs),
-        metal(STEEL, 0.64, 0.7),
-      );
-      groove.rotation.x = Math.PI / 2;
-      groove.position.y = faceLift + height * 0.05;
-      groove.renderOrder = 3;
-      group.add(groove);
-    }
-
-    const mark = new THREE.Mesh(
-      new THREE.BoxGeometry(radius * 0.08, height * 0.16, radius * 0.22),
-      metal(pip, 0.5, 0.4),
-    );
-    mark.position.set(radius * 0.78, height * 0.42, 0);
-    mark.renderOrder = 4;
-    group.add(mark);
-  } else {
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(
-        radius,
-        Math.max(0.04, radius * 0.02),
-        6,
-        segs,
-      ),
-      metal(isGhost ? STEEL : LIP, 0.5, 0.75),
-    );
-    ring.rotation.x = Math.PI / 2;
-    ring.renderOrder = 2;
-    const ringMat = ring.material as THREE.MeshStandardMaterial;
-    ringMat.transparent = true;
-    ringMat.opacity = opacity;
-    ringMat.depthWrite = false;
-    group.add(ring);
-    if (isAggregate) {
-      const inner = new THREE.Mesh(
-        new THREE.TorusGeometry(radius * 0.72, Math.max(0.02, radius * 0.01), 4, segs),
-        metal(STEEL, 0.6, 0.6),
-      );
-      inner.rotation.x = Math.PI / 2;
-      inner.renderOrder = 2;
-      const innerMat = inner.material as THREE.MeshStandardMaterial;
-      innerMat.transparent = true;
-      innerMat.opacity = opacity * 0.7;
-      innerMat.depthWrite = false;
-      group.add(inner);
-    }
+    haze.renderOrder = 2;
+    group.add(haze);
   }
+
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, segs, segs),
+    glassShell(shellOpacity, glow),
+  );
+  shell.renderOrder = 3;
+  group.add(shell);
+
+  const rim = new THREE.Mesh(
+    new THREE.SphereGeometry(radius * 1.015, Math.max(16, segs - 4), Math.max(12, segs - 6)),
+    new THREE.MeshBasicMaterial({
+      color: glow.clone().lerp(new THREE.Color(0xd5dbe3), 0.35),
+      transparent: true,
+      opacity: dim ? 0.03 : 0.07,
+      side: THREE.BackSide,
+      depthWrite: false,
+    }),
+  );
+  rim.renderOrder = 0;
+  group.add(rim);
 
   if (isActive || isHover) {
     const indicator = new THREE.Mesh(
-      new THREE.TorusGeometry(radius * 1.08, Math.max(0.03, radius * 0.012), 6, full ? 64 : 48),
+      new THREE.TorusGeometry(radius * 1.12, Math.max(0.025, radius * 0.01), 6, full ? 64 : 48),
       new THREE.MeshStandardMaterial({
-        color: accent.clone().lerp(new THREE.Color(0xd5dbe3), 0.25),
-        roughness: 0.42,
-        metalness: 0.7,
+        color: accent.clone().lerp(new THREE.Color(0xd5dbe3), 0.2),
+        roughness: 0.55,
+        metalness: 0.15,
         emissive: accent,
-        emissiveIntensity: isHover && !isActive ? 0.05 : 0.035,
-        envMapIntensity: 0.2,
+        emissiveIntensity: 0.06,
+        envMapIntensity: 0.05,
       }),
     );
     indicator.rotation.x = Math.PI / 2;
-    indicator.position.y = isGhost || isAggregate ? 0 : height * 0.5;
-    indicator.renderOrder = 5;
+    indicator.renderOrder = 4;
     group.add(indicator);
   }
 

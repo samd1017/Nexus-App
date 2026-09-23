@@ -513,30 +513,23 @@ function tintOrbHover(
   if (!obj) return;
   obj.traverse((child) => {
     const mesh = child as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.userData.nexusBody) return;
-    const mat = mesh.material as THREE.MeshStandardMaterial & {
+    if (!mesh.isMesh || !mesh.userData.nexusCore) return;
+    const mat = mesh.material as THREE.MeshBasicMaterial & {
       userData: Record<string, unknown>;
     };
-    if (!mat || typeof mat.emissiveIntensity !== "number") return;
+    if (!mat?.color) return;
+    void accent;
     if (on) {
       if (mat.userData.__w5HoverBase == null) {
-        mat.userData.__w5HoverBase = {
-          ei: mat.emissiveIntensity,
-          er: mat.emissive?.r ?? 0,
-          eg: mat.emissive?.g ?? 0,
-          eb: mat.emissive?.b ?? 0,
-        };
+        mat.userData.__w5HoverBase = mat.color.clone();
       }
-      mat.emissiveIntensity = Math.max(mat.emissiveIntensity, 0.05);
-      if (mat.emissive) mat.emissive.copy(accent).multiplyScalar(0.35);
+      const base = mat.userData.__w5HoverBase as THREE.Color;
+      mat.color.copy(base).multiplyScalar(1.22);
       mat.needsUpdate = true;
     } else {
-      const b = mat.userData.__w5HoverBase as
-        | { ei: number; er: number; eg: number; eb: number }
-        | undefined;
+      const b = mat.userData.__w5HoverBase as THREE.Color | undefined;
       if (!b) return;
-      mat.emissiveIntensity = b.ei;
-      if (mat.emissive) mat.emissive.setRGB(b.er, b.eg, b.eb);
+      mat.color.copy(b);
       delete mat.userData.__w5HoverBase;
       mat.needsUpdate = true;
     }
