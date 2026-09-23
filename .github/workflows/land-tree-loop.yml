@@ -1,0 +1,31 @@
+name: land-tree-loop
+on:
+  push:
+    branches:
+      - cursor/graph-hud-release-690a
+    paths:
+      - scripts/tree-loop.patch.b64
+jobs:
+  land:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/graph-hud-release-690a
+          fetch-depth: 1
+      - name: Apply verified patch
+        run: |
+          set -euo pipefail
+          base64 -d scripts/tree-loop.patch.b64 > /tmp/tree-loop.patch
+          echo "7b28392eacb06567e5a7f7db7893f5cb3b280e16576da36d98f8c713a7b8f7e5  /tmp/tree-loop.patch" | sha256sum -c
+          git apply --check /tmp/tree-loop.patch
+          git apply /tmp/tree-loop.patch
+          git rm -f scripts/tree-loop.patch.b64 .github/workflows/land-tree-loop.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/editor/EditorPane.tsx src/components/editor/VisualEditor.tsx src/components/vault/FileTree.tsx src/lib/graph/graph-tick.ts src/lib/vault/indexes.ts src/lib/vault/tree-tick.ts
+          git commit -m "fix: stop the file tree and graph from looping on a hot 45k open"
+          git push origin HEAD:cursor/graph-hud-release-690a
