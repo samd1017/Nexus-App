@@ -78,8 +78,10 @@ void main() {
   float key = clamp(dot(n, sunDir), 0.0, 1.0);
   float sun = pow(key, 0.9);
   float shade = mix(0.16, 1.0, sun);
-  // Wide cool edge on the body itself, so the haze survives if the shell is faint.
+  // Cool edge on the body, quieter under the title so the label stays readable.
   float air = pow(1.0 - facing, 1.7);
+  float cap = smoothstep(0.48, 0.92, n.y);
+  air *= mix(1.0, 0.4, cap);
   vec3 col = uColor * shade;
   col += vec3(0.1, 0.22, 0.42) * air;
   gl_FragColor = vec4(col, uOpacity);
@@ -98,7 +100,9 @@ void main() {
   float facing = clamp(abs(dot(n, viewDir)), 0.0, 1.0);
   float rim = pow(1.0 - facing, 1.65);
   float band = smoothstep(0.04, 0.55, rim);
-  float alpha = band * uOpacity;
+  // Keep the side crescent. Pull the haze back where the title sits.
+  float cap = smoothstep(0.5, 0.95, n.y);
+  float alpha = band * uOpacity * mix(1.0, 0.45, cap);
   if (alpha < 0.02) discard;
   gl_FragColor = vec4(uColor, alpha);
 }
@@ -158,23 +162,25 @@ function makeLabel(
       ? getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
         "system-ui, sans-serif"
       : "system-ui, sans-serif";
-  label.fontWeight = active || hover ? "600" : "500";
+  label.fontWeight = "600";
   label.fontSize = 96;
-  label.color = active ? "#e7edf4" : hover ? "#d5dbe3" : dim ? "#6a7280" : "#b7c0cc";
-  label.backgroundColor = "rgba(0,0,0,0)";
-  label.padding = 1;
+  label.color = active ? "#f7fbff" : hover ? "#f4f8fc" : dim ? "#d7e0ea" : "#f2f6fb";
+  label.backgroundColor = dim ? "rgba(4,7,12,0.84)" : "rgba(4,7,12,0.94)";
+  label.padding = [0.28, 0.12];
   label.borderWidth = 0;
-  label.borderRadius = 0;
-  label.strokeWidth = 0.16;
+  label.borderRadius = 0.1;
+  label.strokeWidth = 0.48;
   label.strokeColor = "#05070a";
-  const th = active ? (full ? 2.4 : 1.85) : full ? 1.7 : 1.35;
+  const th = active ? (full ? 2.55 : 2.0) : full ? 1.95 : 1.58;
   label.textHeight = th;
-  label.position.y = radius + th * 0.72 + 0.3;
+  // Clear the atmosphere shell. The plate, not the haze, sits behind the glyphs.
+  label.position.y = radius * 1.34 + th * 0.5 + 0.46;
   label.renderOrder = active || hover ? 20 : 8;
   label.material.depthTest = false;
   label.material.depthWrite = false;
   label.material.transparent = true;
-  label.material.opacity = active ? 1 : hover ? 0.96 : dim ? 0.4 : 0.78;
+  label.material.toneMapped = false;
+  label.material.opacity = active || hover ? 1 : dim ? 0.9 : 1;
   label.material.sizeAttenuation = true;
   return label;
 }

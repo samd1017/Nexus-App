@@ -1153,11 +1153,11 @@
   height: 28px;
   padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.45);
-  color: var(--text-secondary);
-  font-size: 10.5px;
-  font-weight: 550;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(4, 6, 10, 0.9);
+  color: #e8eef6;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.01em;
   backdrop-filter: blur(12px);
 }
@@ -1189,14 +1189,14 @@
   width: min(280px, calc(100% - 20px));
   padding: 10px 12px;
   border-radius: 14px;
-  background: rgba(8, 10, 14, 0.88);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.06));
+  background: rgba(5, 7, 12, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   box-shadow:
-    0 16px 48px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 0 28px color-mix(in srgb, var(--accent) 12%, transparent);
+    0 16px 48px rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  color: #f2f6fb;
 }
 .graph-chrome--panel .graph-inspector {
   width: min(240px, calc(100% - 16px));
@@ -1210,11 +1210,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 1px 8px;
-  font-size: 10.5px;
-  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f2f6fb;
+}
+.graph-count {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(4, 6, 10, 0.92);
+}
+.graph-count-text {
+  color: #f2f6fb;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 .graph-link-chip:hover {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
