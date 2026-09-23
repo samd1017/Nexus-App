@@ -1,0 +1,30 @@
+name: land-fill-rejoin
+on:
+  push:
+    branches:
+      - cursor/graph-hud-release-690a
+    paths:
+      - scripts/fill-rejoin.patch.b64
+jobs:
+  land:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/graph-hud-release-690a
+          fetch-depth: 1
+      - name: Apply fill rejoin patch
+        run: |
+          set -euo pipefail
+          base64 -d scripts/fill-rejoin.patch.b64 > /tmp/fill-rejoin.patch
+          echo "ea35c249b036db1216d43eed94255693d644fc536cdcf6e330b17fa657e6e7fc  /tmp/fill-rejoin.patch" | sha256sum -c
+          git apply --check /tmp/fill-rejoin.patch
+          git apply /tmp/fill-rejoin.patch
+          git rm -f scripts/fill-rejoin.patch.b64 .github/workflows/land-fill-rejoin.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: keep a 100k vault on screen while search fills"
+          git push origin HEAD:cursor/graph-hud-release-690a
