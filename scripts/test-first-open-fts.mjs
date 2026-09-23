@@ -52,8 +52,8 @@ console.log("first-open JS phase rules: PASS");
 console.log("");
 console.log("Documented first-open targets (not SCALE READY):");
 console.log("  Linux CI: 1k meta <2.5s, 1k short-head <6s; 10k title-seed ready-meta <8s, 10k short-head <45s");
-console.log("  Desktop Partial/Deep: ready-meta after ~2k title FTS rows (Hub-named first),");
-console.log("    then short heads — do not catalog 100k empty bodies first.");
+console.log("  Desktop: ready-meta after the title seed (Hub-named first),");
+console.log("    then one deep-head pass — open set first, then the rest. No second full read.");
 console.log("  Cold 100k retest: tree/editor immediate; search hub useful in seconds–tens of seconds;");
 console.log("    banner should leave Cataloging… and start note heads without a 20+ min monopoly.");
 console.log("  Official vault only (SOAK-MANIFEST / npm run gen:soak-vault). Unofficial Meeting-*");
@@ -62,5 +62,5 @@ console.log("  After ready-meta, palette title search is live (not “try again 
 console.log("  Mid-fill clicks (tree/graph/note) must stay snappy: cooperative WAL batches,");
 console.log("    no body hydrate/upsert on every select, banner isolated from AppShell.");
 console.log("  Windows 100k (Tower): tree/editor <3s; usable title search with ready-meta;");
-console.log("    usable body search (hub/cluster) <15s via short-head FTS; full 8k FTS background");
+console.log("    usable body search (hub/cluster) once the open-set heads land; the rest stays background");
 console.log("first-open: PASS");

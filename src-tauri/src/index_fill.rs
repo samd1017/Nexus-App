@@ -1,15 +1,18 @@
 //! Phased SQLite FTS5 fill from a vault folder.
 //!
 //! Cold open must not wait for a full body index before title search.
-//! Desktop (`FillUntil::Partial` / `Deep`): commit title/path FTS rows as
-//! each directory batch lands, emit `ready-meta` when that walk's titles
-//! are in, then read short heads. `FillUntil::Meta` still catalogs titles
-//! only. No Tauri imports — also compiled by `src-tauri/fill-test`.
+//! Desktop commits title/path FTS rows as each directory batch lands and
+//! emits `ready-meta` when that walk's titles are in. `FillUntil::Partial`
+//! then reads short heads. `FillUntil::Deep` (the desktop path) reads each
+//! remaining note once, at the deep head: a bounded open-set slice emits
+//! `ready-fts-partial`, then the rest of the vault continues in yielded
+//! batches. `FillUntil::Meta` catalogs titles only. No Tauri imports — also
+//! compiled by `src-tauri/fill-test`.
 //!
 //! Mid-fill UI (tree / note open / graph) must stay interactive: small WAL
 //! write batches, at most four head readers, a yield after a real write,
-//! and time-gated progress. The next short-head or deep chunk is read while
-//! the previous chunk is committed.
+//! and time-gated progress. The next head chunk is read while the previous
+//! chunk is committed.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -58,6 +61,10 @@ pub const EARLY_HEAD_CAP: usize = 256;
 /// Path and title rows committed during the walk so the tree and title
 /// search grow before it finishes.
 const DISCOVER_BATCH: usize = 512;
+/// Deep fill commits this many priority-sorted heads, then emits
+/// `ready-fts-partial`, before the rest of the vault. The cap does not
+/// grow with the note count, so the open set does not wait on a 500k tail.
+pub const EAGER_CONTENT_CAP: usize = 512;
 /// Intra-phase banner ticks. Phase transitions still emit immediately.
 /// Scan-delta emits (256) re-rendered AppShell/graph at 10–20Hz on fast fills.
 pub const PROGRESS_EMIT_MS: u64 = 400;
@@ -775,18 +782,26 @@ fn commit_early_heads(
     n
 }
 
-fn paths_at_least_partial(conn: &Connection) -> HashSet<String> {
-    let mut out = HashSet::new();
+/// Paths that already have a head, with the depth stored on the row.
+/// Legacy NULL depths stay out of this map (`inferred_fill_depth` treats
+/// them as deep). Early heads written during this fill are visible here
+/// even when the in-memory catalog snapshot is older.
+fn headed_depths(conn: &Connection) -> HashMap<String, i64> {
+    let mut out = HashMap::new();
     let Ok(mut stmt) = conn.prepare(
-        "SELECT path FROM note_meta WHERE kind='note' AND deleted=0 AND COALESCE(fill_depth, 0) >= ?1",
+        "SELECT path, COALESCE(fill_depth, ?1)
+         FROM note_meta
+         WHERE kind='note' AND deleted=0 AND COALESCE(fill_depth, 0) >= ?2",
     ) else {
         return out;
     };
-    let Ok(rows) = stmt.query_map(params![FILL_DEPTH_PARTIAL], |r| r.get::<_, String>(0)) else {
+    let Ok(rows) = stmt.query_map(params![FILL_DEPTH_DEEP, FILL_DEPTH_PARTIAL], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    }) else {
         return out;
     };
-    for path in rows.flatten() {
-        out.insert(path);
+    for row in rows.flatten() {
+        out.insert(row.0, row.1);
     }
     out
 }
@@ -1006,6 +1021,51 @@ fn pipeline_head_reads(
                 None => break,
             }
         }
+    });
+}
+
+/// Read `indices` at `head_chars` and commit `fill_depth`. Write batches stay
+/// on `head_write_limit` so the first heads do not hold a long WAL lock.
+/// `on_chunk` runs after each chunk is queued (and flushed, when the batch
+/// filled) so progress can tick without a second read of the same files.
+fn index_note_heads(
+    conn: &mut Connection,
+    files: &[DiskNote],
+    indices: &[usize],
+    head_chars: usize,
+    fill_depth: i64,
+    is_cancelled: &mut impl FnMut() -> bool,
+    batch: &mut Vec<FillNote>,
+    indexed: &mut i64,
+    errors: &mut i64,
+    written: &mut HashSet<String>,
+    fresh_titles: &mut HashSet<String>,
+    headed_rows: &mut i64,
+    mut on_chunk: impl FnMut(i64, i64, i64),
+) {
+    pipeline_head_reads(files, indices, head_chars, is_cancelled, |heads| {
+        let n = heads.len() as i64;
+        for (i, body) in heads {
+            let disk = &files[i];
+            batch.push(FillNote {
+                id: desk_node_id(&disk.rel),
+                path: disk.rel.clone(),
+                name: disk.name.clone(),
+                parent_id: parent_id_for(&disk.rel),
+                mtime: disk.mtime,
+                size: disk.size,
+                title: title_from_name_and_head(&disk.name, &body),
+                links: extract_wikilink_targets(&body),
+                tags: extract_tags(&body),
+                body,
+                fill_depth,
+            });
+            *headed_rows += 1;
+            if batch.len() >= head_write_limit(*headed_rows) {
+                flush_note_batch(conn, batch, indexed, errors, written, fresh_titles);
+            }
+        }
+        on_chunk(n, *indexed, *errors);
     });
 }
 
@@ -1361,10 +1421,11 @@ pub fn fill_from_disk_on_conn(
     )
 }
 
-/// Phased fill: title seed → short heads → deep heads.
-/// Desktop Partial/Deep emits `ready-meta` after the first title FTS batch
-/// (not after cataloging every empty body). `is_cancelled` is checked
-/// between batches so a remount can preempt.
+/// Phased fill: title seed, then one head pass.
+/// Desktop Partial/Deep emits `ready-meta` after the title FTS seed
+/// (not after cataloging every empty body). Deep does not read a short
+/// head and then the same file again. `is_cancelled` is checked between
+/// batches so a remount can preempt.
 pub fn fill_from_disk_with_opts(
     conn: &mut Connection,
     vault_root: &Path,
@@ -1463,7 +1524,7 @@ pub fn fill_from_disk_with_opts(
         }),
     );
     let total = files.len() as i64;
-    let already_headed = paths_at_least_partial(conn);
+    let headed = headed_depths(conn);
     progress.total = total;
     progress.indexed = indexed;
     progress.errors = errors;
@@ -1496,22 +1557,18 @@ pub fn fill_from_disk_with_opts(
         seen.insert(disk.rel.clone());
         let scanned = (i as i64) + 1;
         let touched = written.contains(&desk_node_id(&disk.rel));
-        if (already_headed.contains(&disk.rel) || touched) && !opts.force_rebuild {
+        if (headed.contains_key(&disk.rel) || touched) && !opts.force_rebuild {
             let prev = existing.get(&disk.rel);
             let unchanged = prev.map(|p| note_unchanged(p, disk)).unwrap_or(true);
             if unchanged {
                 // A title row landed with the path batch. A head landed for
                 // the open page. Neither should be rewritten as an empty title.
-                let depth = if already_headed.contains(&disk.rel) {
-                    prev.map(|p| inferred_fill_depth(p.fill_depth))
-                        .unwrap_or(FILL_DEPTH_PARTIAL)
-                } else {
-                    FILL_DEPTH_META
-                };
-                if depth < FILL_DEPTH_PARTIAL && opts.until != FillUntil::Meta {
+                // Depth comes from the row written this fill, not the snapshot
+                // taken before those early heads.
+                let depth = headed.get(&disk.rel).copied().unwrap_or(FILL_DEPTH_META);
+                if opts.until == FillUntil::Partial && depth < FILL_DEPTH_PARTIAL {
                     need_partial.push(i);
-                }
-                if depth < FILL_DEPTH_DEEP && opts.until == FillUntil::Deep {
+                } else if opts.until == FillUntil::Deep && depth < FILL_DEPTH_DEEP {
                     need_deep.push(i);
                 }
                 if depth >= target_depth {
@@ -1541,10 +1598,9 @@ pub fn fill_from_disk_with_opts(
                 if note_unchanged(prev, disk) {
                     let depth = inferred_fill_depth(prev.fill_depth);
                     skip_meta = depth >= FILL_DEPTH_META;
-                    if depth < FILL_DEPTH_PARTIAL && opts.until != FillUntil::Meta {
+                    if opts.until == FillUntil::Partial && depth < FILL_DEPTH_PARTIAL {
                         need_partial.push(i);
-                    }
-                    if depth < FILL_DEPTH_DEEP && opts.until == FillUntil::Deep {
+                    } else if opts.until == FillUntil::Deep && depth < FILL_DEPTH_DEEP {
                         need_deep.push(i);
                     }
                     if depth >= target_depth {
@@ -1573,10 +1629,9 @@ pub fn fill_from_disk_with_opts(
         }
 
         need_meta.push(i);
-        if opts.until != FillUntil::Meta {
+        if opts.until == FillUntil::Partial {
             need_partial.push(i);
-        }
-        if opts.until == FillUntil::Deep {
+        } else if opts.until == FillUntil::Deep {
             need_deep.push(i);
         }
         if should_emit_progress(last_emit, last_emitted_scanned, scanned) {
@@ -1700,93 +1755,77 @@ pub fn fill_from_disk_with_opts(
     let pri_order = order_indices_for_fill(&rels, opts.priority_rels);
     let pri_rank: HashMap<usize, usize> =
         pri_order.iter().enumerate().map(|(r, i)| (*i, r)).collect();
-    need_partial.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
-    need_deep.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
 
+    let mut headed_rows: i64 = 0;
+    let mut phase_scanned: i64 = 0;
     last_emit = Instant::now();
     last_emitted_scanned = 0;
-    let partial_total = need_partial.len() as i64;
-    emit(
-        &mut progress,
-        "fts-partial",
-        "ready-fts-partial",
-        0,
-        indexed,
-        skipped,
-        errors,
-        Some("Filling short note heads…".into()),
-        &mut on_progress,
-    );
 
-    let mut phase_scanned: i64 = 0;
-    let mut headed_now: i64 = 0;
-    pipeline_head_reads(&files, &need_partial, short_head, &mut is_cancelled, |heads| {
-        let n = heads.len() as i64;
-        for (i, body) in heads {
-            let disk = &files[i];
-            batch.push(FillNote {
-                id: desk_node_id(&disk.rel),
-                path: disk.rel.clone(),
-                name: disk.name.clone(),
-                parent_id: parent_id_for(&disk.rel),
-                mtime: disk.mtime,
-                size: disk.size,
-                title: title_from_name_and_head(&disk.name, &body),
-                links: extract_wikilink_targets(&body),
-                tags: extract_tags(&body),
-                body,
-                fill_depth: FILL_DEPTH_PARTIAL,
-            });
-            headed_now += 1;
-            if batch.len() >= head_write_limit(headed_now) {
-                flush_note_batch(
-                    conn,
-                    &mut batch,
-                    &mut indexed,
-                    &mut errors,
-                    &mut written,
-                    &mut fresh_titles,
-                );
-            }
-        }
-        phase_scanned += n;
-        if should_emit_progress(last_emit, last_emitted_scanned, phase_scanned) {
-            emit(
-                &mut progress,
-                "fts-partial",
-                "ready-fts-partial",
-                phase_scanned.min(partial_total),
-                indexed,
-                skipped,
-                errors,
-                Some("Filling short note heads…".into()),
-                &mut on_progress,
-            );
-            last_emit = Instant::now();
-            last_emitted_scanned = phase_scanned;
-        }
-    });
-    flush_note_batch(
-        conn,
-        &mut batch,
-        &mut indexed,
-        &mut errors,
-        &mut written,
-        &mut fresh_titles,
-    );
-    emit(
-        &mut progress,
-        "ready-fts-partial",
-        "ready-fts-partial",
-        total,
-        indexed,
-        skipped,
-        errors,
-        Some("Short-head search ready".into()),
-        &mut on_progress,
-    );
-
-    if is_cancelled() || opts.until == FillUntil::Partial {
+    if opts.until == FillUntil::Partial {
+        need_partial.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
+        let partial_total = need_partial.len() as i64;
+        emit(
+            &mut progress,
+            "fts-partial",
+            "ready-fts-partial",
+            0,
+            indexed,
+            skipped,
+            errors,
+            Some("Filling short note heads…".into()),
+            &mut on_progress,
+        );
+        index_note_heads(
+            conn,
+            &files,
+            &need_partial,
+            short_head,
+            FILL_DEPTH_PARTIAL,
+            &mut is_cancelled,
+            &mut batch,
+            &mut indexed,
+            &mut errors,
+            &mut written,
+            &mut fresh_titles,
+            &mut headed_rows,
+            |n, indexed_now, errors_now| {
+                phase_scanned += n;
+                if should_emit_progress(last_emit, last_emitted_scanned, phase_scanned) {
+                    emit(
+                        &mut progress,
+                        "fts-partial",
+                        "ready-fts-partial",
+                        phase_scanned.min(partial_total),
+                        indexed_now,
+                        skipped,
+                        errors_now,
+                        Some("Filling short note heads…".into()),
+                        &mut on_progress,
+                    );
+                    last_emit = Instant::now();
+                    last_emitted_scanned = phase_scanned;
+                }
+            },
+        );
+        flush_note_batch(
+            conn,
+            &mut batch,
+            &mut indexed,
+            &mut errors,
+            &mut written,
+            &mut fresh_titles,
+        );
+        emit(
+            &mut progress,
+            "ready-fts-partial",
+            "ready-fts-partial",
+            total,
+            indexed,
+            skipped,
+            errors,
+            Some("Short-head search ready".into()),
+            &mut on_progress,
+        );
         let edges = finalize_link_edges(conn, skipped, indexed, true, &mut progress);
         crate::shell_catalog::mark_catalog_walk_done(conn);
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
@@ -1800,67 +1839,54 @@ pub fn fill_from_disk_with_opts(
         });
     }
 
-    last_emit = Instant::now();
-    last_emitted_scanned = 0;
-    let deep_total = need_deep.len() as i64;
+    // One content read per note. Priority paths first, then a cap that does
+    // not grow with the vault, then the tail. A file is not read at the
+    // short head and again at the deep head.
+    need_deep.sort_by_key(|i| pri_rank.get(i).copied().unwrap_or(usize::MAX));
+    let eager_n = need_deep.len().min(EAGER_CONTENT_CAP);
     emit(
         &mut progress,
-        "fts",
+        "fts-partial",
         "ready-fts-partial",
         0,
         indexed,
         skipped,
         errors,
-        Some("Deepening FTS heads…".into()),
+        Some("Filling heads for the open set…".into()),
         &mut on_progress,
     );
-
-    let mut deep_scanned: i64 = 0;
-    pipeline_head_reads(&files, &need_deep, deep_head, &mut is_cancelled, |heads| {
-        let n = heads.len() as i64;
-        for (i, body) in heads {
-            let disk = &files[i];
-            batch.push(FillNote {
-                id: desk_node_id(&disk.rel),
-                path: disk.rel.clone(),
-                name: disk.name.clone(),
-                parent_id: parent_id_for(&disk.rel),
-                mtime: disk.mtime,
-                size: disk.size,
-                title: title_from_name_and_head(&disk.name, &body),
-                links: extract_wikilink_targets(&body),
-                tags: extract_tags(&body),
-                body,
-                fill_depth: FILL_DEPTH_DEEP,
-            });
-            if batch.len() >= FTS_WRITE_BATCH {
-                flush_note_batch(
-                    conn,
-                    &mut batch,
-                    &mut indexed,
-                    &mut errors,
-                    &mut written,
-                    &mut fresh_titles,
+    index_note_heads(
+        conn,
+        &files,
+        &need_deep[..eager_n],
+        deep_head,
+        FILL_DEPTH_DEEP,
+        &mut is_cancelled,
+        &mut batch,
+        &mut indexed,
+        &mut errors,
+        &mut written,
+        &mut fresh_titles,
+        &mut headed_rows,
+        |n, indexed_now, errors_now| {
+            phase_scanned += n;
+            if should_emit_progress(last_emit, last_emitted_scanned, phase_scanned) {
+                emit(
+                    &mut progress,
+                    "fts-partial",
+                    "ready-fts-partial",
+                    phase_scanned.min(eager_n as i64),
+                    indexed_now,
+                    skipped,
+                    errors_now,
+                    Some("Filling heads for the open set…".into()),
+                    &mut on_progress,
                 );
+                last_emit = Instant::now();
+                last_emitted_scanned = phase_scanned;
             }
-        }
-        deep_scanned += n;
-        if should_emit_progress(last_emit, last_emitted_scanned, deep_scanned) {
-            emit(
-                &mut progress,
-                "fts",
-                "ready-fts-partial",
-                deep_scanned.min(deep_total),
-                indexed,
-                skipped,
-                errors,
-                None,
-                &mut on_progress,
-            );
-            last_emit = Instant::now();
-            last_emitted_scanned = deep_scanned;
-        }
-    });
+        },
+    );
     flush_note_batch(
         conn,
         &mut batch,
@@ -1869,6 +1895,84 @@ pub fn fill_from_disk_with_opts(
         &mut written,
         &mut fresh_titles,
     );
+    let open_set_covers_vault = eager_n >= need_deep.len();
+    emit(
+        &mut progress,
+        "ready-fts-partial",
+        "ready-fts-partial",
+        if open_set_covers_vault {
+            total
+        } else {
+            phase_scanned
+        },
+        indexed,
+        skipped,
+        errors,
+        Some(
+            if open_set_covers_vault {
+                "Note heads searchable".into()
+            } else {
+                "Open-set heads are searchable".into()
+            },
+        ),
+        &mut on_progress,
+    );
+
+    if !is_cancelled() && eager_n < need_deep.len() {
+        last_emit = Instant::now();
+        last_emitted_scanned = phase_scanned;
+        emit(
+            &mut progress,
+            "fts",
+            "ready-fts-partial",
+            phase_scanned,
+            indexed,
+            skipped,
+            errors,
+            Some("Indexing the rest of the notes…".into()),
+            &mut on_progress,
+        );
+        index_note_heads(
+            conn,
+            &files,
+            &need_deep[eager_n..],
+            deep_head,
+            FILL_DEPTH_DEEP,
+            &mut is_cancelled,
+            &mut batch,
+            &mut indexed,
+            &mut errors,
+            &mut written,
+            &mut fresh_titles,
+            &mut headed_rows,
+            |n, indexed_now, errors_now| {
+                phase_scanned += n;
+                if should_emit_progress(last_emit, last_emitted_scanned, phase_scanned) {
+                    emit(
+                        &mut progress,
+                        "fts",
+                        "ready-fts-partial",
+                        phase_scanned,
+                        indexed_now,
+                        skipped,
+                        errors_now,
+                        None,
+                        &mut on_progress,
+                    );
+                    last_emit = Instant::now();
+                    last_emitted_scanned = phase_scanned;
+                }
+            },
+        );
+        flush_note_batch(
+            conn,
+            &mut batch,
+            &mut indexed,
+            &mut errors,
+            &mut written,
+            &mut fresh_titles,
+        );
+    }
 
     crate::shell_catalog::mark_catalog_walk_done(conn);
     // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
@@ -2390,6 +2494,127 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
+    fn fill_depth_of(conn: &Connection, path: &str) -> i64 {
+        conn.query_row(
+            "SELECT COALESCE(fill_depth, -1) FROM note_meta WHERE path=?1",
+            params![path],
+            |r| r.get(0),
+        )
+        .unwrap_or(-1)
+    }
+
+    #[test]
+    fn deep_fill_indexes_past_the_short_head_without_a_second_pass() {
+        let (vault, db) = temp_pair("onepass");
+        let mut body = "a".repeat(900);
+        body.push_str("\ndeeptokenzz\n");
+        write_note(&vault, "long.md", &body);
+        write_note(&vault, "tiny.md", "tiny retrieval\n");
+        let mut conn = open_test_conn(&db);
+
+        let (partial, _) = fill_until(&mut conn, &vault, false, FillUntil::Partial, &[]);
+        assert_eq!(partial.search_state, "ready-fts-partial");
+        assert!(fts_has(&conn, "retrieval"));
+        assert!(
+            !fts_has(&conn, "deeptokenzz"),
+            "a partial fill stays inside the short head"
+        );
+        assert_eq!(fill_depth_of(&conn, "long.md"), FILL_DEPTH_PARTIAL);
+
+        let (deep, ticks) = fill(&mut conn, &vault, false);
+        assert_eq!(deep.search_state, "ready-fts");
+        assert_eq!(deep.indexed, 2, "deep upgrades both notes once");
+        assert!(ticks.iter().any(|p| p.phase == "ready-fts-partial"));
+        assert_eq!(ticks.last().map(|p| p.phase.as_str()), Some("done"));
+        assert!(fts_has(&conn, "deeptokenzz"));
+        assert!(fts_has(&conn, "retrieval"));
+        assert_eq!(fill_depth_of(&conn, "long.md"), FILL_DEPTH_DEEP);
+        assert_eq!(fill_depth_of(&conn, "tiny.md"), FILL_DEPTH_DEEP);
+
+        let (again, _) = fill(&mut conn, &vault, false);
+        assert_eq!(again.indexed, 0, "a finished deep head is not read again");
+        assert_eq!(again.skipped, 2);
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn deep_open_set_is_searchable_before_the_tail() {
+        let (vault, db) = temp_pair("eager");
+        let n = EAGER_CONTENT_CAP + 20;
+        for i in 0..n {
+            write_note(
+                &vault,
+                &format!("eager/n{i:04}.md"),
+                "cluster token in the open set\n",
+            );
+        }
+        let mut late = String::from("headtokenzz\n");
+        late.push_str(&"x".repeat(900));
+        late.push_str("\ndeeptokenzz\n");
+        write_note(&vault, "tail/late.md", &late);
+
+        let mut conn = open_test_conn(&db);
+        let mut at_open_set = false;
+        let result = fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &["eager".into()],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-fts-partial" && !at_open_set {
+                    at_open_set = true;
+                    assert!(
+                        fts_has_at(&db, "cluster"),
+                        "the open-set slice must be searchable when heads are announced"
+                    );
+                    assert!(
+                        !fts_has_at(&db, "headtokenzz"),
+                        "a note past the open-set cap must still be unread"
+                    );
+                    assert!(!fts_has_at(&db, "deeptokenzz"));
+                    assert!(
+                        p.scanned < (n as i64) + 1,
+                        "ready-fts-partial scanned {} must not already be the whole vault",
+                        p.scanned
+                    );
+                }
+            },
+        )
+        .unwrap();
+
+        assert!(at_open_set, "deep fill must announce the open set before the tail");
+        assert_eq!(result.search_state, "ready-fts");
+        assert_eq!(result.notes, (n as i64) + 1);
+        assert!(fts_has(&conn, "headtokenzz"));
+        assert!(
+            fts_has(&conn, "deeptokenzz"),
+            "the tail is indexed at the deep head, not left at a short head"
+        );
+        assert_eq!(fill_depth_of(&conn, "tail/late.md"), FILL_DEPTH_DEEP);
+        let deep_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND fill_depth=?1",
+                params![FILL_DEPTH_DEEP],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(deep_rows, result.notes, "every note is deep after one pass");
+
+        let (again, _) = fill_until(&mut conn, &vault, false, FillUntil::Deep, &["eager".into()]);
+        assert_eq!(again.indexed, 0);
+        assert_eq!(again.skipped, result.notes);
+
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
     #[test]
     fn progress_ticks_cover_large_skip_batches() {
         let (vault, db) = temp_pair("prog");
@@ -2438,6 +2663,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert!(
             FILL_READ_WORKERS_MAX <= 4,
             "head readers must not take every core/disk queue"
+        );
+        assert!(
+            EAGER_CONTENT_CAP <= 1024 && EAGER_CONTENT_CAP >= 200,
+            "open-set head cap {EAGER_CONTENT_CAP} must stay a page, not the vault"
         );
         assert_eq!(worker_count(1), 1);
         assert_eq!(worker_count(10_000), FILL_READ_WORKERS_MAX);

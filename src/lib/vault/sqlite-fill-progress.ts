@@ -143,7 +143,7 @@ export function sqliteFillPhaseMessage(
     return `Workspace ready — search filling note heads…${tail}`;
   }
   if (p.phase === "fts") {
-    return `Workspace ready — deepening SQLite FTS5…${tail}`;
+    return `Workspace ready — indexing the rest of the notes…${tail}`;
   }
   if (!counts) return "Workspace ready — indexing SQLite FTS5…";
   return `Workspace ready — indexing SQLite FTS5…${tail}`;
