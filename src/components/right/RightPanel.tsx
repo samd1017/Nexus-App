@@ -259,13 +259,13 @@ export function RightPanel() {
           }}
           onDoubleClick={() => setRightWidth(DEFAULT_RIGHT_WIDTH)}
         />
-        <div className="flex items-center gap-1 border-b border-[var(--border)] p-2">
+        <div className="flex items-center gap-0.5 border-b border-[var(--border)] px-1.5 py-1.5">
           {tabDefs.map(([id, Icon, label]) => (
             <button
               key={id}
               type="button"
               className={cn(
-                "chip-btn relative flex-1 justify-center",
+                "icon-btn relative h-7 w-7 shrink-0",
                 tab === id && "is-active",
               )}
               onClick={() => setTab(id)}
@@ -273,18 +273,23 @@ export function RightPanel() {
               aria-label={label}
               aria-selected={tab === id}
             >
-              <Icon size={13} />
-              <span className="hidden xl:inline">{label}</span>
+              <Icon size={14} />
               {id === "pulse" && (openConflictCount > 0 || unreadPulse > 0) ? (
-                <span className="ml-1 rounded-full bg-[rgba(255,69,58,0.15)] px-1.5 text-[10px] font-semibold text-[var(--danger)]">
-                  {Math.max(openConflictCount, unreadPulse)}
+                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--danger)] px-0.5 text-[9px] font-semibold text-white">
+                  {(() => {
+                    const n = Math.max(openConflictCount, unreadPulse);
+                    return n > 9 ? "9+" : n;
+                  })()}
                 </span>
               ) : null}
             </button>
           ))}
+          <span className="min-w-0 flex-1 truncate px-1.5 text-[12px] font-medium tracking-tight text-[var(--text-secondary)]">
+            {tabDefs.find(([id]) => id === tab)?.[2] ?? ""}
+          </span>
           <button
             type="button"
-            className="icon-btn ml-1 h-7 w-7"
+            className="icon-btn h-7 w-7 shrink-0"
             onClick={() => setRightOpen(false)}
             title="Collapse panel"
             aria-label="Collapse panel"

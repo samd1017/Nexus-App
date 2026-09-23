@@ -815,7 +815,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Local folder (browser)"
-                body="Chrome or Edge: Open… uses the File System Access API and remembers the directory handle in IndexedDB. After a reload the browser still asks you to re-grant access — that is a browser permission gate, not a Nexus account. This Cloud Agent VM does not exercise FSA or Tauri; on your machine, Open… (Chromium) or the desktop build is the local-folder path."
+                body="Chrome or Edge: Open… uses the File System Access API and remembers the directory handle in IndexedDB. After a reload the browser still asks you to re-grant access — that is a browser permission gate, not a Nexus account. The desktop app opens the same folder directly."
               />
             </div>
             <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">

@@ -563,6 +563,24 @@ class MemoryDurableIndex implements DurableIndex {
           if (candidateIds.length >= MEMORY_FTS_CANDIDATE_CAP) break;
         }
       }
+    } else if (
+      candidateIds.length < limit &&
+      tokens.length > 0 &&
+      (lists.length !== tokens.length || candidateIds.length === 0)
+    ) {
+      // Slim indexing drops digit tokens (Brief-41936), and a vault above the
+      // full-scan cap never walks titles. An identifier query then says
+      // "no notes match" while that note is on screen. Title and path only.
+      const have = new Set(candidateIds);
+      for (const n of this.notes.values()) {
+        if (have.has(n.id)) continue;
+        const title = (n.title ?? n.name).toLowerCase();
+        if (title.includes(q) || n.path.toLowerCase().includes(q)) {
+          candidateIds.push(n.id);
+          have.add(n.id);
+          if (candidateIds.length >= limit) break;
+        }
+      }
     }
 
     const scored: Array<{

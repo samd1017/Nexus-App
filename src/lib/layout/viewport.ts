@@ -56,11 +56,12 @@ export function toggleGraphForViewport(): void {
 }
 
 export function exitGraphForViewport(): void {
-  const s = useVaultStore.getState();
-  s.setGraphMode(isPhoneViewport() ? "hidden" : "panel");
-  // Leave the graph surface — do not remount ForceGraph3D in the side panel
-  // (that 3D init was stealing the next note-create / note-switch frame).
-  if (s.rightTab === "graph") s.setRightTab("backlinks");
+  const phone = isPhoneViewport();
+  useVaultStore.getState().setGraphMode(phone ? "hidden" : "panel");
+  // setGraphMode("panel") writes rightTab "graph" inside the same update.
+  // The state object from before that call still has the pre-exit tab, so
+  // checking it skips the handoff and the side panel remounts ForceGraph3D.
+  if (!phone) useVaultStore.getState().setRightTab("backlinks");
 }
 
 /** Phone: open/close the backlinks drawer. */
