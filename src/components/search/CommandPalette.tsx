@@ -90,6 +90,9 @@ const MATCH_TYPE_LABEL: Record<string, string> = {
   tag: "Tag",
 };
 
+/** How many note rows the palette asks for. A full page is not the whole vault. */
+const PALETTE_RESULT_LIMIT = 16;
+
 function HighlightedText({
   text,
   query,
@@ -356,7 +359,7 @@ function CommandPaletteOpen() {
     }
     if (wantsOrphans || wantsBroken || isCommandMode) return [];
 
-    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
     const activeNode = activeNoteId ? nodes[activeNoteId] : null;
     const neighborIds =
       activeNode?.kind === "note"
@@ -375,7 +378,7 @@ function CommandPaletteOpen() {
 
     if (hasPathFolderOp) {
       return fuseSearchHits(
-        searchWithOps(nodes, debouncedSearch.trim() || raw, 16),
+        searchWithOps(nodes, debouncedSearch.trim() || raw, PALETTE_RESULT_LIMIT),
         signals,
       );
     }
@@ -385,9 +388,9 @@ function CommandPaletteOpen() {
       // Durable async search owns FTS. A second sync intersect at 100k
       // was enough extra allocation to discard Chrome on the 12th search.
       if (idx?.ready && idx.searchFtsAsync) return [];
-      return fuseSearchHits(searchVault(nodes, needle, 16), signals);
+      return fuseSearchHits(searchVault(nodes, needle, PALETTE_RESULT_LIMIT), signals);
     }
-    return fuseSearchHits(searchVault(nodes, raw, 16), signals);
+    return fuseSearchHits(searchVault(nodes, raw, PALETTE_RESULT_LIMIT), signals);
   }, [
     nodes,
     vaultId,
@@ -430,7 +433,7 @@ function CommandPaletteOpen() {
       : debouncedSearch.trim() || searchText || raw;
     if (!needle.trim()) return;
     let cancelled = false;
-    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
     const activeNode = activeNoteId ? nodes[activeNoteId] : null;
     const neighborIds =
       activeNode?.kind === "note"
@@ -443,8 +446,8 @@ function CommandPaletteOpen() {
       queryText: needle,
     };
     void (hasPathFolderOp
-      ? Promise.resolve(searchWithOps(nodes, needle, 16))
-      : searchWithBackendAsync(nodes, needle, 16)
+      ? Promise.resolve(searchWithOps(nodes, needle, PALETTE_RESULT_LIMIT))
+      : searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT)
     ).then((rows) => {
       if (cancelled) return;
       setAsyncHits(fuseSearchHits(rows, signals));
@@ -1107,7 +1110,7 @@ function CommandPaletteOpen() {
         ? isTagBrowse
           ? `Tagged #${tagPartial}`
           : hits.length > 0
-            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""} · ${engineBit}`
+            ? `Notes · ${hits.length}${hits.length >= PALETTE_RESULT_LIMIT ? "+" : ""} · ${engineBit}`
             : searchIndexing
               ? `Notes · ${engineBit} · indexing…`
               : `Notes · ${engineBit} · no matches`

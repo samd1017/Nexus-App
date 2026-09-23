@@ -90,6 +90,16 @@ class VaultLinkIndex {
     }
   }
 
+  /**
+   * True when a seed or a full rebuild has folded in every note.
+   * A lone setNoteLinks leaves noteCount at 1; that must not hide
+   * backlinks that still live in the other notes.
+   */
+  coversNoteCount(noteCount: number): boolean {
+    if (noteCount <= 0) return this.ready;
+    return this.ready && this.outgoing.size >= noteCount;
+  }
+
   /** Patch one note from loaded content. No-op if content signature unchanged. */
   setNoteLinks(noteId: string, content: string | undefined): void {
     if (content === undefined) {
@@ -103,7 +113,8 @@ class VaultLinkIndex {
     this.linkTargets(noteId, targets);
     this.sigOf.set(noteId, sig);
     this.generation += 1;
-    this.ready = true;
+    // Stay not-ready until a seed or rebuild covers the vault. One patched
+    // note used to flip ready and make every other backlink disappear.
   }
 
   removeNote(noteId: string): void {

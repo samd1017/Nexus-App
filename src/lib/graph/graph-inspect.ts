@@ -108,8 +108,7 @@ export function inspectGraphNote(
   // getBacklinks returns one row per mention, so the same note can appear
   // several times. Chips and the in-count are unique notes.
   if (
-    innIds.length === 0 &&
-    vaultLinkIndex.stats().edgeCount === 0 &&
+    !vaultLinkIndex.coversNoteCount(vaultIndex.noteCount) &&
     !shouldUseEgoGraph(vaultIndex.noteCount)
   ) {
     innIds = [...new Set(getBacklinks(n, nodes).map((b) => b.fromId))];

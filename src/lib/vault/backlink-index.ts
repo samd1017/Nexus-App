@@ -43,7 +43,12 @@ export function buildReverseIndex(
     if (n.kind !== "note") continue;
     const content = n.content ?? "";
     for (const link of extractWikilinks(content)) {
-      const target = normalizeLinkTarget(link.target);
+      // [[Note#Heading]] and [[Note#^block]] are mentions of the note.
+      // Keying the full target hid those sources whenever the link map
+      // did not already cover the vault.
+      const note = link.noteTarget;
+      if (!note) continue;
+      const target = normalizeLinkTarget(note);
       if (!target) continue;
       add(target, n.id);
     }

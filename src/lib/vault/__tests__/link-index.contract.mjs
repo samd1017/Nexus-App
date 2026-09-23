@@ -139,4 +139,71 @@ assert.ok(
 );
 assert.ok(ego.edges.length >= 1);
 
+resetLinkIndex();
+vaultLinkIndex.setNoteLinks("only", "See [[Other Note]]\n");
+assert.equal(vaultLinkIndex.ready, false, "one saved note must not mark the map ready");
+assert.equal(vaultLinkIndex.coversNoteCount(2), false);
+assert.equal(vaultLinkIndex.stats().noteCount, 1);
+rebuildLinkIndex({
+  only: {
+    id: "only",
+    path: "Only.md",
+    name: "Only.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[Other Note]]\n",
+  },
+  other: {
+    id: "other",
+    path: "Other Note.md",
+    name: "Other Note.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "Back to [[Only]]\n",
+  },
+});
+assert.equal(vaultLinkIndex.coversNoteCount(2), true);
+assert.ok(vaultLinkIndex.getBacklinkSources("only").includes("other"));
+
+const { getBacklinks } = await import("../backlinks.ts");
+const { invalidateBacklinkIndex } = await import("../backlink-index.ts");
+resetLinkIndex();
+invalidateBacklinkIndex();
+const partial = {
+  only: {
+    id: "only",
+    path: "First Light.md",
+    name: "First Light.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "Hello\n",
+  },
+  plain: {
+    id: "plain",
+    path: "Linking Notes.md",
+    name: "Linking Notes.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[First Light]]\n",
+  },
+  block: {
+    id: "block",
+    path: "Heading.md",
+    name: "Heading.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[First Light#^next-step]]\n",
+  },
+};
+vaultLinkIndex.setNoteLinks("only", partial.only.content);
+assert.equal(vaultLinkIndex.coversNoteCount(3), false);
+const titles = getBacklinks(partial.only, partial).map((b) => b.fromTitle);
+assert.ok(titles.includes("Linking Notes"), `plain link missing: ${titles}`);
+assert.ok(titles.includes("Heading"), `block link missing: ${titles}`);
+
 console.log("link-index.contract: ok");

@@ -163,7 +163,7 @@ import {
   shouldDeferNoteBodyHydrate,
   shouldSkipDurableUpsertOnHydrate,
 } from "./fill-interaction";
-import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
+import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseEgoGraph, shouldUseFolderGraph } from "./scale-flags";
 import {
   CHROME_FSA_GETFILE_MAX,
   CHROME_FSA_NOTE_CAP,
@@ -3277,7 +3277,16 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			dirtyNoteIds: opts?.external ? get().dirtyNoteIds.filter((x) => x !== id) : get().dirtyNoteIds.includes(id) ? get().dirtyNoteIds : [...get().dirtyNoteIds, id],
 			lastExternalSync: opts?.external ? Date.now() : get().lastExternalSync
 		});
-		vaultLinkIndex.setNoteLinks(id, next);
+		const noteCount = ensureVaultIndex(get().nodes).noteCount;
+		if (
+			!isLargeMemoryVault(get().vaultId) &&
+			!shouldUseEgoGraph(noteCount) &&
+			!vaultLinkIndex.coversNoteCount(noteCount)
+		) {
+			rebuildLinkIndex(get().nodes);
+		} else {
+			vaultLinkIndex.setNoteLinks(id, next);
+		}
 		touchBody(id);
 		const updated = get().nodes[id];
 		if (updated?.kind === "note") {
@@ -5100,6 +5109,10 @@ export const useVaultStore = create(
 		if (!state) return;
 		queueMicrotask(() => {
 			const s = useVaultStore.getState();
+			if (!s.scaleRemount && s.nodes && !isLargeMemoryVault(s.vaultId)) {
+				const noteCount = ensureVaultIndex(s.nodes).noteCount;
+				if (!shouldUseEgoGraph(noteCount)) rebuildLinkIndex(s.nodes);
+			}
 			if (s.scaleRemount) return;
 			if (!s.settings.workspaceSplit) return;
 			let secondary = s.secondaryNoteId;

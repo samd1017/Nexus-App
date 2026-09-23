@@ -31,14 +31,17 @@ function incomingCount(
   nodes: Record<string, VaultNode>,
 ): number {
   const ids = new Set<string>();
-  for (const key of noteTargetKeys(note)) {
-    for (const src of vaultLinkIndex.getBacklinkSources(key)) {
-      if (src !== note.id) ids.add(src);
+  const noteCount = ensureVaultIndex(nodes).noteCount;
+  const covered = vaultLinkIndex.coversNoteCount(noteCount);
+  if (covered) {
+    for (const key of noteTargetKeys(note)) {
+      for (const src of vaultLinkIndex.getBacklinkSources(key)) {
+        if (src !== note.id) ids.add(src);
+      }
     }
+    return ids.size;
   }
-  if (ids.size > 0) return ids.size;
-  // Small vaults still have a body-scan backlink list when the link map is cold.
-  if (shouldUseEgoGraph(ensureVaultIndex(nodes).noteCount)) return 0;
+  if (shouldUseEgoGraph(noteCount)) return 0;
   for (const b of getBacklinks(note, nodes)) ids.add(b.fromId);
   return ids.size;
 }

@@ -70,6 +70,33 @@ async function main() {
   const rev3 = back.buildReverseIndex(small);
   assert.equal(rev3, rev1, "content-only hydrate must not rebuild reverse index");
 
+  back.invalidateBacklinkIndex();
+  const blockVault = {
+    dest: {
+      id: "dest",
+      path: "First Light.md",
+      name: "First Light.md",
+      kind: "note",
+      parentId: null,
+      mtime: 1,
+      content: "# First Light\n",
+    },
+    src: {
+      id: "src",
+      path: "Heading.md",
+      name: "Heading.md",
+      kind: "note",
+      parentId: null,
+      mtime: 1,
+      content: "See [[First Light#^next-step]]\n",
+    },
+  };
+  const revBlock = back.buildReverseIndex(blockVault);
+  assert.ok(
+    revBlock.get("first light")?.includes("src"),
+    "a block link is a backlink to the note",
+  );
+
   const large = manyNodes(500);
   const miss = graph.resolveWikilink("no-such-note-zzz", large);
   assert.equal(miss, null, "large vaults skip O(n) fuzzy resolve");
