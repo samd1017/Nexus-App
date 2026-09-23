@@ -4,6 +4,8 @@
 mod index_fill;
 #[path = "../../src/fill_join.rs"]
 mod fill_join;
+#[path = "../../src/shell_catalog.rs"]
+mod shell_catalog;
 
 pub use fill_join::*;
 pub use index_fill::*;

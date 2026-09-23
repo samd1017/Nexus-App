@@ -2,6 +2,8 @@
 
 **Goal:** Comfortably handle **300k–500k** notes on Desktop (plain-folder markdown), with headroom beyond. Web = demo/QA only. Mobile later via shared DurableIndex schema.
 
+The interactive shell does not hold the catalog. See [SHELL-CATALOG.md](./SHELL-CATALOG.md). A large desktop vault keeps a window of notes in the renderer and asks SQLite for the next page, map level, or neighborhood. The metadata RAM budget below is the old in-memory mirror, not the shell path.
+
 ## Scale continuum (product law)
 
 Nexus is one product from a handful of notes through about 500,000. Same craft. There is no toy mode that breaks at scale, and no enterprise mode that feels heavy or empty on a small vault. The switch is automatic. Drawing 500k orbs is the wrong picture: the folder map and the ego neighborhood stay buttery, and a 12-note vault still gets the full galaxy.

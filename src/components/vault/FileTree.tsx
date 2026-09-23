@@ -392,6 +392,7 @@ export const FileTree = memo(function FileTree() {
   const rootIds = useVaultStore((s) => s.rootIds);
   const vaultId = useVaultStore((s) => s.vaultId);
   const expandedFolders = useVaultStore((s) => s.expandedFolders);
+  const shellUnloaded = useVaultStore((s) => s.shellUnloaded);
   // Stable tick — never ensureVaultIndex inside a Zustand selector
   const structureTick = useTreeStructureTick();
   const createNote = useVaultStore((s) => s.createNote);
@@ -431,12 +432,13 @@ export const FileTree = memo(function FileTree() {
       expandedFolders,
       TREE_FLAT_CAP,
       folderWindows,
+      shellUnloaded,
     );
     setLastTreeFlatCount(rows.length);
     return rows;
     // structureTick encodes structureGen + nodeCount + rootIds
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rootIds, expandedFolders, structureTick, folderWindows]);
+  }, [rootIds, expandedFolders, structureTick, folderWindows, shellUnloaded]);
 
   // Stabilize callbacks that would otherwise churn when flatRows identity changes
   const flatRowsRef = useRef(flatRows);
@@ -491,6 +493,10 @@ export const FileTree = memo(function FileTree() {
   );
 
   const showMore = useCallback((parentId: string) => {
+    if (useVaultStore.getState().shellCatalog) {
+      void useVaultStore.getState().loadShellChildren(parentId);
+      return;
+    }
     setFolderWindows((prev) => {
       const cur = prev[parentId] ?? TREE_FOLDER_NOTE_WINDOW;
       pendingMoreRef.current = { parentId, prevShown: cur };

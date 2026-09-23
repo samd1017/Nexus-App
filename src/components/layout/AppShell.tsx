@@ -377,13 +377,21 @@ export function AppShell() {
     } else if (mode === "desktop" && getDesktopRoot()) {
       const root = getDesktopRoot()!;
       setWatcherAck(null);
+      const shellWindow = useVaultStore.getState().shellCatalog;
       const handle = startDesktopWatch(
         root,
         (scan) => {
+          if (useVaultStore.getState().shellCatalog) return;
           applyExternalSnapshot(scan.nodes, scan.rootIds);
         },
         900,
-        { metaOnly: shouldLazyBodies("desktop") },
+        shellWindow
+          ? {
+              metaOnly: true,
+              shellWindow: true,
+              onPaths: (paths) => useVaultStore.getState().refreshShellPaths(paths),
+            }
+          : { metaOnly: shouldLazyBodies("desktop") },
       );
       setDesktopWatchAck(() => handle.acknowledge());
       desktopStop = handle.stop;

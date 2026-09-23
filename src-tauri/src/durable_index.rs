@@ -1009,3 +1009,151 @@ pub fn vault_index_fill_cancel(db_path: String) -> Result<OkResult, String> {
     request_fill_cancel(&db_path);
     Ok(OkResult { ok: true })
 }
+
+fn shell_busy_map(err: String) -> String {
+    let lower = err.to_lowercase();
+    if lower.contains("busy") || lower.contains("locked") {
+        "shell_busy".into()
+    } else {
+        err
+    }
+}
+
+fn ensure_shell_conn(
+    app: &tauri::AppHandle,
+    state: &mut IndexState,
+    vault_root: &str,
+) -> Result<String, String> {
+    crate::vault_scope::register_and_grant(app, vault_root)?;
+    use tauri::Manager;
+    let data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let path = resolve_index_path(&data, vault_root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let db_path = path.to_string_lossy().to_string();
+    if !state.conns.contains_key(&db_path) {
+        let conn = open_conn(&db_path)?;
+        ensure_schema(&conn, "shell", Some(vault_root))?;
+        state.conns.insert(db_path.clone(), conn);
+    }
+    Ok(db_path)
+}
+
+fn with_shell_conn<T>(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: &str,
+    f: impl FnOnce(&mut Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let conn = guard
+        .conns
+        .get_mut(db_path)
+        .ok_or_else(|| "index not open".to_string())?;
+    let _ = conn.busy_timeout(Duration::from_millis(80));
+    let result = f(conn).map_err(shell_busy_map);
+    let _ = conn.busy_timeout(Duration::from_millis(15_000));
+    result
+}
+
+/// Catalog the vault in-process and return either every note (small vault)
+/// or one bounded window. The full listing never crosses into the WebView
+/// when `materialize` is false.
+#[tauri::command]
+pub fn vault_shell_mount(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedIndex>,
+    vault_root: String,
+    prefer_path: Option<String>,
+) -> Result<crate::shell_catalog::ShellMount, String> {
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let db_path = ensure_shell_conn(&app, &mut guard, &vault_root)?;
+    let allow_walk = !fill_is_inflight(&db_path);
+    let conn = guard
+        .conns
+        .get_mut(&db_path)
+        .ok_or_else(|| "index not open".to_string())?;
+    if !allow_walk {
+        let _ = conn.busy_timeout(Duration::from_millis(80));
+    }
+    let result = crate::shell_catalog::mount_catalog(
+        conn,
+        Path::new(&vault_root),
+        prefer_path.as_deref(),
+        allow_walk,
+    );
+    let _ = conn.busy_timeout(Duration::from_millis(15_000));
+    let mut mounted = if allow_walk {
+        result?
+    } else {
+        result.map_err(shell_busy_map)?
+    };
+    mounted.db_path = db_path;
+    Ok(mounted)
+}
+
+#[tauri::command]
+pub fn vault_shell_children(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    parent_path: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<crate::shell_catalog::ShellPage, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_children(
+            conn,
+            &parent_path,
+            limit.unwrap_or(crate::shell_catalog::SHELL_CHILD_PAGE),
+            offset.unwrap_or(0),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_level(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    parent_path: String,
+    max_nodes: Option<i64>,
+) -> Result<crate::shell_catalog::ShellLevel, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_level(
+            conn,
+            &parent_path,
+            max_nodes.unwrap_or(crate::shell_catalog::SHELL_GRAPH_MAX),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_ego(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    center_id: String,
+    hops: Option<i64>,
+    max_nodes: Option<i64>,
+) -> Result<crate::shell_catalog::ShellEgo, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_ego(
+            conn,
+            &center_id,
+            hops.unwrap_or(crate::shell_catalog::SHELL_EGO_HOPS),
+            max_nodes.unwrap_or(crate::shell_catalog::SHELL_EGO_MAX),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_note(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    id: String,
+) -> Result<Option<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_note(conn, &id)
+    })
+}

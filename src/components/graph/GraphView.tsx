@@ -4,7 +4,9 @@ import * as THREE from "three";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import SpriteText from "three-spritetext";
 import { useVaultStore } from "@/lib/vault/store";
-import { resolveGraphData, type GraphViewMode } from "@/lib/graph/build-graph";
+import { resolveGraphData, type GraphViewMode, type ResolvedGraphData } from "@/lib/graph/build-graph";
+import { emptyShellGraph, graphFromShellEgo, graphFromShellLevel } from "@/lib/graph/shell-graph";
+import { fetchShellEgo, fetchShellLevel } from "@/lib/vault/shell-catalog";
 import { folderIdFromBrowsePath } from "@/lib/graph/folder-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
@@ -1201,6 +1203,11 @@ export function GraphView({ mode, className }: Props) {
   const prevGraphScopeRef = useRef<string | null>(null);
   const graphScopeMode = useVaultStore((s) => s.graphScopeMode ?? "vault");
   const graphBrowsePath = useVaultStore((s) => s.graphBrowsePath ?? "");
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
+  const catalogFolderCount = useVaultStore((s) => s.catalogFolderCount);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const [shellResolved, setShellResolved] = useState<ResolvedGraphData | null>(null);
   const enterGraphFolder = useVaultStore((s) => s.enterGraphFolder);
   const enterGraphEgo = useVaultStore((s) => s.enterGraphEgo);
   const returnFromGraphEgo = useVaultStore((s) => s.returnFromGraphEgo);
@@ -1242,14 +1249,16 @@ export function GraphView({ mode, className }: Props) {
   const desktopBoost = isDesktopShell();
 
   const vaultNoteCount = useMemo(() => {
+    if (shellCatalog) return catalogNoteCount;
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
     return idx.noteCount;
-  }, [deferredNodes]);
+  }, [deferredNodes, shellCatalog, catalogNoteCount]);
 
   const vaultFolderCount = useMemo(() => {
+    if (shellCatalog) return catalogFolderCount;
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
     return idx.folderCount;
-  }, [deferredNodes]);
+  }, [deferredNodes, shellCatalog, catalogFolderCount]);
 
   const particlesLive = scaleParticlesEnabled(
     vaultNoteCount,
@@ -1261,6 +1270,9 @@ export function GraphView({ mode, className }: Props) {
   // Mode-gated fingerprint — folder uses O(level) child signature (not O(N) links,
   // and not structureGeneration which can bump on content-only body evicts).
   const graphStructureKey = useMemo(() => {
+    if (shellCatalog) {
+      return `shell:${graphBrowsePath}:${graphScopeMode}:${egoCenterId ?? ""}:${catalogNoteCount}`;
+    }
     const large = shouldUseFolderGraph(vaultNoteCount);
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
     if (large && graphScopeMode !== "ego") {
@@ -1298,9 +1310,35 @@ export function GraphView({ mode, className }: Props) {
     graphScopeMode,
     egoCenterId,
     graphTick,
+    shellCatalog,
+    catalogNoteCount,
   ]);
 
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath) {
+      setShellResolved(null);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      if (graphScopeMode === "ego" && egoCenterId) {
+        const ego = await fetchShellEgo(shellDbPath, egoCenterId, 2, 400);
+        if (cancelled || !ego) return;
+        setShellResolved(graphFromShellEgo(ego, catalogNoteCount));
+        return;
+      }
+      const level = await fetchShellLevel(shellDbPath, graphBrowsePath || "", 320);
+      if (cancelled || !level) return;
+      setShellResolved(graphFromShellLevel(level, catalogNoteCount));
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [shellCatalog, shellDbPath, graphBrowsePath, graphScopeMode, egoCenterId, catalogNoteCount]);
+
   const resolved = useMemo(() => {
+    if (shellCatalog) return shellResolved ?? emptyShellGraph(catalogNoteCount);
     return resolveGraphData(deferredNodes as Record<string, VaultNode>, {
       noteCount: vaultNoteCount,
       activeNoteId: graphScopeMode === "ego" ? egoCenterId : activeNoteId,
@@ -1312,7 +1350,7 @@ export function GraphView({ mode, className }: Props) {
     });
     // Folder/vault keys already ignore the active note; ego keys include it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphStructureKey, graphBrowsePath, graphScopeMode]);
+  }, [graphStructureKey, graphBrowsePath, graphScopeMode, shellCatalog, shellResolved, catalogNoteCount]);
 
   const graphModeResolved: GraphViewMode = resolved.mode;
 

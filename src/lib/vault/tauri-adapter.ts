@@ -696,7 +696,7 @@ export function startDesktopWatch(
   root: string,
   onChange: (scan: VaultScan, changedPaths?: string[]) => void,
   intervalMs = 900,
-  opts?: { metaOnly?: boolean },
+  opts?: { metaOnly?: boolean; shellWindow?: boolean; onPaths?: (paths: string[]) => void },
 ): { stop: () => void; acknowledge: () => void } {
   const metaOnly = !!opts?.metaOnly;
   let lastSig = "";
@@ -746,6 +746,35 @@ export function startDesktopWatch(
   };
 
   void (async () => {
+    if (opts?.shellWindow) {
+      // Do not signature-walk or copy the catalog into JS. OS notify only.
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const { listen } = await import("@tauri-apps/api/event");
+        const ping = await invoke<string>("vault_index_ping");
+        if (typeof ping !== "string" || !ping.startsWith("nexus-vault-index")) return;
+        const started = await invoke<{ watchId: string }>("vault_watch_start", {
+          root,
+          metaOnly: true,
+        });
+        watchId = started?.watchId ?? null;
+        if (!watchId || stopped) return;
+        usingNative = true;
+        unlisten = await listen<{
+          watchId: string;
+          kind: string;
+          paths: string[];
+        }>("nexus-vault-fs", (ev) => {
+          if (stopped) return;
+          const p = ev.payload;
+          if (watchId && p.watchId && p.watchId !== watchId) return;
+          if (p.paths?.length) opts.onPaths?.(p.paths);
+        });
+      } catch (err) {
+        console.warn("[nexus] shell catalog watch unavailable", err);
+      }
+      return;
+    }
     try {
       const sigs = await scanDesktopSignatures(root);
       lastSig = sigMapHash(sigs);
@@ -853,6 +882,7 @@ export function startDesktopWatch(
     },
     acknowledge: () => {
       suppressUntil = Date.now() + 1800;
+      if (opts?.shellWindow) return;
       void scanDesktopSignatures(root)
         .then((s) => {
           lastSig = JSON.stringify(s);

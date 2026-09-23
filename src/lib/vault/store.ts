@@ -226,6 +226,22 @@ import {
   getOpenProgress,
   isIndexFillInFlight,
 } from "./native-index";
+import {
+  SHELL_CATALOG_OFF,
+  SHELL_CHILD_PAGE,
+  SHELL_ROOT_KEY,
+  fetchShellChildren,
+  fetchShellNote,
+  mergeShellRows,
+  mountShellCatalog,
+  nodesFromShellRows,
+  pageHidden,
+  shellParentKeyForPath,
+  shellParentPath,
+  shellSessionFromMount,
+  type ShellMount,
+  type ShellRow,
+} from "./shell-catalog";
 import { invalidateVaultTagsCache } from "./tags";
 import { recordNoteRevision, getNoteRevision, clearNoteHistory } from "./note-history";
 
@@ -318,6 +334,15 @@ export type VaultStore = {
   graphEgoReturnPath: string | null;
   /** Ticket to remount a large in-memory vault after reload (nodes never persisted). */
   scaleRemount: ScaleRemount | null;
+  /** Desktop large vault: `nodes` is a window, catalog lives in SQLite. */
+  shellCatalog: boolean;
+  catalogNoteCount: number;
+  catalogFolderCount: number;
+  shellDbPath: string | null;
+  /** Parent id → notes/folders not loaded into `nodes`. `__root__` is the vault root. */
+  shellUnloaded: Record<string, number>;
+  /** Parent id → rows already fetched for that parent. */
+  shellLoaded: Record<string, number>;
 
   bootstrap: () => Promise<void>;
   openDemoVault: () => void;
@@ -402,6 +427,10 @@ export type VaultStore = {
   getActiveNote: () => VaultNode | null;
   getChildren: (parentId: string | null) => VaultNode[];
   ensureNoteBody: (id: string) => Promise<string | null>;
+  loadShellChildren: (parentId: string) => Promise<void>;
+  ingestShellRows: (rows: ShellRow[]) => void;
+  refreshShellPaths: (paths: string[]) => void;
+  reloadShellParent: (parentId: string) => Promise<void>;
   flushDirty: () => Promise<void>;
   getBodyMemoryStats: () => BodyCacheStats;
   trimBodyCache: (opts?: { aggressive?: boolean }) => number;
@@ -435,6 +464,7 @@ const GRAPH_SCOPE_DEFAULTS = {
   graphEgoReturnPath: null as string | null,
   secondaryNoteId: null as string | null,
   pendingJump: null as NoteJump | null,
+  ...SHELL_CATALOG_OFF,
 };
 
 
@@ -496,6 +526,8 @@ let pendingExternal: { nodes: Record<string, VaultNode>; rootIds: string[] } | n
 const demoSaveTimers = new Map<string, number>();
 /** path → fingerprint of external body already shelved as .conflict-* */
 let shelvedConflicts = new Map<string, string>();
+/** One in-flight page fetch per tree parent. */
+const shellPageInflight = new Set<string>();
 type StageBuf = {
 	nodes: Record<string, VaultNode>;
 	rootIds: string[];
@@ -511,6 +543,7 @@ async function resyncFromDiskAfterError() {
 	lastDiskResyncAt = now;
 	try {
 		if (desktopRoot) {
+			if (useVaultStore.getState().shellCatalog) return;
 			const { scan } = await loadDiskVaultScan("desktop");
 			useVaultStore.getState().applyExternalSnapshot(scan.nodes, scan.rootIds);
 		} else if (fsaRoot) {
@@ -842,6 +875,12 @@ async function seedLinkIndexFromDurable(
 	} | null,
 	opts?: { allowEmpty?: boolean },
 ): Promise<number> {
+	// A shell window must not copy every link edge into the WebView.
+	// Ego and backlinks for that mode query SQLite per note.
+	if (useVaultStore.getState().shellCatalog) {
+		vaultLinkIndex.markPending();
+		return 0;
+	}
 	if (!index?.listLinkGroups) return 0;
 	try {
 		const groups = await index.listLinkGroups();
@@ -976,8 +1015,10 @@ async function runCompleteDiskSearchIndex(opts?: {
 		});
 		return { indexed: 0, errors: 0, skipped: true };
 	}
-	let noteCount = 0;
-	for (const id in st.nodes) if (st.nodes[id]?.kind === "note") noteCount += 1;
+	let noteCount = st.shellCatalog ? st.catalogNoteCount : 0;
+	if (!st.shellCatalog) {
+		for (const id in st.nodes) if (st.nodes[id]?.kind === "note") noteCount += 1;
+	}
 	setBodyCacheNoteCount(noteCount);
 	const sqlite = getDurableIndex();
 	if (
@@ -1011,6 +1052,16 @@ async function runCompleteDiskSearchIndex(opts?: {
 					}
 					if (p.phase === "ready-fts-partial" || p.phase === "done") {
 						void seedLinkIndexFromDurable(sqlite, { allowEmpty: true });
+					}
+					if (
+						useVaultStore.getState().shellCatalog &&
+						(p.phase === "ready-meta" || p.phase === "done") &&
+						p.total > 0
+					) {
+						useVaultStore.setState({ catalogNoteCount: p.total });
+						if (p.phase === "ready-meta") {
+							void useVaultStore.getState().reloadShellParent(SHELL_ROOT_KEY);
+						}
 					}
 					if (p.phase === "done") {
 						desktopFillRoot = null;
@@ -1220,7 +1271,11 @@ async function runCompleteDiskSearchIndex(opts?: {
 	return { ...result, skipped: false };
 }
 /** Single-path disk open: always meta-only for disk vaults (bodies on demand). */
-async function loadDiskVaultScan(mode: VaultMode) {
+async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string | null }): Promise<{
+	scan: Awaited<ReturnType<typeof openDesktopVaultAt>>;
+	metaOnly: boolean;
+	shell: ShellMount | null;
+}> {
 	const metaOnly = shouldLazyBodies(mode) || mode === "desktop" || mode === "fsa";
 	setOpenProgress({
 		phase: "walking",
@@ -1241,6 +1296,25 @@ async function loadDiskVaultScan(mode: VaultMode) {
 			if (!desktopRoot) throw new Error("No desktop vault root");
 			await ensureDesktopVaultFsScope(desktopRoot);
 			if (metaOnly) {
+				const shell = await mountShellCatalog(desktopRoot, opts?.preferPath);
+				if (shell) {
+					const built = nodesFromShellRows(shell.rows);
+					const scan = {
+						nodes: built.nodes,
+						rootIds: shell.rootIds.length ? shell.rootIds : built.rootIds,
+						signatures: {} as Record<string, string>,
+					};
+					const shown = shell.materialize ? shell.notes : shell.rows.length;
+					setOpenProgress({
+						phase: "indexing",
+						scanned: shown,
+						totalHint: shell.notes || shown,
+						message: shell.materialize
+							? "Metadata ready — indexing search from files…"
+							: "Catalog ready — opening a window of the vault…",
+					});
+					return { scan, metaOnly: true, shell };
+				}
 				const native = await nativeMetaWalk(desktopRoot);
 				if (native && native.length > 0) {
 					onProgress(native.length);
@@ -1254,7 +1328,8 @@ async function loadDiskVaultScan(mode: VaultMode) {
 					});
 					return {
 						scan,
-						metaOnly: true
+						metaOnly: true,
+						shell: null,
 					};
 				}
 			}
@@ -1271,7 +1346,8 @@ async function loadDiskVaultScan(mode: VaultMode) {
 			});
 			return {
 				scan,
-				metaOnly
+				metaOnly,
+				shell: null,
 			};
 		}
 		if (!fsaRoot) throw new Error("No FSA vault root");
@@ -1290,7 +1366,8 @@ async function loadDiskVaultScan(mode: VaultMode) {
 		});
 		return {
 			scan,
-			metaOnly
+			metaOnly,
+			shell: null,
 		};
 	} catch (e) {
 		setOpenProgress({
@@ -1590,7 +1667,7 @@ async function mountDesktopVaultAt(
 		set({ connecting: false });
 		const live = useVaultStore.getState();
 		return {
-			notes: countVaultNotes(live.nodes),
+			notes: live.shellCatalog ? live.catalogNoteCount : countVaultNotes(live.nodes),
 			vaultId: live.vaultId ?? opts?.vaultId ?? "",
 			vaultPath: live.vaultPath || root,
 			searchEngine: describeSearchEngine(),
@@ -1626,10 +1703,14 @@ async function mountDesktopVaultAt(
 	});
 	let scan: Awaited<ReturnType<typeof loadDiskVaultScan>>["scan"];
 	let metaOnly: boolean;
+	let shellMount: ShellMount | null = null;
 	try {
-		const loaded = await loadDiskVaultScan("desktop");
+		const loaded = await loadDiskVaultScan("desktop", {
+			preferPath: useVaultStore.getState().settings.lastNotePath,
+		});
 		scan = loaded.scan;
 		metaOnly = loaded.metaOnly;
+		shellMount = loaded.shell;
 	} catch (e) {
 		desktopRoot = null;
 		const message =
@@ -1652,7 +1733,10 @@ async function mountDesktopVaultAt(
 	const vaultId =
 		opts?.vaultId ||
 		"desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
-	const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+	const shellSession = shellSessionFromMount(shellMount, countVaultNotes(scan.nodes));
+	const first =
+		(shellMount?.activeNoteId && scan.nodes[shellMount.activeNoteId]) ||
+		Object.values(scan.nodes).find((n) => n.kind === "note");
 	const recents = pushRecent({
 		id: vaultId,
 		name,
@@ -1677,6 +1761,7 @@ async function mountDesktopVaultAt(
 		chromeFsaLimit: null,
 		toast: opts?.toast ?? `Opened vault: ${name}`,
 		...GRAPH_SCOPE_DEFAULTS,
+		...shellSession,
 		settings: {
 			...get().settings,
 			lastNotePath: first?.path ?? null,
@@ -1713,7 +1798,7 @@ async function mountDesktopVaultAt(
 	resetAndSeedNav(get().activeNoteId);
 	const live = useVaultStore.getState();
 	return {
-		notes: countVaultNotes(live.nodes),
+		notes: live.shellCatalog ? live.catalogNoteCount : countVaultNotes(live.nodes),
 		vaultId: live.vaultId ?? vaultId,
 		vaultPath: live.vaultPath,
 		searchEngine: describeSearchEngine(),
@@ -1733,6 +1818,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	rootIds: [],
 	activeNoteId: null,
 	secondaryNoteId: null,
+	...SHELL_CATALOG_OFF,
 	pendingJump: null,
 	settings: { ...DEFAULT_SETTINGS },
 	expandedFolders: [],
@@ -1807,9 +1893,16 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				try {
 					desktopRoot = root;
 					fsaRoot = null;
-					const { scan, metaOnly } = await loadDiskVaultScan("desktop");
 					const lastPath = get().settings.lastNotePath;
-					const active = lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id || Object.values(scan.nodes).find((n) => n.kind === "note")?.id || null;
+					const { scan, metaOnly, shell } = await loadDiskVaultScan("desktop", {
+						preferPath: lastPath,
+					});
+					const shellSession = shellSessionFromMount(shell, countVaultNotes(scan.nodes));
+					const active =
+						(shell?.activeNoteId && scan.nodes[shell.activeNoteId]?.id) ||
+						(lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id) ||
+						Object.values(scan.nodes).find((n) => n.kind === "note")?.id ||
+						null;
 					const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
 					const vaultId = "desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
 					const recents2 = pushRecent({
@@ -1832,6 +1925,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						connecting: false,
 						dirtyNoteIds: [],
 						...GRAPH_SCOPE_DEFAULTS,
+						...shellSession,
 					});
 					syncActiveBackend("desktop");
 					{
@@ -3004,6 +3098,23 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return;
 		}
 		const note = id ? get().nodes[id] : null;
+		const shellDb = get().shellDbPath;
+		if (id && get().shellCatalog && !note && shellDb) {
+			const db = shellDb;
+			const requested = id;
+			void fetchShellNote(db, requested).then((row) => {
+				if (!row) return;
+				const live = useVaultStore.getState();
+				if (live.shellDbPath !== db) return;
+				live.ingestShellRows([row]);
+				if (live.activeNoteId === requested) {
+					const loaded = useVaultStore.getState().nodes[requested];
+					if (loaded?.kind === "note" && loaded.content === undefined) {
+						void useVaultStore.getState().ensureNoteBody(requested);
+					}
+				}
+			});
+		}
 		const pathExpand = expandPathToNote(get().nodes, id);
 		const curExpanded = get().expandedFolders;
 		// Only rebuild expandedFolders when ancestors aren't already open —
@@ -3030,10 +3141,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const nextPath = note?.path ?? get().settings.lastNotePath;
 		const pathChanged = nextPath !== get().settings.lastNotePath;
 		let noteCount = 0;
-		try {
-			noteCount = ensureVaultIndex(get().nodes).noteCount;
-		} catch {
-			/* ignore */
+		if (get().shellCatalog) {
+			noteCount = get().catalogNoteCount;
+		} else {
+			try {
+				noteCount = ensureVaultIndex(get().nodes).noteCount;
+			} catch {
+				/* ignore */
+			}
 		}
 		const accordion = noteCount >= 400;
 		const nextExpanded = accordion
@@ -3150,11 +3265,74 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 
 	toggleFolder: (id) => {
 		const cur = readExpandedFolders(get);
-		const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+		const opening = !cur.includes(id);
+		const next = opening ? [...cur, id] : cur.filter((x) => x !== id);
 		writeExpandedFolders(set, next);
+		if (opening && get().shellCatalog && !(get().shellLoaded[id] > 0)) {
+			void get().loadShellChildren(id);
+		}
 	},
 	setExpandedFolders: (ids) => {
 		writeExpandedFolders(set, Array.from(new Set(ids)));
+	},
+	loadShellChildren: async (parentId) => {
+		const s = get();
+		if (!s.shellCatalog || !s.shellDbPath) return;
+		const parentPath = shellParentPath(s.nodes, parentId);
+		if (parentPath == null) return;
+		if (shellPageInflight.has(parentId)) return;
+		const offset = s.shellLoaded[parentId] ?? 0;
+		shellPageInflight.add(parentId);
+		try {
+			const page = await fetchShellChildren(s.shellDbPath, parentPath, offset, SHELL_CHILD_PAGE);
+			if (!page) return;
+			const live = get();
+			if (!live.shellCatalog || live.shellDbPath !== s.shellDbPath) return;
+			const merged = mergeShellRows(live.nodes, live.rootIds, page.rows);
+			const loaded = offset + page.rows.length;
+			const hidden = pageHidden(page, loaded);
+			const unloaded = { ...live.shellUnloaded };
+			if (hidden > 0) unloaded[parentId] = hidden;
+			else delete unloaded[parentId];
+			set({
+				nodes: merged.nodes,
+				rootIds: merged.rootIds,
+				shellLoaded: { ...live.shellLoaded, [parentId]: loaded },
+				shellUnloaded: unloaded,
+			});
+		} finally {
+			shellPageInflight.delete(parentId);
+		}
+	},
+	reloadShellParent: async (parentId) => {
+		const s = get();
+		if (!s.shellCatalog) return;
+		shellPageInflight.delete(parentId);
+		set({ shellLoaded: { ...s.shellLoaded, [parentId]: 0 } });
+		await get().loadShellChildren(parentId);
+	},
+	ingestShellRows: (rows) => {
+		if (!rows?.length) return;
+		const s = get();
+		const merged = mergeShellRows(s.nodes, s.rootIds, rows);
+		if (merged.nodes === s.nodes) return;
+		set({ nodes: merged.nodes, rootIds: merged.rootIds });
+	},
+	refreshShellPaths: (paths) => {
+		if (!get().shellCatalog || !paths?.length) return;
+		const parents = new Set<string>();
+		for (const path of paths) parents.add(shellParentKeyForPath(path));
+		let budget = 0;
+		for (const id of parents) {
+			if (budget >= 8) break;
+			const open =
+				id === SHELL_ROOT_KEY ||
+				get().expandedFolders.includes(id) ||
+				(get().shellLoaded[id] ?? 0) > 0;
+			if (!open) continue;
+			budget += 1;
+			void get().reloadShellParent(id);
+		}
 	},
 	setLeftOpen: (open) => set({ settings: {
 		...get().settings,

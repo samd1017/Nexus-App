@@ -40,6 +40,8 @@ export function flattenVisibleTree(
   expanded: string[],
   cap = TREE_FLAT_CAP,
   folderWindows?: Record<string, number>,
+  /** Notes that exist under a parent but are not in `nodes` (native page remainder). */
+  unloaded?: Record<string, number>,
 ): FlatTreeRow[] {
   const idx = ensureVaultIndex(nodes);
   const exp = new Set(expanded);
@@ -116,15 +118,21 @@ export function flattenVisibleTree(
       foldersRemaining = Math.max(0, foldersRemaining - 1);
       if (!exp.has(id)) continue;
       const children = idx.getChildIds(id);
-      if (children.length === 0) continue;
+      const extra = unloaded?.[id] ?? 0;
+      if (children.length === 0) {
+        if (extra > 0) pushMore(id, depth + 1, extra);
+        continue;
+      }
       const limit = Math.max(0, folderWindows?.[id] ?? TREE_FOLDER_NOTE_WINDOW);
       const hidden = walk(children, depth + 1, limit);
-      if (hidden > 0) pushMore(id, depth + 1, hidden);
+      if (hidden + extra > 0) pushMore(id, depth + 1, hidden + extra);
     }
     return 0;
   };
 
   const indexRoots = idx.getChildIds(null);
   walk(indexRoots.length > 0 ? indexRoots : rootIds, 0, cap);
+  const rootHidden = unloaded?.__root__ ?? 0;
+  if (rootHidden > 0) pushMore("__root__", 0, rootHidden);
   return rows;
 }
