@@ -22,8 +22,19 @@ jobs:
             echo "waiting for both patches"
             exit 0
           fi
+          python3 - << 'PY'
+          from pathlib import Path
+          p = Path("scripts/gate-a/GraphView.patch.b64")
+          chars = list(p.read_text().strip())
+          if len(chars) != 28748:
+              raise SystemExit(f"unexpected b64 length {len(chars)}")
+          # Staging upload flipped three base64 characters. Restore them before decode.
+          for index, char in ((7318, "N"), (8478, "N"), (9562, "s")):
+              chars[index] = char
+          Path("/tmp/gv.b64").write_text("".join(chars))
+          PY
           base64 -d scripts/gate-a/store.patch.b64 > /tmp/store.patch
-          base64 -d scripts/gate-a/GraphView.patch.b64 > /tmp/gv.patch
+          base64 -d /tmp/gv.b64 > /tmp/gv.patch
           echo "36836cd83c29c9b087dc46c7705e0226c0b4de041c06e08dfe4af93672eaa06b  /tmp/store.patch" | sha256sum -c -
           echo "386132604f861799c4a9d8c673ba10d9b66b794e55fbb66b7af758a6f16bc1a4  /tmp/gv.patch" | sha256sum -c -
           patch --forward --batch src/lib/vault/store.ts /tmp/store.patch
