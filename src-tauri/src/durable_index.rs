@@ -62,6 +62,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
   body,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+-- note_id is UNINDEXED in FTS5, so DELETE WHERE note_id scans the whole
+-- index. This side table makes replace/delete a rowid lookup.
+CREATE TABLE IF NOT EXISTS note_fts_row (
+  note_id TEXT PRIMARY KEY,
+  fts_rowid INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS vault_registry (
   vault_id TEXT PRIMARY KEY,
@@ -193,6 +199,7 @@ fn open_conn(db_path: &str) -> Result<Connection, String> {
 fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) -> Result<(), String> {
     conn.execute_batch(DDL)
         .map_err(|e| format!("schema ddl: {e}"))?;
+    crate::index_fill::ensure_note_fts_row(conn);
 
     let ver: i32 = conn
         .query_row(
@@ -209,7 +216,8 @@ fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) ->
             "DELETE FROM link_edge;
              DELETE FROM tag_map;
              DELETE FROM note_meta;
-             DROP TABLE IF EXISTS note_fts;",
+             DROP TABLE IF EXISTS note_fts;
+             DROP TABLE IF EXISTS note_fts_row;",
         );
         conn.execute_batch(DDL)
             .map_err(|e| format!("schema migrate: {e}"))?;
@@ -281,7 +289,6 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
 
     // Wave B: when body_snippet is None, preserve existing FTS body (meta-only reconcile)
     let body_update = note.body_snippet.clone();
-    let body_for_insert = body_update.clone().unwrap_or_default();
 
     // content_hash: only overwrite when provided
     if note.content_hash.is_some() {
@@ -326,29 +333,19 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
     }
 
     if let Some(body) = body_update {
-        conn.execute("DELETE FROM note_fts WHERE note_id = ?1", params![note.id])
-            .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)",
-            params![note.id, title, note.path, body],
-        )
-        .map_err(|e| e.to_string())?;
+        crate::index_fill::replace_note_fts(conn, &note.id, &title, &note.path, body)?;
     } else {
-        // Preserve existing body; refresh title/path only
+        // Preserve existing body; refresh title/path only.
         let old_body: String = conn
             .query_row(
-                "SELECT body FROM note_fts WHERE note_id = ?1",
+                "SELECT body FROM note_fts WHERE rowid = (
+                    SELECT fts_rowid FROM note_fts_row WHERE note_id=?1
+                 )",
                 params![note.id],
                 |r| r.get(0),
             )
             .unwrap_or_default();
-        conn.execute("DELETE FROM note_fts WHERE note_id = ?1", params![note.id])
-            .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)",
-            params![note.id, title, note.path, old_body],
-        )
-        .map_err(|e| e.to_string())?;
+        crate::index_fill::replace_note_fts(conn, &note.id, &title, &note.path, &old_body)?;
     }
 
     // Only replace links/tags when caller supplies them (None = leave previous)
@@ -377,8 +374,7 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
 }
 
 fn remove_note_tx(conn: &Connection, id: &str) -> Result<(), String> {
-    conn.execute("DELETE FROM note_fts WHERE note_id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    crate::index_fill::delete_note_fts(conn, id)?;
     conn.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id])
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id])
@@ -393,7 +389,8 @@ fn wipe_tx(conn: &Connection) -> Result<(), String> {
         "DELETE FROM link_edge;
          DELETE FROM tag_map;
          DELETE FROM note_meta;
-         DELETE FROM note_fts;",
+         DELETE FROM note_fts;
+         DELETE FROM note_fts_row;",
     )
     .map_err(|e| e.to_string())?;
     Ok(())

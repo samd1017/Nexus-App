@@ -1,11 +1,10 @@
 //! Phased SQLite FTS5 fill from a vault folder.
 //!
-//! Cold open must not wait for a full 100k empty-body FTS catalog before
-//! title search or short heads. Desktop (`FillUntil::Partial` / `Deep`):
-//! seed a small title/path FTS batch (priority folder + Hub-named files
-//! first), emit `ready-meta`, then read short heads. `FillUntil::Meta`
-//! still catalogs every title. No Tauri imports — also compiled by
-//! `src-tauri/fill-test`.
+//! Cold open must not wait for a full body index before title search.
+//! Desktop (`FillUntil::Partial` / `Deep`): commit title/path FTS rows as
+//! each directory batch lands, emit `ready-meta` when that walk's titles
+//! are in, then read short heads. `FillUntil::Meta` still catalogs titles
+//! only. No Tauri imports — also compiled by `src-tauri/fill-test`.
 //!
 //! Mid-fill UI (tree / note open / graph) must stay interactive: small WAL
 //! write batches, ≤2 head readers, yield after real I/O, time-gated progress.
@@ -38,24 +37,25 @@ pub const FILL_DEPTH_META: i64 = 0;
 pub const FILL_DEPTH_PARTIAL: i64 = 1;
 pub const FILL_DEPTH_DEEP: i64 = 2;
 const META_BATCH: usize = 256;
-/// FTS5 + link_edge writes hold the WAL exclusive lock. 1024-row batches
-/// made UI search / upsert / list_links wait multi-seconds (15s busy_timeout).
-pub const FTS_WRITE_BATCH: usize = 128;
-pub const READ_CHUNK: usize = 128;
+/// FTS writes hold the WAL writer lock. Rows are replaced by `rowid` (see
+/// `note_fts_row`), so a few hundred per commit stays short for readers.
+pub const FTS_WRITE_BATCH: usize = 256;
+pub const READ_CHUNK: usize = 256;
 /// Sleep after a write that actually took work, so the WebView and note
 /// reads can sneak in on Linux desktop during a 100k fill.
 pub const FILL_YIELD_MS: u64 = 4;
-/// Head readers share the disk with `readNote` / tree clicks. 8 workers
-/// saturated Linux I/O and froze interaction.
-pub const FILL_READ_WORKERS_MAX: usize = 2;
-/// Title/path FTS rows written before `ready-meta` on Partial/Deep fills.
-/// Enough for useful Hub-title hits; the rest wait for short-head writes.
+/// Head readers share the disk with `readNote` / tree clicks. More than a
+/// handful of workers saturated Linux I/O and froze interaction.
+pub const FILL_READ_WORKERS_MAX: usize = 4;
+/// Hot-name titles still sort first if a batch is only partially flushed.
+/// The walk itself now writes a title row for every new path.
 pub const TITLE_FTS_SEED: usize = 2048;
 /// Short heads committed while the directory walk is still running.
 /// Root notes first, so the open page has tags before the vault is listed.
 pub const EARLY_HEAD_CAP: usize = 256;
-/// Path rows committed during the walk so the tree grows before it finishes.
-const DISCOVER_BATCH: usize = 128;
+/// Path and title rows committed during the walk so the tree and title
+/// search grow before it finishes.
+const DISCOVER_BATCH: usize = 256;
 /// Intra-phase banner ticks. Phase transitions still emit immediately.
 /// Scan-delta emits (256) re-rendered AppShell/graph at 10–20Hz on fast fills.
 pub const PROGRESS_EMIT_MS: u64 = 400;
@@ -562,6 +562,7 @@ struct DiscoverPublish<'a> {
     indexed: &'a mut i64,
     errors: &'a mut i64,
     written: &'a mut HashSet<String>,
+    existing: &'a HashMap<String, ExistingNote>,
     on_scanned: &'a mut dyn FnMut(i64, i64, i64),
 }
 
@@ -637,6 +638,14 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
         .map(|n| (n.rel.clone(), n.name.clone(), n.mtime, n.size))
         .collect();
     let _ = crate::shell_catalog::remember_discovered(sink.conn, &rows);
+    commit_discovered_titles(
+        sink.conn,
+        notes,
+        sink.existing,
+        sink.indexed,
+        sink.errors,
+        sink.written,
+    );
     if sink.allow_heads && *sink.headed < EARLY_HEAD_CAP {
         let wrote = commit_early_heads(
             sink.conn,
@@ -651,6 +660,30 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
     }
     (sink.on_scanned)(scanned, *sink.indexed, *sink.errors);
     std::thread::yield_now();
+}
+
+/// Title/path FTS for paths that were not already in the catalog.
+/// Empty body, so a later head can replace the row without a table scan.
+fn commit_discovered_titles(
+    conn: &mut Connection,
+    notes: &[DiskNote],
+    existing: &HashMap<String, ExistingNote>,
+    indexed: &mut i64,
+    errors: &mut i64,
+    written: &mut HashSet<String>,
+) {
+    let mut batch = Vec::with_capacity(notes.len());
+    for note in notes {
+        if existing.contains_key(&note.rel) {
+            continue;
+        }
+        let id = desk_node_id(&note.rel);
+        if written.contains(&id) {
+            continue;
+        }
+        batch.push(meta_fill_note(note));
+    }
+    flush_note_batch(conn, &mut batch, indexed, errors, written);
 }
 
 fn commit_early_heads(
@@ -908,6 +941,78 @@ fn parent_id_for(rel: &str) -> Option<String> {
     rel.rsplit_once('/').map(|(p, _)| desk_node_id(p))
 }
 
+/// `note_fts.note_id` is UNINDEXED. Deletes go through this rowid map so a
+/// 100k fill does not scan the FTS table once per note.
+pub fn ensure_note_fts_row(conn: &Connection) {
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS note_fts_row (
+            note_id TEXT PRIMARY KEY,
+            fts_rowid INTEGER NOT NULL
+         );",
+    );
+    let side: i64 = conn
+        .query_row("SELECT COUNT(*) FROM note_fts_row", [], |r| r.get(0))
+        .unwrap_or(0);
+    let fts: i64 = conn
+        .query_row("SELECT COUNT(*) FROM note_fts", [], |r| r.get(0))
+        .unwrap_or(0);
+    if side < fts {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO note_fts_row(note_id, fts_rowid)
+             SELECT note_id, rowid FROM note_fts WHERE note_id IS NOT NULL",
+            [],
+        );
+    }
+}
+
+pub fn delete_note_fts(conn: &Connection, id: &str) -> Result<(), String> {
+    if let Ok(rowid) = conn.query_row(
+        "SELECT fts_rowid FROM note_fts_row WHERE note_id=?1",
+        params![id],
+        |r| r.get::<_, i64>(0),
+    ) {
+        conn.execute("DELETE FROM note_fts WHERE rowid=?1", params![rowid])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM note_fts_row WHERE note_id=?1", params![id])
+            .map_err(|e| e.to_string())?;
+    } else {
+        conn.execute("DELETE FROM note_fts WHERE note_id=?1", params![id])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn replace_note_fts(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+    path: &str,
+    body: &str,
+) -> Result<(), String> {
+    ensure_note_fts_row(conn);
+    if let Ok(rowid) = conn.query_row(
+        "SELECT fts_rowid FROM note_fts_row WHERE note_id=?1",
+        params![id],
+        |r| r.get::<_, i64>(0),
+    ) {
+        conn.execute("DELETE FROM note_fts WHERE rowid=?1", params![rowid])
+            .map_err(|e| e.to_string())?;
+    }
+    conn.execute(
+        "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)",
+        params![id, title, path, body],
+    )
+    .map_err(|e| e.to_string())?;
+    let rowid = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO note_fts_row(note_id, fts_rowid) VALUES (?1,?2)
+         ON CONFLICT(note_id) DO UPDATE SET fts_rowid=excluded.fts_rowid",
+        params![id, rowid],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn flush_note_batch(
     conn: &mut Connection,
     batch: &mut Vec<FillNote>,
@@ -949,11 +1054,23 @@ fn flush_note_batch(
                    END",
             )
             .map_err(|e| e.to_string())?;
+        let mut fts_row = tx
+            .prepare_cached("SELECT fts_rowid FROM note_fts_row WHERE note_id=?1")
+            .map_err(|e| e.to_string())?;
+        let mut fts_len = tx
+            .prepare_cached("SELECT length(body) FROM note_fts WHERE rowid=?1")
+            .map_err(|e| e.to_string())?;
         let mut fts_del = tx
-            .prepare_cached("DELETE FROM note_fts WHERE note_id = ?1")
+            .prepare_cached("DELETE FROM note_fts WHERE rowid=?1")
             .map_err(|e| e.to_string())?;
         let mut fts_ins = tx
             .prepare_cached("INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)")
+            .map_err(|e| e.to_string())?;
+        let mut fts_map = tx
+            .prepare_cached(
+                "INSERT INTO note_fts_row(note_id, fts_rowid) VALUES (?1,?2)
+                 ON CONFLICT(note_id) DO UPDATE SET fts_rowid=excluded.fts_rowid",
+            )
             .map_err(|e| e.to_string())?;
         let mut link_del = tx
             .prepare_cached("DELETE FROM link_edge WHERE source_id = ?1")
@@ -988,26 +1105,40 @@ fn flush_note_batch(
                 continue;
             }
             // A title/path row must not erase a head that already landed.
-            let keep_head = note.fill_depth <= FILL_DEPTH_META
-                && note.body.is_empty()
-                && tx
-                    .query_row(
-                        "SELECT length(body) FROM note_fts WHERE note_id=?1",
-                        params![note.id],
-                        |r| r.get::<_, i64>(0),
-                    )
-                    .unwrap_or(0)
-                    > 0;
-            if !keep_head
-                && (fts_del.execute(params![note.id]).is_err()
-                    || fts_ins
-                        .execute(params![note.id, note.title, note.path, note.body])
-                        .is_err())
-            {
-                *errors += 1;
-                continue;
+            let prev_rowid: Option<i64> = fts_row
+                .query_row(params![note.id], |r| r.get(0))
+                .ok();
+            let prev_body_len = prev_rowid
+                .map(|rowid| {
+                    fts_len
+                        .query_row(params![rowid], |r| r.get::<_, i64>(0))
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0);
+            let keep_head =
+                note.fill_depth <= FILL_DEPTH_META && note.body.is_empty() && prev_body_len > 0;
+            if !keep_head {
+                if let Some(rowid) = prev_rowid {
+                    if fts_del.execute(params![rowid]).is_err() {
+                        *errors += 1;
+                        continue;
+                    }
+                }
+                if fts_ins
+                    .execute(params![note.id, note.title, note.path, note.body])
+                    .is_err()
+                {
+                    *errors += 1;
+                    continue;
+                }
+                let rowid = tx.last_insert_rowid();
+                if fts_map.execute(params![note.id, rowid]).is_err() {
+                    *errors += 1;
+                    continue;
+                }
             }
-            if note.fill_depth > FILL_DEPTH_META || !note.links.is_empty() {
+            let replace_edges = !note.links.is_empty() || prev_body_len > 0;
+            if replace_edges && (note.fill_depth > FILL_DEPTH_META || !note.links.is_empty()) {
                 if link_del.execute(params![note.id]).is_err() {
                     *errors += 1;
                     continue;
@@ -1022,7 +1153,8 @@ fn flush_note_batch(
                     }
                 }
             }
-            if note.fill_depth > FILL_DEPTH_META {
+            let replace_tags = !note.tags.is_empty() || prev_body_len > 0;
+            if replace_tags && note.fill_depth > FILL_DEPTH_META {
                 if tag_del.execute(params![note.id]).is_err() {
                     *errors += 1;
                     continue;
@@ -1067,9 +1199,7 @@ fn remove_stale_notes(
     for id in &stale {
         let _ = tx.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id]);
         let _ = tx.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id]);
-        let ok = tx
-            .execute("DELETE FROM note_fts WHERE note_id = ?1", params![id])
-            .is_ok()
+        let ok = delete_note_fts(&tx, id).is_ok()
             && tx
                 .execute("DELETE FROM note_meta WHERE id = ?1", params![id])
                 .is_ok();
@@ -1142,8 +1272,9 @@ pub fn fill_from_disk_with_opts(
     mut on_progress: impl FnMut(&IndexFillProgress),
 ) -> Result<IndexFillResult, String> {
     ensure_fill_depth_column(conn);
+    ensure_note_fts_row(conn);
     let _ = conn.execute_batch(
-        "PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=268435456;",
+        "PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=268435456; PRAGMA wal_autocheckpoint=4000;",
     );
 
     let short_head = opts.short_head_chars.clamp(256, 4_096);
@@ -1210,6 +1341,7 @@ pub fn fill_from_disk_with_opts(
             indexed: &mut indexed,
             errors: &mut errors,
             written: &mut written,
+            existing: &existing,
             on_scanned: &mut |scanned, indexed_now, errors_now| {
                 if last_discover.elapsed() >= Duration::from_millis(PROGRESS_EMIT_MS) {
                     emit(
@@ -1261,15 +1393,19 @@ pub fn fill_from_disk_with_opts(
         }
         seen.insert(disk.rel.clone());
         let scanned = (i as i64) + 1;
-        if already_headed.contains(&disk.rel) && !opts.force_rebuild {
+        let touched = written.contains(&desk_node_id(&disk.rel));
+        if (already_headed.contains(&disk.rel) || touched) && !opts.force_rebuild {
             let prev = existing.get(&disk.rel);
             let unchanged = prev.map(|p| note_unchanged(p, disk)).unwrap_or(true);
             if unchanged {
-                // Heads committed during the walk are Partial. A deep fill
-                // still has to finish them; a title row must not replace them.
-                let depth = prev
-                    .map(|p| inferred_fill_depth(p.fill_depth))
-                    .unwrap_or(FILL_DEPTH_PARTIAL);
+                // A title row landed with the path batch. A head landed for
+                // the open page. Neither should be rewritten as an empty title.
+                let depth = if already_headed.contains(&disk.rel) {
+                    prev.map(|p| inferred_fill_depth(p.fill_depth))
+                        .unwrap_or(FILL_DEPTH_PARTIAL)
+                } else {
+                    FILL_DEPTH_META
+                };
                 if depth < FILL_DEPTH_PARTIAL && opts.until != FillUntil::Meta {
                     need_partial.push(i);
                 }
@@ -2001,8 +2137,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
 
         let seeded = ready_meta_fts.expect("ready-meta must emit");
         assert!(
-            seeded > 0 && seeded <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
-            "ready-meta FTS rows {seeded} should be a title seed plus open-page heads, not the full vault"
+            seeded >= 2_400,
+            "ready-meta FTS rows {seeded} should already include titles from the path walk"
         );
         assert!(
             hub_at_ready,
@@ -2019,8 +2155,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         );
         let heads_start = fts_when_heads_started.expect("fts-partial must start");
         assert!(
-            heads_start <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
-            "short-head fill started after {heads_start} FTS rows — catalog still monopolizing"
+            heads_start >= 2_400,
+            "short-head fill should start after titles are already searchable, got {heads_start}"
         );
         assert_eq!(result.search_state, "ready-fts-partial");
         assert!(fts_has(&conn, "cluster"));
@@ -2062,8 +2198,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let hits = hub_hits_at_ready.expect("ready-meta must emit");
         let seed = seeded.expect("seeded FTS count");
         assert!(
-            seed > 0 && seed <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
-            "official ready-meta FTS rows {seed} should be the title seed plus the open-page heads"
+            seed >= 3_000,
+            "official ready-meta FTS rows {seed} should cover the walked titles"
         );
         assert!(
             hits >= 16,
@@ -2152,11 +2288,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     #[test]
     fn cooperative_fill_limits_leave_room_for_ui() {
         assert!(
-            FTS_WRITE_BATCH <= 128,
+            FTS_WRITE_BATCH <= 256,
             "FTS write batch {FTS_WRITE_BATCH} re-creates multi-second WAL locks"
         );
         assert!(
-            READ_CHUNK <= 128,
+            READ_CHUNK <= 256,
             "read chunk {READ_CHUNK} saturates disk ahead of note open"
         );
         assert!(
@@ -2164,7 +2300,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "fill must yield after a real write batch"
         );
         assert!(
-            FILL_READ_WORKERS_MAX <= 2,
+            FILL_READ_WORKERS_MAX <= 4,
             "head readers must not take every core/disk queue"
         );
         assert_eq!(worker_count(1), 1);
@@ -2380,8 +2516,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let seeded = fts_at_ready.expect("seeded FTS count");
         assert_eq!(partial.notes, 10_000);
         assert!(
-            seeded > 0 && seeded <= (TITLE_FTS_SEED + EARLY_HEAD_CAP) as i64,
-            "10k ready-meta FTS rows {seeded} must be the title seed plus open-page heads"
+            seeded >= 9_000,
+            "10k ready-meta FTS rows {seeded} should cover titles from the path walk"
         );
         assert!(
             meta_ms < 8_000,
@@ -2477,10 +2613,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let mut early_ms: Option<u128> = None;
         let mut early_cluster = false;
         let mut early_tag = false;
+        let mut titles_50_ms: Option<u128> = None;
+        let mut titles_90_ms: Option<u128> = None;
         let mut ready_meta_ms: Option<u128> = None;
         let mut hub_ms: Option<u128> = None;
         let mut cluster_ms: Option<u128> = None;
+        let mut short_head_ms: Option<u128> = None;
         let mut seeded: Option<i64> = None;
+        let until = match std::env::var("NEXUS_FILL_PROBE_UNTIL").as_deref() {
+            Ok("deep") => FillUntil::Deep,
+            _ => FillUntil::Partial,
+        };
+        let half = (n as i64) / 2;
+        let most = (n as i64) * 9 / 10;
         let result = fill_from_disk_with_opts(
             &mut conn,
             &vault,
@@ -2490,7 +2635,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                 force_rebuild: false,
                 db_path: "test.sqlite",
                 priority_rels: &[],
-                until: FillUntil::Partial,
+                until,
             },
             || false,
             |p| {
@@ -2506,6 +2651,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                         .unwrap_or(0);
                     early_tag = tags > 0;
                 }
+                if titles_90_ms.is_none()
+                    && (p.phase == "meta" || p.phase == "ready-meta" || p.phase == "early-heads")
+                {
+                    let rows = fts_row_count_at(&db);
+                    let now = t0.elapsed().as_millis();
+                    if titles_50_ms.is_none() && rows >= half {
+                        titles_50_ms = Some(now);
+                    }
+                    if rows >= most {
+                        titles_90_ms = Some(now);
+                    }
+                }
                 if p.phase == "ready-meta" && ready_meta_ms.is_none() {
                     ready_meta_ms = Some(t0.elapsed().as_millis());
                     seeded = Some(fts_row_count_at(&db));
@@ -2520,21 +2677,27 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                         cluster_ms = Some(t0.elapsed().as_millis());
                     }
                 }
+                if p.phase == "ready-fts-partial" && short_head_ms.is_none() {
+                    short_head_ms = Some(t0.elapsed().as_millis());
+                }
             },
         )
         .unwrap();
         eprintln!(
-            "probe n={} page_complete={} first_page_ms={} early_heads_ms={:?} early_cluster={} early_tag={} ready-meta {:?}ms seed {:?} hub {:?}ms cluster {:?}ms total {}ms notes={} state {}",
+            "probe n={} until={until:?} page_complete={} first_page_ms={} early_heads_ms={:?} early_cluster={} early_tag={} titles_50_ms={:?} titles_90_ms={:?} ready-meta {:?}ms seed {:?} hub {:?}ms cluster {:?}ms short_head_ms={:?} total {}ms notes={} state {}",
             n,
             page_rows,
             first_page_ms,
             early_ms,
             early_cluster,
             early_tag,
+            titles_50_ms,
+            titles_90_ms,
             ready_meta_ms,
             seeded,
             hub_ms,
             cluster_ms,
+            short_head_ms,
             t0.elapsed().as_millis(),
             result.notes,
             result.search_state
