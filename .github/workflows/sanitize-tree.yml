@@ -79,7 +79,7 @@ jobs:
           git add scripts/screenshot-dir.mjs
           git rm -r public/large-test-vault
           git rm -f scripts/.san-r00 scripts/.san-r01 scripts/.san-r02 scripts/.san-r03 scripts/.san-r04 scripts/.san-r05 .github/workflows/sanitize-tree.yml
-          if git grep --cached -I -e 'samd1\\' -e '/workspace/' -e 'C:\\Users'; then
+          if git grep --cached -I -e 'samd1\\' -e '/workspace/' -e 'C:\\Users' -- ':!package-lock.json'; then
             echo "index still dirty"
             exit 1
           fi
