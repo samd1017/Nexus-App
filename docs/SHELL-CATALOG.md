@@ -33,9 +33,16 @@ Small vaults (fewer than 400 notes) still materialize every note so the full not
 - `vault_shell_suggest` returns a title/path prefix page (at most 40)
 - `vault_shell_recent` returns notes ordered by modification time
 - `vault_shell_forget` marks rows deleted when a watched path is gone, so the open tree page can drop them
+- `vault_shell_paths` resolves pinned paths (at most 24)
+- `vault_shell_path_page` answers `path:` and `folder:` with one page (at most 40)
+- `vault_shell_orphans` and `vault_shell_broken` are bounded catalog pages
+- `vault_shell_known_norms` checks outgoing link targets against the catalog
+- `vault_shell_mentions` returns a few indexed heads for a title phrase
 - FTS stays a SQLite query
 
-Shell reads use a short busy timeout and then retry a few times, yielding between attempts. A fill batch can commit. The gesture comes back with the page. It does not sit on a long lock, and it does not stop after the first busy and leave the expand or open unfinished.
+The first catalog walk and a folder backfill use their own database connection. They do not hold the connection the UI reads through. Batches yield so a page query can land between them.
+
+Shell reads use a short busy timeout (40ms, three tries, about 156ms) and drop the process lock before sleeping. The UI tries twice. If the lock is still held, the command returns `shell_busy`. The screen keeps the last page, or stays empty when nothing has loaded, and refreshes when the next fill batch commits. A gesture does not sit on a long lock.
 
 ## What leaves the interactive path
 
@@ -43,7 +50,7 @@ Shell reads use a short busy timeout and then retry a few times, yielding betwee
 - Rebuilding a structural index of every note in order to paint the tree or the map
 - Copying `link_edge` into the WebView while the shell window is active
 - The desktop watcher signature walk and full-scan snapshot while the shell window is active. OS notify refreshes the affected page and drops paths that are no longer on disk. It does not remount the vault.
-- Backlinks, the tag rail, wikilink suggestions, title lookup outside FTS, and Recent-by-mtime reading the in-memory window. Those are per-note or per-query catalog calls. The window stays a page.
+- Backlinks, the tag rail, wikilink suggestions, title lookup outside FTS, Recent-by-mtime, pinned notes, `path:` / `folder:` filters, orphans, broken links, and unlinked mentions reading the in-memory window. Those are per-note or per-query catalog calls. The window stays a page. Unlinked mentions see indexed heads, not every full body.
 
 If the shell command is missing, desktop open still falls back to the full meta walk. That fallback is not the large-vault path.
 
@@ -60,7 +67,8 @@ Same gestures on a small vault and a large one. Vault size must not add work to 
 | Switch notes | One body read. At most one catalog row when the note is outside the window. |
 | Backlinks, tags, wikilink suggest, Recent | One catalog query. The result is a page, not the note map. |
 | Map level or neighborhood | At most 320 folder nodes or 400 ego nodes, from a query. Selecting a node does not build a node per note. |
-| While search fill is running | Those gestures stay on the page or the query. A busy catalog retries briefly and still returns the page. It does not freeze the shell for the length of a fill batch. |
+| While search fill is running | Those gestures stay on the page or the query. A busy catalog gives up inside a fraction of a second, keeps the last page, and refreshes when the catalog is free. It does not freeze the shell for the length of a fill batch. |
+| Tag rail and prefix suggestions | Paint from heads already in the catalog. They do not wait for the deep fill to finish. |
 
 Re-test by repeating those gestures on a small folder and on a large folder, including during fill. The large folder should not get a slower click, scroll, or keystroke as the note count climbs.
 
@@ -68,11 +76,13 @@ Re-test by repeating those gestures on a small folder and on a large folder, inc
 
 These are real gaps. They are why a large vault is not yet the same product as a small one.
 
-- The first catalog build and the FTS fill still walk the vault in the native process. That cost is not part of a click, and it has not been timed at 500,000 notes.
-- If a fill transaction outlasts the short retry budget, the gesture still has nothing new to draw. The budget is a handful of brief waits, not a multi-second freeze.
-- The tag rail reads `tag_map`. Tags are written when fill reads a note head. Until that pass, the rail is empty. It does not scan bodies in the window to fill the gap.
-- Wikilink suggestions on this path match a prefix of the title or path. A substring in the middle of every title is not a keystroke query.
+- The first catalog build and the FTS fill still walk the vault in the native process. Clicks are not that walk, and the walk has not been timed at 500,000 notes.
+- If a fill transaction outlasts the short retry budget, the gesture keeps the last page (or an empty one) and refreshes later. It does not hang. A page that has not been indexed yet is still missing until that batch commits.
+- The tag rail reads `tag_map` for heads already written. It stays empty until the first head batch, then paints those tags without waiting for the rest of the vault. It does not scan bodies in the window.
+- Wikilink suggestions on this path match a prefix of the title or path already in the catalog. A substring in the middle of every title is not a keystroke query.
 - Backlink rows are capped. The count is the reverse-index total for that note. Snippets are not loaded for every source.
-- Unlinked mentions, broken links, orphans, pinned notes, and `path:` / `folder:` palette filters still read the window.
-- Adding folder rows to an older note-only index streams paths inside the native process once.
+- Unlinked mentions read a page of indexed heads (the short head while fill is partial, a deeper head later), not every full body.
+- Orphan detection treats a note as linked when an edge names its title. A link that only matches a path can still look unlinked.
+- Adding folder rows to an older note-only index still streams paths inside the native process once. That pass no longer holds the UI connection.
+- The browser does not implement the desktop pin, path, orphan, broken-link, or mention commands. Those panels stay on the window the browser already pages.
 - The browser pages a granted folder through a disposable local catalog, including backlinks, tags, neighborhood, and search, and still refuses above its cap. What that client still lacks is listed in [VAULT-CONTRACT.md](./VAULT-CONTRACT.md).

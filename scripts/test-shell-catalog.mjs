@@ -21,9 +21,11 @@ import {
   isShellBusyMessage,
   mergeShellRows,
   nodesFromShellRows,
+  shellBusyBudgetMs,
   shellBusyDelayMs,
   shellSessionFromMount,
 } from "./src/lib/vault/shell-catalog.ts";
+import { unlinkedFromHeads } from "./src/lib/vault/unlinked-mentions.ts";
 import { graphFromShellLevel } from "./src/lib/graph/shell-graph.ts";
 import {
   browserRecord,
@@ -44,6 +46,17 @@ import { CHROME_FSA_NOTE_CAP, CHROME_FSA_NOTE_WARN } from "./src/lib/vault/chrom
 
 assert.equal(SHELL_FULL_MAX_NOTES, 399);
 assert.equal(SHELL_CHILD_PAGE, 200);
+const busyBudget = shellBusyBudgetMs();
+assert.ok(busyBudget < 500, "gesture retry budget " + busyBudget + "ms");
+assert.ok(busyBudget >= 156);
+assert.equal(shellBusyDelayMs(0), 16);
+const mentions = unlinkedFromHeads("Zephyr", [
+  { fromId: "self", fromPath: "Self.md", fromTitle: "Self", body: "plain Zephyr here" },
+  { fromId: "linked", fromPath: "Linked.md", fromTitle: "Linked", body: "see [[Zephyr]] only" },
+  { fromId: "other", fromPath: "Other.md", fromTitle: "Other", body: "a Zephyr mention" },
+], "self");
+assert.equal(mentions.length, 1);
+assert.equal(mentions[0].fromId, "other");
 
 const page = Array.from({ length: 10 }, (_, i) => ({
   id: "n" + i,

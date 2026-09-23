@@ -2,10 +2,11 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalSt
 import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
-import { fetchShellBacklinks } from "@/lib/vault/shell-catalog";
+import { fetchShellBacklinks, fetchShellKnownNorms, fetchShellMentions } from "@/lib/vault/shell-catalog";
 import type { Backlink } from "@/lib/vault/types";
 import {
   getUnlinkedMentions,
+  unlinkedFromHeads,
   wrapUnlinkedMention,
 } from "@/lib/vault/unlinked-mentions";
 import { getBrokenLinksForNote } from "@/lib/vault/broken-links";
@@ -15,7 +16,7 @@ import {
 } from "@/lib/vault/tags";
 import { extractOutline } from "@/lib/markdown/serialize";
 import { noteTitle } from "@/lib/vault/types";
-import { presentLinkContext } from "@/lib/markdown/wikilinks";
+import { extractWikilinkTargets, normalizeLinkTarget, presentLinkContext } from "@/lib/markdown/wikilinks";
 import { jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { PulseRail } from "@/components/right/PulseRail";
 import { AttachmentsRail } from "@/components/right/AttachmentsRail";
@@ -67,6 +68,7 @@ export function RightPanel() {
   const setRightTab = useVaultStore((s) => s.setRightTab);
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
   const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
   const [shellBacklinks, setShellBacklinks] = useState<Backlink[] | null>(null);
   const openConflictCount = useVaultStore((s) => {
     // Depend on nodes + dismissals so badge updates live
@@ -153,15 +155,46 @@ export function RightPanel() {
     for (const b of pending) void ensureNoteBody(b.fromId);
   }, [tab, groupedBacklinks, ensureNoteBody]);
 
+  const [shellBrokenTargets, setShellBrokenTargets] = useState<string[] | null>(null);
+  const [shellMentions, setShellMentions] = useState<ReturnType<typeof unlinkedFromHeads> | null>(null);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === "browser" || tab !== "backlinks" || !note || note.kind !== "note") {
+      setShellBrokenTargets(null);
+      setShellMentions(null);
+      return;
+    }
+    const db = shellDbPath;
+    const noteId = note.id;
+    const title = noteTitle(note);
+    const norms = [...new Set(extractWikilinkTargets(note.content ?? "").map((target) => normalizeLinkTarget(target)).filter(Boolean))];
+    let cancel = false;
+    void fetchShellKnownNorms(db, norms).then((known) => {
+      if (cancel || !known) return;
+      const have = new Set(known);
+      setShellBrokenTargets(norms.filter((norm) => !have.has(norm)));
+    });
+    void fetchShellMentions(db, title, 24).then((heads) => {
+      if (cancel || !heads) return;
+      setShellMentions(unlinkedFromHeads(title, heads, noteId));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, shellLiveTick, tab, note, bodyGen]);
+
   const brokenLinks = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== "browser") {
+      return (shellBrokenTargets ?? []).map((target) => ({ target, context: "" }));
+    }
     return getBrokenLinksForNote(note, nodes);
-  }, [tab, note, nodes, bodyGen]);
+  }, [tab, note, nodes, bodyGen, shellCatalog, shellDbPath, shellBrokenTargets]);
 
   const unlinkedMentions = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== "browser") return shellMentions ?? [];
     return getUnlinkedMentions(note, nodes);
-  }, [tab, note, nodes, bodyGen]);
+  }, [tab, note, nodes, bodyGen, shellCatalog, shellDbPath, shellMentions]);
 
   const tags = useMemo(() => {
     if (!note || note.kind !== "note") return [];

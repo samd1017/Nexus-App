@@ -71,7 +71,7 @@ import {
   suggestItemsFromHits,
   type WikilinkSuggestItem,
 } from "@/lib/editor/wikilink-suggest";
-import { fetchShellSuggest } from "@/lib/vault/shell-catalog";
+import { fetchShellSuggest, onShellCatalogWake } from "@/lib/vault/shell-catalog";
 import { EditorToolbar } from "./EditorToolbar";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import { SlashMenu } from "./SlashMenu";
@@ -359,12 +359,23 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       setSuggestQuery(q);
       setSuggestFrom(open.from);
       setSuggestTo(open.to);
-      setSuggestItems([]);
       setSuggestSelected(0);
       setSuggestRect(coordsAtPos(ed, open.to));
-      void fetchShellSuggest(db, q).then((hits) => {
+      const paint = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
         if (!hits || suggestQueryRef.current !== q) return;
         setSuggestItems(suggestItemsFromHits(hits));
+      };
+      void fetchShellSuggest(db, q).then((hits) => {
+        if (suggestQueryRef.current !== q) return;
+        if (!hits) {
+          const stop = onShellCatalogWake(() => {
+            stop();
+            if (suggestQueryRef.current !== q) return;
+            void fetchShellSuggest(db, q).then(paint);
+          });
+          return;
+        }
+        paint(hits);
       });
       return;
     }

@@ -29,7 +29,13 @@ import {
   shiftDate,
 } from "@/lib/vault/templates";
 import { collectVaultTags, notesForTag, type TagHit } from "@/lib/vault/tags";
-import { fetchShellRecent, fetchShellTagNotes, fetchShellTags } from "@/lib/vault/shell-catalog";
+import {
+  BROWSER_SHELL_DB,
+  fetchShellByPaths,
+  fetchShellRecent,
+  fetchShellTagNotes,
+  fetchShellTags,
+} from "@/lib/vault/shell-catalog";
 import type { VaultNode } from "@/lib/vault/types";
 import { formatShortcut } from "@/lib/platform";
 import { openCommandPalette } from "@/components/search/CommandPalette";
@@ -99,8 +105,10 @@ export function LeftSidebar() {
   const shellDbPath = useVaultStore((s) => s.shellDbPath);
   const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
   const [catalogTags, setCatalogTags] = useState<TagHit[] | null>(null);
   const [catalogRecent, setCatalogRecent] = useState<VaultNode[] | null>(null);
+  const [pinnedCatalog, setPinnedCatalog] = useState<VaultNode[]>([]);
 
   useEffect(() => {
     if (!shellCatalog || !shellDbPath) {
@@ -115,7 +123,7 @@ export function LeftSidebar() {
     return () => {
       cancel = true;
     };
-  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy]);
+  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy, shellLiveTick]);
 
   useEffect(() => {
     if (!shellCatalog || !shellDbPath) {
@@ -141,7 +149,7 @@ export function LeftSidebar() {
     return () => {
       cancel = true;
     };
-  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy]);
+  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy, shellLiveTick]);
 
   const vaultTags = useMemo(
     () => (shellCatalog ? (catalogTags ?? []) : collectVaultTags(nodes)),
@@ -181,9 +189,46 @@ export function LeftSidebar() {
     return byVisit;
   }, [recentNoteVisits, shellCatalog, catalogRecent]);
 
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB) {
+      setPinnedCatalog([]);
+      return;
+    }
+    const paths = pinnedNotePaths ?? [];
+    if (!paths.length) {
+      setPinnedCatalog([]);
+      return;
+    }
+    let cancel = false;
+    void fetchShellByPaths(shellDbPath, paths).then((rows) => {
+      if (cancel || !rows) return;
+      setPinnedCatalog(
+        rows
+          .filter((row) => row.kind === "note")
+          .map((row) => ({
+            id: row.id,
+            path: row.path,
+            name: row.name,
+            kind: "note" as const,
+            parentId: row.parentId ?? null,
+            mtime: row.mtime,
+          })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, pinnedNotePaths, shellLiveTick]);
+
   const pinnedNotes = useMemo(() => {
     const paths = pinnedNotePaths ?? [];
     if (!paths.length) return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) {
+      const byPath = new Map(pinnedCatalog.map((n) => [n.path, n]));
+      return paths
+        .map((p) => byPath.get(p))
+        .filter((n): n is NonNullable<typeof n> => Boolean(n));
+    }
     const byPath = new Map(
       Object.values(nodes)
         .filter((n) => n.kind === "note")
@@ -192,7 +237,7 @@ export function LeftSidebar() {
     return paths
       .map((p) => byPath.get(p))
       .filter((n): n is NonNullable<typeof n> => Boolean(n));
-  }, [nodes, pinnedNotePaths]);
+  }, [nodes, pinnedNotePaths, shellCatalog, shellDbPath, pinnedCatalog]);
 
   const [trashItems, setTrashItems] = useState<TrashEntry[]>([]);
   useEffect(() => {

@@ -235,6 +235,7 @@ import {
   fetchShellForget,
   fetchShellNote,
   mergeShellRows,
+  wakeShellCatalog,
   mountShellCatalog,
   nodesFromShellRows,
   pageHidden,
@@ -345,6 +346,8 @@ export type VaultStore = {
   shellUnloaded: Record<string, number>;
   /** Parent id → rows already fetched for that parent. */
   shellLoaded: Record<string, number>;
+  /** Bumps while fill commits so tags and deferred pages refresh. */
+  shellLiveTick: number;
 
   bootstrap: () => Promise<void>;
   openDemoVault: () => void;
@@ -1066,14 +1069,13 @@ async function runCompleteDiskSearchIndex(opts?: {
 					if (p.phase === "ready-fts-partial" || p.phase === "done") {
 						void seedLinkIndexFromDurable(sqlite, { allowEmpty: true });
 					}
-					if (
-						useVaultStore.getState().shellCatalog &&
-						(p.phase === "ready-meta" || p.phase === "done") &&
-						p.total > 0
-					) {
-						useVaultStore.setState({ catalogNoteCount: p.total });
-						if (p.phase === "ready-meta") {
-							void useVaultStore.getState().reloadShellParent(SHELL_ROOT_KEY);
+					if (useVaultStore.getState().shellCatalog) {
+						noteShellFillProgress();
+						if ((p.phase === "ready-meta" || p.phase === "done") && p.total > 0) {
+							useVaultStore.setState({ catalogNoteCount: p.total });
+							if (p.phase === "ready-meta") {
+								void useVaultStore.getState().reloadShellParent(SHELL_ROOT_KEY);
+							}
 						}
 					}
 					if (p.phase === "done") {
@@ -1855,6 +1857,13 @@ async function mountDesktopVaultAt(
 	};
 }
 
+const shellDeferredParents = new Set<string>();
+let shellWakeTimer: ReturnType<typeof setTimeout> | null = null;
+let lastShellWake = 0;
+
+let noteShellReadDeferred = (_parentId: string) => {};
+let noteShellFillProgress = () => {};
+
 function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
   return {
 	ready: false,
@@ -1867,6 +1876,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	activeNoteId: null,
 	secondaryNoteId: null,
 	...SHELL_CATALOG_OFF,
+	shellLiveTick: 0,
 	pendingJump: null,
 	settings: { ...DEFAULT_SETTINGS },
 	expandedFolders: [],
@@ -3355,7 +3365,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		shellPageInflight.add(parentId);
 		try {
 			const page = await fetchShellChildren(s.shellDbPath, parentPath, offset, SHELL_CHILD_PAGE);
-			if (!page) return;
+			if (!page) {
+				noteShellReadDeferred(parentId);
+				return;
+			}
 			const live = get();
 			if (!live.shellCatalog || live.shellDbPath !== s.shellDbPath) return;
 			const merged = mergeShellRows(live.nodes, live.rootIds, page.rows);
@@ -5400,6 +5413,42 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 /** Panels parked while the galaxy is fullscreen. Not persisted. */
 let fullscreenPanelSnapshot: { leftOpen: boolean; rightOpen: boolean } | null =
   null;
+
+function flushDeferredShellReads() {
+	const ids = [...shellDeferredParents].slice(0, 8);
+	shellDeferredParents.clear();
+	const live = useVaultStore.getState();
+	if (live.shellCatalog) {
+		for (const id of ids) void live.loadShellChildren(id);
+	}
+	useVaultStore.setState((s) => ({ shellLiveTick: (s.shellLiveTick ?? 0) + 1 }));
+	wakeShellCatalog();
+}
+
+function scheduleShellWake() {
+	if (shellWakeTimer) return;
+	shellWakeTimer = setTimeout(() => {
+		shellWakeTimer = null;
+		flushDeferredShellReads();
+	}, 280);
+}
+
+noteShellReadDeferred = (parentId: string) => {
+	if (!parentId) return;
+	shellDeferredParents.add(parentId);
+	scheduleShellWake();
+};
+
+noteShellFillProgress = () => {
+	const now = Date.now();
+	if (now - lastShellWake < 450) return;
+	lastShellWake = now;
+	if (shellWakeTimer) {
+		clearTimeout(shellWakeTimer);
+		shellWakeTimer = null;
+	}
+	flushDeferredShellReads();
+};
 
 export const useVaultStore = create(
   persist(createVaultState as never, {

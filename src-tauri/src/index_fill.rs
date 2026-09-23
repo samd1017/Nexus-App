@@ -1817,6 +1817,30 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     }
 
     #[test]
+    fn tags_from_indexed_heads_are_visible_before_deep_fill() {
+        let (vault, db) = temp_pair("tags-partial");
+        for i in 0..30 {
+            write_note(
+                &vault,
+                &format!("n{i:02}.md"),
+                &format!("#zeta\nnote {i}\n"),
+            );
+        }
+        let mut conn = open_test_conn(&db);
+        let (result, _) = fill_until(&mut conn, &vault, false, FillUntil::Partial, &[]);
+        assert_eq!(result.search_state, "ready-fts-partial");
+        let tags: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tag_map WHERE tag='zeta'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tags, 30, "known heads must be in tag_map before the deep pass");
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
     fn progress_ticks_cover_large_skip_batches() {
         let (vault, db) = temp_pair("prog");
         for i in 0..80 {

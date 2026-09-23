@@ -88,6 +88,33 @@ export function getUnlinkedMentions(
   return out.sort((a, b) => a.fromTitle.localeCompare(b.fromTitle));
 }
 
+/** Filter indexed heads down to plain-text mentions. A page, not the vault. */
+export function unlinkedFromHeads(
+  title: string,
+  heads: Array<{ fromId: string; fromPath: string; fromTitle: string; body: string }>,
+  selfId?: string,
+): UnlinkedMention[] {
+  const needle = title.trim();
+  if (needle.length < MIN_TITLE) return [];
+  const out: UnlinkedMention[] = [];
+  for (const head of heads) {
+    if (out.length >= MAX_HITS) break;
+    if (selfId && head.fromId === selfId) continue;
+    const raw = head.body ?? "";
+    const scan = maskWikilinks(stripCodeForLinkScan(raw));
+    const hit = mentionRe(needle).exec(scan);
+    if (!hit || hit.index == null) continue;
+    out.push({
+      fromId: head.fromId,
+      fromPath: head.fromPath,
+      fromTitle: head.fromTitle,
+      context: contextAround(scan, hit.index, hit[0].length),
+      title: needle,
+    });
+  }
+  return out.sort((a, b) => a.fromTitle.localeCompare(b.fromTitle));
+}
+
 /** Wrap the first unlinked title occurrence in [[Title]]. */
 export function wrapUnlinkedMention(
   body: string,

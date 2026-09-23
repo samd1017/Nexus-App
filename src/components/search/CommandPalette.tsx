@@ -47,6 +47,10 @@ import { getBacklinks } from "@/lib/vault/backlinks";
 import {
   BROWSER_SHELL_DB,
   fetchShellBacklinks,
+  fetchShellBroken,
+  fetchShellOrphans,
+  fetchShellPathPage,
+  onShellCatalogWake,
   fetchShellRecent,
   fetchShellSearch,
   fetchShellSuggest,
@@ -56,7 +60,7 @@ import {
 import { presentLinkContext } from "@/lib/markdown/wikilinks";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
-import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
+import { getAllBrokenLinks, getOrphanNotes, type VaultBrokenLink } from "@/lib/vault/broken-links";
 import type { TrashEntry } from "@/lib/vault/trash";
 import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
@@ -242,6 +246,7 @@ function CommandPaletteOpen() {
   const requestDelete = useVaultStore((s) => s.requestDelete);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
   const shellDbPath = useVaultStore((s) => s.shellDbPath);
   const toggleLeft = useVaultStore((s) => s.toggleLeft);
   const toggleRight = useVaultStore((s) => s.toggleRight);
@@ -368,6 +373,7 @@ function CommandPaletteOpen() {
       ) {
         return [];
       }
+      if (wantsOrphans || wantsBroken || hasPathFolderOp) return [];
     }
     if (isEmptyQuery) {
       return topNotesByVisitMtime(nodes, 10, vaultId);
@@ -482,6 +488,33 @@ function CommandPaletteOpen() {
           cancelled = true;
         };
       }
+      if (hasPathFolderOp && db !== BROWSER_SHELL_DB) {
+        const pathNeedle = pathFolderOps.pathFilter ?? "";
+        const folderNeedle = pathFolderOps.folderFilter ?? "";
+        const paint = (rows: Awaited<ReturnType<typeof fetchShellPathPage>>) => {
+          if (cancelled || !rows) return;
+          setAsyncHits(
+            rows
+              .filter((row) => row.kind === "note")
+              .map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), row.path)),
+          );
+        };
+        void fetchShellPathPage(db, pathNeedle, folderNeedle, PALETTE_RESULT_LIMIT).then((rows) => {
+          if (cancelled) return;
+          if (!rows) {
+            const stop = onShellCatalogWake(() => {
+              stop();
+              if (cancelled) return;
+              void fetchShellPathPage(db, pathNeedle, folderNeedle, PALETTE_RESULT_LIMIT).then(paint);
+            });
+            return;
+          }
+          paint(rows);
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
       if (
         isCommandMode ||
         isTagBrowse ||
@@ -529,13 +562,25 @@ function CommandPaletteOpen() {
           cancelled = true;
         };
       }
-      void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
+      const paintSuggest = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
         if (cancelled || !hits) return;
         setAsyncHits(
           hits
             .filter((hit) => hit.kind === "note")
             .map((hit) => asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path)),
         );
+      };
+      void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
+        if (cancelled) return;
+        if (!hits) {
+          const stop = onShellCatalogWake(() => {
+            stop();
+            if (cancelled) return;
+            void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then(paintSuggest);
+          });
+          return;
+        }
+        paintSuggest(hits);
       });
       return () => {
         cancelled = true;
@@ -596,6 +641,8 @@ function CommandPaletteOpen() {
     activeNoteId,
     shellCatalog,
     shellDbPath,
+    pathFolderOps.pathFilter,
+    pathFolderOps.folderFilter,
   ]);
   const hits = asyncHits ?? syncHits;
 
@@ -603,6 +650,51 @@ function CommandPaletteOpen() {
     if (!isAskMode) return null;
     return buildAskAnswer(raw, hits, nodes);
   }, [isAskMode, raw, hits, nodes]);
+
+  const [shellOrphans, setShellOrphans] = useState<{ id: string; title: string; path: string }[]>([]);
+  const [shellBrokenLinks, setShellBrokenLinks] = useState<VaultBrokenLink[]>([]);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB || !wantsOrphans) {
+      setShellOrphans([]);
+      return;
+    }
+    let cancel = false;
+    void fetchShellOrphans(shellDbPath, 24).then((rows) => {
+      if (cancel || !rows) return;
+      setShellOrphans(
+        rows.map((row) => ({
+          id: row.id,
+          title: row.name.replace(/\.md$/i, ""),
+          path: row.path,
+        })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, wantsOrphans, shellLiveTick]);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB || !wantsBroken) {
+      setShellBrokenLinks([]);
+      return;
+    }
+    let cancel = false;
+    void fetchShellBroken(shellDbPath, 40).then((rows) => {
+      if (cancel || !rows) return;
+      setShellBrokenLinks(
+        rows.map((row) => ({
+          noteId: row.fromId,
+          notePath: row.fromPath,
+          noteTitle: row.fromTitle,
+          target: row.target,
+          context: row.fromTitle,
+        })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, wantsBroken, shellLiveTick]);
 
   const [shellTags, setShellTags] = useState<{ tag: string; count: number }[] | null>(null);
   useEffect(() => {
@@ -612,12 +704,12 @@ function CommandPaletteOpen() {
     }
     let cancelled = false;
     void fetchShellTags(shellDbPath, 48).then((rows) => {
-      if (!cancelled) setShellTags(rows);
+      if (!cancelled && rows) setShellTags(rows);
     });
     return () => {
       cancelled = true;
     };
-  }, [shellCatalog, shellDbPath, isTagBrowse]);
+  }, [shellCatalog, shellDbPath, isTagBrowse, shellLiveTick]);
 
   const tags = useMemo(() => {
     if (!isTagBrowse) return [];
@@ -636,21 +728,23 @@ function CommandPaletteOpen() {
 
   const orphans = useMemo(() => {
     if (!wantsOrphans) return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) return shellOrphans;
     try {
       return getOrphanNotes(nodes, 24);
     } catch {
       return [];
     }
-  }, [nodes, wantsOrphans]);
+  }, [nodes, wantsOrphans, shellCatalog, shellDbPath, shellOrphans]);
 
   const brokenLinks = useMemo(() => {
     if (!wantsBroken) return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) return shellBrokenLinks;
     try {
       return getAllBrokenLinks(nodes, 40);
     } catch {
       return [];
     }
-  }, [nodes, wantsBroken]);
+  }, [nodes, wantsBroken, shellCatalog, shellDbPath, shellBrokenLinks]);
 
   const brokenCreateTargets = useMemo(() => {
     if (!wantsBroken) return [];

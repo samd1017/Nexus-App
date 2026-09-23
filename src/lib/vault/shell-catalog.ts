@@ -118,8 +118,37 @@ async function getInvoke(): Promise<Invoke | null> {
   }
 }
 
-/** Attempts inside one invoke, after the native command has already retried. */
-const SHELL_BUSY_TRIES = 4;
+/**
+ * Attempts inside one invoke, after the native command has already retried.
+ * Native budget is 3×40ms plus two short sleeps (156ms). Two invokes stay
+ * under half a second, then the UI keeps the last page.
+ */
+export const SHELL_BUSY_TRIES = 2;
+/** Must match `shell_busy_budget_ms` in the native catalog. */
+export const SHELL_NATIVE_BUSY_BUDGET_MS = 156;
+
+export function shellBusyBudgetMs(): number {
+  let total = 0;
+  for (let attempt = 0; attempt < SHELL_BUSY_TRIES; attempt++) {
+    total += SHELL_NATIVE_BUSY_BUDGET_MS;
+    if (attempt + 1 < SHELL_BUSY_TRIES) total += shellBusyDelayMs(attempt);
+  }
+  return total;
+}
+
+const shellWakes = new Set<() => void>();
+
+/** Run once the catalog has had a chance to commit another fill batch. */
+export function onShellCatalogWake(fn: () => void): () => void {
+  shellWakes.add(fn);
+  return () => {
+    shellWakes.delete(fn);
+  };
+}
+
+export function wakeShellCatalog(): void {
+  for (const fn of [...shellWakes]) fn();
+}
 
 export function isShellBusyMessage(err: unknown): boolean {
   const msg = String(err).toLowerCase();
@@ -127,7 +156,7 @@ export function isShellBusyMessage(err: unknown): boolean {
 }
 
 export function shellBusyDelayMs(attempt: number): number {
-  return 24 * (attempt + 1);
+  return 16 * (attempt + 1);
 }
 
 function commandMissing(err: unknown): boolean {
@@ -603,6 +632,98 @@ export async function fetchShellForget(
   const ids = Array.isArray(raw.ids) ? raw.ids.map(String) : [];
   const gone = Array.isArray(raw.paths) ? raw.paths.map(String) : [];
   return { ids, paths: gone };
+}
+
+export async function fetchShellByPaths(
+  dbPath: string,
+  paths: string[],
+): Promise<ShellRow[] | null> {
+  if (browserApi(dbPath) || !dbPath || !paths.length) return null;
+  const call = await callShell<unknown[]>("vault_shell_paths", { dbPath, paths: paths.slice(0, 24) });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => asRow(entry as Record<string, unknown>)).filter((row) => row.id);
+}
+
+export async function fetchShellPathPage(
+  dbPath: string,
+  pathNeedle: string,
+  folderNeedle: string,
+  limit = 40,
+): Promise<ShellRow[] | null> {
+  if (browserApi(dbPath) || !dbPath) return null;
+  const call = await callShell<unknown[]>("vault_shell_path_page", {
+    dbPath,
+    pathNeedle,
+    folderNeedle,
+    limit,
+  });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => asRow(entry as Record<string, unknown>)).filter((row) => row.id);
+}
+
+export async function fetchShellOrphans(dbPath: string, limit = 24): Promise<ShellRow[] | null> {
+  if (browserApi(dbPath) || !dbPath) return null;
+  const call = await callShell<unknown[]>("vault_shell_orphans", { dbPath, limit });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => asRow(entry as Record<string, unknown>)).filter((row) => row.id);
+}
+
+export type ShellBrokenLink = {
+  fromId: string;
+  fromPath: string;
+  fromTitle: string;
+  target: string;
+};
+
+export async function fetchShellBroken(dbPath: string, limit = 40): Promise<ShellBrokenLink[] | null> {
+  if (browserApi(dbPath) || !dbPath) return null;
+  const call = await callShell<unknown[]>("vault_shell_broken", { dbPath, limit });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => {
+    const row = entry as Record<string, unknown>;
+    return {
+      fromId: String(row.fromId ?? row.from_id ?? ""),
+      fromPath: String(row.fromPath ?? row.from_path ?? ""),
+      fromTitle: String(row.fromTitle ?? row.from_title ?? ""),
+      target: String(row.target ?? ""),
+    };
+  }).filter((row) => row.fromId && row.target);
+}
+
+export async function fetchShellKnownNorms(dbPath: string, norms: string[]): Promise<string[] | null> {
+  if (browserApi(dbPath) || !dbPath) return null;
+  const call = await callShell<unknown[]>("vault_shell_known_norms", {
+    dbPath,
+    norms: norms.slice(0, 64),
+  });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => String(entry));
+}
+
+export type ShellMentionHead = {
+  fromId: string;
+  fromPath: string;
+  fromTitle: string;
+  body: string;
+};
+
+export async function fetchShellMentions(
+  dbPath: string,
+  phrase: string,
+  limit = 24,
+): Promise<ShellMentionHead[] | null> {
+  if (browserApi(dbPath) || !dbPath || phrase.trim().length < 4) return null;
+  const call = await callShell<unknown[]>("vault_shell_mentions", { dbPath, phrase, limit });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => {
+    const row = entry as Record<string, unknown>;
+    return {
+      fromId: String(row.fromId ?? row.from_id ?? ""),
+      fromPath: String(row.fromPath ?? row.from_path ?? ""),
+      fromTitle: String(row.fromTitle ?? row.from_title ?? ""),
+      body: String(row.body ?? ""),
+    };
+  }).filter((row) => row.fromId);
 }
 
 export function shellParentPath(

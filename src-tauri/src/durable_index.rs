@@ -1043,42 +1043,45 @@ fn ensure_shell_conn(
     Ok(db_path)
 }
 
-const SHELL_BUSY_TRIES: u32 = 6;
-
-/// Short lock waits. Each attempt yields so a fill batch can commit, then
-/// the gesture returns the page instead of giving up on the first busy.
+/// Short lock waits. The index mutex is dropped before the sleep, so one
+/// busy read does not queue every other gesture behind it. After the budget
+/// the command returns `shell_busy` and the UI keeps the last page.
 fn with_shell_conn<T>(
     state: tauri::State<'_, SharedIndex>,
     db_path: &str,
     mut f: impl FnMut(&mut Connection) -> Result<T, String>,
 ) -> Result<T, String> {
-    let mut guard = state.lock().map_err(|e| e.to_string())?;
-    let conn = guard
-        .conns
-        .get_mut(db_path)
-        .ok_or_else(|| "index not open".to_string())?;
     let mut last = "shell_busy".to_string();
-    for attempt in 0..SHELL_BUSY_TRIES {
-        let _ = conn.busy_timeout(Duration::from_millis(80));
-        match f(conn) {
-            Ok(value) => {
-                let _ = conn.busy_timeout(Duration::from_millis(15_000));
-                return Ok(value);
-            }
+    for attempt in 0..crate::shell_catalog::SHELL_BUSY_TRIES {
+        let outcome = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let conn = guard
+                .conns
+                .get_mut(db_path)
+                .ok_or_else(|| "index not open".to_string())?;
+            let _ = conn.busy_timeout(Duration::from_millis(
+                crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS,
+            ));
+            let result = f(conn);
+            let _ = conn.busy_timeout(Duration::from_millis(15_000));
+            result
+        };
+        match outcome {
+            Ok(value) => return Ok(value),
             Err(err) => {
                 let mapped = shell_busy_map(err);
                 if mapped != "shell_busy" {
-                    let _ = conn.busy_timeout(Duration::from_millis(15_000));
                     return Err(mapped);
                 }
                 last = mapped;
-                if attempt + 1 < SHELL_BUSY_TRIES {
-                    std::thread::sleep(Duration::from_millis(16 * (attempt as u64 + 1)));
+                if attempt + 1 < crate::shell_catalog::SHELL_BUSY_TRIES {
+                    std::thread::sleep(Duration::from_millis(
+                        crate::shell_catalog::shell_busy_sleep_ms(attempt),
+                    ));
                 }
             }
         }
     }
-    let _ = conn.busy_timeout(Duration::from_millis(15_000));
     Err(last)
 }
 
@@ -1092,43 +1095,77 @@ pub fn vault_shell_mount(
     vault_root: String,
     prefer_path: Option<String>,
 ) -> Result<crate::shell_catalog::ShellMount, String> {
-    let mut guard = state.lock().map_err(|e| e.to_string())?;
-    let db_path = ensure_shell_conn(&app, &mut guard, &vault_root)?;
+    let db_path = {
+        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        ensure_shell_conn(&app, &mut guard, &vault_root)?
+    };
     let allow_walk = !fill_is_inflight(&db_path);
-    let conn = guard
-        .conns
-        .get_mut(&db_path)
-        .ok_or_else(|| "index not open".to_string())?;
+    // A first catalog (or a folder backfill) uses its own connection. Holding
+    // the UI connection across that walk queued every click behind it.
+    if allow_walk {
+        let counts = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let conn = guard
+                .conns
+                .get_mut(&db_path)
+                .ok_or_else(|| "index not open".to_string())?;
+            let _ = conn.busy_timeout(Duration::from_millis(
+                crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS,
+            ));
+            let counts = crate::shell_catalog::catalog_counts(conn);
+            let _ = conn.busy_timeout(Duration::from_millis(15_000));
+            counts
+        };
+        if let Ok((notes, folders)) = counts {
+            if notes == 0 || folders == 0 {
+                let mut writer = open_conn(&db_path)?;
+                if notes == 0 {
+                    crate::shell_catalog::write_catalog(&mut writer, Path::new(&vault_root))?;
+                } else {
+                    crate::shell_catalog::derive_folders(&mut writer)?;
+                }
+            }
+        }
+    }
     let mut last_busy = String::new();
     let mut mounted = None;
-    let tries = if allow_walk { 1 } else { SHELL_BUSY_TRIES };
-    for attempt in 0..tries {
-        if !allow_walk {
-            let _ = conn.busy_timeout(Duration::from_millis(80));
-        }
-        match crate::shell_catalog::mount_catalog(
-            conn,
-            Path::new(&vault_root),
-            prefer_path.as_deref(),
-            allow_walk,
-        ) {
+    for attempt in 0..crate::shell_catalog::SHELL_BUSY_TRIES {
+        let outcome = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let conn = guard
+                .conns
+                .get_mut(&db_path)
+                .ok_or_else(|| "index not open".to_string())?;
+            let _ = conn.busy_timeout(Duration::from_millis(
+                crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS,
+            ));
+            // The folder walk already ran on `writer`, or fill owns the
+            // database. This lock only reads a page.
+            let result = crate::shell_catalog::mount_catalog(
+                conn,
+                Path::new(&vault_root),
+                prefer_path.as_deref(),
+                false,
+            );
+            let _ = conn.busy_timeout(Duration::from_millis(15_000));
+            result
+        };
+        match outcome {
             Ok(value) => {
                 mounted = Some(value);
                 break;
             }
-            Err(err) if !allow_walk && shell_busy_map(err.clone()) == "shell_busy" => {
+            Err(err) if shell_busy_map(err.clone()) == "shell_busy" => {
                 last_busy = "shell_busy".into();
-                if attempt + 1 < tries {
-                    std::thread::sleep(Duration::from_millis(16 * (attempt as u64 + 1)));
+                if attempt + 1 < crate::shell_catalog::SHELL_BUSY_TRIES {
+                    std::thread::sleep(Duration::from_millis(
+                        crate::shell_catalog::shell_busy_sleep_ms(attempt),
+                    ));
                 }
             }
-            Err(err) => {
-                let _ = conn.busy_timeout(Duration::from_millis(15_000));
-                return Err(if allow_walk { err } else { shell_busy_map(err) });
-            }
+            Err(err) => return Err(shell_busy_map(err)),
         }
     }
-    let _ = conn.busy_timeout(Duration::from_millis(15_000));
     let mut mounted = mounted.ok_or(last_busy)?;
     mounted.db_path = db_path;
     Ok(mounted)
@@ -1282,5 +1319,79 @@ pub fn vault_shell_forget(
 ) -> Result<crate::shell_catalog::ShellForget, String> {
     with_shell_conn(state, &db_path, |conn| {
         crate::shell_catalog::forget_missing_paths(conn, Path::new(&vault_root), &paths)
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_paths(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    paths: Vec<String>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_by_paths(conn, &paths)
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_path_page(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    path_needle: Option<String>,
+    folder_needle: Option<String>,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_path_page(
+            conn,
+            path_needle.as_deref().unwrap_or(""),
+            folder_needle.as_deref().unwrap_or(""),
+            limit.unwrap_or(crate::shell_catalog::SHELL_PATH_LIMIT),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_orphans(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_orphans(conn, limit.unwrap_or(24))
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_broken(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellBrokenLink>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_broken(conn, limit.unwrap_or(40))
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_known_norms(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    norms: Vec<String>,
+) -> Result<Vec<String>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_known_norms(conn, &norms)
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_mentions(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    phrase: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellMentionHead>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_mention_heads(conn, &phrase, limit.unwrap_or(24))
     })
 }

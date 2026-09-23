@@ -24,6 +24,33 @@ pub const SHELL_TAG_NOTES_LIMIT: i64 = 80;
 pub const SHELL_SUGGEST_LIMIT: i64 = 40;
 /// Recent notes by modification time.
 pub const SHELL_RECENT_LIMIT: i64 = 12;
+/// Pinned paths resolved in one catalog read.
+pub const SHELL_PIN_LIMIT: usize = 24;
+/// `path:` / `folder:` palette page.
+pub const SHELL_PATH_LIMIT: i64 = 40;
+/// One shell read gives up after this many lock waits. It does not use the
+/// 15s writer timeout.
+pub const SHELL_BUSY_TRIES: u32 = 3;
+pub const SHELL_BUSY_TIMEOUT_MS: u64 = 40;
+pub const SHELL_BUSY_SLEEP_STEP_MS: u64 = 12;
+
+pub fn shell_busy_sleep_ms(attempt: u32) -> u64 {
+    SHELL_BUSY_SLEEP_STEP_MS.saturating_mul(u64::from(attempt) + 1)
+}
+
+/// Worst case for one catalog read while a fill batch holds the write lock.
+pub fn shell_busy_budget_ms() -> u64 {
+    let mut total = 0u64;
+    let mut attempt = 0u32;
+    while attempt < SHELL_BUSY_TRIES {
+        total = total.saturating_add(SHELL_BUSY_TIMEOUT_MS);
+        if attempt + 1 < SHELL_BUSY_TRIES {
+            total = total.saturating_add(shell_busy_sleep_ms(attempt));
+        }
+        attempt += 1;
+    }
+    total
+}
 /// Folder map draw budget. Matches the TS folder graph cap.
 pub const SHELL_GRAPH_MAX: i64 = 320;
 pub const SHELL_EGO_MAX: i64 = 400;
@@ -537,10 +564,15 @@ pub fn write_catalog(conn: &mut Connection, root: &Path) -> Result<(), String> {
             }
             if batch.len() >= SHELL_WRITE_BATCH {
                 flush_batch(conn, &mut batch)?;
+                yield_catalog_batch();
             }
         }
     }
     flush_batch(conn, &mut batch)
+}
+
+fn yield_catalog_batch() {
+    std::thread::sleep(std::time::Duration::from_millis(2));
 }
 
 /// One native pass so older note-only catalogs gain folder rows.
@@ -576,6 +608,7 @@ pub fn derive_folders(conn: &mut Connection) -> Result<(), String> {
                 push_insert(&mut batch, &acc, part, "folder", 0);
                 if batch.len() >= SHELL_WRITE_BATCH {
                     flush_batch(conn, &mut batch)?;
+                    yield_catalog_batch();
                 }
             }
         }
@@ -1050,6 +1083,209 @@ fn query_recent_hits(conn: &Connection, limit: i64) -> Result<Vec<ShellSuggestHi
     Ok(mapped.filter_map(|r| r.ok()).collect())
 }
 
+/// Resolve a handful of pinned paths. Missing paths are omitted.
+pub fn query_by_paths(conn: &Connection, paths: &[String]) -> Result<Vec<ShellRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path, name, kind, parent_id, mtime, 0
+             FROM note_meta
+             WHERE deleted=0 AND path=?1
+             LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for path in paths.iter().take(SHELL_PIN_LIMIT) {
+        let norm = path.replace('\\', "/");
+        if let Ok(row) = stmt.query_row(params![norm], map_row) {
+            out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// `path:` and `folder:` against the catalog. The result is a page.
+pub fn query_path_page(
+    conn: &Connection,
+    path_needle: &str,
+    folder_needle: &str,
+    limit: i64,
+) -> Result<Vec<ShellRow>, String> {
+    let limit = limit.clamp(1, SHELL_PATH_LIMIT);
+    let path_q = path_needle.trim().to_ascii_lowercase();
+    let folder_q = folder_needle.trim().to_ascii_lowercase();
+    if path_q.is_empty() && folder_q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path, name, kind, parent_id, mtime, 0
+             FROM note_meta
+             WHERE deleted=0 AND kind='note'
+               AND (?1 = '' OR instr(lower(path), ?1) > 0)
+               AND (?2 = '' OR instr(lower(path), ?2) > 0)
+             ORDER BY mtime DESC, name COLLATE NOCASE
+             LIMIT ?3",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![path_q, folder_q, limit], map_row)
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+/// Notes with no stored link in or out. A page, not the vault.
+pub fn query_orphans(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
+    let limit = limit.clamp(1, 24);
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
+             FROM note_meta m
+             WHERE m.deleted=0 AND m.kind='note'
+               AND NOT EXISTS (SELECT 1 FROM link_edge e WHERE e.source_id = m.id)
+               AND NOT EXISTS (
+                 SELECT 1 FROM link_edge e
+                 WHERE e.target_id = m.id
+                    OR e.target_norm = lower(COALESCE(NULLIF(m.title, ''), m.name))
+               )
+             ORDER BY m.mtime DESC, m.name COLLATE NOCASE
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![limit], map_row)
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellBrokenLink {
+    pub from_id: String,
+    pub from_path: String,
+    pub from_title: String,
+    pub target: String,
+}
+
+/// Outgoing edges whose target is not a catalog title, name, or path.
+pub fn query_broken(conn: &Connection, limit: i64) -> Result<Vec<ShellBrokenLink>, String> {
+    let limit = limit.clamp(1, 40);
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.id, m.path, COALESCE(NULLIF(m.title, ''), m.name), e.target_raw
+             FROM link_edge e
+             JOIN note_meta m ON m.id = e.source_id
+             WHERE m.deleted=0 AND m.kind='note'
+               AND NOT EXISTS (
+                 SELECT 1 FROM note_meta t
+                 WHERE t.deleted=0 AND t.kind='note' AND (
+                   lower(COALESCE(t.title, '')) = e.target_norm
+                   OR lower(t.name) = e.target_norm
+                   OR lower(t.path) = e.target_norm
+                 )
+               )
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![limit], |row| {
+            Ok(ShellBrokenLink {
+                from_id: row.get(0)?,
+                from_path: row.get(1)?,
+                from_title: row.get(2)?,
+                target: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+/// Which of these link norms already name a note. Used so a paged shell does
+/// not call every outgoing link broken.
+pub fn query_known_norms(conn: &Connection, norms: &[String]) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT 1 FROM note_meta
+             WHERE deleted=0 AND kind='note' AND (
+               lower(COALESCE(title, '')) = ?1
+               OR lower(name) = ?1
+               OR lower(path) = ?1
+             )
+             LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut found = Vec::new();
+    for raw in norms.iter().take(64) {
+        let norm = raw.trim().trim_end_matches(".md").replace('\\', "/").to_ascii_lowercase();
+        if norm.is_empty() {
+            continue;
+        }
+        let hit: i64 = stmt.query_row(params![norm], |r| r.get(0)).unwrap_or(0);
+        if hit > 0 {
+            found.push(norm);
+        }
+    }
+    Ok(found)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellMentionHead {
+    pub from_id: String,
+    pub from_path: String,
+    pub from_title: String,
+    pub body: String,
+}
+
+fn fts_phrase(phrase: &str) -> String {
+    let mut cleaned = String::new();
+    for ch in phrase.chars() {
+        if ch.is_alphanumeric() || ch.is_whitespace() {
+            cleaned.push(ch);
+        }
+    }
+    let trimmed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!("\"{}\"", trimmed.replace('"', ""))
+}
+
+/// A few indexed heads that mention a title. The caller drops real wikilinks.
+/// Missing FTS returns an empty page rather than scanning the vault.
+pub fn query_mention_heads(
+    conn: &Connection,
+    phrase: &str,
+    limit: i64,
+) -> Result<Vec<ShellMentionHead>, String> {
+    let phrase = phrase.trim();
+    if phrase.chars().count() < 4 {
+        return Ok(Vec::new());
+    }
+    let limit = limit.clamp(1, 24);
+    let match_q = fts_phrase(phrase);
+    if match_q == "\"\"" {
+        return Ok(Vec::new());
+    }
+    let mut stmt = match conn.prepare(
+        "SELECT f.note_id, m.path, COALESCE(NULLIF(m.title, ''), m.name), substr(f.body, 1, 500)
+         FROM note_fts f
+         JOIN note_meta m ON m.id = f.note_id
+         WHERE f MATCH ?1 AND m.deleted=0
+         LIMIT ?2",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mapped = stmt
+        .query_map(params![match_q, limit], |row| {
+            Ok(ShellMentionHead {
+                from_id: row.get(0)?,
+                from_path: row.get(1)?,
+                from_title: row.get(2)?,
+                body: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
 pub fn query_recent(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
     let limit = limit.clamp(1, SHELL_RECENT_LIMIT);
     let mut stmt = conn
@@ -1417,5 +1653,99 @@ mod tests {
         assert_eq!(forgotten.ids, vec![shell_node_id("Gone.md")]);
         assert!(query_note(&conn, &shell_node_id("Gone.md")).unwrap().is_none());
         assert!(query_note(&conn, &shell_node_id("Keep.md")).unwrap().is_some());
+    }
+
+    #[test]
+    fn shell_read_budget_stays_short() {
+        let budget = shell_busy_budget_ms();
+        assert_eq!(budget, 156, "keep the TypeScript budget constant in step");
+        assert!(budget <= 250, "catalog read budget {budget}ms");
+    }
+
+    #[test]
+    fn shell_read_gives_up_while_a_writer_holds_the_lock() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-busy-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("index.sqlite");
+        let writer = Connection::open(&db).unwrap();
+        writer
+            .execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE t(id INTEGER);")
+            .unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        let reader = Connection::open(&db).unwrap();
+        let started = std::time::Instant::now();
+        let mut saw_busy = false;
+        for attempt in 0..SHELL_BUSY_TRIES {
+            let _ = reader.busy_timeout(std::time::Duration::from_millis(SHELL_BUSY_TIMEOUT_MS));
+            match reader.execute_batch("BEGIN IMMEDIATE;") {
+                Ok(()) => {
+                    let _ = reader.execute_batch("ROLLBACK;");
+                    break;
+                }
+                Err(err) => {
+                    let msg = err.to_string().to_lowercase();
+                    assert!(
+                        msg.contains("busy") || msg.contains("locked"),
+                        "unexpected lock error: {msg}"
+                    );
+                    saw_busy = true;
+                    if attempt + 1 < SHELL_BUSY_TRIES {
+                        std::thread::sleep(std::time::Duration::from_millis(shell_busy_sleep_ms(
+                            attempt,
+                        )));
+                    }
+                }
+            }
+        }
+        let elapsed = started.elapsed().as_millis() as u64;
+        let _ = writer.execute_batch("ROLLBACK;");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(saw_busy, "reader should have hit the writer lock");
+        assert!(
+            elapsed <= shell_busy_budget_ms() + 80,
+            "gave up in {elapsed}ms, budget {}",
+            shell_busy_budget_ms()
+        );
+    }
+
+    #[test]
+    fn partial_catalog_pages_do_not_grow_with_the_folder() {
+        let conn = open_mem();
+        for i in 0..1_000 {
+            let path = format!("Area/n{i:04}.md");
+            insert_note(&conn, &path, None);
+        }
+        conn.execute(
+            "INSERT INTO link_edge(source_id, target_raw, target_norm, target_id)
+             VALUES (?1, 'Missing', 'missing', NULL)",
+            params![shell_node_id("Area/n0001.md")],
+        )
+        .unwrap();
+        let pins = query_by_paths(
+            &conn,
+            &["Area/n0003.md".into(), "Area/n0999.md".into(), "nope.md".into()],
+        )
+        .unwrap();
+        assert_eq!(pins.len(), 2);
+        let page = query_path_page(&conn, "", "area/n00", 40).unwrap();
+        assert!(page.len() <= 40);
+        assert!(page.len() < 1_000);
+        let orphans = query_orphans(&conn, 24).unwrap();
+        assert!(orphans.len() <= 24);
+        assert!(orphans.iter().all(|row| row.id != shell_node_id("Area/n0001.md")));
+        let broken = query_broken(&conn, 40).unwrap();
+        assert_eq!(broken.len(), 1);
+        assert_eq!(broken[0].target, "Missing");
+        let known = query_known_norms(&conn, &["n0099".into(), "missing".into()]).unwrap();
+        assert_eq!(known, vec!["n0099".to_string()]);
+        let mentions = query_mention_heads(&conn, "n0099", 24).unwrap();
+        assert!(mentions.is_empty(), "missing FTS is an empty page, not a vault scan");
     }
 }
