@@ -5,7 +5,6 @@
  */
 
 import * as THREE from "three";
-import SpriteText from "three-spritetext";
 
 export type InstrumentKind = "note" | "folder" | "aggregate";
 
@@ -101,8 +100,8 @@ void main() {
   float rim = pow(1.0 - facing, 1.65);
   float band = smoothstep(0.04, 0.55, rim);
   // Keep the side crescent. Pull the haze back where the title sits.
-  float cap = smoothstep(0.5, 0.95, n.y);
-  float alpha = band * uOpacity * mix(1.0, 0.45, cap);
+  float cap = smoothstep(0.42, 0.9, n.y);
+  float alpha = band * uOpacity * mix(1.0, 0.22, cap);
   if (alpha < 0.02) discard;
   gl_FragColor = vec4(uColor, alpha);
 }
@@ -142,47 +141,145 @@ function truncateLabel(name: string | undefined | null, max = 22): string {
   return clean.slice(0, max - 1) + "…";
 }
 
+function fontStack(): string {
+  if (typeof document === "undefined") return "system-ui, sans-serif";
+  const stack = getComputedStyle(document.documentElement)
+    .getPropertyValue("--font-sans")
+    .trim();
+  return stack || "system-ui, sans-serif";
+}
+
+type LabelRole = "active" | "hub" | "readout" | "idle";
+
+function glyphWidths(ctx: CanvasRenderingContext2D, glyphs: string[]): number[] {
+  return glyphs.map((glyph) => ctx.measureText(glyph).width);
+}
+
+function drawPlate(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  radius: number,
+) {
+  const r = Math.min(radius, h / 2 - 1, w / 2 - 1);
+  ctx.beginPath();
+  ctx.moveTo(r, 0.5);
+  ctx.arcTo(w - 0.5, 0.5, w - 0.5, h - 0.5, r);
+  ctx.arcTo(w - 0.5, h - 0.5, 0.5, h - 0.5, r);
+  ctx.arcTo(0.5, h - 0.5, 0.5, 0.5, r);
+  ctx.arcTo(0.5, 0.5, w - 0.5, 0.5, r);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(7, 10, 16, 0.97)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(220, 228, 238, 0.82)";
+  ctx.lineWidth = 1.75;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(r + 2, 2);
+  ctx.lineTo(w - r - 2, 2);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+/**
+ * Instrument plate. Tracked type on a hairline steel tag, clear of the haze.
+ * No outline around the glyphs.
+ */
 function makeLabel(
   text: string,
   opts: {
     active: boolean;
     hover: boolean;
+    hub: boolean;
+    readout: boolean;
     dim: boolean;
     full: boolean;
     radius: number;
   },
 ): THREE.Object3D {
-  const { active, hover, dim, full, radius } = opts;
-  const label = new SpriteText(text) as SpriteText & {
-    position: THREE.Vector3;
-    material: THREE.SpriteMaterial;
-  };
-  label.fontFace =
-    typeof document !== "undefined"
-      ? getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
-        "system-ui, sans-serif"
-      : "system-ui, sans-serif";
-  label.fontWeight = "600";
-  label.fontSize = 96;
-  label.color = active ? "#f7fbff" : hover ? "#f4f8fc" : dim ? "#d7e0ea" : "#f2f6fb";
-  label.backgroundColor = dim ? "rgba(4,7,12,0.84)" : "rgba(4,7,12,0.94)";
-  label.padding = [0.28, 0.12];
-  label.borderWidth = 0;
-  label.borderRadius = 0.1;
-  label.strokeWidth = 0.48;
-  label.strokeColor = "#05070a";
-  const th = active ? (full ? 2.55 : 2.0) : full ? 1.95 : 1.58;
-  label.textHeight = th;
-  // Clear the atmosphere shell. The plate, not the haze, sits behind the glyphs.
-  label.position.y = radius * 1.34 + th * 0.5 + 0.46;
-  label.renderOrder = active || hover ? 20 : 8;
-  label.material.depthTest = false;
-  label.material.depthWrite = false;
-  label.material.transparent = true;
-  label.material.toneMapped = false;
-  label.material.opacity = active || hover ? 1 : dim ? 0.9 : 1;
-  label.material.sizeAttenuation = true;
-  return label;
+  const { active, hover, hub, readout, dim, full, radius } = opts;
+  const role: LabelRole = active || hover ? "active" : readout ? "readout" : hub ? "hub" : "idle";
+  if (typeof document === "undefined") return new THREE.Object3D();
+
+  const fontPx = 72;
+  const trackingEm =
+    role === "readout" ? 0.11 : text.length > 16 ? 0.028 : text.length > 10 ? 0.048 : 0.072;
+  const weight = role === "active" ? "600" : "500";
+  const fill = dim ? "#d5dee8" : role === "active" ? "#f7fbff" : "#eef3f8";
+  const glyphs = Array.from(text);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new THREE.Object3D();
+
+  ctx.font = `${weight} ${fontPx}px ${fontStack()}`;
+  const widths = glyphWidths(ctx, glyphs);
+  const tracking = fontPx * trackingEm;
+  const textW =
+    widths.reduce((sum, w) => sum + w, 0) + tracking * Math.max(0, glyphs.length - 1);
+  const sample = ctx.measureText(text || "N");
+  const ascent = sample.actualBoundingBoxAscent || fontPx * 0.74;
+  const descent = sample.actualBoundingBoxDescent || fontPx * 0.2;
+  const padX = role === "readout" ? 16 : 14;
+  const padY = 11;
+  const rail = role === "active" ? 7 : role === "hub" ? 5 : 0;
+  const boxW = Math.ceil(textW + padX * 2 + rail);
+  const boxH = Math.ceil(ascent + descent + padY * 2);
+  const bleed = 3;
+  const scale = 2;
+  canvas.width = Math.ceil((boxW + bleed * 2) * scale);
+  canvas.height = Math.ceil((boxH + bleed * 2) * scale);
+  ctx.setTransform(scale, 0, 0, scale, bleed * scale, bleed * scale);
+  ctx.font = `${weight} ${fontPx}px ${fontStack()}`;
+  ctx.textBaseline = "alphabetic";
+
+  drawPlate(ctx, boxW, boxH, 5);
+  if (role === "active") {
+    ctx.fillStyle = "rgba(232, 240, 248, 0.96)";
+    ctx.fillRect(6, 8, 2.5, boxH - 16);
+  } else if (role === "hub") {
+    const mark = boxH * 0.36;
+    ctx.fillStyle = "rgba(206, 220, 232, 0.88)";
+    ctx.fillRect(6, (boxH - mark) / 2, 2, mark);
+  }
+
+  const baseline = (boxH - (ascent + descent)) / 2 + ascent;
+  ctx.fillStyle = fill;
+  let cursor = padX + rail + (boxW - padX * 2 - rail - textW) / 2;
+  glyphs.forEach((glyph, i) => {
+    ctx.fillText(glyph, cursor, baseline);
+    cursor += widths[i] + tracking;
+  });
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+    sizeAttenuation: true,
+  });
+  const sprite = new THREE.Sprite(material);
+  const glyphH =
+    role === "active"
+      ? full ? 2.05 : 1.74
+      : role === "hub"
+        ? full ? 1.7 : 1.46
+        : role === "readout"
+          ? full ? 1.52 : 1.32
+          : full ? 1.58 : 1.36;
+  const worldH = glyphH * (boxH / fontPx);
+  const worldW = worldH * (canvas.width / canvas.height);
+  sprite.scale.set(worldW, worldH, 1);
+  sprite.position.y = radius * 1.34 + worldH * 0.5 + 0.55;
+  sprite.renderOrder = role === "active" ? 20 : 8;
+  sprite.material.opacity = dim ? 0.88 : 1;
+  sprite.userData.nexusLabel = true;
+  return sprite;
 }
 
 /**
@@ -283,6 +380,8 @@ export function createInstrumentNode(
       makeLabel(truncateLabel(node.name, full ? 24 : 18), {
         active: isActive,
         hover: isHover,
+        hub: isHub || isFolderNode,
+        readout: isAggregate,
         dim,
         full,
         radius,
