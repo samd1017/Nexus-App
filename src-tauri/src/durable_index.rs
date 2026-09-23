@@ -333,7 +333,7 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
     }
 
     if let Some(body) = body_update {
-        crate::index_fill::replace_note_fts(conn, &note.id, &title, &note.path, body)?;
+        crate::index_fill::replace_note_fts(conn, &note.id, &title, &note.path, &body)?;
     } else {
         // Preserve existing body; refresh title/path only.
         let old_body: String = conn
@@ -458,57 +458,92 @@ fn search_tx(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchHit
     }
 
     let fts_q = fts_escape_query(q);
+    // Titles already committed in note_meta (first page, a folder opened
+    // before the walker, a discover batch) must match even when FTS has
+    // not indexed that row yet.
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if let Ok(suggested) = crate::shell_catalog::query_suggest(conn, q, limit) {
+        for hit in suggested {
+            if hit.kind != "note" || !seen.insert(hit.id.clone()) {
+                continue;
+            }
+            let title = if hit.title.is_empty() {
+                hit.name
+            } else {
+                hit.title
+            };
+            out.push(SearchHitDto {
+                note_id: hit.id,
+                path: hit.path,
+                title,
+                snippet: String::new(),
+                score: 110.0,
+                match_type: "title".into(),
+            });
+        }
+    }
     if fts_q.is_empty() {
-        return Ok(vec![]);
+        out.truncate(limit.max(0) as usize);
+        return Ok(out);
     }
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT f.note_id, f.path, f.title, snippet(note_fts, 3, '', '', '…', 12),
-                    bm25(note_fts)
-             FROM note_fts f
-             JOIN note_meta m ON m.id = f.note_id
-             WHERE note_fts MATCH ?1 AND m.deleted = 0 AND m.kind = 'note'
-             ORDER BY bm25(note_fts)
-             LIMIT ?2",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![fts_q, limit], |r| {
-            let title: String = r.get(2)?;
-            let path: String = r.get(1)?;
-            let snip: String = r.get(3)?;
-            let bm: f64 = r.get(4).unwrap_or(0.0);
-            let q_l = q.to_lowercase();
-            let title_l = title.to_lowercase();
-            let (score, match_type) = if title_l == q_l {
-                (120.0, "title")
-            } else if title_l.starts_with(&q_l) {
-                (100.0, "title")
-            } else if title_l.contains(&q_l) {
-                (80.0, "title")
-            } else if path.to_lowercase().contains(&q_l) {
-                (60.0, "title")
-            } else {
-                (40.0 + (-bm).max(0.0).min(20.0), "content")
-            };
-            Ok(SearchHitDto {
-                note_id: r.get(0)?,
-                path,
-                title,
-                snippet: snip,
-                score,
-                match_type: match_type.into(),
+    let fts_rows = (|| -> Result<Vec<SearchHitDto>, String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT f.note_id, f.path, f.title, snippet(note_fts, 3, '', '', '…', 12),
+                        bm25(note_fts)
+                 FROM note_fts f
+                 JOIN note_meta m ON m.id = f.note_id
+                 WHERE note_fts MATCH ?1 AND m.deleted = 0 AND m.kind = 'note'
+                 ORDER BY bm25(note_fts)
+                 LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![fts_q, limit], |r| {
+                let title: String = r.get(2)?;
+                let path: String = r.get(1)?;
+                let snip: String = r.get(3)?;
+                let bm: f64 = r.get(4).unwrap_or(0.0);
+                let q_l = q.to_lowercase();
+                let title_l = title.to_lowercase();
+                let (score, match_type) = if title_l == q_l {
+                    (120.0, "title")
+                } else if title_l.starts_with(&q_l) {
+                    (100.0, "title")
+                } else if title_l.contains(&q_l) {
+                    (80.0, "title")
+                } else if path.to_lowercase().contains(&q_l) {
+                    (60.0, "title")
+                } else {
+                    (40.0 + (-bm).max(0.0).min(20.0), "content")
+                };
+                Ok(SearchHitDto {
+                    note_id: r.get(0)?,
+                    path,
+                    title,
+                    snippet: snip,
+                    score,
+                    match_type: match_type.into(),
+                })
             })
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut out = Vec::new();
-    for row in rows.flatten() {
-        out.push(row);
+            .map_err(|e| e.to_string())?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    })();
+    match fts_rows {
+        Ok(rows) => {
+            for row in rows {
+                if seen.insert(row.note_id.clone()) {
+                    out.push(row);
+                }
+            }
+        }
+        Err(err) if out.is_empty() => return Err(err),
+        Err(_) => {}
     }
     out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.truncate(limit.max(0) as usize);
     Ok(out)
 }
 
@@ -688,12 +723,8 @@ pub fn vault_index_search(
     query: String,
     limit: Option<i64>,
 ) -> Result<Vec<SearchHitDto>, String> {
-    let guard = state.lock().map_err(|e| e.to_string())?;
-    let conn = guard
-        .conns
-        .get(&db_path)
-        .ok_or_else(|| "index not open".to_string())?;
-    search_tx(conn, &query, limit.unwrap_or(40))
+    let limit = limit.unwrap_or(40);
+    with_shell_conn(&state, &db_path, |conn| search_tx(conn, &query, limit))
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1205,7 +1236,7 @@ pub fn vault_shell_children(
                 .unwrap_or_default();
             if !listed.is_empty() {
                 let _ = with_shell_conn(&state, &db_path, |conn| {
-                    crate::shell_catalog::upsert_shell_rows(conn, listed)
+                    crate::shell_catalog::upsert_shell_rows(conn, listed.clone())
                 });
                 return with_shell_conn(&state, &db_path, |conn| {
                     crate::shell_catalog::query_children(conn, &parent_path, limit, offset)

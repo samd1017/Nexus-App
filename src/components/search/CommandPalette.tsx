@@ -83,6 +83,7 @@ import {
   getSearchIndexState,
   isNoteHeadSearchLive,
   isTitleSearchLive,
+  mergeCatalogAndFtsHits,
   searchEmptyStateMessage,
 } from "@/lib/vault/sqlite-fill-progress";
 import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
@@ -541,34 +542,41 @@ function CommandPaletteOpen() {
         };
       }
       const idx = getDurableIndex();
-      if (idx?.ready && idx.searchFtsAsync) {
-        void (async () => {
-          const page = activeNoteId ? await fetchShellBacklinks(db, activeNoteId) : null;
-          if (cancelled) return;
-          const neighborIds = page?.rows.map((row) => row.fromId) ?? [];
-          const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
-          const rows = await searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT);
-          if (cancelled) return;
-          setAsyncHits(
-            fuseSearchHits(rows, {
-              recentIds,
-              activeNoteId,
-              neighborIds,
-              queryText: needle,
-            }),
+      const titleLive = isTitleSearchLive(getSearchIndexState());
+      const mapSuggest = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>): SearchHit[] =>
+        (hits ?? [])
+          .filter((hit) => hit.kind === "note")
+          .map((hit) =>
+            asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path),
           );
-        })();
-        return () => {
-          cancelled = true;
-        };
-      }
-      const paintSuggest = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
-        if (cancelled || !hits) return;
+      let catalogHits: SearchHit[] = [];
+      let ftsHits: SearchHit[] = [];
+      let catalogReady = false;
+      const publish = () => {
+        if (cancelled) return;
+        if (!catalogReady && ftsHits.length === 0) return;
+        const merged = mergeCatalogAndFtsHits(catalogHits, ftsHits, PALETTE_RESULT_LIMIT);
+        if (!titleLive || ftsHits.length === 0) {
+          setAsyncHits(merged);
+          return;
+        }
+        const recentIds = vaultId
+          ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT)
+          : [];
         setAsyncHits(
-          hits
-            .filter((hit) => hit.kind === "note")
-            .map((hit) => asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path)),
+          fuseSearchHits(merged, {
+            recentIds,
+            activeNoteId,
+            neighborIds: [],
+            queryText: needle,
+          }),
         );
+      };
+      const applyCatalog = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
+        if (cancelled || !hits) return;
+        catalogHits = mapSuggest(hits);
+        catalogReady = true;
+        publish();
       };
       void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
         if (cancelled) return;
@@ -576,12 +584,20 @@ function CommandPaletteOpen() {
           const stop = onShellCatalogWake(() => {
             stop();
             if (cancelled) return;
-            void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then(paintSuggest);
+            void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then(applyCatalog);
           });
           return;
         }
-        paintSuggest(hits);
+        applyCatalog(hits);
       });
+      if (titleLive && idx?.ready && idx.searchFtsAsync) {
+        void (async () => {
+          const rows = await searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT);
+          if (cancelled) return;
+          ftsHits = rows;
+          publish();
+        })();
+      }
       return () => {
         cancelled = true;
       };
@@ -643,6 +659,7 @@ function CommandPaletteOpen() {
     shellDbPath,
     pathFolderOps.pathFilter,
     pathFolderOps.folderFilter,
+    searchIndexState,
   ]);
   const hits = asyncHits ?? syncHits;
 
@@ -1678,6 +1695,9 @@ function CommandPaletteOpen() {
                       headsReady:
                         isNoteHeadSearchLive(searchIndexState) ||
                         searchEngine.id !== "sqlite-fts5-bm25",
+                      catalogSearch: Boolean(
+                        shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
+                      ),
                     })}
                   </span>
                 </Command.Item>

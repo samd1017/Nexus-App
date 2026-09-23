@@ -44,6 +44,7 @@ import {
   chromeFsaWarnMessage,
 } from "@/lib/vault/chrome-fsa-cap";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { fillProgressRatio } from "@/lib/vault/sqlite-fill-progress";
 
 function OpenProgressBanner() {
   // Subscribe here — not in AppShell — so 400ms fill ticks do not
@@ -79,15 +80,12 @@ function OpenProgressBanner() {
 
   const isReady = progress.phase === "ready";
   const isError = progress.phase === "error";
-  const hasTotalHint =
-    progress.totalHint != null && progress.totalHint > 0;
-  const ratio = hasTotalHint
-    ? Math.min(1, progress.scanned / progress.totalHint!)
-    : null;
+  const ratio =
+    isError || isReady
+      ? null
+      : fillProgressRatio(progress.scanned, progress.totalHint);
   const valueNow =
-    hasTotalHint && !isError && progress.phase !== "ready"
-      ? Math.round(ratio! * 100)
-      : undefined;
+    ratio != null ? Math.round(ratio * 100) : undefined;
 
   const dismissError = () => {
     setOpenProgress({

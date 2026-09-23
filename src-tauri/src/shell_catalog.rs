@@ -1933,6 +1933,14 @@ mod tests {
         assert!(suggest.iter().any(|h| h.path == "Alpha.md"));
         assert!(suggest.iter().any(|h| h.path == "Alpine.md"));
         assert!(suggest.iter().all(|h| h.path != "Beta.md"));
+        insert_note(&conn, "00-Inbox/00/Hub 0.md", None);
+        insert_note(&conn, "00-Inbox/00/Topic 1.md", None);
+        let hub = query_suggest(&conn, "Hub", 16).unwrap();
+        assert!(
+            hub.iter().any(|h| h.path.ends_with("Hub 0.md")),
+            "catalog title search must hit Hub before any FTS row exists"
+        );
+        assert!(hub.iter().all(|h| !h.path.ends_with("Topic 1.md")));
         let one = query_suggest(&conn, "al", 1).unwrap();
         assert_eq!(one.len(), 1);
 

@@ -9,10 +9,17 @@
  * Keep title-seed / fill-join / Open-gate / link_edge / phases unchanged.
  */
 
-export function shouldDeferNoteBodyHydrate(args: {
+/**
+ * The note the user just opened reads from disk immediately.
+ * Fill may still be writing the catalog. The SQLite upsert stays
+ * skipped (`shouldSkipDurableUpsertOnHydrate`) so this read does not
+ * start a second writer. Hover and embeds stay on
+ * `shouldSkipBackgroundBodyHydrate`.
+ */
+export function shouldDeferNoteBodyHydrate(_args: {
   fillBusy: boolean;
 }): boolean {
-  return args.fillBusy === true;
+  return false;
 }
 
 /**

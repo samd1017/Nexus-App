@@ -22,10 +22,15 @@ const {
   isEmptyNativeFillFailure,
   isFillSettlePhase,
   sqliteEngineShortLabel,
+  fillCountLabel,
+  fillProgressRatio,
+  honestFillTotal,
+  mergeCatalogAndFtsHits,
   sqliteFillPhaseMessage,
   isTitleSearchLive,
   isNoteHeadSearchLive,
   searchEmptyStateMessage,
+  searchStateFromPhase,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
   isInFlightFillError,
@@ -160,15 +165,76 @@ assert.equal(
   "no current root + fill still blocks a second Open",
 );
 
+assert.equal(
+  searchStateFromPhase("meta"),
+  "idle",
+  "the path walk must not claim FTS titles are on",
+);
+assert.equal(searchStateFromPhase("ready-meta"), "ready-meta");
+assert.equal(advanceSearchIndexState("idle", "meta"), "idle");
+assert.equal(advanceSearchIndexState("idle", "ready-meta"), "ready-meta");
+
+assert.equal(honestFillTotal(24064, 1), null);
+assert.equal(honestFillTotal(1, 1), null);
+assert.equal(honestFillTotal(0, 10001), null);
+assert.equal(honestFillTotal(32768, 100002), 100002);
+assert.equal(fillProgressRatio(24064, 1), null);
+assert.equal(fillProgressRatio(1, 1), null);
+assert.equal(fillProgressRatio(0, 10001), null);
+assert.ok(Math.abs((fillProgressRatio(32768, 100002) ?? 0) - 32768 / 100002) < 1e-9);
+
+const lying = sqliteFillPhaseMessage({
+  phase: "meta",
+  scanned: 24064,
+  total: 1,
+  skipped: 0,
+  indexed: 24064,
+});
+assert.match(lying, /cataloging notes/i);
+assert.equal(lying.includes("title search on"), false);
+assert.equal(lying.includes("/ 1"), false);
+assert.match(lying, /24,064 so far/);
+
+assert.equal(
+  sqliteFillPhaseMessage({
+    phase: "fts-partial",
+    scanned: 0,
+    total: 10001,
+    skipped: 0,
+    indexed: 10001,
+  }).includes("0 /"),
+  false,
+  "heads fill must not flash 0 / N after the tree is usable",
+);
 assert.match(
   sqliteFillPhaseMessage({
-    phase: "meta",
+    phase: "fts",
+    scanned: 32768,
+    total: 100002,
+    skipped: 0,
+    indexed: 32768,
+  }),
+  /32,768 \/ 100,002/,
+);
+assert.match(
+  sqliteFillPhaseMessage({
+    phase: "ready-meta",
     scanned: 100000,
     total: 100000,
     skipped: 0,
     indexed: 100000,
   }),
   /title search on/,
+);
+assert.equal(
+  sqliteFillPhaseMessage({
+    phase: "meta",
+    scanned: 100000,
+    total: 100000,
+    skipped: 0,
+    indexed: 100000,
+  }).includes("title search on"),
+  false,
 );
 assert.match(
   sqliteFillPhaseMessage({
@@ -179,6 +245,21 @@ assert.match(
     indexed: 12800,
   }),
   /note heads/,
+);
+assert.match(fillCountLabel(12800, 100000), /12,800 \/ 100,000/);
+
+const hub = { noteId: "desk_Hub", path: "00-Inbox/00/Hub 0.md" };
+const merged = mergeCatalogAndFtsHits(
+  [hub],
+  [],
+  16,
+);
+assert.equal(merged.length, 1);
+assert.equal(merged[0].path, hub.path);
+assert.equal(
+  mergeCatalogAndFtsHits([hub], [{ noteId: "desk_Hub", path: hub.path }, { noteId: "other", path: "Topic.md" }], 16)
+    .length,
+  2,
 );
 assert.equal(isFillSettlePhase("ready-meta", "meta"), true);
 assert.equal(
@@ -207,6 +288,22 @@ assert.equal(isNoteHeadSearchLive("ready-fts-partial"), true);
 assert.match(
   searchEmptyStateMessage({ titleSearchLive: false, headsReady: false }),
   /still reading files/,
+);
+assert.match(
+  searchEmptyStateMessage({
+    titleSearchLive: false,
+    headsReady: false,
+    catalogSearch: true,
+  }),
+  /catalog yet/,
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: false,
+    headsReady: false,
+    catalogSearch: true,
+  }).includes("when Ready"),
+  false,
 );
 assert.match(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }),

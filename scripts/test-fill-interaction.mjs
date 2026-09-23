@@ -26,10 +26,14 @@ const {
 
 assert.equal(
   shouldDeferNoteBodyHydrate({ fillBusy: true }),
-  true,
-  "tree/graph select must not start a disk read while fill runs",
+  false,
+  "the open note reads from disk while fill runs",
 );
-assert.equal(shouldDeferNoteBodyHydrate({ fillBusy: false }), false);
+assert.equal(
+  shouldDeferNoteBodyHydrate({ fillBusy: false }),
+  false,
+  "an idle vault still reads the open note immediately",
+);
 
 assert.equal(
   shouldSkipBackgroundBodyHydrate({ fillBusy: true }),

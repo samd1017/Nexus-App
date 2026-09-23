@@ -63,7 +63,9 @@ export function searchStateFromPhase(phase: string): SearchIndexState {
   ) {
     return "ready-fts-partial";
   }
-  if (phase === "ready-meta" || phase === "meta") return "ready-meta";
+  // "meta" is the path walk. Batches commit titles along the way, but
+  // FTS is not claimable until Rust emits ready-meta (walk finished).
+  if (phase === "ready-meta") return "ready-meta";
   return "idle";
 }
 
@@ -96,23 +98,73 @@ export function sqliteFillProgressMessage(
   return `Workspace ready — indexing SQLite FTS5… ${p.scanned.toLocaleString()} / ${total.toLocaleString()}${extra}`;
 }
 
+/**
+ * A total is honest when it can contain `scanned`. A startup hint of 1
+ * must not turn 24,064 scanned notes into 100%. A heads-phase reset of
+ * scanned=0 must not flash `0 / N`.
+ */
+export function honestFillTotal(scanned: number, total: number): number | null {
+  if (!(total > 1) || scanned <= 0 || total < scanned) return null;
+  return total;
+}
+
+export function fillCountLabel(scanned: number, total: number): string {
+  if (scanned <= 0) return "";
+  const honest = honestFillTotal(scanned, total);
+  if (honest == null) return `${scanned.toLocaleString()} so far`;
+  return `${scanned.toLocaleString()} / ${honest.toLocaleString()}`;
+}
+
+export function fillProgressRatio(
+  scanned: number,
+  totalHint: number | null | undefined,
+): number | null {
+  if (totalHint == null) return null;
+  const honest = honestFillTotal(scanned, totalHint);
+  if (honest == null) return null;
+  return scanned / honest;
+}
+
 export function sqliteFillPhaseMessage(
   p: Pick<
     SqliteFillProgress,
     "phase" | "scanned" | "total" | "skipped" | "indexed"
   >,
 ): string {
-  const counts = sqliteFillProgressMessage(p);
-  if (p.phase === "meta" || p.phase === "ready-meta") {
-    return `Workspace ready — title search on. Cataloging notes… ${p.scanned.toLocaleString()} / ${(p.total > 0 ? p.total : p.scanned).toLocaleString()}`;
+  const counts = fillCountLabel(p.scanned, p.total);
+  const tail = counts ? ` ${counts}` : "";
+  if (p.phase === "ready-meta") {
+    return `Workspace ready — title search on. Cataloging notes…${tail}`;
+  }
+  if (p.phase === "meta") {
+    return `Workspace ready — cataloging notes…${tail}`;
   }
   if (p.phase === "fts-partial" || p.phase === "ready-fts-partial") {
-    return `Workspace ready — search filling note heads… ${p.scanned.toLocaleString()} / ${(p.total > 0 ? p.total : p.scanned).toLocaleString()}`;
+    return `Workspace ready — search filling note heads…${tail}`;
   }
   if (p.phase === "fts") {
-    return `Workspace ready — deepening SQLite FTS5… ${p.scanned.toLocaleString()} / ${(p.total > 0 ? p.total : p.scanned).toLocaleString()}`;
+    return `Workspace ready — deepening SQLite FTS5…${tail}`;
   }
-  return counts;
+  if (!counts) return "Workspace ready — indexing SQLite FTS5…";
+  return `Workspace ready — indexing SQLite FTS5…${tail}`;
+}
+
+export function mergeCatalogAndFtsHits<T extends { noteId: string; path: string }>(
+  catalog: T[],
+  fts: T[],
+  limit: number,
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  const cap = limit > 0 ? limit : catalog.length + fts.length;
+  for (const hit of [...catalog, ...fts]) {
+    const key = hit.noteId || hit.path;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(hit);
+    if (out.length >= cap) break;
+  }
+  return out;
 }
 
 /** Empty native walk on a non-empty tree is a scope/forbidden failure, not a no-op skip. */
@@ -205,8 +257,11 @@ export function isNoteHeadSearchLive(state: SearchIndexState): boolean {
 export function searchEmptyStateMessage(args: {
   titleSearchLive: boolean;
   headsReady: boolean;
+  /** Desktop shell catalog can answer titles before FTS is claimable. */
+  catalogSearch?: boolean;
 }): string {
   if (!args.titleSearchLive) {
+    if (args.catalogSearch) return "No title matches in the catalog yet.";
     return "Search is still reading files — try again when Ready.";
   }
   if (!args.headsReady) {

@@ -150,6 +150,7 @@ import {
   getSearchIndexState,
   isEmptyNativeFillFailure,
   setSearchIndexState,
+  honestFillTotal,
   sqliteFillPhaseMessage,
   sqliteFillReadyMessage,
   isInFlightFillError,
@@ -1061,7 +1062,10 @@ async function runCompleteDiskSearchIndex(opts?: {
 				priorityPaths: diskFillPriorityPaths(),
 				onProgress: (p) => {
 					if (gen !== vaultGen) return;
-					const total = p.total > 0 ? p.total : noteCount;
+					// Rust leaves total at 0 until the walk finishes. A startup
+					// catalog count (often 1) must not become the denominator.
+					const reportedTotal = p.total > 0 ? p.total : 0;
+					const totalHint = honestFillTotal(p.scanned, reportedTotal);
 					const next = advanceSearchIndexState(getSearchIndexState(), p.phase);
 					setSearchIndexState(next);
 					if (next === "ready-meta" || next === "ready-fts-partial" || next === "ready-fts") {
@@ -1101,11 +1105,12 @@ async function runCompleteDiskSearchIndex(opts?: {
 					if (p.phase === "done") {
 						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
+						const doneTotal = reportedTotal > 0 ? reportedTotal : noteCount;
 						setOpenProgress({
 							phase: "ready",
-							scanned: total || noteCount,
-							totalHint: total || noteCount,
-							message: sqliteFillReadyMessage(p.skipped, total || noteCount),
+							scanned: doneTotal,
+							totalHint: doneTotal > 1 ? doneTotal : null,
+							message: sqliteFillReadyMessage(p.skipped, doneTotal),
 						});
 						return;
 					}
@@ -1116,11 +1121,11 @@ async function runCompleteDiskSearchIndex(opts?: {
 					setOpenProgress({
 						phase: "indexing",
 						scanned: p.scanned,
-						totalHint: total || noteCount,
+						totalHint,
 						message: sqliteFillPhaseMessage({
 							phase: p.phase,
 							scanned: p.scanned,
-							total: total || noteCount,
+							total: reportedTotal,
 							skipped: p.skipped,
 							indexed: p.indexed,
 						}),
