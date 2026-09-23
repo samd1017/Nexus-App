@@ -12,7 +12,7 @@
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -124,6 +124,7 @@ struct FillNote {
     title: String,
     body: String,
     links: Vec<String>,
+    tags: Vec<String>,
     fill_depth: i64,
 }
 
@@ -220,6 +221,148 @@ fn strip_code_for_link_scan(markdown: &str) -> String {
     out
 }
 
+fn tag_token_ok(token: &str) -> bool {
+    let mut chars = token.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    token.len() <= 49
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '-'))
+}
+
+/// Tags from a file head: frontmatter `tags:` plus `#tag` outside code.
+/// Same rough rules as TS `extractTagsFromMarkdown`.
+pub fn extract_tags(markdown: &str) -> Vec<String> {
+    let stripped = strip_code_for_link_scan(markdown);
+    let mut tags = BTreeSet::new();
+    if let Some(rest) = stripped.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            let block = &rest[..end];
+            for line in block.lines() {
+                let trimmed = line.trim();
+                let lower = trimmed.to_ascii_lowercase();
+                if !lower.starts_with("tags:") {
+                    continue;
+                }
+                let raw = trimmed.split_once(':').map(|(_, v)| v.trim()).unwrap_or("");
+                for part in raw.split(|c: char| {
+                    c == ',' || c == '[' || c == ']' || c.is_whitespace()
+                }) {
+                    let t = part.trim_matches(|c: char| c == '"' || c == '\'' || c == '#');
+                    if tag_token_ok(t) {
+                        tags.insert(t.to_ascii_lowercase());
+                    }
+                }
+            }
+        }
+    }
+    let chars: Vec<char> = stripped.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '#' {
+            let prev_ok = i == 0
+                || chars[i - 1].is_whitespace()
+                || matches!(chars[i - 1], '(' | '[' | '{');
+            if prev_ok && i + 1 < chars.len() && chars[i + 1].is_ascii_alphabetic() {
+                let mut buf = String::new();
+                let mut j = i + 1;
+                while j < chars.len()
+                    && buf.len() < 49
+                    && (chars[j].is_ascii_alphanumeric() || matches!(chars[j], '_' | '/' | '-'))
+                {
+                    buf.push(chars[j]);
+                    j += 1;
+                }
+                if tag_token_ok(&buf) {
+                    tags.insert(buf.to_ascii_lowercase());
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    tags.into_iter().collect()
+}
+
+fn replace_note_tags(conn: &Connection, id: &str, tags: &[String]) -> Result<(), String> {
+    conn.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    for tag in tags {
+        if !tag_token_ok(tag) {
+            continue;
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO tag_map(tag, note_id) VALUES (?1,?2)",
+            params![tag, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// One-shot from already-indexed heads when an older fill never wrote `tag_map`.
+fn backfill_tags_from_fts(conn: &mut Connection) -> Result<(), String> {
+    let rows: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT note_id, body FROM note_fts")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        mapped.flatten().collect()
+    };
+    for chunk in rows.chunks(128) {
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        for (id, body) in chunk {
+            replace_note_tags(&tx, id, &extract_tags(body))?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
+    }
+    Ok(())
+}
+
+fn tags_indexed_flag(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT value FROM meta_kv WHERE key = 'tags_indexed'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .map(|v| v == "1")
+    .unwrap_or(false)
+}
+
+fn set_tags_indexed_flag(conn: &Connection) {
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES ('tags_indexed', '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [],
+    );
+}
+
+fn ensure_tags_from_bodies(conn: &mut Connection) {
+    if tags_indexed_flag(conn) {
+        return;
+    }
+    let tags: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tag_map", [], |r| r.get(0))
+        .unwrap_or(0);
+    let fts: i64 = conn
+        .query_row("SELECT COUNT(*) FROM note_fts", [], |r| r.get(0))
+        .unwrap_or(0);
+    if tags == 0 && fts > 0 {
+        if backfill_tags_from_fts(conn).is_err() {
+            return;
+        }
+    }
+    set_tags_indexed_flag(conn);
+}
+
 /// Extract unique `[[note]]` targets from a file head. Skips code fences / inline
 /// code. Same note-target rules as TS `extractWikilinkTargets`.
 pub fn extract_wikilink_targets(markdown: &str) -> Vec<String> {
@@ -292,6 +435,9 @@ fn finalize_link_edges(
         if mark_ready {
             set_links_indexed_flag(conn);
         }
+    }
+    if mark_ready {
+        ensure_tags_from_bodies(conn);
     }
     count_link_edges(conn)
 }
@@ -531,6 +677,7 @@ fn meta_fill_note(disk: &DiskNote) -> FillNote {
         title: disk.name.trim_end_matches(".md").to_string(),
         body: String::new(),
         links: Vec::new(),
+        tags: Vec::new(),
         fill_depth: FILL_DEPTH_META,
     }
 }
@@ -658,6 +805,12 @@ fn flush_note_batch(
                  VALUES (?1,?2,?3,NULL)",
             )
             .map_err(|e| e.to_string())?;
+        let mut tag_del = tx
+            .prepare_cached("DELETE FROM tag_map WHERE note_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let mut tag_ins = tx
+            .prepare_cached("INSERT OR IGNORE INTO tag_map(tag, note_id) VALUES (?1,?2)")
+            .map_err(|e| e.to_string())?;
         for note in batch.iter() {
             if meta
                 .execute(params![
@@ -694,6 +847,17 @@ fn flush_note_batch(
                         continue;
                     }
                     if link_ins.execute(params![note.id, raw, norm]).is_err() {
+                        *errors += 1;
+                    }
+                }
+            }
+            if note.fill_depth > FILL_DEPTH_META {
+                if tag_del.execute(params![note.id]).is_err() {
+                    *errors += 1;
+                    continue;
+                }
+                for tag in &note.tags {
+                    if tag_ins.execute(params![tag, note.id]).is_err() {
                         *errors += 1;
                     }
                 }
@@ -1052,6 +1216,7 @@ pub fn fill_from_disk_with_opts(
                 size: disk.size,
                 title: title_from_name_and_head(&disk.name, &body),
                 links: extract_wikilink_targets(&body),
+                tags: extract_tags(&body),
                 body,
                 fill_depth: FILL_DEPTH_PARTIAL,
             });
@@ -1136,6 +1301,7 @@ pub fn fill_from_disk_with_opts(
                 size: disk.size,
                 title: title_from_name_and_head(&disk.name, &body),
                 links: extract_wikilink_targets(&body),
+                tags: extract_tags(&body),
                 body,
                 fill_depth: FILL_DEPTH_DEEP,
             });
@@ -1413,6 +1579,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         );
         assert_eq!(normalize_link_target("Folder/Note.md"), "folder/note");
         assert_eq!(normalize_link_target("Topic 1"), "topic 1");
+    }
+
+    #[test]
+    fn extract_tags_reads_frontmatter_and_hash_tags() {
+        let body = "---\ntags: [Trip, planning]\n---\n# Hub\nSee #Road and `#skip`.\n";
+        let got = extract_tags(body);
+        assert!(got.contains(&"trip".to_string()));
+        assert!(got.contains(&"planning".to_string()));
+        assert!(got.contains(&"road".to_string()));
+        assert!(!got.iter().any(|t| t == "skip"));
     }
 
     #[test]

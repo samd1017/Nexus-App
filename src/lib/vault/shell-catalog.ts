@@ -90,6 +90,51 @@ async function getInvoke(): Promise<Invoke | null> {
   }
 }
 
+/** Attempts inside one invoke, after the native command has already retried. */
+const SHELL_BUSY_TRIES = 4;
+
+export function isShellBusyMessage(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return msg.includes("shell_busy") || msg.includes("database is locked") || msg.includes("sqlite_busy");
+}
+
+export function shellBusyDelayMs(attempt: number): number {
+  return 24 * (attempt + 1);
+}
+
+function commandMissing(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return msg.includes("not found") || msg.includes("unknown command");
+}
+
+async function yieldMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type ShellCall<T> = { ok: true; value: T } | { ok: false; reason: "missing" | "busy" | "error" };
+
+/** Yield between attempts so a fill batch can commit and the page still returns. */
+async function callShell<T>(cmd: string, args: Record<string, unknown>): Promise<ShellCall<T>> {
+  const invoke = await getInvoke();
+  if (!invoke) return { ok: false, reason: "missing" };
+  for (let attempt = 0; attempt < SHELL_BUSY_TRIES; attempt++) {
+    try {
+      return { ok: true, value: await invoke<T>(cmd, args) };
+    } catch (err) {
+      if (isShellBusyMessage(err)) {
+        if (attempt + 1 < SHELL_BUSY_TRIES) {
+          await yieldMs(shellBusyDelayMs(attempt));
+          continue;
+        }
+        return { ok: false, reason: "busy" };
+      }
+      if (commandMissing(err)) return { ok: false, reason: "missing" };
+      return { ok: false, reason: "error" };
+    }
+  }
+  return { ok: false, reason: "busy" };
+}
+
 function num(v: unknown, fallback = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -139,6 +184,40 @@ export function nodesFromShellRows(rows: ShellRow[]): {
     return na.name.localeCompare(nb.name, undefined, { numeric: true, sensitivity: "base" });
   });
   return { nodes, rootIds };
+}
+
+/**
+ * Remove ids (and loaded descendants) from an already-open window.
+ * The walk is the window, not the vault.
+ */
+export function dropShellIds(
+  nodes: Record<string, VaultNode>,
+  rootIds: string[],
+  ids: string[],
+): { nodes: Record<string, VaultNode>; rootIds: string[]; dropped: string[] } {
+  if (!ids.length) return { nodes, rootIds, dropped: [] };
+  const drop = new Set(ids.filter(Boolean));
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const node of Object.values(nodes)) {
+      if (drop.has(node.id)) continue;
+      if (node.parentId && drop.has(node.parentId)) {
+        drop.add(node.id);
+        grew = true;
+      }
+    }
+  }
+  if (drop.size === 0) return { nodes, rootIds, dropped: [] };
+  const next: Record<string, VaultNode> = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    if (!drop.has(id)) next[id] = node;
+  }
+  return {
+    nodes: next,
+    rootIds: rootIds.filter((id) => !drop.has(id)),
+    dropped: [...drop],
+  };
 }
 
 export function mergeShellRows(
@@ -240,24 +319,30 @@ function normalizeMount(raw: Record<string, unknown>): ShellMount {
   };
 }
 
+export type ShellMountOutcome =
+  | { status: "ready"; mount: ShellMount }
+  | { status: "absent" }
+  | { status: "busy" };
+
 export async function mountShellCatalog(
   vaultRoot: string,
   preferPath?: string | null,
-): Promise<ShellMount | null> {
-  const invoke = await getInvoke();
-  if (!invoke) return null;
-  try {
-    const raw = await invoke<Record<string, unknown>>("vault_shell_mount", {
-      vaultRoot,
-      preferPath: preferPath || null,
-    });
-    if (!raw || typeof raw !== "object") return null;
-    const mount = normalizeMount(raw);
-    if (!mount.dbPath) return null;
-    return mount;
-  } catch {
-    return null;
+): Promise<ShellMountOutcome> {
+  const call = await callShell<Record<string, unknown>>("vault_shell_mount", {
+    vaultRoot,
+    preferPath: preferPath || null,
+  });
+  if (!call.ok) {
+    return { status: call.reason === "busy" ? "busy" : "absent" };
   }
+  if (!call.value || typeof call.value !== "object") return { status: "absent" };
+  const mount = normalizeMount(call.value);
+  if (!mount.dbPath) return { status: "absent" };
+  return { status: "ready", mount };
+}
+
+function rowsOf(raw: Record<string, unknown>): ShellRow[] {
+  return Array.isArray(raw.rows) ? raw.rows.map((r) => asRow(r as Record<string, unknown>)) : [];
 }
 
 export async function fetchShellChildren(
@@ -266,27 +351,23 @@ export async function fetchShellChildren(
   offset: number,
   limit = SHELL_CHILD_PAGE,
 ): Promise<ShellPage | null> {
-  const invoke = await getInvoke();
-  if (!invoke || !dbPath) return null;
-  try {
-    const raw = await invoke<Record<string, unknown>>("vault_shell_children", {
-      dbPath,
-      parentPath,
-      limit,
-      offset,
-    });
-    return {
-      parentPath: String(raw.parentPath ?? raw.parent_path ?? parentPath),
-      rows: Array.isArray(raw.rows) ? raw.rows.map((r) => asRow(r as Record<string, unknown>)) : [],
-      noteTotal: num(raw.noteTotal ?? raw.note_total),
-      folderTotal: num(raw.folderTotal ?? raw.folder_total),
-      offset: num(raw.offset, offset),
-      limit: num(raw.limit, limit),
-    };
-  } catch (err) {
-    if (String(err).includes("shell_busy")) return null;
-    return null;
-  }
+  if (!dbPath) return null;
+  const call = await callShell<Record<string, unknown>>("vault_shell_children", {
+    dbPath,
+    parentPath,
+    limit,
+    offset,
+  });
+  if (!call.ok) return null;
+  const raw = call.value;
+  return {
+    parentPath: String(raw.parentPath ?? raw.parent_path ?? parentPath),
+    rows: rowsOf(raw),
+    noteTotal: num(raw.noteTotal ?? raw.note_total),
+    folderTotal: num(raw.folderTotal ?? raw.folder_total),
+    offset: num(raw.offset, offset),
+    limit: num(raw.limit, limit),
+  };
 }
 
 export async function fetchShellLevel(
@@ -294,24 +375,21 @@ export async function fetchShellLevel(
   parentPath: string,
   maxNodes = 320,
 ): Promise<ShellLevel | null> {
-  const invoke = await getInvoke();
-  if (!invoke || !dbPath) return null;
-  try {
-    const raw = await invoke<Record<string, unknown>>("vault_shell_level", {
-      dbPath,
-      parentPath,
-      maxNodes,
-    });
-    return {
-      parentPath: String(raw.parentPath ?? raw.parent_path ?? parentPath),
-      rows: Array.isArray(raw.rows) ? raw.rows.map((r) => asRow(r as Record<string, unknown>)) : [],
-      noteTotal: num(raw.noteTotal ?? raw.note_total),
-      folderTotal: num(raw.folderTotal ?? raw.folder_total),
-      omitted: num(raw.omitted),
-    };
-  } catch {
-    return null;
-  }
+  if (!dbPath) return null;
+  const call = await callShell<Record<string, unknown>>("vault_shell_level", {
+    dbPath,
+    parentPath,
+    maxNodes,
+  });
+  if (!call.ok) return null;
+  const raw = call.value;
+  return {
+    parentPath: String(raw.parentPath ?? raw.parent_path ?? parentPath),
+    rows: rowsOf(raw),
+    noteTotal: num(raw.noteTotal ?? raw.note_total),
+    folderTotal: num(raw.folderTotal ?? raw.folder_total),
+    omitted: num(raw.omitted),
+  };
 }
 
 export async function fetchShellEgo(
@@ -320,41 +398,153 @@ export async function fetchShellEgo(
   hops = 2,
   maxNodes = 400,
 ): Promise<ShellEgo | null> {
-  const invoke = await getInvoke();
-  if (!invoke || !dbPath || !centerId) return null;
-  try {
-    const raw = await invoke<Record<string, unknown>>("vault_shell_ego", {
-      dbPath,
-      centerId,
-      hops,
-      maxNodes,
-    });
-    const edgesRaw = Array.isArray(raw.edges) ? raw.edges : [];
-    return {
-      centerId: String(raw.centerId ?? raw.center_id ?? centerId),
-      rows: Array.isArray(raw.rows) ? raw.rows.map((r) => asRow(r as Record<string, unknown>)) : [],
-      edges: edgesRaw.map((e) => {
-        const edge = e as Record<string, unknown>;
-        return { source: String(edge.source ?? ""), target: String(edge.target ?? "") };
-      }),
-      capped: Boolean(raw.capped),
-    };
-  } catch {
-    return null;
-  }
+  if (!dbPath || !centerId) return null;
+  const call = await callShell<Record<string, unknown>>("vault_shell_ego", {
+    dbPath,
+    centerId,
+    hops,
+    maxNodes,
+  });
+  if (!call.ok) return null;
+  const raw = call.value;
+  const edgesRaw = Array.isArray(raw.edges) ? raw.edges : [];
+  return {
+    centerId: String(raw.centerId ?? raw.center_id ?? centerId),
+    rows: rowsOf(raw),
+    edges: edgesRaw.map((e) => {
+      const edge = e as Record<string, unknown>;
+      return { source: String(edge.source ?? ""), target: String(edge.target ?? "") };
+    }),
+    capped: Boolean(raw.capped),
+  };
 }
 
 export async function fetchShellNote(dbPath: string, id: string): Promise<ShellRow | null> {
-  const invoke = await getInvoke();
-  if (!invoke || !dbPath || !id) return null;
-  try {
-    const raw = await invoke<Record<string, unknown> | null>("vault_shell_note", { dbPath, id });
-    if (!raw || typeof raw !== "object") return null;
-    const row = asRow(raw);
-    return row.id ? row : null;
-  } catch {
-    return null;
-  }
+  if (!dbPath || !id) return null;
+  const call = await callShell<Record<string, unknown> | null>("vault_shell_note", { dbPath, id });
+  if (!call.ok || !call.value || typeof call.value !== "object") return null;
+  const row = asRow(call.value);
+  return row.id ? row : null;
+}
+
+export type ShellBacklinkRow = {
+  fromId: string;
+  fromPath: string;
+  fromTitle: string;
+};
+
+export type ShellBacklinkPage = {
+  rows: ShellBacklinkRow[];
+  total: number;
+};
+
+export async function fetchShellBacklinks(
+  dbPath: string,
+  id: string,
+  limit = 80,
+): Promise<ShellBacklinkPage | null> {
+  if (!dbPath || !id) return null;
+  const call = await callShell<Record<string, unknown>>("vault_shell_backlinks", {
+    dbPath,
+    id,
+    limit,
+  });
+  if (!call.ok) return null;
+  const raw = call.value;
+  const rowsRaw = Array.isArray(raw.rows) ? raw.rows : [];
+  return {
+    total: num(raw.total),
+    rows: rowsRaw.map((entry) => {
+      const row = entry as Record<string, unknown>;
+      return {
+        fromId: String(row.fromId ?? row.from_id ?? ""),
+        fromPath: String(row.fromPath ?? row.from_path ?? ""),
+        fromTitle: String(row.fromTitle ?? row.from_title ?? ""),
+      };
+    }).filter((row) => row.fromId),
+  };
+}
+
+export type ShellTagCount = { tag: string; count: number };
+
+export async function fetchShellTags(dbPath: string, limit = 48): Promise<ShellTagCount[] | null> {
+  if (!dbPath) return null;
+  const call = await callShell<unknown[]>("vault_shell_tags", { dbPath, limit });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => {
+    const row = entry as Record<string, unknown>;
+    return { tag: String(row.tag ?? ""), count: num(row.count) };
+  }).filter((row) => row.tag);
+}
+
+export async function fetchShellTagNotes(
+  dbPath: string,
+  tag: string,
+  limit = 80,
+): Promise<ShellRow[] | null> {
+  if (!dbPath || !tag) return null;
+  const call = await callShell<unknown[]>("vault_shell_tag_notes", { dbPath, tag, limit });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => asRow(entry as Record<string, unknown>)).filter((row) => row.id);
+}
+
+export type ShellSuggestHit = {
+  id: string;
+  path: string;
+  name: string;
+  kind: string;
+  title: string;
+  parentId: string | null;
+  mtime: number;
+};
+
+export async function fetchShellSuggest(
+  dbPath: string,
+  query: string,
+  limit = 40,
+): Promise<ShellSuggestHit[] | null> {
+  if (!dbPath) return null;
+  const call = await callShell<unknown[]>("vault_shell_suggest", { dbPath, query, limit });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => {
+    const row = entry as Record<string, unknown>;
+    return {
+      id: String(row.id ?? ""),
+      path: String(row.path ?? "").replace(/\\/g, "/"),
+      name: String(row.name ?? ""),
+      kind: row.kind === "folder" ? "folder" : "note",
+      title: String(row.title ?? row.name ?? ""),
+      parentId: (row.parentId ?? row.parent_id ?? null) as string | null,
+      mtime: num(row.mtime),
+    };
+  }).filter((row) => row.id);
+}
+
+export async function fetchShellRecent(dbPath: string, limit = 12): Promise<ShellRow[] | null> {
+  if (!dbPath) return null;
+  const call = await callShell<unknown[]>("vault_shell_recent", { dbPath, limit });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => asRow(entry as Record<string, unknown>)).filter((row) => row.id);
+}
+
+export type ShellForget = { ids: string[]; paths: string[] };
+
+export async function fetchShellForget(
+  dbPath: string,
+  vaultRoot: string,
+  paths: string[],
+): Promise<ShellForget | null> {
+  if (!dbPath || !vaultRoot || !paths.length) return null;
+  const call = await callShell<Record<string, unknown>>("vault_shell_forget", {
+    dbPath,
+    vaultRoot,
+    paths,
+  });
+  if (!call.ok) return null;
+  const raw = call.value;
+  const ids = Array.isArray(raw.ids) ? raw.ids.map(String) : [];
+  const gone = Array.isArray(raw.paths) ? raw.paths.map(String) : [];
+  return { ids, paths: gone };
 }
 
 export function shellParentPath(

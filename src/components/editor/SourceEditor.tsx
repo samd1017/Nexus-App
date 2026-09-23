@@ -8,8 +8,10 @@ import {
   coordsAtTextareaCaret,
   detectOpenWikilinkInText,
   insertWikilinkInSource,
+  suggestItemsFromHits,
   type WikilinkSuggestItem,
 } from "@/lib/editor/wikilink-suggest";
+import { fetchShellSuggest } from "@/lib/vault/shell-catalog";
 import { dailyNotePath, upgradeSparseDailySkeleton } from "@/lib/vault/templates";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import {
@@ -125,10 +127,25 @@ export function SourceEditor({
       setSuggestOpen(false);
       return;
     }
-    const items = buildSuggestItems(
-      useVaultStore.getState().nodes,
-      open.query,
-    );
+    const live = useVaultStore.getState();
+    if (live.shellCatalog && live.shellDbPath) {
+      const q = open.query;
+      const db = live.shellDbPath;
+      setSuggestOpen(true);
+      setSuggestQuery(q);
+      setSuggestFrom(open.from);
+      setSuggestTo(open.to);
+      setSuggestItems([]);
+      setSuggestSelected(0);
+      const ta = taRef.current;
+      if (ta) setSuggestRect(coordsAtTextareaCaret(ta, open.to));
+      void fetchShellSuggest(db, q).then((hits) => {
+        if (!hits || suggestQueryRef.current !== q) return;
+        setSuggestItems(suggestItemsFromHits(hits));
+      });
+      return;
+    }
+    const items = buildSuggestItems(live.nodes, open.query);
     setSuggestOpen(true);
     setSuggestQuery(open.query);
     setSuggestFrom(open.from);

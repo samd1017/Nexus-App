@@ -28,7 +28,9 @@ import {
   formatDateISO,
   shiftDate,
 } from "@/lib/vault/templates";
-import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
+import { collectVaultTags, notesForTag, type TagHit } from "@/lib/vault/tags";
+import { fetchShellRecent, fetchShellTagNotes, fetchShellTags } from "@/lib/vault/shell-catalog";
+import type { VaultNode } from "@/lib/vault/types";
 import { formatShortcut } from "@/lib/platform";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
@@ -93,7 +95,58 @@ export function LeftSidebar() {
 
   const weekDays = useMemo(() => weekDaysMondayStart(new Date()), []);
 
-  const vaultTags = useMemo(() => collectVaultTags(nodes), [nodes]);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  const [catalogTags, setCatalogTags] = useState<TagHit[] | null>(null);
+  const [catalogRecent, setCatalogRecent] = useState<VaultNode[] | null>(null);
+
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath) {
+      setCatalogTags(null);
+      return;
+    }
+    let cancel = false;
+    void fetchShellTags(shellDbPath).then((rows) => {
+      if (cancel || !rows) return;
+      setCatalogTags(rows.map((row) => ({ tag: row.tag, count: row.count, noteIds: [] })));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy]);
+
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath) {
+      setCatalogRecent(null);
+      return;
+    }
+    let cancel = false;
+    void fetchShellRecent(shellDbPath, 12).then((rows) => {
+      if (cancel || !rows) return;
+      setCatalogRecent(
+        rows
+          .filter((row) => row.kind === "note")
+          .map((row) => ({
+            id: row.id,
+            path: row.path,
+            name: row.name,
+            kind: "note" as const,
+            parentId: row.parentId ?? null,
+            mtime: row.mtime,
+          })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy]);
+
+  const vaultTags = useMemo(
+    () => (shellCatalog ? (catalogTags ?? []) : collectVaultTags(nodes)),
+    [shellCatalog, catalogTags, nodes],
+  );
   const visibleTags = useMemo(() => vaultTags.slice(0, 12), [vaultTags]);
   const tagCount = vaultTags.length;
 
@@ -117,7 +170,8 @@ export function LeftSidebar() {
       if (byVisit.length >= 3) break;
     }
     if (byVisit.length >= 3) return byVisit;
-    const byMtime = Object.values(nodes)
+    const pool = shellCatalog ? (catalogRecent ?? []) : Object.values(nodes);
+    const byMtime = pool
       .filter((n) => n.kind === "note" && !seen.has(n.id))
       .sort((a, b) => b.mtime - a.mtime);
     for (const n of byMtime) {
@@ -125,7 +179,7 @@ export function LeftSidebar() {
       if (byVisit.length >= 3) break;
     }
     return byVisit;
-  }, [recentNoteVisits]);
+  }, [recentNoteVisits, shellCatalog, catalogRecent]);
 
   const pinnedNotes = useMemo(() => {
     const paths = pinnedNotePaths ?? [];
@@ -555,6 +609,25 @@ export function LeftSidebar() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (shellCatalog && shellDbPath) {
+                          void fetchShellTagNotes(shellDbPath, t.tag, 80).then((rows) => {
+                            if (!rows?.length) {
+                              openCommandPalette(`#${t.tag}`);
+                              return;
+                            }
+                            setActiveNote(rows[0].id);
+                            if (rows.length === 1) closeDrawersIfNarrow();
+                            if (rows.length > 1) {
+                              setToast(
+                                `#${t.tag} · ${t.count} note${t.count === 1 ? "" : "s"}`,
+                              );
+                              openCommandPalette(`#${t.tag}`);
+                            } else {
+                              setToast(`#${t.tag}`);
+                            }
+                          });
+                          return;
+                        }
                         const hits = notesForTag(nodes, t.tag);
                         if (hits[0]) {
                           setActiveNote(hits[0].id);

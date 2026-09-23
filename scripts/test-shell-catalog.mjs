@@ -17,8 +17,11 @@ import { flattenVisibleTree } from "./src/lib/vault/file-tree-flat.ts";
 import {
   SHELL_CHILD_PAGE,
   SHELL_FULL_MAX_NOTES,
+  dropShellIds,
+  isShellBusyMessage,
   mergeShellRows,
   nodesFromShellRows,
+  shellBusyDelayMs,
   shellSessionFromMount,
 } from "./src/lib/vault/shell-catalog.ts";
 import { graphFromShellLevel } from "./src/lib/graph/shell-graph.ts";
@@ -86,6 +89,45 @@ assert.ok(level.nodes.length <= 5);
 assert.equal(level.stats.vaultNoteCount, 5000);
 assert.equal(level.mode, "folder");
 assert.ok(level.nodes.some((n) => n.kind === "aggregate"));
+
+for (const size of [200, 1000, 5000]) {
+  const pageLen = Math.min(size, SHELL_CHILD_PAGE);
+  const grown = Array.from({ length: pageLen }, (_, i) => ({
+    id: "p" + i,
+    path: "Pile/n" + i + ".md",
+    name: "n" + i + ".md",
+    kind: "note",
+    parentId: "pile",
+    mtime: 1,
+  }));
+  const held = nodesFromShellRows([
+    { id: "pile", path: "Pile", name: "Pile", kind: "folder", parentId: null, mtime: 1 },
+    ...grown,
+  ]);
+  const notes = Object.values(held.nodes).filter((n) => n.kind === "note");
+  assert.equal(notes.length, pageLen);
+  assert.ok(notes.length <= SHELL_CHILD_PAGE);
+  assert.ok(notes.length < size || size <= SHELL_CHILD_PAGE);
+  assert.ok(Object.keys(held.nodes).length < size || size <= SHELL_CHILD_PAGE + 1);
+}
+
+const gone = dropShellIds(built.nodes, built.rootIds, ["n3"]);
+assert.equal(gone.dropped.length, 1);
+assert.equal(Object.keys(gone.nodes).length, 9);
+assert.ok(!gone.nodes.n3);
+
+const nested = nodesFromShellRows([
+  { id: "dir", path: "Dir", name: "Dir", kind: "folder", parentId: null, mtime: 1 },
+  { id: "child", path: "Dir/a.md", name: "a.md", kind: "note", parentId: "dir", mtime: 1 },
+]);
+const droppedDir = dropShellIds(nested.nodes, nested.rootIds, ["dir"]);
+assert.equal(Object.keys(droppedDir.nodes).length, 0);
+
+assert.equal(isShellBusyMessage("shell_busy"), true);
+assert.equal(isShellBusyMessage("database is locked"), true);
+assert.equal(isShellBusyMessage("no such table"), false);
+assert.ok(shellBusyDelayMs(0) > 0);
+assert.ok(shellBusyDelayMs(2) > shellBusyDelayMs(0));
 console.log("shell-catalog: PASS");
 `,
   ],

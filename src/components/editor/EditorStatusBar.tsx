@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
+import { fetchShellBacklinks } from "@/lib/vault/shell-catalog";
 import { isCanvasNote } from "@/lib/vault/canvas";
 import { vaultLinkIndex } from "@/lib/vault/link-index";
 import { noteTargetKeys } from "@/lib/vault/backlink-index";
@@ -61,17 +62,38 @@ export function EditorStatusBar({ noteId }: { noteId: string }) {
   const vaultId = useVaultStore((s) => s.vaultId);
   const dirty = useVaultStore((s) => s.dirtyNoteIds.includes(noteId));
   const nodes = useVaultStore((s) => s.nodes);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
   const setRightOpen = useVaultStore((s) => s.setRightOpen);
   const setRightTab = useVaultStore((s) => s.setRightTab);
+  const [shellIn, setShellIn] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || !note || note.kind !== "note") {
+      setShellIn(null);
+      return;
+    }
+    let cancel = false;
+    const id = note.id;
+    void fetchShellBacklinks(shellDbPath, id).then((page) => {
+      if (!cancel) setShellIn(page?.total ?? 0);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, note?.id]);
 
   const mass = useMemo(() => noteMass(content), [content]);
   const links = useMemo(() => {
     if (!note || note.kind !== "note" || !nodes) return { out: 0, inn: 0 };
+    if (shellCatalog) {
+      return { out: outgoingCount(note.id, content), inn: shellIn ?? 0 };
+    }
     return {
       out: outgoingCount(note.id, content),
       inn: incomingCount(note, nodes),
     };
-  }, [nodes, note, content]);
+  }, [nodes, note, content, shellCatalog, shellIn]);
 
   if (isCanvasNote(content)) {
     return (

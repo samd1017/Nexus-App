@@ -14,6 +14,16 @@ use std::time::SystemTime;
 pub const SHELL_FULL_MAX_NOTES: i64 = 399;
 /// One tree page. Expand / "more" fetches another page, not the folder.
 pub const SHELL_CHILD_PAGE: i64 = 200;
+/// Backlink panel and status count share one bounded reverse-index read.
+pub const SHELL_BACKLINK_LIMIT: i64 = 80;
+/// Tag rail. Counts come from `tag_map`, not a body scan.
+pub const SHELL_TAG_LIMIT: i64 = 48;
+/// Notes listed for one tag.
+pub const SHELL_TAG_NOTES_LIMIT: i64 = 80;
+/// Wikilink / title prefix suggestions.
+pub const SHELL_SUGGEST_LIMIT: i64 = 40;
+/// Recent notes by modification time.
+pub const SHELL_RECENT_LIMIT: i64 = 12;
 /// Folder map draw budget. Matches the TS folder graph cap.
 pub const SHELL_GRAPH_MAX: i64 = 320;
 pub const SHELL_EGO_MAX: i64 = 400;
@@ -152,7 +162,9 @@ fn pending_mount() -> ShellMount {
 pub fn ensure_shell_indexes(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS note_meta_parent ON note_meta(parent_id);
-         CREATE INDEX IF NOT EXISTS note_meta_title_norm ON note_meta(lower(title));",
+         CREATE INDEX IF NOT EXISTS note_meta_title_norm ON note_meta(lower(title));
+         CREATE INDEX IF NOT EXISTS note_meta_path_norm ON note_meta(lower(path));
+         CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);",
     )
     .map_err(|e| e.to_string())
 }
@@ -778,6 +790,353 @@ pub fn query_ego(
     })
 }
 
+/// One incoming source. Context stays empty until the open note hydrates that body.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellBacklink {
+    pub from_id: String,
+    pub from_path: String,
+    pub from_title: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellBacklinks {
+    pub rows: Vec<ShellBacklink>,
+    pub total: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellTagCount {
+    pub tag: String,
+    pub count: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellSuggestHit {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub title: String,
+    pub parent_id: Option<String>,
+    pub mtime: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellForget {
+    pub ids: Vec<String>,
+    pub paths: Vec<String>,
+}
+
+fn shell_link_norm(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let without_md = if trimmed.len() >= 3
+        && trimmed[trimmed.len().saturating_sub(3)..].eq_ignore_ascii_case(".md")
+    {
+        &trimmed[..trimmed.len() - 3]
+    } else {
+        trimmed
+    };
+    without_md.replace('\\', "/").to_ascii_lowercase()
+}
+
+fn link_norms(title: &str, name: &str, path: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut push = |s: &str| {
+        let n = shell_link_norm(s);
+        if !n.is_empty() && !out.iter().any(|e| e == &n) {
+            out.push(n);
+        }
+    };
+    push(title);
+    push(name);
+    push(path);
+    out
+}
+
+fn note_title_name_path(conn: &Connection, id: &str) -> Result<Option<(String, String, String)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT COALESCE(title, ''), name, path FROM note_meta
+             WHERE deleted=0 AND id=?1 LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt.query(params![id]).map_err(|e| e.to_string())?;
+    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        return Ok(Some((
+            row.get(0).map_err(|e| e.to_string())?,
+            row.get(1).map_err(|e| e.to_string())?,
+            row.get(2).map_err(|e| e.to_string())?,
+        )));
+    }
+    Ok(None)
+}
+
+const BACKLINK_WHERE: &str = "
+FROM link_edge e
+JOIN note_meta m ON m.id = e.source_id
+WHERE m.deleted=0 AND m.kind='note' AND e.source_id != ?1
+  AND (
+    e.target_id = ?1
+    OR e.target_norm = ?2
+    OR e.target_norm = ?3
+    OR e.target_norm = ?4
+    OR e.target_norm = ?5
+    OR e.target_norm = ?6
+    OR e.target_norm = ?7
+  )";
+
+/// Incoming notes for one id. The source does not have to be in the UI window.
+pub fn query_backlinks(conn: &Connection, id: &str, limit: i64) -> Result<ShellBacklinks, String> {
+    let limit = limit.clamp(1, SHELL_BACKLINK_LIMIT);
+    let Some((title, name, path)) = note_title_name_path(conn, id)? else {
+        return Ok(ShellBacklinks {
+            rows: Vec::new(),
+            total: 0,
+        });
+    };
+    let mut norms = link_norms(&title, &name, &path);
+    while norms.len() < 6 {
+        norms.push(format!("\u{0}{}", norms.len()));
+    }
+    let total: i64 = conn
+        .query_row(
+            &format!("SELECT COUNT(DISTINCT m.id) {BACKLINK_WHERE}"),
+            params![id, norms[0], norms[1], norms[2], norms[3], norms[4], norms[5]],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT m.id, m.path, COALESCE(NULLIF(m.title, ''), m.name) AS title
+             {BACKLINK_WHERE}
+             GROUP BY m.id
+             ORDER BY title COLLATE NOCASE
+             LIMIT ?8"
+        ))
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(
+            params![id, norms[0], norms[1], norms[2], norms[3], norms[4], norms[5], limit],
+            |row| {
+                Ok(ShellBacklink {
+                    from_id: row.get(0)?,
+                    from_path: row.get(1)?,
+                    from_title: row.get(2)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = mapped.filter_map(|r| r.ok()).collect();
+    Ok(ShellBacklinks { rows, total })
+}
+
+pub fn query_tags(conn: &Connection, limit: i64) -> Result<Vec<ShellTagCount>, String> {
+    let limit = limit.clamp(1, SHELL_TAG_LIMIT);
+    let mut stmt = conn
+        .prepare(
+            "SELECT tag, COUNT(*) FROM tag_map
+             GROUP BY tag
+             ORDER BY COUNT(*) DESC, tag COLLATE NOCASE
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![limit], |row| {
+            Ok(ShellTagCount {
+                tag: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+pub fn query_tag_notes(conn: &Connection, tag: &str, limit: i64) -> Result<Vec<ShellRow>, String> {
+    let limit = limit.clamp(1, SHELL_TAG_NOTES_LIMIT);
+    let tag = tag.trim().trim_start_matches('#').to_ascii_lowercase();
+    if tag.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
+             FROM note_meta m
+             JOIN tag_map t ON t.note_id = m.id
+             WHERE m.deleted=0 AND m.kind='note' AND t.tag = ?1
+             ORDER BY m.mtime DESC, m.name COLLATE NOCASE
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![tag, limit], map_row)
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+fn like_prefix(q: &str) -> String {
+    let mut s = String::new();
+    for c in q.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            s.push('\\');
+        }
+        s.push(c);
+    }
+    s.push('%');
+    s
+}
+
+/// Title and path prefix. A leading-wildcard scan of every title is not a keystroke.
+pub fn query_suggest(conn: &Connection, query: &str, limit: i64) -> Result<Vec<ShellSuggestHit>, String> {
+    let limit = limit.clamp(1, SHELL_SUGGEST_LIMIT);
+    let q = query.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        return query_recent_hits(conn, limit);
+    }
+    let prefix = like_prefix(&q);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path, name, kind, parent_id, mtime,
+                    COALESCE(NULLIF(title, ''), name)
+             FROM note_meta
+             WHERE deleted=0 AND (
+               lower(COALESCE(title, '')) LIKE ?1 ESCAPE '\\'
+               OR lower(path) LIKE ?1 ESCAPE '\\'
+               OR lower(name) LIKE ?1 ESCAPE '\\'
+             )
+             ORDER BY
+               CASE WHEN lower(COALESCE(title, name)) LIKE ?1 ESCAPE '\\' THEN 0 ELSE 1 END,
+               CASE kind WHEN 'note' THEN 0 ELSE 1 END,
+               name COLLATE NOCASE
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![prefix, limit], map_suggest)
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+fn map_suggest(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShellSuggestHit> {
+    Ok(ShellSuggestHit {
+        id: row.get(0)?,
+        path: row.get(1)?,
+        name: row.get(2)?,
+        kind: row.get(3)?,
+        parent_id: row.get(4)?,
+        mtime: row.get(5)?,
+        title: row.get(6)?,
+    })
+}
+
+fn query_recent_hits(conn: &Connection, limit: i64) -> Result<Vec<ShellSuggestHit>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path, name, kind, parent_id, mtime,
+                    COALESCE(NULLIF(title, ''), name)
+             FROM note_meta
+             WHERE deleted=0 AND kind='note'
+             ORDER BY mtime DESC, name COLLATE NOCASE
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![limit], map_suggest)
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+pub fn query_recent(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
+    let limit = limit.clamp(1, SHELL_RECENT_LIMIT);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path, name, kind, parent_id, mtime, 0
+             FROM note_meta
+             WHERE deleted=0 AND kind='note'
+             ORDER BY mtime DESC, name COLLATE NOCASE
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![limit], map_row)
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
+fn safe_abs(root: &Path, rel: &str) -> Option<PathBuf> {
+    let rel = normalize_rel(rel);
+    if rel.is_empty() || rel.split('/').any(|p| p.is_empty() || p == "." || p == "..") {
+        return None;
+    }
+    Some(root.join(&rel))
+}
+
+fn like_literal(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Mark catalog rows deleted when the watcher says the file is gone.
+/// Does not rebuild the window. Returns ids the UI should drop from the loaded page.
+pub fn forget_missing_paths(
+    conn: &Connection,
+    root: &Path,
+    rels: &[String],
+) -> Result<ShellForget, String> {
+    let mut ids = Vec::new();
+    let mut paths = Vec::new();
+    let mut seen = HashSet::new();
+    for rel in rels {
+        let Some(abs) = safe_abs(root, rel) else {
+            continue;
+        };
+        if abs.exists() {
+            continue;
+        }
+        let rel = normalize_rel(rel);
+        if !paths.contains(&rel) {
+            paths.push(rel.clone());
+        }
+        let child_like = format!("{}/%%", like_literal(&rel));
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM note_meta
+                 WHERE deleted=0 AND (path = ?1 OR path LIKE ?2 ESCAPE '\\' OR id = ?3)",
+            )
+            .map_err(|e| e.to_string())?;
+        let found: Vec<String> = stmt
+            .query_map(params![rel, child_like, shell_node_id(&rel)], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        for id in found {
+            if seen.insert(id.clone()) {
+                let _ = conn.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id]);
+                let _ = conn.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id]);
+                let _ = conn.execute(
+                    "DELETE FROM link_edge WHERE target_id = ?1",
+                    params![id],
+                );
+                conn.execute("UPDATE note_meta SET deleted=1 WHERE id = ?1", params![id])
+                    .map_err(|e| e.to_string())?;
+                ids.push(id);
+            }
+        }
+    }
+    Ok(ShellForget { ids, paths })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -920,5 +1279,143 @@ mod tests {
         let page = query_children(&conn, "Area", 10, 0).unwrap();
         assert_eq!(page.note_total, 1);
         assert_eq!(page.rows[0].path, "Area/Child.md");
+    }
+
+    #[test]
+    fn page_stays_bounded_as_folder_grows() {
+        let conn = open_mem();
+        let folder = "Pile";
+        conn.execute(
+            "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, title, deleted)
+             VALUES (?1,?2,?3,'folder',NULL,1,?3,0)",
+            params![shell_node_id(folder), folder, folder],
+        )
+        .unwrap();
+        for &size in &[200i64, 1_000, 5_000] {
+            let have: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND parent_id=?1",
+                    params![shell_node_id(folder)],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            for i in have..size {
+                let path = format!("Pile/n{i:04}.md");
+                insert_note(&conn, &path, Some(&shell_node_id(folder)));
+            }
+            let page = query_children(&conn, folder, SHELL_CHILD_PAGE, 0).unwrap();
+            assert!(
+                page.rows.len() as i64 <= SHELL_CHILD_PAGE,
+                "page {} for {size} notes",
+                page.rows.len()
+            );
+            assert_eq!(page.note_total, size);
+            assert!(page.rows.len() < size as usize || size <= SHELL_CHILD_PAGE);
+        }
+    }
+
+    #[test]
+    fn backlinks_tags_suggest_and_recent_are_queries() {
+        let conn = open_mem();
+        conn.execute_batch(
+            "CREATE TABLE tag_map (
+               tag TEXT NOT NULL,
+               note_id TEXT NOT NULL,
+               PRIMARY KEY (tag, note_id)
+             );",
+        )
+        .unwrap();
+        insert_note(&conn, "Alpha.md", None);
+        insert_note(&conn, "Alpine.md", None);
+        insert_note(&conn, "Beta.md", None);
+        conn.execute(
+            "UPDATE note_meta SET mtime=?1 WHERE path='Beta.md'",
+            params![30i64],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE note_meta SET mtime=?1 WHERE path='Alpha.md'",
+            params![10i64],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE note_meta SET mtime=?1 WHERE path='Alpine.md'",
+            params![20i64],
+        )
+        .unwrap();
+        let alpha = shell_node_id("Alpha.md");
+        let alpine = shell_node_id("Alpine.md");
+        conn.execute(
+            "INSERT INTO link_edge(source_id, target_raw, target_norm, target_id)
+             VALUES (?1,'Alpha','alpha',?2)",
+            params![alpine, alpha],
+        )
+        .unwrap();
+        let backs = query_backlinks(&conn, &alpha, 80).unwrap();
+        assert_eq!(backs.total, 1);
+        assert_eq!(backs.rows.len(), 1);
+        assert_eq!(backs.rows[0].from_id, alpine);
+
+        conn.execute(
+            "INSERT INTO tag_map(tag, note_id) VALUES ('trip', ?1), ('trip', ?2)",
+            params![alpha, alpine],
+        )
+        .unwrap();
+        let tags = query_tags(&conn, 48).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag, "trip");
+        assert_eq!(tags[0].count, 2);
+        let tagged = query_tag_notes(&conn, "trip", 80).unwrap();
+        assert_eq!(tagged.len(), 2);
+
+        let suggest = query_suggest(&conn, "al", 40).unwrap();
+        assert!(suggest.iter().any(|h| h.path == "Alpha.md"));
+        assert!(suggest.iter().any(|h| h.path == "Alpine.md"));
+        assert!(suggest.iter().all(|h| h.path != "Beta.md"));
+        let one = query_suggest(&conn, "al", 1).unwrap();
+        assert_eq!(one.len(), 1);
+
+        let recent = query_recent(&conn, 2).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].path, "Beta.md");
+        assert_eq!(recent[1].path, "Alpine.md");
+    }
+
+    #[test]
+    fn forget_drops_a_missing_file_from_the_catalog() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-forget-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Keep.md"), "keep").unwrap();
+        fs::write(dir.join("Gone.md"), "gone").unwrap();
+        let conn = open_mem();
+        conn.execute_batch(
+            "CREATE TABLE tag_map (
+               tag TEXT NOT NULL,
+               note_id TEXT NOT NULL,
+               PRIMARY KEY (tag, note_id)
+             );",
+        )
+        .unwrap();
+        insert_note(&conn, "Keep.md", None);
+        insert_note(&conn, "Gone.md", None);
+        fs::remove_file(dir.join("Gone.md")).unwrap();
+        let forgotten = forget_missing_paths(
+            &conn,
+            &dir,
+            &["Keep.md".into(), "Gone.md".into()],
+        )
+        .unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(forgotten.paths, vec!["Gone.md".to_string()]);
+        assert_eq!(forgotten.ids, vec![shell_node_id("Gone.md")]);
+        assert!(query_note(&conn, &shell_node_id("Gone.md")).unwrap().is_none());
+        assert!(query_note(&conn, &shell_node_id("Keep.md")).unwrap().is_some());
     }
 }

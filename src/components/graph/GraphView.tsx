@@ -6,7 +6,7 @@ import SpriteText from "three-spritetext";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveGraphData, type GraphViewMode, type ResolvedGraphData } from "@/lib/graph/build-graph";
 import { emptyShellGraph, graphFromShellEgo, graphFromShellLevel } from "@/lib/graph/shell-graph";
-import { fetchShellEgo, fetchShellLevel } from "@/lib/vault/shell-catalog";
+import { fetchShellBacklinks, fetchShellEgo, fetchShellLevel } from "@/lib/vault/shell-catalog";
 import { folderIdFromBrowsePath } from "@/lib/graph/folder-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
@@ -40,7 +40,7 @@ import {
   isPhoneViewport,
 } from "@/lib/layout/viewport";
 import { GraphChrome } from "@/components/graph/GraphChrome";
-import { inspectGraphNote } from "@/lib/graph/graph-inspect";
+import { inspectGraphNote, type GraphInspectLink } from "@/lib/graph/graph-inspect";
 import {
   applyGraphFilters,
   filtersAreIdle,
@@ -2559,7 +2559,7 @@ export function GraphView({ mode, className }: Props) {
   }, [activeNoteId]);
 
   const inspectId = hoverTip?.id || activeNoteId;
-  const inspect = useMemo(
+  const baseInspect = useMemo(
     () =>
       inspectGraphNote(
         useVaultStore.getState().nodes ?? EMPTY_GRAPH_NODES,
@@ -2568,6 +2568,32 @@ export function GraphView({ mode, className }: Props) {
       ),
     [inspectId, graphTick],
   );
+  const [shellInn, setShellInn] = useState<{ links: GraphInspectLink[]; total: number } | null>(null);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || !inspectId) {
+      setShellInn(null);
+      return;
+    }
+    let cancel = false;
+    void fetchShellBacklinks(shellDbPath, inspectId).then((page) => {
+      if (cancel) return;
+      setShellInn({
+        total: page?.total ?? 0,
+        links: (page?.rows ?? []).slice(0, 6).map((row) => ({
+          id: row.fromId,
+          title: row.fromTitle,
+          path: row.fromPath,
+        })),
+      });
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, inspectId]);
+  const inspect =
+    shellCatalog && baseInspect && shellInn
+      ? { ...baseInspect, inn: shellInn.links, inCount: shellInn.total }
+      : baseInspect;
   const tagOptions = useMemo(
     () => tagFilterOptions(displayData.nodes),
     [displayData.nodes],

@@ -230,7 +230,9 @@ import {
   SHELL_CATALOG_OFF,
   SHELL_CHILD_PAGE,
   SHELL_ROOT_KEY,
+  dropShellIds,
   fetchShellChildren,
+  fetchShellForget,
   fetchShellNote,
   mergeShellRows,
   mountShellCatalog,
@@ -1296,7 +1298,28 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 			if (!desktopRoot) throw new Error("No desktop vault root");
 			await ensureDesktopVaultFsScope(desktopRoot);
 			if (metaOnly) {
-				const shell = await mountShellCatalog(desktopRoot, opts?.preferPath);
+				const outcome = await mountShellCatalog(desktopRoot, opts?.preferPath);
+				if (outcome.status === "busy") {
+					// A full meta walk would copy the vault into the window. Stay on
+					// the shell path; the catalog read already retried the lock.
+					return {
+						scan: { nodes: {}, rootIds: [], signatures: {} },
+						metaOnly: true,
+						shell: {
+							materialize: false,
+							pending: true,
+							notes: 0,
+							folders: 0,
+							rows: [],
+							rootIds: [],
+							activeNoteId: null,
+							omittedNotes: 0,
+							loaded: [],
+							dbPath: "",
+						},
+					};
+				}
+				const shell = outcome.status === "ready" ? outcome.mount : null;
 				if (shell) {
 					const built = nodesFromShellRows(shell.rows);
 					const scan = {
@@ -3320,19 +3343,59 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	},
 	refreshShellPaths: (paths) => {
 		if (!get().shellCatalog || !paths?.length) return;
-		const parents = new Set<string>();
-		for (const path of paths) parents.add(shellParentKeyForPath(path));
-		let budget = 0;
-		for (const id of parents) {
-			if (budget >= 8) break;
-			const open =
-				id === SHELL_ROOT_KEY ||
-				get().expandedFolders.includes(id) ||
-				(get().shellLoaded[id] ?? 0) > 0;
-			if (!open) continue;
-			budget += 1;
-			void get().reloadShellParent(id);
-		}
+		const db = get().shellDbPath;
+		const root = desktopRoot;
+		void (async () => {
+			let goneIds: string[] = [];
+			if (db && root) {
+				const forgotten = await fetchShellForget(db, root, paths);
+				if (forgotten && get().shellDbPath === db) {
+					goneIds = forgotten.ids.slice();
+					for (const rel of forgotten.paths) {
+						goneIds.push(deskNodeId(rel));
+					}
+				}
+			}
+			if (goneIds.length && get().shellCatalog) {
+				const live = get();
+				const dropped = dropShellIds(live.nodes, live.rootIds, goneIds);
+				if (dropped.dropped.length) {
+					const activeGone =
+						(live.activeNoteId && dropped.dropped.includes(live.activeNoteId)) ||
+						(live.secondaryNoteId && dropped.dropped.includes(live.secondaryNoteId));
+					set({
+						nodes: dropped.nodes,
+						rootIds: dropped.rootIds,
+						...(activeGone
+							? {
+									activeNoteId:
+										live.activeNoteId && dropped.dropped.includes(live.activeNoteId)
+											? null
+											: live.activeNoteId,
+									secondaryNoteId:
+										live.secondaryNoteId && dropped.dropped.includes(live.secondaryNoteId)
+											? null
+											: live.secondaryNoteId,
+								}
+							: {}),
+					});
+				}
+			}
+			const parents = new Set<string>();
+			for (const path of paths) parents.add(shellParentKeyForPath(path));
+			let budget = 0;
+			for (const id of parents) {
+				if (budget >= 8) break;
+				const open =
+					id === SHELL_ROOT_KEY ||
+					get().expandedFolders.includes(id) ||
+					(get().shellLoaded[id] ?? 0) > 0;
+				if (!open) continue;
+				if (!get().nodes[id] && id !== SHELL_ROOT_KEY) continue;
+				budget += 1;
+				void get().reloadShellParent(id);
+			}
+		})();
 	},
 	setLeftOpen: (open) => set({ settings: {
 		...get().settings,

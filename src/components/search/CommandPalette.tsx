@@ -44,6 +44,13 @@ import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-
 import { fuseSearchHits } from "@/lib/search/rank-fusion";
 import { buildAskAnswer, retrieveForAsk } from "@/lib/search/ask-notes";
 import { getBacklinks } from "@/lib/vault/backlinks";
+import {
+  fetchShellBacklinks,
+  fetchShellRecent,
+  fetchShellSuggest,
+  fetchShellTagNotes,
+  fetchShellTags,
+} from "@/lib/vault/shell-catalog";
 import { presentLinkContext } from "@/lib/markdown/wikilinks";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
@@ -232,6 +239,8 @@ function CommandPaletteOpen() {
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const requestDelete = useVaultStore((s) => s.requestDelete);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
   const toggleLeft = useVaultStore((s) => s.toggleLeft);
   const toggleRight = useVaultStore((s) => s.toggleRight);
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
@@ -343,6 +352,21 @@ function CommandPaletteOpen() {
   const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
 
   const syncHits = useMemo(() => {
+    if (shellCatalog && shellDbPath) {
+      if (isEmptyQuery) return topNotesByVisitMtime(nodes, 10, vaultId);
+      if ((exactTagQuery || isTagBrowse) && !hasPathFolderOp) return [];
+      const needle = debouncedSearch.trim() || searchText || raw;
+      if (
+        needle &&
+        !isCommandMode &&
+        !wantsOrphans &&
+        !wantsBroken &&
+        !isAskMode &&
+        !hasPathFolderOp
+      ) {
+        return [];
+      }
+    }
     if (isEmptyQuery) {
       return topNotesByVisitMtime(nodes, 10, vaultId);
     }
@@ -412,11 +436,96 @@ function CommandPaletteOpen() {
     pathFolderOps.excludes,
     isAskMode,
     activeNoteId,
+    shellCatalog,
+    shellDbPath,
   ]);
 
   const [asyncHits, setAsyncHits] = useState<SearchHit[] | null>(null);
   useEffect(() => {
     setAsyncHits(null);
+    if (shellCatalog && shellDbPath) {
+      let cancelled = false;
+      const db = shellDbPath;
+      const asHit = (id: string, path: string, title: string, snippet: string): SearchHit => ({
+        noteId: id,
+        path,
+        title,
+        snippet,
+        score: 1,
+        matchType: "title",
+      });
+      if (isEmptyQuery) {
+        void fetchShellRecent(db, 10).then((rows) => {
+          if (cancelled || !rows) return;
+          const visits = topNotesByVisitMtime(useVaultStore.getState().nodes, 10, vaultId);
+          const seen = new Set(visits.map((hit) => hit.noteId));
+          const extra: SearchHit[] = [];
+          for (const row of rows) {
+            if (seen.has(row.id) || visits.length + extra.length >= 10) continue;
+            extra.push(asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), row.path));
+          }
+          setAsyncHits([...visits, ...extra]);
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+      if (exactTagQuery && !hasPathFolderOp) {
+        const tag = exactTagQuery[1];
+        void fetchShellTagNotes(db, tag).then((rows) => {
+          if (cancelled || !rows) return;
+          setAsyncHits(rows.map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), `#${tag}`)));
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+      if (
+        isCommandMode ||
+        isTagBrowse ||
+        wantsOrphans ||
+        wantsBroken ||
+        isAskMode ||
+        hasPathFolderOp
+      ) {
+        return;
+      }
+      const needle = debouncedSearch.trim() || searchText || raw;
+      if (!needle.trim()) return;
+      const idx = getDurableIndex();
+      if (idx?.ready && idx.searchFtsAsync) {
+        void (async () => {
+          const page = activeNoteId ? await fetchShellBacklinks(db, activeNoteId) : null;
+          if (cancelled) return;
+          const neighborIds = page?.rows.map((row) => row.fromId) ?? [];
+          const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
+          const rows = await searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT);
+          if (cancelled) return;
+          setAsyncHits(
+            fuseSearchHits(rows, {
+              recentIds,
+              activeNoteId,
+              neighborIds,
+              queryText: needle,
+            }),
+          );
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }
+      void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
+        if (cancelled || !hits) return;
+        setAsyncHits(
+          hits
+            .filter((hit) => hit.kind === "note")
+            .map((hit) => asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path)),
+        );
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
     if (
       isEmptyQuery ||
       isCommandMode ||
@@ -470,6 +579,8 @@ function CommandPaletteOpen() {
     hasPathFolderOp,
     isAskMode,
     activeNoteId,
+    shellCatalog,
+    shellDbPath,
   ]);
   const hits = asyncHits ?? syncHits;
 
@@ -478,9 +589,27 @@ function CommandPaletteOpen() {
     return buildAskAnswer(raw, hits, nodes);
   }, [isAskMode, raw, hits, nodes]);
 
+  const [shellTags, setShellTags] = useState<{ tag: string; count: number }[] | null>(null);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || !isTagBrowse) {
+      setShellTags(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchShellTags(shellDbPath, 48).then((rows) => {
+      if (!cancelled) setShellTags(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [shellCatalog, shellDbPath, isTagBrowse]);
+
   const tags = useMemo(() => {
     if (!isTagBrowse) return [];
-    return collectVaultTags(nodes)
+    const source = shellCatalog
+      ? (shellTags ?? []).map((t) => ({ tag: t.tag, count: t.count, noteIds: [] as string[] }))
+      : collectVaultTags(nodes);
+    return source
       .filter(
         (t) =>
           !tagPartial ||
@@ -488,7 +617,7 @@ function CommandPaletteOpen() {
           t.tag.includes(tagPartial),
       )
       .slice(0, 20);
-  }, [nodes, isTagBrowse, tagPartial]);
+  }, [nodes, isTagBrowse, tagPartial, shellCatalog, shellTags]);
 
   const orphans = useMemo(() => {
     if (!wantsOrphans) return [];

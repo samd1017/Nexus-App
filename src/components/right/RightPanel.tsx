@@ -1,7 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
+import { fetchShellBacklinks } from "@/lib/vault/shell-catalog";
+import type { Backlink } from "@/lib/vault/types";
 import {
   getUnlinkedMentions,
   wrapUnlinkedMention,
@@ -63,6 +65,9 @@ export function RightPanel() {
   const focusMode = usePrefsStore((s) => s.focusMode);
   const tab = useVaultStore((s) => s.rightTab);
   const setRightTab = useVaultStore((s) => s.setRightTab);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const [shellBacklinks, setShellBacklinks] = useState<Backlink[] | null>(null);
   const openConflictCount = useVaultStore((s) => {
     // Depend on nodes + dismissals so badge updates live
     void s.nodes;
@@ -85,10 +90,34 @@ export function RightPanel() {
   const note = activeNoteId ? nodes[activeNoteId] : null;
   const bodyReady = !note || note.kind !== "note" || isContentLoaded(note);
 
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || tab !== "backlinks" || !note || note.kind !== "note") {
+      setShellBacklinks(null);
+      return;
+    }
+    let cancel = false;
+    const id = note.id;
+    void fetchShellBacklinks(shellDbPath, id).then((page) => {
+      if (cancel) return;
+      setShellBacklinks(
+        (page?.rows ?? []).map((row) => ({
+          fromId: row.fromId,
+          fromPath: row.fromPath,
+          fromTitle: row.fromTitle,
+          context: "",
+        })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, tab, note?.id]);
+
   const backlinks = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];
+    if (shellCatalog) return shellBacklinks ?? [];
     return getBacklinks(note, nodes);
-  }, [tab, note, nodes, bodyGen]);
+  }, [tab, note, nodes, bodyGen, shellCatalog, shellBacklinks]);
 
   /** Wave 4: group multi-mentions by source note, show count */
   const groupedBacklinks = useMemo((): GroupedBacklink[] => {
@@ -145,6 +174,10 @@ export function RightPanel() {
   }, [note, bodyGen]);
 
   const handleTagClick = (tag: string) => {
+    if (shellCatalog) {
+      openCommandPalette(`#${tag}`);
+      return;
+    }
     const hits = notesForTag(nodes, tag);
     if (hits[0]) setActiveNote(hits[0].id);
     setToast(`#${tag} · ${hits.length} note${hits.length === 1 ? "" : "s"}`);

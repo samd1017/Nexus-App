@@ -37,6 +37,24 @@ export function buildSuggestItems(
   return ensureVaultIndex(nodes).suggest(nodes, query, limit);
 }
 
+/** Map a bounded catalog suggest page into menu rows. */
+export function suggestItemsFromHits(
+  hits: Array<{ id: string; kind: string; title: string; path: string }>,
+): WikilinkSuggestItem[] {
+  return hits.map((hit) => {
+    const kind = hit.kind === "folder" ? "folder" : "note";
+    const title = hit.title || hit.path.replace(/\.md$/i, "");
+    const pathNo = hit.path.replace(/\.md$/i, "");
+    return {
+      id: hit.id,
+      kind,
+      title,
+      path: hit.path,
+      target: kind === "note" ? title : pathNo,
+    };
+  });
+}
+
 /** Scan text before cursor for an unfinished `[[query` (no closing ]]). */
 export function detectOpenWikilink(
   editor: Editor,

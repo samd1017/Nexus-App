@@ -1043,20 +1043,43 @@ fn ensure_shell_conn(
     Ok(db_path)
 }
 
+const SHELL_BUSY_TRIES: u32 = 6;
+
+/// Short lock waits. Each attempt yields so a fill batch can commit, then
+/// the gesture returns the page instead of giving up on the first busy.
 fn with_shell_conn<T>(
     state: tauri::State<'_, SharedIndex>,
     db_path: &str,
-    f: impl FnOnce(&mut Connection) -> Result<T, String>,
+    mut f: impl FnMut(&mut Connection) -> Result<T, String>,
 ) -> Result<T, String> {
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     let conn = guard
         .conns
         .get_mut(db_path)
         .ok_or_else(|| "index not open".to_string())?;
-    let _ = conn.busy_timeout(Duration::from_millis(80));
-    let result = f(conn).map_err(shell_busy_map);
+    let mut last = "shell_busy".to_string();
+    for attempt in 0..SHELL_BUSY_TRIES {
+        let _ = conn.busy_timeout(Duration::from_millis(80));
+        match f(conn) {
+            Ok(value) => {
+                let _ = conn.busy_timeout(Duration::from_millis(15_000));
+                return Ok(value);
+            }
+            Err(err) => {
+                let mapped = shell_busy_map(err);
+                if mapped != "shell_busy" {
+                    let _ = conn.busy_timeout(Duration::from_millis(15_000));
+                    return Err(mapped);
+                }
+                last = mapped;
+                if attempt + 1 < SHELL_BUSY_TRIES {
+                    std::thread::sleep(Duration::from_millis(16 * (attempt as u64 + 1)));
+                }
+            }
+        }
+    }
     let _ = conn.busy_timeout(Duration::from_millis(15_000));
-    result
+    Err(last)
 }
 
 /// Catalog the vault in-process and return either every note (small vault)
@@ -1076,21 +1099,37 @@ pub fn vault_shell_mount(
         .conns
         .get_mut(&db_path)
         .ok_or_else(|| "index not open".to_string())?;
-    if !allow_walk {
-        let _ = conn.busy_timeout(Duration::from_millis(80));
+    let mut last_busy = String::new();
+    let mut mounted = None;
+    let tries = if allow_walk { 1 } else { SHELL_BUSY_TRIES };
+    for attempt in 0..tries {
+        if !allow_walk {
+            let _ = conn.busy_timeout(Duration::from_millis(80));
+        }
+        match crate::shell_catalog::mount_catalog(
+            conn,
+            Path::new(&vault_root),
+            prefer_path.as_deref(),
+            allow_walk,
+        ) {
+            Ok(value) => {
+                mounted = Some(value);
+                break;
+            }
+            Err(err) if !allow_walk && shell_busy_map(err.clone()) == "shell_busy" => {
+                last_busy = "shell_busy".into();
+                if attempt + 1 < tries {
+                    std::thread::sleep(Duration::from_millis(16 * (attempt as u64 + 1)));
+                }
+            }
+            Err(err) => {
+                let _ = conn.busy_timeout(Duration::from_millis(15_000));
+                return Err(if allow_walk { err } else { shell_busy_map(err) });
+            }
+        }
     }
-    let result = crate::shell_catalog::mount_catalog(
-        conn,
-        Path::new(&vault_root),
-        prefer_path.as_deref(),
-        allow_walk,
-    );
     let _ = conn.busy_timeout(Duration::from_millis(15_000));
-    let mut mounted = if allow_walk {
-        result?
-    } else {
-        result.map_err(shell_busy_map)?
-    };
+    let mut mounted = mounted.ok_or(last_busy)?;
     mounted.db_path = db_path;
     Ok(mounted)
 }
@@ -1155,5 +1194,93 @@ pub fn vault_shell_note(
 ) -> Result<Option<crate::shell_catalog::ShellRow>, String> {
     with_shell_conn(state, &db_path, |conn| {
         crate::shell_catalog::query_note(conn, &id)
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_backlinks(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    id: String,
+    limit: Option<i64>,
+) -> Result<crate::shell_catalog::ShellBacklinks, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_backlinks(
+            conn,
+            &id,
+            limit.unwrap_or(crate::shell_catalog::SHELL_BACKLINK_LIMIT),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_tags(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellTagCount>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_tags(
+            conn,
+            limit.unwrap_or(crate::shell_catalog::SHELL_TAG_LIMIT),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_tag_notes(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    tag: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_tag_notes(
+            conn,
+            &tag,
+            limit.unwrap_or(crate::shell_catalog::SHELL_TAG_NOTES_LIMIT),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_suggest(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellSuggestHit>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_suggest(
+            conn,
+            &query,
+            limit.unwrap_or(crate::shell_catalog::SHELL_SUGGEST_LIMIT),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_recent(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::query_recent(
+            conn,
+            limit.unwrap_or(crate::shell_catalog::SHELL_RECENT_LIMIT),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn vault_shell_forget(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    vault_root: String,
+    paths: Vec<String>,
+) -> Result<crate::shell_catalog::ShellForget, String> {
+    with_shell_conn(state, &db_path, |conn| {
+        crate::shell_catalog::forget_missing_paths(conn, Path::new(&vault_root), &paths)
     })
 }

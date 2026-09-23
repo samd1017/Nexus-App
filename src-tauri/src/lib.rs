@@ -10,8 +10,10 @@ use durable_index::{
     vault_index_list_links,
     vault_index_open,
     vault_index_path, vault_index_rebuild, vault_index_remove, vault_index_search,
-    vault_index_stats, vault_index_upsert, vault_index_wipe, vault_shell_children,
-    vault_shell_ego, vault_shell_level, vault_shell_mount, vault_shell_note, IndexState,
+    vault_index_stats, vault_index_upsert, vault_index_wipe, vault_shell_backlinks,
+    vault_shell_children, vault_shell_ego, vault_shell_forget, vault_shell_level,
+    vault_shell_mount, vault_shell_note, vault_shell_recent, vault_shell_suggest,
+    vault_shell_tag_notes, vault_shell_tags, IndexState,
 };
 use vault_scope::{
     is_allowed_vault_root, register_and_grant, vault_clear_roots, vault_register_root,
@@ -192,6 +194,12 @@ pub fn run() {
             vault_shell_level,
             vault_shell_ego,
             vault_shell_note,
+            vault_shell_backlinks,
+            vault_shell_tags,
+            vault_shell_tag_notes,
+            vault_shell_suggest,
+            vault_shell_recent,
+            vault_shell_forget,
         ])
         .setup(|app| {
             let handle = app.handle();
