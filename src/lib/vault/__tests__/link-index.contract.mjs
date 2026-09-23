@@ -63,6 +63,52 @@ rebuildLinkIndex(lazy);
 assert.equal(vaultLinkIndex.ready, false, "all-lazy rebuild does not fake ready");
 assert.equal(vaultLinkIndex.stats().edgeCount, 0);
 
+const loaded = {
+  a: {
+    id: "a",
+    path: "A.md",
+    name: "A.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[B]]",
+  },
+  b: {
+    id: "b",
+    path: "B.md",
+    name: "B.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[A]]",
+  },
+};
+rebuildLinkIndex(loaded);
+assert.equal(vaultLinkIndex.stats().edgeCount, 2);
+const stripped = {
+  a: { id: "a", path: "A.md", name: "A.md", kind: "note", parentId: null, mtime: 1 },
+  b: {
+    id: "b",
+    path: "B.md",
+    name: "B.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[A]]",
+  },
+};
+rebuildLinkIndex(stripped);
+assert.deepEqual(
+  vaultLinkIndex.getOutgoing("a"),
+  ["B"],
+  "a stripped body must keep the edges indexed before the strip",
+);
+
+const { ensureVaultIndex } = await import("../indexes.ts");
+ensureVaultIndex(null);
+ensureVaultIndex(undefined);
+assert.equal(ensureVaultIndex({}).noteCount, 0);
+
 const { buildEgoGraph } = await import("../../graph/build-graph.ts");
 seedLinkIndex([
   { sourceId: "hub", targets: ["Topic 1"] },
