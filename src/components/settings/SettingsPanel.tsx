@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Settings, X, Cloud } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import {
@@ -101,15 +101,14 @@ export function SettingsPanel() {
     () => getConflictItems?.()?.length ?? 0,
     () => 0,
   );
-  // Read published index count outside a mutating Zustand selector
-  const noteCount = useSyncExternalStore(
-    (onStoreChange) => useVaultStore.subscribe(onStoreChange),
-    () => {
-      ensureVaultIndex(useVaultStore.getState().nodes);
-      return vaultIndex.noteCount;
-    },
-    () => 0,
-  );
+  const nodes = useVaultStore((s) => s.nodes);
+  // Index during render, not inside getSnapshot. A snapshot that calls
+  // ensureVaultIndex can change between React's two reads and loop.
+  const noteCount = useMemo(() => {
+    if (!vaultId) return 0;
+    ensureVaultIndex(nodes);
+    return vaultIndex.noteCount;
+  }, [nodes, vaultId]);
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
   const [recordingHotkey, setRecordingHotkey] = useState<HotkeyId | null>(null);
@@ -211,7 +210,7 @@ export function SettingsPanel() {
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6">
       <button
         type="button"
-        className="absolute inset-0 bg-black/55 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-[var(--overlay)] backdrop-blur-[2px]"
         aria-label="Close settings"
         onClick={() => setOpen(false)}
       />
@@ -224,7 +223,7 @@ export function SettingsPanel() {
         className="glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(255,255,255,0.08)] bg-white/[0.03] text-[var(--accent)]">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--accent-dim)] text-[var(--accent)]">
             <Settings size={16} />
           </div>
           <div className="min-w-0 flex-1">
@@ -245,7 +244,7 @@ export function SettingsPanel() {
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-5 py-5">
+        <div className="settings-body min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
           {/* Appearance */}
           <Section title="Appearance">
             <Label>Accent color</Label>
@@ -264,11 +263,11 @@ export function SettingsPanel() {
                         "flex h-9 items-center gap-2 rounded-full border px-3 text-[12.5px] transition",
                         selected
                           ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--text-primary)]"
-                          : "border-[var(--border)] bg-white/[0.02] text-[var(--text-secondary)] hover:border-[rgba(255,255,255,0.14)]",
+                          : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:bg-[var(--fill-hover)]",
                       )}
                     >
                       <span
-                        className="h-3.5 w-3.5 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.12)]"
+                        className="h-3.5 w-3.5 rounded-full shadow-[0_0_0_1px_var(--border-strong)]"
                         style={{ background: p.hex }}
                       />
                       {p.label}
@@ -291,7 +290,7 @@ export function SettingsPanel() {
                   "flex h-9 items-center gap-2 rounded-full border px-3 text-[12.5px] transition",
                   prefs.accentPreset === "custom"
                     ? "border-[var(--accent)] bg-[var(--accent-dim)]"
-                    : "border-[var(--border)] bg-white/[0.02] text-[var(--text-secondary)]",
+                    : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]",
                 )}
               >
                 <span
@@ -301,7 +300,7 @@ export function SettingsPanel() {
                 Custom
               </button>
               <input
-                className="h-9 min-w-0 flex-1 rounded-[10px] border border-[var(--border)] bg-white/[0.03] px-3 font-mono text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="h-9 min-w-0 flex-1 rounded-[10px] border border-[var(--border)] bg-[var(--bg-primary)] px-3 font-mono text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                 value={customDraft}
                 placeholder="#00C8FF"
                 spellCheck={false}
@@ -825,7 +824,7 @@ export function SettingsPanel() {
 
           {/* About */}
           <Section title="About">
-            <div className="flex items-start gap-3 rounded-[14px] border border-[var(--border)] bg-white/[0.02] p-3.5">
+            <div className="flex items-start gap-3 rounded-[14px] border border-[var(--border)] bg-[var(--fill-subtle)] p-3.5">
               <NexusMark size={36} className="text-[var(--text-primary)]" />
               <div className="min-w-0">
                 <NexusWordmark size="md" showMark={false} />
@@ -892,7 +891,7 @@ function HelpItem({
   body: string;
 }) {
   return (
-    <div className="rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5">
+    <div className="rounded-[12px] border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-2.5">
       <div className="text-[12.5px] font-semibold text-[var(--text-primary)]">
         {title}
       </div>
@@ -953,7 +952,7 @@ function Segmented({
   return (
     <div
       className={cn(
-        "flex rounded-[10px] border border-[var(--border)] bg-white/[0.02] p-0.5",
+        "flex rounded-[10px] border border-[var(--border)] bg-[var(--fill-subtle)] p-0.5",
         className,
       )}
     >
@@ -1017,7 +1016,7 @@ function ToggleRow({
         onClick={() => onChange(!checked)}
         className={cn(
           "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
-          checked ? "bg-[var(--accent)]" : "bg-white/[0.12]",
+          checked ? "bg-[var(--accent)]" : "bg-[var(--switch-off)]",
         )}
       >
         <span

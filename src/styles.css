@@ -77,6 +77,7 @@
     --fill-hover: rgba(255, 255, 255, 0.05);
     --titlebar-bg: rgba(8, 8, 10, 0.94);
     --code-inline: rgba(255, 255, 255, 0.06);
+    --switch-off: rgba(255, 255, 255, 0.18);
   }
 
   [data-theme="light"] {
@@ -101,6 +102,7 @@
     --fill-hover: rgba(16, 18, 28, 0.055);
     --titlebar-bg: rgba(247, 248, 251, 0.92);
     --code-inline: rgba(16, 18, 28, 0.06);
+    --switch-off: #c5cad6;
     --danger-dim: color-mix(in srgb, var(--danger) 12%, transparent);
     --warning-dim: color-mix(in srgb, var(--warning) 12%, transparent);
     --success-dim: color-mix(in srgb, var(--success) 12%, transparent);
@@ -109,6 +111,23 @@
   [data-theme="light"] .glass-elevated,
   [data-theme="light"] .glass-panel {
     background: var(--glass-bg);
+  }
+
+  [data-theme="light"] .icon-btn:hover,
+  [data-theme="light"] .chip-btn:hover,
+  [data-theme="light"] .ghost-btn:hover {
+    background: var(--fill-hover);
+    border-color: var(--border-strong);
+  }
+
+  [data-theme="light"] .chip-btn,
+  [data-theme="light"] .ghost-btn {
+    background: var(--fill-subtle);
+  }
+
+  .settings-body > section + section {
+    border-top: 1px solid var(--border);
+    padding-top: 1.35rem;
   }
 
   * {
