@@ -17,6 +17,7 @@ import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
 import { shouldSkipLaunchNote } from "./launch-note";
 import { keepIdsByPath, keepRecentLocalBodies, keepRenamedShellIds } from "./stable-ids";
+import { writeIntentState } from "@/lib/editor/write-intent";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import {
   buildSyntheticVault,
@@ -6037,6 +6038,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 					: null,
 				activePath: active?.path ?? null,
 				writingInNote: Boolean(document.activeElement?.closest?.(".ProseMirror")),
+				caretIn: (() => {
+					if (!document.activeElement?.closest?.(".ProseMirror")) return null;
+					const at = window.getSelection()?.anchorNode;
+					const el = at && (at.nodeType === 1 ? (at as Element) : at.parentElement);
+					return el?.closest?.("h1, h2, h3, h4, h5, h6") ? "title" : "body";
+				})(),
+				writeIntent: writeIntentState(),
 				diskWriteError,
 			};
 		},

@@ -33,6 +33,30 @@ export function clearWriteFocus(): void {
   intent = null;
 }
 
+// Notes made moments ago whose name is still to be set. Kept here rather than
+// in the list, which may still be mounting (or remount) when the note is made.
+const created = new Map<string, number>();
+const CREATED_MS = 120_000;
+
+export function markJustCreated(id: string | null | undefined): void {
+  if (id) created.set(id, Date.now());
+}
+
+/** True, once, when `id` was made moments ago: naming it goes on to writing. */
+export function takeJustCreated(id: string | null | undefined): boolean {
+  if (!id) return false;
+  const at = created.get(id);
+  created.delete(id);
+  return at !== undefined && Date.now() - at <= CREATED_MS;
+}
+
+/** For the soak probe: which note is waiting for the cursor, and what is held. */
+export function writeIntentState(): { path: string | null; heldChars: number } {
+  const path = livePath();
+  const live = held && Date.now() <= held.until ? held : null;
+  return { path, heldChars: live?.text.length ?? 0 };
+}
+
 /** Text typed or pasted for `path` before its editor could take it. */
 export function takeHeldWrite(path: string | null | undefined): string | null {
   if (!held || !path) return null;

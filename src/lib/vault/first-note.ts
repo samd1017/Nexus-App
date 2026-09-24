@@ -3,6 +3,7 @@ import { exitGraphForViewport } from "@/lib/layout/viewport";
 import { revealFileList } from "@/lib/chrome/reveal-list";
 import { scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
+import { markJustCreated } from "@/lib/editor/write-intent";
 
 /** No notes in the open vault, including a large vault still being counted. */
 export function vaultHasNoNotes(): boolean {
@@ -25,6 +26,7 @@ export function startFirstNote(): void {
   if (s.settings.graphMode === "fullscreen") exitGraphForViewport();
   revealFileList(() => {
     createNoteWhenReady(null, "Untitled", (id) => {
+      markJustCreated(id);
       window.dispatchEvent(new CustomEvent("nexus-created-note", { detail: id }));
       const safe =
         typeof CSS !== "undefined" && typeof CSS.escape === "function"

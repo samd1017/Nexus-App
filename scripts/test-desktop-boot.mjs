@@ -869,7 +869,7 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
   const intentSrc = readFileSync(new URL("../src/lib/editor/write-intent.ts", import.meta.url), "utf8");
   assert.equal(intentSrc.includes("export const WRITE_FOCUS_MS = 6000;"), true);
   assert.equal(intentSrc.includes("export function requestWriteFocus(path: string, ms = WRITE_FOCUS_MS)"), true);
-  assert.equal(treeSrc.includes("if (path) requestWriteFocus(path);"), true);
+  assert.equal(treeSrc.includes("requestWriteFocus(node.path);"), true);
   assert.equal(paletteSrc.includes("if (path) requestWriteFocus(path);"), true);
   assert.equal(visualSrc.includes("writeFocusPending(pathNow())"), true);
   // A field or a dialog keeps the cursor. The list row the name was typed in
@@ -886,6 +886,22 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
   // It waits for a body the store has and the editor has not shown yet.
   assert.equal(visualSrc.includes("if (body === baselineMd.current || body === lastWrittenRef.current) return false;"), true);
   assert.equal(visualSrc.includes("if (!ed.view.pasteText(text)) ed.commands.insertContent(text);"), true);
+  // The cursor is taken in the same tick, not a frame later, so a paste sent
+  // right after the name is set lands in the body on any webview.
+  const caretAt = visualSrc.indexOf("function caretToWritingLine(ed: Editor): void {");
+  assert.ok(caretAt > 0);
+  const caretBody = visualSrc.slice(caretAt, visualSrc.indexOf("\n}\n", caretAt));
+  assert.equal(caretBody.includes("ed.view.focus();"), true);
+  assert.equal(caretBody.includes('insertContentAt(doc.content.size, { type: "paragraph" })'), true);
+  // A click under a note that ends in its title starts a line below the title.
+  assert.equal(visualSrc.includes("return ed ? clickBelowTitle(ed, event) : false;"), true);
+  assert.equal(visualSrc.includes("if (e.clientY <= lastDom.getBoundingClientRect().bottom + 2) return false;"), true);
+  // "Just created" lives outside the list, which may mount after the note is made.
+  assert.equal(treeSrc.includes("const fresh = takeJustCreated(id) || Boolean(id && justCreatedRef.current === id);"), true);
+  assert.equal(treeSrc.includes("if (st.activeNoteId !== node.id) st.setActiveNote(node.id);"), true);
+  const firstSrc = readFileSync(new URL("../src/lib/vault/first-note.ts", import.meta.url), "utf8");
+  assert.ok(firstSrc.indexOf("markJustCreated(id);") > 0 && firstSrc.indexOf("markJustCreated(id);") < firstSrc.indexOf('"nexus-created-note"'));
+  assert.equal(storeSrc.includes("writeIntent: writeIntentState(),"), true);
 }
 // Runtime: typing and pasting after naming a note, before its editor has the
 // cursor, are held for that note; moving away ends the request.
@@ -952,6 +968,17 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
     assert.equal(wi.writeFocusPending("FirstRun Note.md"), true);
     for (const fn of listeners.pointerdown ?? []) fn({ target: { closest: () => null } });
     assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);
+    // A note made moments ago is known as new wherever the list was when it
+    // was made, once. Naming it goes on to writing.
+    assert.equal(wi.takeJustCreated("desk_Untitled.md"), false);
+    wi.markJustCreated("desk_Untitled.md");
+    assert.equal(wi.takeJustCreated("desk_Untitled.md"), true);
+    assert.equal(wi.takeJustCreated("desk_Untitled.md"), false);
+    wi.requestWriteFocus("FirstRun Note.md");
+    assert.deepEqual(wi.writeIntentState(), { path: "FirstRun Note.md", heldChars: 0 });
+    paste("abc");
+    assert.deepEqual(wi.writeIntentState(), { path: "FirstRun Note.md", heldChars: 3 });
+    wi.takeHeldWrite("FirstRun Note.md");
     // The request outlasts the rescan after a rename (six seconds), then ends.
     const realNow = Date.now;
     try {

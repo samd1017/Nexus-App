@@ -206,17 +206,43 @@ function placeCaretForWriting(ed: Editor): void {
         return;
       }
     }
-    if (doc.lastChild?.type.name === "heading") {
-      ed.chain()
-        .insertContentAt(doc.content.size, { type: "paragraph" })
-        .focus("end")
-        .run();
-    } else {
-      ed.commands.focus("end");
-    }
+    caretToWritingLine(ed);
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * The caret on the first line under the title, or at the end. TipTap's focus()
+ * moves the selection now but the cursor only a frame later; a paste or key
+ * sent the moment a name is set runs before that frame, into whatever still
+ * has focus. Take the cursor now as well.
+ */
+function caretToWritingLine(ed: Editor): void {
+  const { doc } = ed.state;
+  if (doc.lastChild?.type.name === "heading") {
+    ed.chain().insertContentAt(doc.content.size, { type: "paragraph" }).focus("end").run();
+  } else {
+    ed.commands.focus("end");
+  }
+  ed.view.focus();
+}
+
+/**
+ * A click below the last line of a note that ends in a heading (a new note is
+ * only its title) would put the caret at the end of the title. It starts a
+ * line under the title instead. True when it handled the click.
+ */
+function clickBelowTitle(ed: Editor, e: MouseEvent): boolean {
+  if (ed.isDestroyed || e.button !== 0 || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return false;
+  const last = ed.state.doc.lastChild;
+  if (last?.type.name !== "heading") return false;
+  const lastDom = ed.view.dom.lastElementChild as HTMLElement | null;
+  if (!lastDom) return false;
+  if (e.clientY <= lastDom.getBoundingClientRect().bottom + 2) return false;
+  e.preventDefault();
+  caretToWritingLine(ed);
+  return true;
 }
 
 /**
@@ -239,13 +265,7 @@ function writeHeldText(
   if (!text) return;
   try {
     const inHeading = ed.state.selection.$from.parent.type.name === "heading";
-    if (!ed.isFocused || inHeading) {
-      if (ed.state.doc.lastChild?.type.name === "heading") {
-        ed.chain().insertContentAt(ed.state.doc.content.size, { type: "paragraph" }).focus("end").run();
-      } else {
-        ed.commands.focus("end");
-      }
-    }
+    if (!ed.isFocused || inHeading) caretToWritingLine(ed);
     if (!ed.view.pasteText(text)) ed.commands.insertContent(text);
   } catch {
     /* editor went away mid-write; the text was already taken */
@@ -632,6 +652,10 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
           spellcheck: spellCheck ? "true" : "false",
         },
         handleDOMEvents: {
+          mousedown: (_view, event) => {
+            const ed = editorRef.current;
+            return ed ? clickBelowTitle(ed, event) : false;
+          },
           click: (_view, event) => {
             const a = (event.target as HTMLElement | null)?.closest?.("a[href]");
             if (!(a instanceof HTMLAnchorElement)) return false;

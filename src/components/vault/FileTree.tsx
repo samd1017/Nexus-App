@@ -39,7 +39,7 @@ import { bufferRenameKey, claimEmptyFolderEnter, isIdleEnterTarget, isProgrammat
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { finishReveal, takePendingFolderReveal } from "@/lib/chrome/reveal-list";
 import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
-import { requestWriteFocus } from "@/lib/editor/write-intent";
+import { markJustCreated, requestWriteFocus, takeJustCreated } from "@/lib/editor/write-intent";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -756,8 +756,8 @@ export const FileTree = memo(function FileTree() {
   // that already moved the cursor elsewhere wins.
   const returnTreeFocus = useCallback((id?: string, committed?: boolean) => {
     if (id) settleRename(id);
-    const fresh = Boolean(id && justCreatedRef.current === id);
-    if (fresh) justCreatedRef.current = null;
+    const fresh = takeJustCreated(id) || Boolean(id && justCreatedRef.current === id);
+    if (id && justCreatedRef.current === id) justCreatedRef.current = null;
     const land = () => {
       const active = document.activeElement as HTMLElement | null;
       const idle =
@@ -768,8 +768,11 @@ export const FileTree = memo(function FileTree() {
       if (!idle) return;
       if (fresh && committed) {
         const st = useVaultStore.getState();
-        const path = st.activeNoteId ? st.nodes[st.activeNoteId]?.path : null;
-        if (path) requestWriteFocus(path);
+        const node = id ? st.nodes[id] : null;
+        if (node?.kind === "note") {
+          if (st.activeNoteId !== node.id) st.setActiveNote(node.id);
+          requestWriteFocus(node.path);
+        }
         return;
       }
       parentRef.current?.focus({ preventScroll: true });
@@ -872,6 +875,7 @@ export const FileTree = memo(function FileTree() {
 
   const openCreatedRename = useCallback((noteId: string) => {
     justCreatedRef.current = noteId;
+    markJustCreated(noteId);
     startRenameBuffer(noteId);
     const safe =
       typeof CSS !== "undefined" && typeof CSS.escape === "function"
