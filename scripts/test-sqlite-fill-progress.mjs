@@ -335,10 +335,17 @@ assert.equal(
   }).includes("when Ready"),
   false,
 );
-assert.match(
+assert.equal(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }),
-  /title matches|Note-head/,
-  "after title seed, empty hub must not say wait until Ready",
+  "No notes match.",
+  "after title seed, an empty result is a miss, not a still-filling lock",
+);
+assert.equal(
+  searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }).includes(
+    "still filling",
+  ),
+  false,
+  "palette must not say note-head search is still filling once titles are live",
 );
 assert.equal(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }).includes(

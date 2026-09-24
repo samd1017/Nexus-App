@@ -301,8 +301,7 @@ export function searchEmptyStateMessage(args: {
     if (args.catalogSearch) return "No title matches in the catalog yet.";
     return "Search is still reading files — try again when Ready.";
   }
-  if (!args.headsReady) {
-    return "No title matches. Note-head search is still filling.";
-  }
+  // Title search is already live. An empty query is a miss, not a lock
+  // while note text is still being read.
   return "No notes match.";
 }

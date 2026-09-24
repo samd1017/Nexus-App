@@ -70,6 +70,9 @@ pub const TITLE_READY_FLUSH: usize = 32;
 /// Sleep between title batches after the interactive window. Long enough
 /// that note open, scroll, and the graph can use the disk.
 pub const DISCOVER_TAIL_YIELD_MS: u64 = 32;
+/// Names read from one directory after Ready, before the fill yields.
+/// The rest of a fat folder is not scanned in that same pass.
+const POST_READY_DIR_BATCH: usize = 64;
 /// Passive checkpoint during the title tail. The journal must not grow with
 /// the vault, or search and the tree slow down the longer the listing runs.
 pub const TAIL_CHECKPOINT_EVERY: i64 = 2048;
@@ -835,6 +838,7 @@ fn list_dir_ready_page(
     rel: &str,
     file_limit: usize,
     skip: &HashSet<String>,
+    count_entries: bool,
 ) -> (Vec<LiteEntry>, Vec<LiteEntry>, bool) {
     let mut dirs = Vec::new();
     let mut files = Vec::new();
@@ -869,7 +873,9 @@ fn list_dir_ready_page(
     };
     let mut truncated = false;
     for entry in entries.flatten() {
-        note_dir_entry_before_ready();
+        if count_entries {
+            note_dir_entry_before_ready();
+        }
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
             continue;
@@ -1099,6 +1105,11 @@ fn collect_md_notes_publishing<'a>(
                     continue;
                 }
             }
+            // After Ready, yield before the next name batch so search and
+            // typing are not behind a scan of the rest of the folder.
+            if announced && !tail {
+                std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+            }
             // The ready page leaves the rest of that folder on `rescan`.
             // Finish it up to the open-window cap before sibling folders, so
             // one fat folder still supplies the window. After the cap, the
@@ -1132,7 +1143,10 @@ fn collect_md_notes_publishing<'a>(
             }
             let (files, mut dirs, truncated) = if !announced && ready_at != usize::MAX {
                 let need = ready_at.saturating_sub(out.len()).max(1);
-                list_dir_ready_page(&dir, &rel, need, &seen_rel)
+                list_dir_ready_page(&dir, &rel, need, &seen_rel, true)
+            } else if announced && ready_at != usize::MAX {
+                let room = cap.saturating_sub(out.len()).max(1).min(POST_READY_DIR_BATCH);
+                list_dir_ready_page(&dir, &rel, room, &seen_rel, false)
             } else {
                 let room = cap.saturating_sub(out.len()).max(1);
                 list_dir_window(&dir, &rel, room, &seen_rel)
@@ -2321,8 +2335,9 @@ pub fn fill_from_disk_with_opts<'a>(
                 Some("Titles and open notes are searchable".into()),
                 &mut *b.on_progress,
             );
-            // Let the UI paint Ready before the next directory is stated.
-            std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
+            // Let the UI paint Ready and accept a keystroke before the next
+            // directory batch. The rest of a fat folder is not read here.
+            std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
         },
         &mut |sink, prefix| {
             let scanned = prefix.len() as i64;

@@ -605,6 +605,24 @@ export class NativeSqliteDurableIndex implements DurableIndex {
   }
 }
 
+/** Shell mount already resolved the index file. Skip the ping and path lookup. */
+export async function openNativeSqliteIndexFromKnownPath(
+  vaultId: string,
+  vaultRoot: string,
+  dbPath: string,
+): Promise<NativeSqliteDurableIndex | null> {
+  const invoke = await getInvoke();
+  if (!invoke || !dbPath) return null;
+  try {
+    const idx = new NativeSqliteDurableIndex(dbPath, vaultId, vaultRoot, invoke);
+    await idx.openNative();
+    return idx;
+  } catch (err) {
+    console.warn("[nexus] native sqlite index unavailable", err);
+    return null;
+  }
+}
+
 export async function openNativeSqliteIndex(
   vaultId: string,
   vaultRoot: string,

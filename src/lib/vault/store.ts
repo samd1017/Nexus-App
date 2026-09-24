@@ -854,7 +854,11 @@ function maybeSyncDurableIndex(
 	} catch {}
 }
 /** Prefer SQLite on desktop; memory on FSA/sandbox. Large-test local uses memory FTS. */
-async function prepareDurableIndex(vaultId: string | null, mode: VaultMode) {
+async function prepareDurableIndex(
+	vaultId: string | null,
+	mode: VaultMode,
+	dbPath?: string | null,
+) {
 	if (!vaultId || !shouldUseDurableIndex(mode, vaultId)) {
 		closeDurableIndex();
 		return;
@@ -864,7 +868,8 @@ async function prepareDurableIndex(vaultId: string | null, mode: VaultMode) {
 		await openDurableIndexForVault({
 			vaultId,
 			mode,
-			vaultRoot: root
+			vaultRoot: root,
+			dbPath,
 		});
 		invalidateIndexedSearch();
 	} catch {}
@@ -1893,7 +1898,7 @@ async function mountDesktopVaultAt(
 	{
 		const st = useVaultStore.getState();
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-		await prepareDurableIndex(st.vaultId, st.mode);
+		await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
 		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 		try {
 			await completeDiskSearchIndex({ forceRebuild: opts?.forceRebuild === true });
@@ -2058,7 +2063,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					{
 						const st = useVaultStore.getState();
 						if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-						await prepareDurableIndex(st.vaultId, st.mode);
+						await prepareDurableIndex(st.vaultId, st.mode, shell?.dbPath);
 						maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
 						await completeDiskSearchIndex();
 					}

@@ -706,8 +706,10 @@ export async function openDurableIndexForVault(opts: {
   vaultId: string;
   mode: string;
   vaultRoot?: string | null;
+  /** When the shell mount already opened this file, skip the path lookup. */
+  dbPath?: string | null;
 }): Promise<DurableIndex | null> {
-  const { vaultId, mode, vaultRoot } = opts;
+  const { vaultId, mode, vaultRoot, dbPath } = opts;
   if (mode !== "fsa" && mode !== "desktop" && mode !== "sandbox") {
     closeDurableIndex();
     return null;
@@ -716,9 +718,11 @@ export async function openDurableIndexForVault(opts: {
   // Prefer native SQLite on desktop when vault root is known
   if (mode === "desktop" && vaultRoot) {
     try {
-      const { openNativeSqliteIndex, NativeSqliteDurableIndex } = await import(
-        "./native-sqlite-index"
-      );
+      const {
+        openNativeSqliteIndex,
+        openNativeSqliteIndexFromKnownPath,
+        NativeSqliteDurableIndex,
+      } = await import("./native-sqlite-index");
       if (
         active instanceof NativeSqliteDurableIndex &&
         active.ready &&
@@ -732,7 +736,10 @@ export async function openDurableIndexForVault(opts: {
       if (active?.ready) {
         closeDurableIndex();
       }
-      const native = await openNativeSqliteIndex(vaultId, vaultRoot);
+      const native =
+        (dbPath
+          ? await openNativeSqliteIndexFromKnownPath(vaultId, vaultRoot, dbPath)
+          : null) ?? (await openNativeSqliteIndex(vaultId, vaultRoot));
       if (native) {
         active = native;
         return native;
