@@ -70,6 +70,9 @@ pub const TITLE_READY_FLUSH: usize = 32;
 /// Sleep between title batches after the interactive window. Long enough
 /// that note open, scroll, and the graph can use the disk.
 pub const DISCOVER_TAIL_YIELD_MS: u64 = 32;
+/// Passive checkpoint during the title tail. The journal must not grow with
+/// the vault, or search and the tree slow down the longer the listing runs.
+pub const TAIL_CHECKPOINT_EVERY: i64 = 2048;
 /// Short heads committed while the directory walk is still running.
 /// Root notes first, so the open page has tags before the vault is listed.
 /// Once this many notes already have a head, later opens do not peek further.
@@ -578,7 +581,99 @@ fn load_existing_notes(conn: &Connection) -> HashMap<String, ExistingNote> {
     for row in rows.flatten() {
         map.insert(row.0, row.1);
     }
+    #[cfg(test)]
+    EXISTING_CATALOG_ROWS_LOADED.with(|c| c.set(map.len() as i64));
     map
+}
+
+#[cfg(test)]
+thread_local! {
+    static EXISTING_CATALOG_ROWS_LOADED: Cell<i64> = Cell::new(0);
+    static TAIL_WAL_CHECKPOINTS: Cell<u32> = Cell::new(0);
+    static MAX_LISTING_RETAINED: Cell<usize> = Cell::new(0);
+}
+
+#[cfg(test)]
+fn note_listing_retained(n: usize) {
+    MAX_LISTING_RETAINED.with(|c| {
+        if n > c.get() {
+            c.set(n);
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn note_listing_retained(_: usize) {}
+
+fn ensure_walk_gen_column(conn: &Connection) {
+    let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN walk_gen INTEGER", []);
+}
+
+fn next_walk_gen(conn: &Connection) -> i64 {
+    ensure_walk_gen_column(conn);
+    let cur: i64 = conn
+        .query_row(
+            "SELECT CAST(value AS INTEGER) FROM meta_kv WHERE key='fill_walk_gen'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let next = cur + 1;
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES('fill_walk_gen', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![next.to_string()],
+    );
+    next
+}
+
+fn cache_prior(
+    conn: &Connection,
+    prior: &mut HashMap<String, ExistingNote>,
+    rel: &str,
+    record: bool,
+) -> bool {
+    if prior.contains_key(rel) {
+        return true;
+    }
+    let Some(note) = existing_note(conn, rel) else {
+        return false;
+    };
+    if record {
+        prior.insert(rel.to_string(), note);
+    }
+    true
+}
+
+fn existing_note(conn: &Connection, rel: &str) -> Option<ExistingNote> {
+    conn.query_row(
+        "SELECT id, mtime, size, fill_depth FROM note_meta
+         WHERE path=?1 AND kind='note' AND deleted=0",
+        params![rel],
+        |r| {
+            Ok(ExistingNote {
+                id: r.get(0)?,
+                mtime: r.get(1)?,
+                size: r.get(2)?,
+                fill_depth: r.get(3)?,
+            })
+        },
+    )
+    .ok()
+}
+
+fn stamp_walk_gen(conn: &Connection, gen: i64, notes: &[DiskNote]) -> Result<(), String> {
+    if notes.is_empty() {
+        return Ok(());
+    }
+    let mut stmt = conn
+        .prepare_cached("UPDATE note_meta SET walk_gen=?1 WHERE path=?2")
+        .map_err(|e| e.to_string())?;
+    for note in notes {
+        stmt.execute(params![gen, note.rel])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 struct DiscoverPublish<'a> {
@@ -591,10 +686,16 @@ struct DiscoverPublish<'a> {
     errors: &'a mut i64,
     written: &'a mut HashSet<String>,
     fresh_titles: &'a mut HashSet<String>,
-    existing: &'a HashMap<String, ExistingNote>,
+    /// Set on every note this full walk touches. Stale removal uses it so
+    /// the walk does not keep every path in memory.
+    walk_gen: Option<i64>,
+    /// Mtimes from before this walk updates them. Only the interactive
+    /// window is kept, so a large folder does not become a second catalog.
+    prior: &'a mut HashMap<String, ExistingNote>,
     on_scanned: &'a mut dyn FnMut(i64, i64, i64),
     /// After the interactive title window, each batch sleeps.
     tail_yield: bool,
+    last_checkpoint_at: i64,
 }
 
 struct LiteEntry {
@@ -603,12 +704,40 @@ struct LiteEntry {
     name: String,
 }
 
-fn list_dir_children(dir: &Path, rel: &str) -> (Vec<LiteEntry>, Vec<LiteEntry>) {
-    let mut files = Vec::new();
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RankedFile {
+    name: String,
+    rel: String,
+    abs: PathBuf,
+}
+
+fn keep_smallest(set: &mut BTreeSet<RankedFile>, file: RankedFile, k: usize) {
+    if k == 0 {
+        return;
+    }
+    set.insert(file);
+    if set.len() > k {
+        set.pop_last();
+    }
+}
+
+/// Names in one directory. At most `file_limit` notes are kept: hub names
+/// first, smallest name first, so a fat folder is not copied into memory
+/// before the first page is searchable. `truncated` means the tail must
+/// read this directory again for the names that did not fit.
+fn list_dir_window(
+    dir: &Path,
+    rel: &str,
+    file_limit: usize,
+    skip: &HashSet<String>,
+) -> (Vec<LiteEntry>, Vec<LiteEntry>, bool) {
     let mut dirs = Vec::new();
+    let mut hot: BTreeSet<RankedFile> = BTreeSet::new();
+    let mut cold: BTreeSet<RankedFile> = BTreeSet::new();
+    let mut total = 0usize;
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return (files, dirs),
+        Err(_) => return (Vec::new(), dirs, false),
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -621,26 +750,58 @@ fn list_dir_children(dir: &Path, rel: &str) -> (Vec<LiteEntry>, Vec<LiteEntry>) 
         } else {
             format!("{rel}/{name}")
         };
-        let lite = LiteEntry {
-            abs: entry.path(),
-            rel: child_rel,
-            name,
-        };
         if ft.is_dir() {
-            dirs.push(lite);
-        } else if ft.is_file() && lite.name.to_ascii_lowercase().ends_with(".md") {
-            files.push(lite);
+            dirs.push(LiteEntry {
+                abs: entry.path(),
+                rel: child_rel,
+                name,
+            });
+            continue;
+        }
+        if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
+            continue;
+        }
+        if skip.contains(&child_rel) {
+            continue;
+        }
+        total += 1;
+        let ranked = RankedFile {
+            name,
+            rel: child_rel,
+            abs: entry.path(),
+        };
+        if is_title_seed_hot_name(&ranked.name) {
+            keep_smallest(&mut hot, ranked, file_limit);
+        } else if hot.len() < file_limit {
+            keep_smallest(&mut cold, ranked, file_limit);
         }
     }
-    files.sort_by(|a, b| {
-        is_title_seed_hot_name(&b.name)
-            .cmp(&is_title_seed_hot_name(&a.name))
-            .then_with(|| a.name.cmp(&b.name))
-    });
-    // `pop` takes the tail. Hot names, smallest first (`Hub 0` before
-    // `Hub 1400` in the same folder), were sorted to the front.
-    files.reverse();
-    (files, dirs)
+    let mut chosen = Vec::with_capacity(file_limit.min(total));
+    for ranked in hot {
+        if chosen.len() >= file_limit {
+            break;
+        }
+        chosen.push(LiteEntry {
+            abs: ranked.abs,
+            rel: ranked.rel,
+            name: ranked.name,
+        });
+    }
+    if chosen.len() < file_limit {
+        let room = file_limit - chosen.len();
+        for ranked in cold.into_iter().take(room) {
+            chosen.push(LiteEntry {
+                abs: ranked.abs,
+                rel: ranked.rel,
+                name: ranked.name,
+            });
+        }
+    }
+    // `pop` takes the tail, so the smallest hub name is last.
+    chosen.reverse();
+    let truncated = total > chosen.len();
+    note_listing_retained(chosen.len());
+    (chosen, dirs, truncated)
 }
 
 fn disk_note_from_lite(lite: LiteEntry) -> DiskNote {
@@ -676,11 +837,86 @@ fn flush_unpublished(
     *published = out.len();
 }
 
+fn stream_dir_tail<'p, 'c>(
+    dir: &Path,
+    rel: &str,
+    skip: &HashSet<String>,
+    publish: &mut Option<DiscoverPublish<'p>>,
+    listed: &mut i64,
+    is_cancelled: &RefCell<Box<dyn FnMut() -> bool + 'c>>,
+    stack: &mut Vec<(PathBuf, String)>,
+    push_dirs: bool,
+) -> bool {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let mut batch: Vec<DiskNote> = Vec::new();
+    let mut child_dirs: Vec<(PathBuf, String)> = Vec::new();
+    let flush_batch = |batch: &mut Vec<DiskNote>,
+                       publish: &mut Option<DiscoverPublish<'p>>,
+                       listed: &mut i64|
+     -> bool {
+        if batch.is_empty() {
+            return false;
+        }
+        note_listing_retained(batch.len());
+        *listed += batch.len() as i64;
+        if let Some(sink) = publish.as_mut() {
+            publish_discovered(sink, batch, *listed);
+        }
+        batch.clear();
+        let mut cancel = is_cancelled.borrow_mut();
+        (*cancel)()
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
+            continue;
+        }
+        let Ok(ft) = entry.file_type() else { continue };
+        let child_rel = if rel.is_empty() {
+            name.clone()
+        } else {
+            format!("{rel}/{name}")
+        };
+        if ft.is_dir() {
+            if push_dirs {
+                child_dirs.push((entry.path(), child_rel));
+            }
+            continue;
+        }
+        if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
+            continue;
+        }
+        if skip.contains(&child_rel) {
+            continue;
+        }
+        batch.push(disk_note_from_lite(LiteEntry {
+            abs: entry.path(),
+            rel: child_rel,
+            name,
+        }));
+        if batch.len() >= DISCOVER_BATCH && flush_batch(&mut batch, publish, listed) {
+            return true;
+        }
+    }
+    if flush_batch(&mut batch, publish, listed) {
+        return true;
+    }
+    if push_dirs {
+        child_dirs.sort_by(|a, b| b.1.cmp(&a.1));
+        stack.append(&mut child_dirs);
+    }
+    false
+}
+
 /// List the vault. `cap` stops the interactive portion: once that many notes
 /// are in hand the callback runs (title search, then the open-note bodies)
 /// and the rest of the names are listed with `tail_yield`. `usize::MAX`
-/// never pauses. Hot-named files in a directory are stated before the rest,
-/// and priority directories are entered first.
+/// never pauses. The interactive window keeps at most `cap` names from a
+/// directory; the tail reads the rest without holding the directory.
+/// Returns `(interactive notes, total notes listed, walk finished)`.
 fn collect_md_notes_publishing<'a>(
     root: &Path,
     mut publish: Option<DiscoverPublish<'_>>,
@@ -690,7 +926,7 @@ fn collect_md_notes_publishing<'a>(
     is_cancelled: &RefCell<Box<dyn FnMut() -> bool + 'a>>,
     on_ready: &mut dyn FnMut(&mut DiscoverPublish<'_>, &[DiskNote]),
     on_cap: &mut dyn FnMut(&mut DiscoverPublish<'_>, &[DiskNote]),
-) -> (Vec<DiskNote>, bool) {
+) -> (Vec<DiskNote>, i64, bool) {
     let mut out = Vec::new();
     let mut seen_rel: HashSet<String> = HashSet::new();
     // A note the user already has open is part of the first page even when
@@ -714,12 +950,15 @@ fn collect_md_notes_publishing<'a>(
         out.push(disk_note_from_lite(LiteEntry { abs, rel, name }));
     }
     let mut published = 0usize;
-    let mut capped = cap == usize::MAX;
+    let unlimited = cap == usize::MAX;
+    let mut capped = false;
     let mut announced = false;
     let mut tail = false;
+    let mut listed: i64 = out.len() as i64;
     let mut stack: Vec<(PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
     let mut pending_files: Vec<LiteEntry> = Vec::new();
     let mut pending_dirs: Vec<LiteEntry> = Vec::new();
+    let mut rescan: Vec<(PathBuf, String)> = Vec::new();
 
     loop {
         if tail {
@@ -729,14 +968,52 @@ fn collect_md_notes_publishing<'a>(
             };
             if stop {
                 flush_unpublished(&mut publish, &out, &mut published);
-                return (out, false);
+                return (out, listed, false);
             }
         }
         if pending_files.is_empty() && pending_dirs.is_empty() {
+            if tail {
+                if let Some((dir, rel)) = rescan.pop() {
+                    if stream_dir_tail(
+                        &dir,
+                        &rel,
+                        &seen_rel,
+                        &mut publish,
+                        &mut listed,
+                        is_cancelled,
+                        &mut stack,
+                        false,
+                    ) {
+                        flush_unpublished(&mut publish, &out, &mut published);
+                        return (out, listed, false);
+                    }
+                    continue;
+                }
+            }
             let Some((dir, rel)) = stack.pop() else {
                 break;
             };
-            let (files, mut dirs) = list_dir_children(&dir, &rel);
+            if tail {
+                if stream_dir_tail(
+                    &dir,
+                    &rel,
+                    &seen_rel,
+                    &mut publish,
+                    &mut listed,
+                    is_cancelled,
+                    &mut stack,
+                    true,
+                ) {
+                    flush_unpublished(&mut publish, &out, &mut published);
+                    return (out, listed, false);
+                }
+                continue;
+            }
+            let room = cap.saturating_sub(out.len());
+            let (files, mut dirs, truncated) = list_dir_window(&dir, &rel, room, &seen_rel);
+            if truncated {
+                rescan.push((dir.clone(), rel.clone()));
+            }
             // Pop takes the last entry. Before the first title page, smallest
             // names come out first (`00-Inbox`, then bucket `00`) so a cold
             // open does not title-index later folders before Hub 0.
@@ -757,6 +1034,7 @@ fn collect_md_notes_publishing<'a>(
                 continue;
             }
             out.push(disk_note_from_lite(lite));
+            listed = out.len() as i64;
             let batch_due = out.len() % DISCOVER_BATCH == 0;
             let ready_due = !announced && ready_at != usize::MAX && out.len() >= ready_at;
             if batch_due || ready_due {
@@ -768,7 +1046,7 @@ fn collect_md_notes_publishing<'a>(
                 }
                 announced = true;
             }
-            if !capped && out.len() >= cap {
+            if !unlimited && !capped && out.len() >= cap {
                 flush_unpublished(&mut publish, &out, &mut published);
                 if let Some(sink) = publish.as_mut() {
                     on_cap(sink, &out);
@@ -786,7 +1064,7 @@ fn collect_md_notes_publishing<'a>(
         }
     }
     flush_unpublished(&mut publish, &out, &mut published);
-    (out, true)
+    (out, listed, true)
 }
 
 fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanned: i64) {
@@ -799,7 +1077,9 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
     for note in notes {
         all_rows.push((note.rel.clone(), note.name.clone(), note.mtime, note.size));
         let id = desk_node_id(&note.rel);
-        if sink.existing.contains_key(&note.rel) || sink.written.contains(&id) {
+        let known = sink.written.contains(&id)
+            || cache_prior(sink.conn, sink.prior, &note.rel, !sink.tail_yield);
+        if known {
             touches.push((note.rel.clone(), note.name.clone(), note.mtime, note.size));
         } else {
             titles.push(meta_fill_note(note));
@@ -820,7 +1100,11 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
             sink.fresh_titles,
         )
         .is_ok();
-        folders_ok && touch_ok && write_ok && tx.commit().is_ok()
+        let stamped = match sink.walk_gen {
+            Some(gen) => stamp_walk_gen(&tx, gen, notes).is_ok(),
+            None => true,
+        };
+        folders_ok && touch_ok && write_ok && stamped && tx.commit().is_ok()
     } else {
         false
     };
@@ -829,6 +1113,12 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
         *sink.errors += titles.len() as i64;
     }
     if sink.tail_yield {
+        if committed && scanned - sink.last_checkpoint_at >= TAIL_CHECKPOINT_EVERY {
+            let _ = sink.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+            sink.last_checkpoint_at = scanned;
+            #[cfg(test)]
+            TAIL_WAL_CHECKPOINTS.with(|c| c.set(c.get() + 1));
+        }
         std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
     } else {
         cooperate_after_write(started);
@@ -1573,6 +1863,44 @@ fn write_note_batch(
     }
 }
 
+fn remove_stale_walk(conn: &mut Connection, gen: i64) -> i64 {
+    let ids: Vec<String> = {
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT id FROM note_meta
+             WHERE kind='note' AND deleted=0 AND COALESCE(walk_gen, 0) != ?1",
+        ) else {
+            return 0;
+        };
+        let Ok(rows) = stmt.query_map(params![gen], |r| r.get::<_, String>(0)) else {
+            return 0;
+        };
+        rows.flatten().collect()
+    };
+    if ids.is_empty() {
+        return 0;
+    }
+    let Ok(tx) = conn.unchecked_transaction() else {
+        return 0;
+    };
+    let mut removed = 0i64;
+    for id in &ids {
+        let _ = tx.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id]);
+        let _ = tx.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id]);
+        let ok = delete_note_fts(&tx, id).is_ok()
+            && tx
+                .execute("DELETE FROM note_meta WHERE id = ?1", params![id])
+                .is_ok();
+        if ok {
+            removed += 1;
+        }
+    }
+    if tx.commit().is_ok() {
+        removed
+    } else {
+        0
+    }
+}
+
 fn remove_stale_notes(
     conn: &mut Connection,
     existing: &HashMap<String, ExistingNote>,
@@ -1723,7 +2051,6 @@ pub fn fill_from_disk_with_opts<'a>(
             );
         }
     }
-    let existing = load_existing_notes(conn);
     let mut last_discover = Instant::now();
     struct ProgressBridge<'a> {
         progress: IndexFillProgress,
@@ -1745,7 +2072,14 @@ pub fn fill_from_disk_with_opts<'a>(
         usize::MAX
     };
     let ready_at = if deep { TITLE_READY_FLUSH } else { usize::MAX };
-    let (files, walk_done) = collect_md_notes_publishing(
+    let walk_gen = if deep { Some(next_walk_gen(conn)) } else { None };
+    let mut prior: HashMap<String, ExistingNote> = HashMap::new();
+    let pre_snapshot = if deep {
+        None
+    } else {
+        Some(load_existing_notes(conn))
+    };
+    let (files, listed, walk_done) = collect_md_notes_publishing(
         vault_root,
         Some(DiscoverPublish {
             conn,
@@ -1757,8 +2091,10 @@ pub fn fill_from_disk_with_opts<'a>(
             errors: &mut errors,
             written: &mut written,
             fresh_titles: &mut fresh_titles,
-            existing: &existing,
+            walk_gen,
+            prior: &mut prior,
             tail_yield: false,
+            last_checkpoint_at: 0,
             on_scanned: &mut |scanned, indexed_now, errors_now| {
                 if last_discover.elapsed() >= Duration::from_millis(PROGRESS_EMIT_MS) {
                     let mut bridge = bridge.borrow_mut();
@@ -1858,10 +2194,13 @@ pub fn fill_from_disk_with_opts<'a>(
     let mut progress = bridge.borrow().progress.clone();
     drop(bridge);
     if interactive_done.get() {
-        let notes = files.len() as i64;
+        let notes = listed;
         if walk_done {
-            let seen: HashSet<String> = files.iter().map(|f| f.rel.clone()).collect();
-            let _ = remove_stale_notes(conn, &existing, &seen);
+            if errors == 0 {
+                if let Some(gen) = walk_gen {
+                    let _ = remove_stale_walk(conn, gen);
+                }
+            }
             crate::shell_catalog::mark_catalog_walk_done(conn);
             let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
             emit(
@@ -1886,6 +2225,11 @@ pub fn fill_from_disk_with_opts<'a>(
         });
     }
     let mut is_cancelled = is_cancelled.into_inner();
+    let existing = if deep {
+        prior
+    } else {
+        pre_snapshot.unwrap_or_default()
+    };
     let total = files.len() as i64;
     let headed = headed_depths(conn);
     progress.total = total;
@@ -2098,7 +2442,15 @@ pub fn fill_from_disk_with_opts<'a>(
         &mut on_progress,
     );
 
-    let _ = remove_stale_notes(conn, &existing, &seen);
+    if deep {
+        if errors == 0 {
+            if let Some(gen) = walk_gen {
+                let _ = remove_stale_walk(conn, gen);
+            }
+        }
+    } else {
+        let _ = remove_stale_notes(conn, &existing, &seen);
+    }
 
     if is_cancelled() || opts.until == FillUntil::Meta {
         let edges = finalize_link_edges(conn, skipped, indexed, false, &mut progress);
@@ -3037,6 +3389,169 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
+    fn reset_fill_probes() {
+        EXISTING_CATALOG_ROWS_LOADED.with(|c| c.set(-1));
+        TAIL_WAL_CHECKPOINTS.with(|c| c.set(0));
+        MAX_LISTING_RETAINED.with(|c| c.set(0));
+    }
+
+    fn ready_page_ms(vault: &Path, db: &Path) -> u128 {
+        let mut conn = open_test_conn(db);
+        let started = Instant::now();
+        let mut ready_ms = 0u128;
+        fill_from_disk_with_opts(
+            &mut conn,
+            vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && ready_ms == 0 {
+                    ready_ms = started.elapsed().as_millis();
+                    assert!(
+                        p.scanned > 0 && p.scanned <= TITLE_READY_FLUSH as i64,
+                        "ready scanned {} must stay the first page",
+                        p.scanned
+                    );
+                    assert!(
+                        fts_row_count_at(db) <= TITLE_READY_FLUSH as i64,
+                        "title rows at Ready must stay the first page"
+                    );
+                    assert!(fts_path_at(db, "00-Inbox/00/Hub 0.md"));
+                    assert!(!fts_path_at(db, "60-Systems/00/Topic 6.md"));
+                }
+            },
+        )
+        .unwrap();
+        assert!(ready_ms > 0, "deep fill must announce the first page");
+        assert_eq!(
+            EXISTING_CATALOG_ROWS_LOADED.with(|c| c.get()),
+            -1,
+            "Ready must not snapshot the whole catalog"
+        );
+        assert!(
+            MAX_LISTING_RETAINED.with(|c| c.get()) <= TITLE_INTERACTIVE_CAP,
+            "the listing retained {} names",
+            MAX_LISTING_RETAINED.with(|c| c.get())
+        );
+        ready_ms
+    }
+
+    #[test]
+    fn first_page_cost_stays_flat_as_the_vault_grows() {
+        let (small_vault, small_db) = temp_pair("flat-small");
+        let (large_vault, large_db) = temp_pair("flat-large");
+        write_official_shaped(&small_vault, 800);
+        write_official_shaped(&large_vault, 4_800);
+        reset_fill_probes();
+        let small_ms = ready_page_ms(&small_vault, &small_db);
+        reset_fill_probes();
+        let large_ms = ready_page_ms(&large_vault, &large_db);
+        assert!(
+            large_ms < small_ms.saturating_mul(4) + 750,
+            "6x notes made Ready {large_ms}ms vs {small_ms}ms"
+        );
+        assert!(
+            TAIL_WAL_CHECKPOINTS.with(|c| c.get()) >= 1,
+            "the title tail must checkpoint before the listing finishes"
+        );
+        let _ = fs::remove_dir_all(small_vault.parent().unwrap());
+        let _ = fs::remove_dir_all(large_vault.parent().unwrap());
+    }
+
+    #[test]
+    fn fat_folder_page_does_not_keep_every_name() {
+        let (vault, db) = temp_pair("fat-page");
+        for i in 0..4_000 {
+            let name = if i == 0 {
+                "Hub 0.md".to_string()
+            } else {
+                format!("Topic {i}.md")
+            };
+            write_note(&vault, &format!("00-Inbox/{name}"), "x\n");
+        }
+        write_note(&vault, "60-Systems/Topic 9.md", "later\n");
+        reset_fill_probes();
+        let mut conn = open_test_conn(&db);
+        let mut hub_at_ready = false;
+        let mut late_at_ready = false;
+        fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && !hub_at_ready {
+                    hub_at_ready = fts_path_at(&db, "00-Inbox/Hub 0.md");
+                    late_at_ready = fts_path_at(&db, "00-Inbox/Topic 3999.md");
+                }
+            },
+        )
+        .unwrap();
+        assert!(hub_at_ready, "Hub 0 is on the first page of a fat folder");
+        assert!(!late_at_ready, "a late name in that folder waits for the tail");
+        assert!(fts_path_at(&db, "00-Inbox/Topic 3999.md"));
+        assert_eq!(EXISTING_CATALOG_ROWS_LOADED.with(|c| c.get()), -1);
+        assert!(MAX_LISTING_RETAINED.with(|c| c.get()) <= TITLE_INTERACTIVE_CAP);
+        assert!(TAIL_WAL_CHECKPOINTS.with(|c| c.get()) >= 1);
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn deep_reopen_drops_a_deleted_note_without_a_catalog_snapshot() {
+        let (vault, db) = temp_pair("stale-gen");
+        for i in 0..(TITLE_INTERACTIVE_CAP + 40) {
+            write_note(&vault, &format!("keep/n{i:04}.md"), "keep\n");
+        }
+        write_note(&vault, "drop/gone.md", "gone\n");
+        let mut conn = open_test_conn(&db);
+        let opts = FillOpts {
+            deep_head_chars: 8000,
+            short_head_chars: 768,
+            force_rebuild: false,
+            db_path: "test.sqlite",
+            priority_rels: &[],
+            until: FillUntil::Deep,
+        };
+        fill_from_disk_with_opts(&mut conn, &vault, opts, || false, |_| {}).unwrap();
+        assert!(fts_path_at(&db, "drop/gone.md"));
+        fs::remove_file(vault.join("drop/gone.md")).unwrap();
+        reset_fill_probes();
+        let again = fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |_| {},
+        )
+        .unwrap();
+        assert!(!fts_path_at(&db, "drop/gone.md"));
+        assert!(fts_path_at(&db, "keep/n0000.md"));
+        assert_eq!(EXISTING_CATALOG_ROWS_LOADED.with(|c| c.get()), -1);
+        assert!(again.notes >= TITLE_INTERACTIVE_CAP as i64);
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
     #[test]
     fn cancelled_title_tail_keeps_notes_it_has_not_listed_yet() {
         let (vault, db) = temp_pair("tail-cancel");
@@ -3244,6 +3759,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert!(
             DISCOVER_TAIL_YIELD_MS >= 16 && DISCOVER_TAIL_YIELD_MS <= 80,
             "title tail yield {DISCOVER_TAIL_YIELD_MS}ms must leave the disk free without stalling the listing"
+        );
+        assert!(
+            TAIL_CHECKPOINT_EVERY >= 1024 && TAIL_CHECKPOINT_EVERY <= 8192,
+            "tail checkpoint {TAIL_CHECKPOINT_EVERY} must keep the journal page-sized"
         );
         assert_eq!(worker_count(1), 1);
         assert_eq!(worker_count(10_000), FILL_READ_WORKERS_MAX);
