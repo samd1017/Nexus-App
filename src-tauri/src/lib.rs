@@ -73,6 +73,28 @@ fn log_ready_focus(window_ms: u64) {
     eprintln!("{}", ready_clock_line("focus", t, window_ms));
 }
 
+fn log_ready_phase(phase: &str) {
+    eprintln!("{}", ready_clock_line(phase, ready_clock_ms(), 0));
+}
+
+/// Marks one edge of the launch clock. `runtime` is the first user plugin,
+/// after the Tauri runtime exists. `plugins` is the last work before the
+/// event loop builds the webview. `window` (in setup) is the first line
+/// after that webview exists, so `plugins` → `window` is the system web
+/// view constructor (WKWebView `initWithFrame`, or WebView2 environment
+/// creation). That constructor is the launch floor on this stack.
+fn ready_phase_plugin<R: tauri::Runtime>(
+    id: &'static str,
+    phase: &'static str,
+) -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new(id)
+        .setup(move |_app, _api| {
+            log_ready_phase(phase);
+            Ok(())
+        })
+        .build()
+}
+
 /// Echo a page clock line onto the process log the soak already tails.
 /// The window stays hidden until the early page has decided, so the first
 /// visible frame is that line rather than a blank webview.
@@ -227,10 +249,12 @@ pub fn run() {
     let process_ms = ready_clock_ms();
     eprintln!("{}", ready_clock_line("process", process_ms, 0));
     tauri::Builder::default()
+        .plugin(ready_phase_plugin("nexus-clock-runtime", "runtime"))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(ready_phase_plugin("nexus-clock-plugins", "plugins"))
         .manage(std::sync::Mutex::new(IndexState::new()))
         .manage(std::sync::Mutex::new(WatchState::new()))
         .invoke_handler(tauri::generate_handler![

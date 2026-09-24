@@ -229,6 +229,12 @@ const rustSrc = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url)
 assert.equal(rustSrc.includes('ready_clock_line("process"'), true);
 assert.equal(rustSrc.includes('ready_clock_line("window"'), true);
 assert.equal(rustSrc.includes('ready_clock_line("focus"'), true);
+assert.equal(rustSrc.includes("fn log_ready_phase"), true);
+const runtimeAt = rustSrc.indexOf('ready_phase_plugin("nexus-clock-runtime", "runtime")');
+const fsAt = rustSrc.indexOf("tauri_plugin_fs::init()");
+const pluginsAt = rustSrc.indexOf('ready_phase_plugin("nexus-clock-plugins", "plugins")');
+const windowAt = rustSrc.indexOf('ready_clock_line("window"');
+assert.ok(runtimeAt > 0 && runtimeAt < fsAt && fsAt < pluginsAt && pluginsAt < windowAt);
 assert.equal(rustSrc.includes('"document-native"'), true);
 assert.equal(rustSrc.includes('"document-finished"'), true);
 assert.equal(rustSrc.includes("fn ready_clock_log"), true);
