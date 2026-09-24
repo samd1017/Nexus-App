@@ -39,6 +39,7 @@ const {
   isIndexFillProgressPhase,
   shouldJoinDesktopFill,
   shouldBlockDesktopOpen,
+  shouldWaitForInflightFill,
 } = await import("../src/lib/vault/sqlite-fill-progress.ts");
 
 assert.equal(
@@ -158,6 +159,20 @@ assert.equal(
   }),
   false,
   "no join when fill is idle",
+);
+assert.equal(
+  shouldWaitForInflightFill({ fillInFlight: true, searchReady: false }),
+  true,
+  "an open still waits when titles are not live yet",
+);
+assert.equal(
+  shouldWaitForInflightFill({ fillInFlight: true, searchReady: true }),
+  false,
+  "a filled page does not wait for the background index open",
+);
+assert.equal(
+  shouldWaitForInflightFill({ fillInFlight: false, searchReady: false }),
+  false,
 );
 assert.equal(
   shouldBlockDesktopOpen({

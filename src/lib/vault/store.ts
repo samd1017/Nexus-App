@@ -159,6 +159,7 @@ import {
   FILL_IN_PROGRESS_TOAST,
   shouldBlockDesktopOpen,
   shouldJoinDesktopFill,
+  shouldWaitForInflightFill,
 } from "./sqlite-fill-progress";
 import { isNativeFillInFlight } from "./native-sqlite-index";
 import {
@@ -1761,6 +1762,51 @@ function applyScaleRestore(
 	}
 }
 
+function filledPageIsSearchable(
+	shell: ShellMount | null | undefined,
+	forceRebuild?: boolean,
+): boolean {
+	return shell?.titlesLive === true && forceRebuild !== true;
+}
+
+/** The saved page is the announcement. The index file opens afterward. */
+function announceFilledPageReady(shell: ShellMount): void {
+	diskSearchReady = true;
+	setSearchIndexState("ready-meta");
+	const pageNotes = (shell.rows ?? []).filter((r) => r.kind === "note").length;
+	setOpenProgress({
+		phase: "ready",
+		scanned: Math.max(1, Math.min(32, pageNotes || 1)),
+		totalHint: null,
+		message: "Ready · titles and open notes",
+	});
+}
+
+/**
+ * Open the filled index only after Ready can paint. `vault_index_open` used
+ * to run on the webview thread inside this turn, so the announcement could
+ * not land until that file returned.
+ */
+function openFilledIndexAfterReady(
+	vaultId: string | null,
+	mode: VaultMode,
+	dbPath: string | null | undefined,
+	root: string,
+): void {
+	if (root) desktopFillRoot = root;
+	useVaultStore.setState({ indexFillBusy: true });
+	void (async () => {
+		await yieldToUi(true);
+		await prepareDurableIndex(vaultId, mode, dbPath);
+		maybeSyncDurableIndex(vaultId, mode, useVaultStore.getState().nodes);
+		await completeDiskSearchIndex({ forceRebuild: false });
+	})().catch((e) => {
+		useVaultStore.setState({ indexFillBusy: false });
+		const message = e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
+		useVaultStore.setState({ toast: message });
+	});
+}
+
 /** Desktop open without a folder dialog — Wave E soak + reopen. */
 async function mountDesktopVaultAt(
 	get: StoreGet,
@@ -1776,6 +1822,7 @@ async function mountDesktopVaultAt(
 	searchIndexState: ReturnType<typeof getSearchIndexState>;
 }> {
 	const fillBusy =
+		useVaultStore.getState().indexFillBusy ||
 		isIndexFillInFlight() ||
 		isNativeFillInFlight() ||
 		Boolean(diskSearchInflight);
@@ -1789,7 +1836,14 @@ async function mountDesktopVaultAt(
 	const uiMounted = Boolean(liveNow.vaultId) && liveNow.rootIds.length > 0;
 	// Same folder, tree still on screen: join. Do not rescan 100k.
 	if (sameFill && uiMounted) {
-		if (diskSearchInflight) await diskSearchInflight;
+		if (
+			shouldWaitForInflightFill({
+				fillInFlight: Boolean(diskSearchInflight),
+				searchReady: diskSearchReady,
+			})
+		) {
+			await diskSearchInflight;
+		}
 		set({ connecting: false });
 		const live = useVaultStore.getState();
 		return {
@@ -1900,26 +1954,9 @@ async function mountDesktopVaultAt(
 	{
 		const st = useVaultStore.getState();
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-		const titlesLive = shellMount?.titlesLive === true && opts?.forceRebuild !== true;
-		if (titlesLive) {
-			diskSearchReady = true;
-			setSearchIndexState("ready-meta");
-			const pageNotes = (shellMount?.rows ?? []).filter((r) => r.kind === "note").length;
-			setOpenProgress({
-				phase: "ready",
-				scanned: Math.max(1, Math.min(32, pageNotes || 1)),
-				totalHint: null,
-				message: "Ready · titles and open notes",
-			});
-			void (async () => {
-				await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
-				maybeSyncDurableIndex(st.vaultId, st.mode, useVaultStore.getState().nodes);
-				await completeDiskSearchIndex({ forceRebuild: false });
-			})().catch((e) => {
-				const message =
-					e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
-				set({ toast: message });
-			});
+		if (shellMount && filledPageIsSearchable(shellMount, opts?.forceRebuild)) {
+			announceFilledPageReady(shellMount);
+			openFilledIndexAfterReady(st.vaultId, st.mode, shellMount.dbPath, root);
 		} else {
 			await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
 			maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
@@ -2087,9 +2124,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					{
 						const st = useVaultStore.getState();
 						if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-						await prepareDurableIndex(st.vaultId, st.mode, shell?.dbPath);
-						maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-						await completeDiskSearchIndex();
+						if (shell && filledPageIsSearchable(shell)) {
+							announceFilledPageReady(shell);
+							openFilledIndexAfterReady(st.vaultId, st.mode, shell.dbPath, root);
+						} else {
+							await prepareDurableIndex(st.vaultId, st.mode, shell?.dbPath);
+							maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+							await completeDiskSearchIndex();
+						}
 					}
 					applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });

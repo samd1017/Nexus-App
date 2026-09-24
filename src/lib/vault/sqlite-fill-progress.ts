@@ -260,6 +260,18 @@ export function shouldJoinDesktopFill(args: {
   return normalizeVaultRoot(args.currentRoot) === normalizeVaultRoot(args.nextRoot);
 }
 
+/**
+ * A second open waits on the in-flight index job only when this folder is
+ * not searchable yet. Once the saved page is Ready, that job is background
+ * and must not hold the next announcement.
+ */
+export function shouldWaitForInflightFill(args: {
+  fillInFlight: boolean;
+  searchReady: boolean;
+}): boolean {
+  return args.fillInFlight && !args.searchReady;
+}
+
 /** Opening a different folder while fill is healthy — block, do not start a second writer. */
 export function shouldBlockDesktopOpen(args: {
   currentRoot: string | null | undefined;

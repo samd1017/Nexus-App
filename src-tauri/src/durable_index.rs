@@ -603,7 +603,7 @@ pub fn vault_index_path(app: tauri::AppHandle, vault_root: String) -> Result<Str
 }
 
 #[tauri::command]
-pub fn vault_index_open(
+pub async fn vault_index_open(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -618,6 +618,60 @@ pub fn vault_index_open(
         .map_err(|e| format!("app_data_dir: {e}"))?;
     let _ = crate::vault_scope::assert_index_db_path(&data, &db_path)?;
 
+    {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        if guard.conns.contains_key(&db_path) {
+            return Ok(IndexOpenResult {
+                ok: true,
+                schema_version: SCHEMA_VERSION,
+                kind: "sqlite".into(),
+            });
+        }
+    }
+
+    // Opening a filled index can spend tens of seconds in recovery or the
+    // first write. That work used to run on the webview thread, so Ready
+    // could not paint until it returned. The file opens on a blocking thread.
+    let path = db_path.clone();
+    let vid = vault_id.clone();
+    let root = vault_root.clone();
+    let conn = tauri::async_runtime::spawn_blocking(move || -> Result<Connection, String> {
+        let conn = open_shell_conn(&path)?;
+        let version: i32 = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let stored_root: Option<String> = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key = 'vault_root'",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        if version != SCHEMA_VERSION {
+            ensure_schema(&conn, &vid, root.as_deref())?;
+        } else if let Some(root) = root.as_deref() {
+            if stored_root.as_deref().is_some_and(|s| s != root) {
+                wipe_tx(&conn)?;
+                ensure_schema(&conn, &vid, Some(root))?;
+            }
+        }
+        conn.execute(
+            "INSERT INTO meta_kv(key, value) VALUES ('last_open_ms', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![now_ms().to_string()],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn)
+    })
+    .await
+    .map_err(|e| format!("sqlite open: {e}"))??;
+
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     if guard.conns.contains_key(&db_path) {
         return Ok(IndexOpenResult {
@@ -626,39 +680,6 @@ pub fn vault_index_open(
             kind: "sqlite".into(),
         });
     }
-    let conn = open_shell_conn(&db_path)?;
-    let version: i32 = conn
-        .query_row(
-            "SELECT value FROM meta_kv WHERE key = 'schema_version'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let stored_root: Option<String> = conn
-        .query_row(
-            "SELECT value FROM meta_kv WHERE key = 'vault_root'",
-            [],
-            |r| r.get(0),
-        )
-        .ok();
-    if version != SCHEMA_VERSION {
-        ensure_schema(&conn, &vault_id, vault_root.as_deref())?;
-    } else if let Some(root) = vault_root.as_deref() {
-        if stored_root.as_deref().is_some_and(|s| s != root) {
-            wipe_tx(&conn)?;
-            ensure_schema(&conn, &vault_id, Some(root))?;
-        }
-    }
-
-    conn.execute(
-        "INSERT INTO meta_kv(key, value) VALUES ('last_open_ms', ?1)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![now_ms().to_string()],
-    )
-    .map_err(|e| e.to_string())?;
-
     guard.conns.insert(db_path, conn);
     Ok(IndexOpenResult {
         ok: true,
