@@ -133,6 +133,7 @@ const TreeRow = memo(function TreeRow({
   isFocused,
   onFocusRow,
   onToggleFolder,
+  onRenameFinished,
 }: {
   nodeId: string;
   depth: number;
@@ -145,6 +146,7 @@ const TreeRow = memo(function TreeRow({
   isFocused?: boolean;
   onFocusRow?: (id: string) => void;
   onToggleFolder: (id: string) => void;
+  onRenameFinished?: () => void;
 }) {
   // Narrow selectors — avoid whole-nodes subscription
   const node = useVaultStore((s) => s.nodes[nodeId]);
@@ -194,15 +196,18 @@ const TreeRow = memo(function TreeRow({
     setRenamingId(null);
     if (!next || next === current) {
       setNameDraft(current);
-      return;
+    } else {
+      renameNode(node.id, next);
     }
-    renameNode(node.id, next);
+    skipBlur.current = true;
+    onRenameFinished?.();
   };
 
   const cancelRename = () => {
     skipBlur.current = true;
     setRenamingId(null);
     setNameDraft(displayName(node));
+    onRenameFinished?.();
   };
 
   const openNote = (e?: React.MouseEvent) => {
@@ -232,7 +237,7 @@ const TreeRow = memo(function TreeRow({
       className={cn(
         "tree-item group relative flex w-full items-center gap-1.5 text-left select-none",
         isActive && "is-active",
-        isFocused && !isActive && "is-focused",
+        isFocused && "is-focused",
         isDragging && "opacity-40",
         isDropHover &&
           "ring-1 ring-[var(--accent)] bg-[rgba(0,200,255,0.1)]",
@@ -305,6 +310,7 @@ const TreeRow = memo(function TreeRow({
           ref={inputRef}
           autoFocus
           className="min-w-0 flex-1 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[13px] text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
+          aria-label="File name. Enter keeps it. Escape puts the old name back."
           value={nameDraft}
           onChange={(e) => setNameDraft(e.target.value)}
           onBlur={commitRename}
@@ -412,6 +418,7 @@ export const FileTree = memo(function FileTree() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [treeHasFocus, setTreeHasFocus] = useState(false);
   const [folderWindows, setFolderWindows] = useState<Record<string, number>>({});
   // Ghost label only in React state; position updated via rAF + DOM
   const [ghostLabel, setGhostLabel] = useState<string | null>(null);
@@ -588,13 +595,38 @@ export const FileTree = memo(function FileTree() {
     if (idx >= 0) setFocusedIndex(idx);
   }, []);
 
+  const returnTreeFocus = useCallback(() => {
+    parentRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const handleTreeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const rows = flatRowsRef.current;
-      if (renamingId || rows.length === 0) return;
+      if (renamingId) return;
+      if (rows.length === 0) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const id = createNote(null, "Untitled");
+          if (id) requestAnimationFrame(() => setRenamingId(id));
+        }
+        return;
+      }
       const nodes = useVaultStore.getState().nodes;
       const row = rows[focusedIndex];
       if (!row) return;
+      if (e.key === "Home") {
+        e.preventDefault();
+        setFocusedIndex(0);
+        virtualizer.scrollToIndex(0, { align: "auto" });
+        return;
+      }
+      if (e.key === "End") {
+        e.preventDefault();
+        const last = rows.length - 1;
+        setFocusedIndex(last);
+        virtualizer.scrollToIndex(last, { align: "auto" });
+        return;
+      }
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -667,6 +699,11 @@ export const FileTree = memo(function FileTree() {
             virtualizer.scrollToIndex(parentIdx, { align: "auto" });
           }
         }
+        return;
+      }
+      if (e.key === "F2") {
+        e.preventDefault();
+        setRenamingId(node.id);
         return;
       }
       if (e.key === "Enter") {
@@ -978,7 +1015,10 @@ export const FileTree = memo(function FileTree() {
           key={row.id}
           id={`tree-row-${row.id}`}
           type="button"
-          className="tree-item flex w-full items-center text-left text-[12px] text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+          className={cn(
+            "tree-item flex w-full items-center text-left text-[12px] text-[var(--text-muted)] hover:text-[var(--text-secondary)]",
+            treeHasFocus && focusedId === row.id && "is-focused",
+          )}
           style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
           role="treeitem"
           aria-label={`${hidden.toLocaleString()} more in this folder`}
@@ -1006,7 +1046,7 @@ export const FileTree = memo(function FileTree() {
           data-empty-parent={parentId ?? ""}
           className={cn(
             "tree-item flex w-full items-center gap-2 text-[12px] text-[var(--text-muted)]",
-            focusedId === row.id && "is-focused",
+            treeHasFocus && focusedId === row.id && "is-focused",
           )}
           style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
         >
@@ -1015,6 +1055,7 @@ export const FileTree = memo(function FileTree() {
             type="button"
             className="mr-1 shrink-0 rounded-md px-2 text-[12px] text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
             style={{ height: 24 }}
+            title="Enter makes a note in this folder"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -1037,9 +1078,10 @@ export const FileTree = memo(function FileTree() {
         dragId={dragId}
         dropTarget={dropTarget}
         onPointerDragStart={onPointerDragStart}
-        isFocused={focusedId === row.id}
+        isFocused={treeHasFocus && focusedId === row.id}
         onFocusRow={onFocusRow}
         onToggleFolder={toggleFolderReveal}
+        onRenameFinished={returnTreeFocus}
       />
     );
   };
@@ -1058,7 +1100,14 @@ export const FileTree = memo(function FileTree() {
       role="tree"
       aria-label="Vault notes and folders"
       tabIndex={0}
+      data-tree-focused={treeHasFocus ? "1" : "0"}
       aria-activedescendant={focusedId ? `tree-row-${focusedId}` : undefined}
+      onFocus={() => setTreeHasFocus(true)}
+      onBlur={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (next && e.currentTarget.contains(next)) return;
+        setTreeHasFocus(false);
+      }}
       onKeyDown={handleTreeKeyDown}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -1073,15 +1122,21 @@ export const FileTree = memo(function FileTree() {
       {flatRows.length === 0 ? (
         <EmptyState
           compact
-          className="mx-2 my-4"
-          title="Empty vault"
-          description="Create a note to get started, or right-click for more."
+          className={cn(
+            "mx-2 my-4",
+            treeHasFocus && "ring-2 ring-[rgba(0,200,255,0.85)]",
+          )}
+          title="Nothing in this vault yet"
+          description="Enter or New note. The name you type is the file."
         >
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
               className="primary-btn min-h-8 px-3 text-[12px]"
-              onClick={() => createNote(null)}
+              onClick={() => {
+                const id = createNote(null, "Untitled");
+                if (id) requestAnimationFrame(() => setRenamingId(id));
+              }}
             >
               New note
             </button>
