@@ -330,11 +330,11 @@ export function EditorPane({
           </p>
         ) : (
           <p
-            className="nexus-keys-hint mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[12.5px] font-medium text-white"
+            className="nexus-keys-hint mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[14px] font-semibold text-white"
             data-testid="note-keys-hint"
           >
             <kbd>Esc</kbd> list <span aria-hidden>·</span> <kbd>↑</kbd>
-            <kbd>↓</kbd> move <span aria-hidden>·</span> <kbd>↵</kbd> open{" "}
+            <kbd>↓</kbd> move <span aria-hidden>·</span> <kbd>Enter</kbd> open{" "}
             <span aria-hidden>·</span> <kbd>F2</kbd> rename
           </p>
         )}

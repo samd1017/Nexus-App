@@ -95,6 +95,7 @@ export function ConfirmDialog({
       focusLanding();
     };
     let lateReclaim = 0;
+    let slowReclaim = 0;
     const onFocusIn = (e: FocusEvent) => {
       const panel = panelRef.current;
       if (!panel) return;
@@ -102,8 +103,11 @@ export function ConfirmDialog({
       if (next && panel.contains(next)) return;
       reclaimAfterFocus(reclaim);
       window.clearTimeout(lateReclaim);
-      // A busy vault can move the cursor again after the next frame.
+      window.clearTimeout(slowReclaim);
+      // A busy vault can move the cursor again after the next frame, and a
+      // slow webview later still.
       lateReclaim = window.setTimeout(reclaim, 160);
+      slowReclaim = window.setTimeout(reclaim, 360);
     };
     document.addEventListener("focusin", onFocusIn, true);
 
@@ -127,6 +131,15 @@ export function ConfirmDialog({
         e.stopPropagation();
         if (action === "rebuild") onConfirmRef.current();
         else if (action === "dismiss") onCancelRef.current();
+        else {
+          // The cursor was taken out of the ask before it could be reclaimed.
+          // Enter then means the safe default, which is Cancel here; an ask
+          // whose default is the action never runs it this way.
+          const panel = panelRef.current;
+          const outside = !panel || !panel.contains(document.activeElement);
+          if (outside && preferCancel) onCancelRef.current();
+          else if (outside) focusLanding();
+        }
         return;
       }
       if (e.key === "Tab" && panelRef.current) {
@@ -163,6 +176,7 @@ export function ConfirmDialog({
       window.clearTimeout(soon);
       window.clearTimeout(later);
       window.clearTimeout(lateReclaim);
+      window.clearTimeout(slowReclaim);
       document.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKey, true);
       const restore = () => {
@@ -251,7 +265,7 @@ export function ConfirmDialog({
         </div>
         <div className="mt-5 flex items-center justify-end gap-2">
           <span className="nexus-rename-hint mr-auto text-[11.5px] font-medium text-white/70" aria-hidden>
-            <kbd>esc</kbd>
+            <kbd>Esc</kbd>
             <span className="ml-1 self-center">cancels</span>
           </span>
           <button

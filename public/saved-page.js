@@ -180,6 +180,8 @@
     host.style.left = "0";
     host.style.right = "0";
     host.style.zIndex = "200";
+    // Drawn over the title bar; clicks go through to the gear and the list.
+    host.style.pointerEvents = "none";
     host.style.paddingTop = "44px";
     host.style.background = "#08080a";
     host.hidden = false;

@@ -52,13 +52,14 @@ export function Toast() {
   return (
     <div className="pointer-events-none fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 z-[120] -translate-x-1/2">
       <div
+        key={toast}
         role="status"
         aria-live={variant === "error" ? "assertive" : "polite"}
         aria-atomic="true"
         data-testid={trashStatus ? "trash-status" : undefined}
         data-trash-status={trashStatus ? "1" : undefined}
         className={cn(
-          "pointer-events-auto flex items-center gap-2.5 rounded-full border px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.45)]",
+          "nexus-toast-in pointer-events-auto flex items-center gap-2.5 rounded-full border px-4 py-2 text-[13px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.45)]",
           "bg-[var(--bg-elevated,#16161A)]",
           variant === "success" &&
             "border-[rgba(48,209,88,0.35)] shadow-[0_0_20px_rgba(48,209,88,0.12)]",

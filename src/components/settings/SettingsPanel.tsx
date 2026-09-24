@@ -165,6 +165,9 @@ export function SettingsPanel() {
 
   useEffect(() => {
     if (!open) return;
+    // Search sits above Settings; opening Settings from the menu while search
+    // is up would otherwise look like nothing happened.
+    if (useVaultStore.getState().commandOpen) useVaultStore.getState().setCommandOpen(false);
     const root = dialogRef.current;
     // Focus dialog container on open
     const prev = document.activeElement as HTMLElement | null;
@@ -332,7 +335,7 @@ export function SettingsPanel() {
             )}
           </div>
           <span className="nexus-rename-hint" aria-hidden>
-            <kbd>esc</kbd>
+            <kbd>Esc</kbd>
           </span>
           <button
             type="button"

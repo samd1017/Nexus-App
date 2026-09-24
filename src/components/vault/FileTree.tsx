@@ -418,8 +418,8 @@ const TreeRow = memo(function TreeRow({
           data-testid="tree-rename-hint"
           aria-hidden
         >
-          <kbd>↵</kbd>
-          <kbd>esc</kbd>
+          <kbd>Enter</kbd>
+          <kbd>Esc</kbd>
         </span>
       ) : null}
       <div
@@ -868,7 +868,15 @@ export const FileTree = memo(function FileTree() {
       for (const id of reclaimTimers) window.clearTimeout(id);
       reclaimTimers.length = 0;
     };
+    // Trash, Rebuild, Settings, and search own the cursor while they are open.
+    const dialogOpen = () =>
+      Boolean(
+        document.querySelector(
+          "[data-nexus-confirm], [role='dialog'][aria-modal='true'], [data-nexus-ctx-menu]",
+        ),
+      );
     const reclaimHolding = (folderId: string) => {
+      if (dialogOpen()) return;
       const rename = document.querySelector<HTMLElement>("[data-testid='tree-rename']");
       if (rename) {
         if (document.activeElement !== rename) rename.focus({ preventScroll: true });
@@ -880,6 +888,7 @@ export const FileTree = memo(function FileTree() {
       focusEmptyRow(folderId);
     };
     const onFocusIn = (e: FocusEvent) => {
+      if (dialogOpen()) return;
       const next = e.target as Element | null;
       const rename = document.querySelector<HTMLElement>("[data-testid='tree-rename']");
       if (rename && isProgrammaticFocusSteal(next, true, fromPointer)) {
@@ -909,6 +918,7 @@ export const FileTree = memo(function FileTree() {
       reclaimTimers.push(window.setTimeout(run, 160));
     };
     const onKey = (e: KeyboardEvent) => {
+      if (dialogOpen()) return;
       const target = e.target as HTMLElement | null;
       const tree = parentRef.current;
       const active = document.activeElement;
