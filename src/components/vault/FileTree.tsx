@@ -428,7 +428,12 @@ const TreeRow = memo(function TreeRow({
           >
             {displayName(node)}
           </span>
-          {folderEmpty ? (
+          {folderEmpty && expanded ? (
+            // The row below says the whole line when the folder is open.
+            <span className="nexus-empty-tag shrink-0" data-testid="tree-empty-folder-tag">
+              empty
+            </span>
+          ) : folderEmpty ? (
             <span
               role="status"
               data-testid="tree-empty-folder-status"

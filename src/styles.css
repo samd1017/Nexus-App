@@ -2453,3 +2453,10 @@ button:focus-visible,
   font-size: 12.5px;
   letter-spacing: -0.005em;
 }
+.nexus-empty-tag {
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+  color: var(--text-secondary);
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+}

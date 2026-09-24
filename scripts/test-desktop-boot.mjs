@@ -863,6 +863,29 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
   assert.equal(editorSrc.includes("startFirstNote as startFirstNoteAnywhere"), true);
   assert.equal(editorSrc.includes('useVaultStore.getState().createNote(null, "Untitled")'), false);
 }
+// After a new note is named, the body takes the cursor by path, for a few seconds,
+// and never pulls it back from the list, a field, or a dialog.
+{
+  const intentSrc = readFileSync(new URL("../src/lib/editor/write-intent.ts", import.meta.url), "utf8");
+  assert.equal(intentSrc.includes("export function requestWriteFocus(path: string, ms = 2500)"), true);
+  assert.equal(treeSrc.includes("if (path) requestWriteFocus(path);"), true);
+  assert.equal(paletteSrc.includes("if (path) requestWriteFocus(path);"), true);
+  assert.equal(visualSrc.includes("writeFocusPending(pathNow())"), true);
+  assert.equal(visualSrc.includes("[data-file-tree], [role='dialog'], [data-nexus-confirm]"), true);
+  assert.equal(visualSrc.includes("writeFocusPending(useVaultStore.getState().nodes[noteAtSchedule]?.path)"), true);
+}
+// Vault scale, with the count and the memory line, sits directly under the Vault lead.
+{
+  const lead = settingsSrc.indexOf('data-settings-lead="vault"');
+  const scale = settingsSrc.indexOf("Vault scale", lead);
+  const toggle = settingsSrc.indexOf('label="Confirm before delete"', lead);
+  assert.ok(lead > 0 && scale > lead && toggle > scale);
+  assert.equal(settingsSrc.includes('data-testid="settings-memory-line"'), true);
+  assert.equal(settingsSrc.includes("bodyStats.loaded > 0 && totalNotes > bodyStats.loaded"), true);
+}
+// An open empty folder shows a short tag; the row below carries the full line.
+assert.equal(treeSrc.includes('data-testid="tree-empty-folder-tag"'), true);
+assert.equal(cssSrc.includes('.tree-item [data-testid="tree-empty-folder-status"] {'), true);
 // Dialogs are one opaque dark card in both themes and never start transparent.
 assert.equal(settingsSrc.includes("nexus-dark-island"), true);
 assert.equal(confirmSrc.includes("nexus-dark-island"), true);
