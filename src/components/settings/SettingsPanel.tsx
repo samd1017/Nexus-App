@@ -65,7 +65,7 @@ function MemoryBudgetStatus({
   return (
     <div className="mt-2 border-t border-[var(--border)] pt-2">
       <div className="text-[12px] font-medium text-[var(--text-secondary)]">
-        Memory budget
+        Notes in memory
       </div>
       <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
         {!vaultId
@@ -133,6 +133,7 @@ export function SettingsPanel() {
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (document.querySelector("[data-nexus-confirm]")) return;
         e.preventDefault();
         setOpen(false);
         return;
@@ -239,7 +240,7 @@ export function SettingsPanel() {
           </div>
           <button
             type="button"
-            className="icon-btn"
+            className="icon-btn !h-9 !w-9"
             onClick={() => setOpen(false)}
             aria-label="Close"
           >
@@ -247,7 +248,7 @@ export function SettingsPanel() {
           </button>
         </div>
 
-        <div className="settings-body min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
+        <div className="settings-body min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {/* Appearance */}
           <Section title="Appearance">
             <Label>Accent color</Label>
@@ -521,7 +522,7 @@ export function SettingsPanel() {
                 </div>
                 <button
                   type="button"
-                  className="ghost-btn shrink-0 text-[13px]"
+                  className="ghost-btn !h-9 shrink-0 px-3 text-[13px]"
                   onClick={() => setConfirmKind("rebuild")}
                 >
                   Rebuild
@@ -561,29 +562,14 @@ export function SettingsPanel() {
 
           <Section title="Agents & Grok">
             <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-              Humans and agents share the same folder of Markdown. Point Grok,
-              Cursor, or any script at this vault. Nexus watches the disk,
-              shows writes in Pulse, and opens Conflict Studio when you and an
-              agent edit the same note at once.
+              An agent can write Markdown in this same folder. Nexus notices the
+              new file and opens a side-by-side compare if you were editing it too.
             </p>
-            <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-              <li>Open a real folder (or stay in the demo vault).</li>
-              <li>
-                Have an agent write a <span className="font-mono">.md</span> file
-                — or run <strong>Simulate agent write</strong> from the vault
-                menu / command palette.
-              </li>
-              <li>
-                Open Pulse. To practice a conflict, edit{" "}
-                <span className="font-mono">Systems/Hermes Pulse.md</span> then
-                simulate again — Keep mine / Take theirs.
-              </li>
-            </ol>
             {vaultId ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  className="min-h-9 rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
                   onClick={() => {
                     useVaultStore.getState().simulateHermesWrite();
                     useVaultStore.getState().openPulseRail?.();
@@ -594,7 +580,7 @@ export function SettingsPanel() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  className="min-h-9 rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
                   onClick={() => {
                     useVaultStore.getState().practiceAgentConflict();
                     useVaultStore.getState().openPulseRail?.();
@@ -854,13 +840,23 @@ export function SettingsPanel() {
             )}
           </Section>
 
-          <button
-            type="button"
-            className="ghost-btn w-full justify-center text-[13px]"
-            onClick={() => setConfirmKind("reset")}
-          >
-            Reset to defaults
-          </button>
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                Reset settings
+              </div>
+              <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                Appearance, editor, and shortcuts go back to their originals. This vault stays.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="ghost-btn !h-9 shrink-0 px-3 text-[13px] !text-[var(--danger)]"
+              onClick={() => setConfirmKind("reset")}
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </div>
       <ConfirmDialog
@@ -931,7 +927,7 @@ function Section({
 }) {
   return (
     <section>
-      <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
         {title}
       </h3>
       {children}

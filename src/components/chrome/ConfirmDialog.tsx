@@ -149,7 +149,7 @@ export function ConfirmDialog({
           <button
             ref={cancelRef}
             type="button"
-            className="ghost-btn"
+            className="ghost-btn !h-9 px-3 text-[13px]"
             onClick={onCancel}
           >
             {cancelLabel}
@@ -158,7 +158,7 @@ export function ConfirmDialog({
             ref={confirmRef}
             type="button"
             className={cn(
-              "primary-btn",
+              "primary-btn !h-9 px-3 text-[13px]",
               danger &&
                 "!border-[rgba(255,69,58,0.45)] !bg-[rgba(255,69,58,0.9)] !text-white hover:!bg-[var(--danger)]",
             )}

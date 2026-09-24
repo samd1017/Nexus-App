@@ -1451,6 +1451,7 @@ function CommandPaletteOpen() {
         ) : null}
 
         <Command.List className="max-h-[min(480px,50dvh)] overflow-y-auto overscroll-contain p-2 pb-[max(8px,env(safe-area-inset-bottom))] sm:max-h-[min(480px,56vh)]">
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length === 0 ? null : (
           <Command.Empty className="px-3 py-8 text-center">
             <div className="text-[13px] text-[var(--text-muted)]">
               {Object.keys(nodes).length === 0
@@ -1470,6 +1471,7 @@ function CommandPaletteOpen() {
               </button>
             ) : null}
           </Command.Empty>
+          )}
 
           {askAnswer ? (
             <Command.Group heading="Ask your notes · local" className={GROUP_HEADING}>
@@ -1679,32 +1681,33 @@ function CommandPaletteOpen() {
             </Command.Group>
           ) : null}
 
-          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) ? (
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length === 0 ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-2 px-3 py-3 text-[13px] leading-snug text-[var(--text-secondary)]"
+            >
+              <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+              <span>
+                {searchEmptyStateMessage({
+                  titleSearchLive:
+                    titleSearchLive || searchEngine.id !== "sqlite-fts5-bm25",
+                  headsReady:
+                    isNoteHeadSearchLive(searchIndexState) ||
+                    searchEngine.id !== "sqlite-fts5-bm25",
+                  catalogSearch: Boolean(
+                    shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
+                  ),
+                })}
+              </span>
+            </div>
+          ) : null}
+
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length > 0 ? (
             <Command.Group
               heading={notesHeading}
               className={cn(GROUP_HEADING, tags.length > 0 && "mt-1")}
             >
-              {hits.length === 0 ? (
-                <Command.Item
-                  value="search-index-status"
-                  disabled
-                  className={ITEM_CLASS}
-                >
-                  <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
-                  <span>
-                    {searchEmptyStateMessage({
-                      titleSearchLive:
-                        titleSearchLive || searchEngine.id !== "sqlite-fts5-bm25",
-                      headsReady:
-                        isNoteHeadSearchLive(searchIndexState) ||
-                        searchEngine.id !== "sqlite-fts5-bm25",
-                      catalogSearch: Boolean(
-                        shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
-                      ),
-                    })}
-                  </span>
-                </Command.Item>
-              ) : null}
               {hits.map((h) => (
                 <Command.Item
                   key={h.noteId}

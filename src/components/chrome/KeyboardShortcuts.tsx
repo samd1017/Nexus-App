@@ -170,6 +170,7 @@ export function KeyboardShortcuts() {
 
       // Escape closes overlays / exits focus
       if (e.key === "Escape") {
+        if (document.querySelector("[data-nexus-confirm]")) return;
         if (document.documentElement.dataset.nexusShortcuts === "1") {
           return;
         }

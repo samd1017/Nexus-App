@@ -340,7 +340,7 @@ const TreeRow = memo(function TreeRow({
         <button
           type="button"
           tabIndex={-1}
-          className="icon-btn !h-7 !w-7"
+          className="icon-btn !h-full !w-8 rounded-md"
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -728,6 +728,13 @@ export const FileTree = memo(function FileTree() {
       window.clearTimeout(timer);
       window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("keydown", onKey);
+      const active = document.activeElement as HTMLElement | null;
+      const idle =
+        !active ||
+        active === document.body ||
+        active === document.documentElement ||
+        Boolean(active.closest?.("[data-nexus-ctx-menu]"));
+      if (idle) parentRef.current?.focus({ preventScroll: true });
     };
   }, [ctx]);
 
