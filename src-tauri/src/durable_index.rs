@@ -688,7 +688,10 @@ pub async fn vault_index_open(
     })
 }
 
-#[tauri::command]
+// Index and catalog commands run on the async runtime, not the main thread:
+// a sync command runs on the thread that also drives the window, so a slow
+// query or a busy-retry sleep froze scrolling and typing.
+#[tauri::command(async)]
 pub fn vault_index_close(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -703,7 +706,7 @@ pub fn vault_index_close(
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_wipe(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -720,7 +723,7 @@ pub fn vault_index_wipe(
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_rebuild(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -749,7 +752,7 @@ pub fn vault_index_rebuild(
     stats_tx(conn)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_upsert(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -766,7 +769,7 @@ pub fn vault_index_upsert(
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_remove(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -781,7 +784,7 @@ pub fn vault_index_remove(
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_search(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -800,7 +803,7 @@ pub struct LinkGroupDto {
 }
 
 /// Seed the JS link index from persisted `link_edge` (no note bodies).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_list_links(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -834,7 +837,7 @@ pub fn vault_index_list_links(
     Ok(groups)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_stats(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -849,7 +852,7 @@ pub fn vault_index_stats(
 
 /// Wave B: list all note_meta (+ optional FTS body snippet) to hydrate the JS mirror
 /// without wiping SQLite on open.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_list(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1327,7 +1330,7 @@ fn with_shell_conn<T>(
 /// Catalog the vault in-process and return either every note (small vault)
 /// or one bounded window. The full listing never crosses into the WebView
 /// when `materialize` is false.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_mount(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedIndex>,
@@ -1465,7 +1468,7 @@ pub fn vault_shell_mount(
     Ok(mounted)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_children(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1506,7 +1509,7 @@ pub fn vault_shell_children(
     Ok(first)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_level(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1522,7 +1525,7 @@ pub fn vault_shell_level(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_ego(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1540,7 +1543,7 @@ pub fn vault_shell_ego(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_note(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1551,7 +1554,7 @@ pub fn vault_shell_note(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_backlinks(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1567,7 +1570,7 @@ pub fn vault_shell_backlinks(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_tags(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1581,7 +1584,7 @@ pub fn vault_shell_tags(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_tag_notes(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1597,7 +1600,7 @@ pub fn vault_shell_tag_notes(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_suggest(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1613,7 +1616,7 @@ pub fn vault_shell_suggest(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_recent(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1627,7 +1630,7 @@ pub fn vault_shell_recent(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_forget(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1639,7 +1642,7 @@ pub fn vault_shell_forget(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_paths(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1650,7 +1653,7 @@ pub fn vault_shell_paths(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_path_page(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1668,7 +1671,7 @@ pub fn vault_shell_path_page(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_orphans(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1679,7 +1682,7 @@ pub fn vault_shell_orphans(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_broken(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1690,7 +1693,7 @@ pub fn vault_shell_broken(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_known_norms(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -1701,7 +1704,7 @@ pub fn vault_shell_known_norms(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_shell_mentions(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,

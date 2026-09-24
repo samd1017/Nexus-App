@@ -142,7 +142,7 @@ fn should_skip_dir(name: &str) -> bool {
 /// Bulk folder + `.md` meta listing. Paths are vault-relative POSIX.
 /// Wave A: root is registered (absolute, no `..`) and granted plugin-fs
 /// persisted-scope before walk — dialog *and* programmatic path opens.
-#[tauri::command]
+#[tauri::command(async)]
 fn vault_meta_walk(app: tauri::AppHandle, root: String) -> Result<Vec<NodeMetaDto>, String> {
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -334,8 +334,9 @@ pub fn run() {
 
             let handle = app.handle().clone();
             // Menus used to run before the event loop could serve the document.
+            let menu_handle = handle.clone();
             handle.run_on_main_thread(move || {
-                if let Err(err) = install_menus(&handle) {
+                if let Err(err) = install_menus(&menu_handle) {
                     eprintln!("nexus menu: {err}");
                 }
             })?;
