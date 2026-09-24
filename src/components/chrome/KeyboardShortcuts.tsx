@@ -171,6 +171,8 @@ export function KeyboardShortcuts() {
       // Escape closes overlays / exits focus
       if (e.key === "Escape") {
         if (document.querySelector("[data-nexus-confirm]")) return;
+        if (document.querySelector("[data-nexus-ctx-menu]")) return;
+        if (document.querySelector("[aria-label='New note template']")) return;
         if (document.documentElement.dataset.nexusShortcuts === "1") {
           return;
         }

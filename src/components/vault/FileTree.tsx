@@ -726,33 +726,41 @@ export const FileTree = memo(function FileTree() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         setCtx(null);
         return;
       }
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
+        e.stopPropagation();
         const list = menuItems();
         const current = list.indexOf(document.activeElement as HTMLButtonElement);
         if (e.key === "ArrowDown") focusItem(current < 0 ? 0 : current + 1);
         else focusItem(current < 0 ? list.length - 1 : current - 1);
       }
     };
+    const returnId = ctx.kind === "item" ? ctx.nodeId : null;
     const timer = window.setTimeout(() => {
       focusItem(0);
       window.addEventListener("pointerdown", onPointerDown, true);
-      window.addEventListener("keydown", onKey);
+      window.addEventListener("keydown", onKey, true);
     }, 0);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
       const active = document.activeElement as HTMLElement | null;
       const idle =
         !active ||
         active === document.body ||
         active === document.documentElement ||
         Boolean(active.closest?.("[data-nexus-ctx-menu]"));
-      if (idle) parentRef.current?.focus({ preventScroll: true });
+      if (!idle) return;
+      if (returnId) {
+        const idx = flatRowsRef.current.findIndex((row) => row.id === returnId);
+        if (idx >= 0) setFocusedIndex(idx);
+      }
+      parentRef.current?.focus({ preventScroll: true });
     };
   }, [ctx]);
 

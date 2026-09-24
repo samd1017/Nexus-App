@@ -132,8 +132,9 @@ export function SettingsPanel() {
       root.focus({ preventScroll: true });
     }
     const onKey = (e: KeyboardEvent) => {
+      // Rebuild / Reset own the keyboard until they close.
+      if (document.querySelector("[data-nexus-confirm]")) return;
       if (e.key === "Escape") {
-        if (document.querySelector("[data-nexus-confirm]")) return;
         e.preventDefault();
         setOpen(false);
         return;

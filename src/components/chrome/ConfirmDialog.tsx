@@ -30,22 +30,31 @@ export function ConfirmDialog({
   const panelRef = useRef<HTMLDivElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
 
+  const onCancelRef = useRef(onCancel);
+  const onConfirmRef = useRef(onConfirm);
+  onCancelRef.current = onCancel;
+  onConfirmRef.current = onConfirm;
+
   useEffect(() => {
     if (!open) return;
-    prevFocusRef.current =
+    const prev =
       typeof document !== "undefined"
         ? (document.activeElement as HTMLElement | null)
         : null;
-    // Danger dialogs: focus Cancel so Enter alone does not delete
+    prevFocusRef.current = prev;
+    // Danger starts on Cancel so Enter does not delete. Other asks start
+    // on the action. Callbacks stay in refs so a parent re-render cannot
+    // pull focus back out of the dialog.
     const t = window.setTimeout(() => {
-      cancelRef.current?.focus({ preventScroll: true });
+      const target = danger ? cancelRef.current : confirmRef.current;
+      (target ?? cancelRef.current)?.focus({ preventScroll: true });
     }, 0);
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        onCancel();
+        onCancelRef.current();
         return;
       }
       // Only confirm on Enter when Confirm button itself is focused
@@ -54,11 +63,11 @@ export function ConfirmDialog({
         if (active === confirmRef.current) {
           e.preventDefault();
           e.stopPropagation();
-          onConfirm();
+          onConfirmRef.current();
         } else if (active === cancelRef.current) {
           e.preventDefault();
           e.stopPropagation();
-          onCancel();
+          onCancelRef.current();
         } else {
           // Trap: do not auto-confirm destructive actions
           e.preventDefault();
@@ -73,12 +82,24 @@ export function ConfirmDialog({
         if (!focusable.length) return;
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
+        e.preventDefault();
+        e.stopPropagation();
         if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
           last.focus();
         } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
           first.focus();
+        } else if (e.shiftKey) {
+          // Let the browser move when we are in the middle, but keep the
+          // event inside this dialog so a parent trap cannot steal it.
+          const list = Array.from(focusable);
+          const i = list.indexOf(document.activeElement as HTMLElement);
+          const next = i <= 0 ? last : list[i - 1];
+          next?.focus();
+        } else {
+          const list = Array.from(focusable);
+          const i = list.indexOf(document.activeElement as HTMLElement);
+          const next = i < 0 || i >= list.length - 1 ? first : list[i + 1];
+          next?.focus();
         }
       }
     };
@@ -86,16 +107,16 @@ export function ConfirmDialog({
     return () => {
       window.clearTimeout(t);
       window.removeEventListener("keydown", onKey, true);
-      const prev = prevFocusRef.current;
-      if (prev && typeof prev.focus === "function") {
+      const back = prevFocusRef.current;
+      if (back && back.isConnected && typeof back.focus === "function") {
         try {
-          prev.focus({ preventScroll: true });
+          back.focus({ preventScroll: true });
         } catch {
           /* ignore */
         }
       }
     };
-  }, [open, onCancel, onConfirm]);
+  }, [open, danger]);
 
   if (!open || typeof document === "undefined") return null;
 

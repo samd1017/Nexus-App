@@ -53,23 +53,54 @@ export function NewNoteMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createNote = useVaultStore((s) => s.createNote);
 
   useEffect(() => {
     if (!open) return;
+    const trigger = triggerRef.current;
+    const timer = window.setTimeout(() => {
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>("[role='menuitem']")
+        ?.focus();
+    }, 0);
+    const items = () =>
+      Array.from(
+        menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitem']") ??
+          [],
+      );
     const onDoc = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+        trigger?.focus({ preventScroll: true });
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const list = items();
+      if (!list.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const current = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next =
+        e.key === "ArrowDown"
+          ? (current + 1 + list.length) % list.length
+          : (current - 1 + list.length) % list.length;
+      list[next]?.focus();
     };
     document.addEventListener("mousedown", onDoc);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
+      window.clearTimeout(timer);
       document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [open]);
 
@@ -92,6 +123,7 @@ export function NewNoteMenu({
   return (
     <div ref={rootRef} className="relative inline-flex">
       <button
+        ref={triggerRef}
         type="button"
         className={cn(triggerClass, className)}
         title={title}
@@ -106,6 +138,7 @@ export function NewNoteMenu({
 
       {open ? (
         <div
+          ref={menuRef}
           id={menuId}
           role="menu"
           aria-label="New note template"
