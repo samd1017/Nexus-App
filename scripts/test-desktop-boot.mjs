@@ -775,5 +775,11 @@ assert.equal(treeSrc.includes("nexus-rename-input"), true);
 assert.equal(cssSrc.includes("container-type: inline-size"), true);
 assert.equal(paletteSrc.includes('data-testid="search-miss-actions"'), true);
 assert.equal(keysSrc.includes("[data-right-panel]"), true);
+// A large vault never reports its loaded page as its size; System theme is settled, not live.
+assert.equal(settingsSrc.includes("Counting notes…"), true);
+assert.equal(settingsSrc.includes("if (shellCatalog) return catalogNoteCount > 0 ? catalogNoteCount : -1;"), true);
+const prefsSrc = readFileSync(new URL("../src/lib/prefs/preferences.ts", import.meta.url), "utf8");
+assert.equal(prefsSrc.includes("settledSystemTheme"), true);
+assert.equal(storeSrc.includes("export function noteBodyFailed"), true);
 
 console.log("desktop-boot: PASS");
