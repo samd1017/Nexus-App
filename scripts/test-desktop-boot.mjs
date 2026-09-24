@@ -1386,7 +1386,7 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
 // and applied once it is armed; the hold ends when the reveal lands or expires.
 {
   const revealSrc2 = readFileSync(new URL("../src/lib/chrome/reveal-list.ts", import.meta.url), "utf8");
-  assert.equal(revealSrc2.includes("inFlight = { id: folderId, until: Date.now() + 3000, enter: false };"), true);
+  assert.equal(revealSrc2.includes("inFlight = { id: folderId, until: Date.now() + 3000 + extra, enter: false };"), true);
   assert.equal(revealSrc2.includes("export function finishReveal(id: string): boolean"), true);
   const holdAt = keysSrc.indexOf("revealInFlight() &&");
   assert.ok(holdAt > 0);
@@ -1528,6 +1528,33 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
     m.revealFolderInList("folder-5");
     assert.equal(m.takePendingFolderReveal(), "folder-5");
     assert.equal(m.takePendingFolderReveal(), null);
+    // With a disk check pending, the row lands after it, once, and Enter is
+    // held meanwhile. A check that never answers lands after a short wait.
+    let settle;
+    const checked = new Promise((r) => { settle = r; });
+    const before = events.length;
+    m.revealFolderInList("folder-6", { settle: checked });
+    assert.equal(events.length, before, "no landing before the check");
+    assert.equal(m.queueRevealEnter(), true);
+    settle();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(events.at(-1)?.detail, "folder-6");
+    assert.equal(events.length, before + 1);
+    assert.equal(m.finishReveal("folder-6"), true, "the Enter held during the check is applied");
+    const stuckAt = events.length;
+    m.revealFolderInList("folder-7", { settle: new Promise(() => {}) });
+    assert.equal(events.length, stuckAt);
+    await new Promise((r) => setTimeout(r, 1600));
+    assert.equal(events.at(-1)?.detail, "folder-7");
+    assert.equal(events.length, stuckAt + 1);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(events.length, stuckAt + 1, "lands once");
+    // Search closes as the reveal starts, check or not.
+    let closed = 0;
+    globalThis.__revealStore = { settings: { leftOpen: true }, setLeftOpen() {}, commandOpen: true, setCommandOpen: (v) => { if (!v) closed += 1; } };
+    m.revealFolderInList("folder-8", { settle: Promise.resolve() });
+    assert.equal(closed, 1);
+    await new Promise((r) => setTimeout(r, 1600));
   } finally {
     globalThis.document = saved.document;
     globalThis.window = saved.window;
@@ -1557,6 +1584,27 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   // The Enter claim still reads the same flag as before.
   assert.equal(treeSrc.includes('folderEmpty={row.kind === "folder" && folderHasNothing(row.id)}'), true);
   assert.equal(treeSrc.includes('data-folder-empty={folderEmpty ? "1" : undefined}'), true);
+}
+// A folder picked in search is checked on disk before it takes Enter: a paged
+// catalog can still list notes that left the disk while the app was closed.
+{
+  const at = storeSrc.indexOf("settleFolderForEnter: async (folderId) => {");
+  assert.ok(at > 0);
+  const body = storeSrc.slice(at, storeSrc.indexOf("\n\t},\n", at));
+  assert.equal(body.includes("shellPageInflight.has(folderId)"), true);
+  assert.equal(body.includes("const onDisk = await countDesktopFolderEntries(root, node.path);"), true);
+  assert.equal(body.includes("if (!onDisk || onDisk.notes + onDisk.folders > 0) return;"), true);
+  assert.equal(body.includes("await fetchShellForget(db, root, kids.map((k) => k.path));"), true);
+  assert.equal(body.includes("shellLoaded: { ...now.shellLoaded, [folderId]: 0 },"), true);
+  assert.equal(body.includes("ensureVaultIndex(get().nodes);"), true);
+  assert.equal(paletteSrc.includes("revealFolderInList(id, { settle: useVaultStore.getState().settleFolderForEnter(id) });"), true);
+  assert.equal((paletteSrc.match(/revealSearchedFolder\(/g) ?? []).length >= 4, true);
+  assert.equal(paletteSrc.includes("revealFolderInList(folder.id)"), false);
+  const adapterSrc2 = readFileSync(new URL("../src/lib/vault/tauri-adapter.ts", import.meta.url), "utf8");
+  const cAt = adapterSrc2.indexOf("export async function countDesktopFolderEntries(");
+  const cBody = adapterSrc2.slice(cAt, adapterSrc2.indexOf("\n}\n", cAt));
+  assert.equal(cBody.includes('if (!e.name || e.name.startsWith(".")) continue;'), true);
+  assert.equal(cBody.includes('else if (e.name.toLowerCase().endsWith(".md")) notes += 1;'), true);
 }
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);

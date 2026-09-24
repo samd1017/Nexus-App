@@ -492,6 +492,27 @@ export async function statDesktopFolder(
   }
 }
 
+/** Notes and folders directly inside `relPath` on disk (hidden entries skipped), or null. */
+export async function countDesktopFolderEntries(
+  root: string,
+  relPath: string,
+): Promise<{ notes: number; folders: number } | null> {
+  try {
+    const { readDir } = await import("@tauri-apps/plugin-fs");
+    const entries = await readDir(joinRoot(root, relPath));
+    let notes = 0;
+    let folders = 0;
+    for (const e of entries) {
+      if (!e.name || e.name.startsWith(".")) continue;
+      if (e.isDirectory) folders += 1;
+      else if (e.name.toLowerCase().endsWith(".md")) notes += 1;
+    }
+    return { notes, folders };
+  } catch {
+    return null;
+  }
+}
+
 export async function createDesktopFolder(
   root: string,
   relPath: string,

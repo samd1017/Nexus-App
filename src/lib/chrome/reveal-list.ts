@@ -87,16 +87,41 @@ export function finishReveal(id: string): boolean {
   return enter;
 }
 
-/** Ask the tree to show a folder, expand its parents, and focus its row. */
-export function revealFolderInList(folderId: string): void {
+const SETTLE_WAIT_MS = 1500;
+
+/**
+ * Ask the tree to show a folder, expand its parents, and focus its row.
+ * `settle` is work that decides whether the folder is empty (a check on
+ * disk); the row lands after it, or after a short wait, and an Enter pressed
+ * meanwhile is held for the folder.
+ */
+export function revealFolderInList(
+  folderId: string,
+  opts?: { settle?: Promise<unknown> },
+): void {
   pendingFolder = folderId;
-  inFlight = { id: folderId, until: Date.now() + 3000, enter: false };
+  const extra = opts?.settle ? SETTLE_WAIT_MS : 0;
+  inFlight = { id: folderId, until: Date.now() + 3000 + extra, enter: false };
   // Search is a modal field: left open, it would take the next Enter.
   const st = useVaultStore.getState();
   if (st.commandOpen) st.setCommandOpen(false);
-  revealFileList(() => {
-    window.dispatchEvent(
-      new CustomEvent("nexus-reveal-folder", { detail: folderId }),
-    );
-  });
+  const land = () => {
+    revealFileList(() => {
+      window.dispatchEvent(
+        new CustomEvent("nexus-reveal-folder", { detail: folderId }),
+      );
+    });
+  };
+  if (!opts?.settle) {
+    land();
+    return;
+  }
+  let landed = false;
+  const once = () => {
+    if (landed) return;
+    landed = true;
+    land();
+  };
+  opts.settle.then(once, once);
+  window.setTimeout(once, SETTLE_WAIT_MS);
 }

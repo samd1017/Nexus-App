@@ -230,6 +230,11 @@ function topNotesByVisitMtime(
   return out;
 }
 
+/** A folder picked in search lands in the list once it is known whether it is empty. */
+function revealSearchedFolder(id: string): void {
+  revealFolderInList(id, { settle: useVaultStore.getState().settleFolderForEnter(id) });
+}
+
 // Where the cursor was before search opened. The field takes focus on mount,
 // so this is tracked all the time rather than read when search opens.
 let focusBeforeSearch: HTMLElement | null = null;
@@ -865,7 +870,7 @@ function CommandPaletteOpen() {
     if (hits.length > 0 && !folder.exact) return;
     window.clearTimeout(pending.timer);
     pendingFolderEnterRef.current = null;
-    revealFolderInList(folder.id);
+    revealSearchedFolder(folder.id);
   }, [folderHits, hits.length, q]);
 
   const askAnswer = useMemo(() => {
@@ -1652,7 +1657,7 @@ function CommandPaletteOpen() {
               if (folder) {
                 e.preventDefault();
                 e.stopPropagation();
-                revealFolderInList(folder.id);
+                revealSearchedFolder(folder.id);
                 return;
               }
               // The catalog has not answered yet. What is selected now is
@@ -2036,7 +2041,7 @@ function CommandPaletteOpen() {
                   data-folder-id={f.id}
                   onSelect={() => {
                     setCommandOpen(false);
-                    revealFolderInList(f.id);
+                    revealSearchedFolder(f.id);
                   }}
                   className={ITEM_CLASS}
                 >

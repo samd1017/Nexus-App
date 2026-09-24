@@ -66,6 +66,7 @@ import {
   listDesktopTrash,
   deskNodeId,
   assertDesktopRootReadable,
+  countDesktopFolderEntries,
 } from "./tauri-adapter";
 import {
   DesktopFsForbiddenError,
@@ -452,6 +453,7 @@ export type VaultStore = {
   getChildren: (parentId: string | null) => VaultNode[];
   ensureNoteBody: (id: string) => Promise<string | null>;
   loadShellChildren: (parentId: string) => Promise<void>;
+  settleFolderForEnter: (folderId: string) => Promise<void>;
   ingestShellRows: (rows: ShellRow[]) => void;
   refreshShellPaths: (paths: string[]) => void;
   reloadShellParent: (parentId: string) => Promise<void>;
@@ -3746,6 +3748,46 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		} finally {
 			shellPageInflight.delete(parentId);
 		}
+	},
+	// A folder picked in search is about to take Enter. In a paged vault the
+	// catalog can still list notes that left the disk while the app was closed
+	// (it does not walk the folder again on reopen), and such a folder would not
+	// take Enter as empty. Look at the folder on disk: when it holds nothing,
+	// the catalog forgets those rows and the folder is empty here too.
+	settleFolderForEnter: async (folderId) => {
+		const s = get();
+		const node = s.nodes[folderId];
+		const root = desktopRoot;
+		if (!node || node.kind !== "folder" || !s.shellCatalog || s.mode !== "desktop" || !root) return;
+		for (let i = 0; i < 40 && shellPageInflight.has(folderId); i++) {
+			await new Promise((r) => setTimeout(r, 20));
+		}
+		if (get().shellLoaded[folderId] === undefined) await get().loadShellChildren(folderId);
+		const onDisk = await countDesktopFolderEntries(root, node.path);
+		if (!onDisk || onDisk.notes + onDisk.folders > 0) return;
+		const live = get();
+		if (!live.shellCatalog || live.shellDbPath !== s.shellDbPath || !live.nodes[folderId]) return;
+		const kids = Object.values(live.nodes).filter((n) => n.parentId === folderId);
+		const db = live.shellDbPath;
+		if (kids.length && db) {
+			try {
+				await fetchShellForget(db, root, kids.map((k) => k.path));
+			} catch {
+				/* the rows below still go from this window */
+			}
+		}
+		const now = get();
+		const dropped = dropShellIds(now.nodes, now.rootIds, kids.map((k) => k.id));
+		const unloaded = { ...now.shellUnloaded };
+		delete unloaded[folderId];
+		set({
+			nodes: dropped.nodes,
+			rootIds: dropped.rootIds,
+			shellUnloaded: unloaded,
+			shellLoaded: { ...now.shellLoaded, [folderId]: 0 },
+			...(now.activeNoteId && dropped.dropped.includes(now.activeNoteId) ? { activeNoteId: null } : {}),
+		});
+		try { ensureVaultIndex(get().nodes); } catch {}
 	},
 	reloadShellParent: async (parentId) => {
 		const s = get();
