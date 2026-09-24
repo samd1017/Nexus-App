@@ -955,6 +955,14 @@
     color: var(--text-primary);
   }
 
+  [data-theme="light"] .tree-item:hover {
+    background: var(--fill-hover);
+  }
+
+  [data-theme="light"] .tree-item.is-active {
+    background: var(--accent-dim);
+  }
+
   .tree-item.is-active {
     background: rgba(0, 200, 255, 0.1);
     color: var(--text-primary);

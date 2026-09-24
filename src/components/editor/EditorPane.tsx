@@ -271,10 +271,10 @@ export function EditorPane({
         >
           <AlertCircle
             size={28}
-            className="mb-3 text-[var(--accent)]"
+            className="mb-3 text-[var(--danger)]"
             aria-hidden
           />
-          <p className="text-[14px] text-[var(--text-secondary)]">
+          <p className="text-[14px] text-[var(--text-secondary)]" role="alert">
             {mode === "fsa" || mode === "desktop" || (mode as string) === "sandbox"
               ? "Couldn't load this note from disk"
               : mode === "demo"
@@ -304,6 +304,8 @@ export function EditorPane({
         data-editor-pane={pane}
         data-testid="nexus-editor"
         data-body-loading="true"
+        role="status"
+        aria-live="polite"
       >
         <Loader2
           size={28}

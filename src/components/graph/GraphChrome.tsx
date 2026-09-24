@@ -142,12 +142,12 @@ export function GraphChrome(props: GraphChromeProps) {
         >
           <div className="graph-loading-ring" aria-hidden />
           <p className="text-[13px] font-medium tracking-wide text-[#f2f6fb]">
-            {props.viewMode === "folder" ? "Laying out folder map" : "Laying out orbs"}
+            {props.viewMode === "folder" ? "Laying out the folder map" : "Drawing links"}
           </p>
           <p className="text-[12px] text-[#d5dce8]">
             {props.largeVault
-              ? "Capped view — never the whole vault as orbs"
-              : "Wikilinks become the constellation"}
+              ? "This view shows one folder"
+              : "Lines are links between notes"}
           </p>
         </div>
       ) : null}
@@ -210,7 +210,7 @@ export function GraphChrome(props: GraphChromeProps) {
           >
             <button
               type="button"
-              className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--accent)] hover:bg-white/5"
+              className="min-h-7 rounded-full px-2 py-1 text-[12px] font-semibold tracking-wide text-[var(--accent)] hover:bg-white/5"
               onClick={props.onVaultMap}
             >
               Vault
@@ -222,7 +222,7 @@ export function GraphChrome(props: GraphChromeProps) {
                   <span className="text-[#d5dce8] opacity-70">/</span>
                   <button
                     type="button"
-                    className="max-w-[96px] truncate rounded-full px-1.5 py-0.5 text-[11px] font-semibold tracking-wide text-[#f2f6fb] hover:bg-white/5"
+                    className="max-w-[8rem] min-h-7 truncate rounded-full px-2 py-1 text-[12px] font-semibold tracking-wide text-[#f2f6fb] hover:bg-white/5"
                     onClick={() => props.onEnterFolder(path)}
                   >
                     {seg}
@@ -237,14 +237,14 @@ export function GraphChrome(props: GraphChromeProps) {
           <label className="relative flex min-w-0 flex-1 items-center">
             <Search
               size={11}
-              className="pointer-events-none absolute left-2 text-[#d5dce8]"
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#d5dce8]"
             />
             <input
               ref={props.filterInputRef}
               value={props.query}
               onChange={(e) => props.onQuery(e.target.value)}
               placeholder="Filter this view"
-              className="h-7 w-full min-w-[7rem] rounded-full border border-white/[0.16] bg-[rgba(4,6,10,0.92)] pl-6 pr-2 text-[12px] font-medium text-[#f2f6fb] outline-none placeholder:text-[#c5ceda] focus:border-[var(--accent)]/40"
+              className="h-8 w-full min-w-[7rem] rounded-full border border-white/[0.16] bg-[rgba(4,6,10,0.92)] pl-7 pr-2 text-[12.5px] font-medium text-[#f2f6fb] outline-none placeholder:text-[#c5ceda] focus:border-[var(--accent)]/40"
               aria-label="Filter graph"
               data-graph-filter
             />
@@ -258,7 +258,7 @@ export function GraphChrome(props: GraphChromeProps) {
               onClick={props.onToggleGhosts}
             >
               <Ghost size={11} />
-              <span className="hidden sm:inline">Ghosts</span>
+              <span className="hidden sm:inline">Missing</span>
             </button>
           ) : null}
           {props.orphansAvailable ? (

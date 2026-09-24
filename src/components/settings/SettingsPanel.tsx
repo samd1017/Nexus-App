@@ -28,6 +28,7 @@ import {
 } from "@/lib/cloud/oauth";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
+import { ConfirmDialog } from "@/components/chrome/ConfirmDialog";
 import { useVaultStore } from "@/lib/vault/store";
 import { rebuildDurableIndexFromNodes } from "@/lib/vault/durable-index";
 import {
@@ -66,14 +67,14 @@ function MemoryBudgetStatus({
       <div className="text-[12px] font-medium text-[var(--text-secondary)]">
         Memory budget
       </div>
-      <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
+      <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
         {!vaultId
-          ? "Automatic when a folder vault is open"
+          ? "Shown after you open a folder."
           : !bodyStats || bodyStats.max === 0
-            ? "Automatic · full in-memory (demo / browser vault)"
+            ? "This vault keeps note text in memory."
             : bodyStats.underPressure
-              ? `Automatic · releasing pressure · In memory: ${bodyStats.loaded} / ${bodyStats.max} bodies (over soft cap) · Protected: ${bodyStats.protected} (active + unsaved) — unsaved notes stay loaded`
-              : `Automatic · note text kept only for recent and open notes · In memory: ${bodyStats.loaded} / ${bodyStats.max} bodies · Protected: ${bodyStats.protected} (active + unsaved)`}
+              ? `Keeping the notes you are using. ${bodyStats.loaded.toLocaleString()} in memory, including ${bodyStats.protected.toLocaleString()} you are editing.`
+              : `Note text loads when you open a note. ${bodyStats.loaded.toLocaleString()} in memory right now.`}
       </p>
     </div>
   );
@@ -113,6 +114,7 @@ export function SettingsPanel() {
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
   const [recordingHotkey, setRecordingHotkey] = useState<HotkeyId | null>(null);
+  const [confirmKind, setConfirmKind] = useState<null | "reset" | "rebuild">(null);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -466,22 +468,21 @@ export function SettingsPanel() {
               <div className="text-[13px] font-medium text-[var(--text-primary)]">
                 Vault scale
               </div>
-              <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
-                Designed for large folders. Open is progressive (metadata first).
-                Search uses an on-disk index on desktop.
+              <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                A large folder opens the same way as a small one. Search is ready
+                for the notes on screen first.
                 {noteCount > 0 ? (
                   <>
                     {" "}
-                    This vault:{" "}
-                    <span className="text-[var(--text-secondary)]">
+                    This vault has{" "}
+                    <span className="text-[var(--text-primary)]">
                       {noteCount.toLocaleString()} notes
                     </span>
                     {mode === "demo"
-                      ? " (demo — sample vault, not on disk)"
+                      ? ". These are sample notes, not saved to a folder."
                       : mode === "local"
-                        ? " (in-memory)"
-                        : " (bodies load as you open notes)"}
-                    .
+                        ? ". They stay in this browser until you open a folder."
+                        : ". Note text loads when you open it."}
                   </>
                 ) : null}
               </p>
@@ -514,24 +515,14 @@ export function SettingsPanel() {
                   <div className="text-[13px] font-medium text-[var(--text-primary)]">
                     Rebuild search index
                   </div>
-                  <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
-                    Refresh titles and snippets if search looks stale
+                  <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                    Refresh titles if search looks out of date. Your notes stay where they are.
                   </p>
                 </div>
                 <button
                   type="button"
-                  className="ghost-btn shrink-0 text-[12px]"
-                  onClick={() => {
-                    const st = useVaultStore.getState();
-                    invalidateIndexedSearch();
-                    rebuildIndexedSearch(st.nodes);
-                    rebuildDurableIndexFromNodes(
-                      st.vaultId,
-                      st.nodes,
-                      Boolean(st.vaultId),
-                    );
-                    st.setToast("Search index rebuilt");
-                  }}
+                  className="ghost-btn shrink-0 text-[13px]"
+                  onClick={() => setConfirmKind("rebuild")}
                 >
                   Rebuild
                 </button>
@@ -811,17 +802,17 @@ export function SettingsPanel() {
                 title="Desktop"
                 body={
                   isAppleModPlatform()
-                    ? `The desktop app (Tauri) opens a real folder and watches it. Reveal in Finder shows that folder. Open Settings with ${formatShortcut(",")}.`
-                    : `The desktop app (Tauri) opens a real folder and watches it. Reveal in your file manager shows that folder. Open Settings with ${formatShortcut(",")}.`
+                    ? `Nexus on this computer opens a real folder and notices when files change. Reveal in Finder shows that folder. Open Settings with ${formatShortcut(",")}.`
+                    : `Nexus on this computer opens a real folder and notices when files change. Reveal in your file manager shows that folder. Open Settings with ${formatShortcut(",")}.`
                 }
               />
               <HelpItem
                 title="Local folder (browser)"
-                body="Chrome or Edge: Open… uses the File System Access API and remembers the directory handle in IndexedDB. After a reload the browser still asks you to re-grant access — that is a browser permission gate, not a Nexus account. The desktop app opens the same folder directly."
+                body="In Chrome or Edge, Open… asks for a folder and remembers it. After a reload the browser asks you to allow that folder again. Nexus on this computer opens the same folder without that extra step."
               />
             </div>
-            <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">
-              Everyday reference — deeper guides can grow as the product matures.
+            <p className="mt-3 text-[12.5px] text-[var(--text-secondary)]">
+              Short answers for everyday use.
             </p>
           </Section>
 
@@ -865,16 +856,42 @@ export function SettingsPanel() {
 
           <button
             type="button"
-            className="ghost-btn w-full justify-center text-[12.5px]"
-            onClick={() => {
-              resetPrefs();
-              setCustomDraft(DEFAULT_CUSTOM);
-            }}
+            className="ghost-btn w-full justify-center text-[13px]"
+            onClick={() => setConfirmKind("reset")}
           >
             Reset to defaults
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmKind !== null}
+        danger={confirmKind === "reset"}
+        title={confirmKind === "rebuild" ? "Rebuild search?" : "Reset settings?"}
+        message={
+          confirmKind === "rebuild"
+            ? "Refresh search for this vault. Notes on disk stay as they are. A large vault can take a moment."
+            : "Restore appearance, editor, and shortcuts to their original settings. This vault stays as it is."
+        }
+        confirmLabel={confirmKind === "rebuild" ? "Rebuild" : "Reset"}
+        onCancel={() => setConfirmKind(null)}
+        onConfirm={() => {
+          if (confirmKind === "rebuild") {
+            const st = useVaultStore.getState();
+            invalidateIndexedSearch();
+            rebuildIndexedSearch(st.nodes);
+            rebuildDurableIndexFromNodes(
+              st.vaultId,
+              st.nodes,
+              Boolean(st.vaultId),
+            );
+            st.setToast("Search index rebuilt");
+          } else if (confirmKind === "reset") {
+            resetPrefs();
+            setCustomDraft(DEFAULT_CUSTOM);
+          }
+          setConfirmKind(null);
+        }}
+      />
     </div>
   );
 }
@@ -898,7 +915,7 @@ function HelpItem({
       <div className="text-[12.5px] font-semibold text-[var(--text-primary)]">
         {title}
       </div>
-      <p className="mt-1 text-[12px] leading-snug text-[var(--text-muted)]">
+      <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
         {body}
       </p>
     </div>
@@ -963,6 +980,7 @@ function Segmented({
         <button
           key={o.value}
           type="button"
+          aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
             "min-h-8 flex-1 rounded-[8px] px-2 text-[12.5px] font-medium transition",

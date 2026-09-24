@@ -390,7 +390,7 @@ export function LeftSidebar() {
               <button
                 type="button"
                 className={cn(
-                  "daily-chip !h-6 !px-1.5 text-[10px]",
+                  "daily-chip !h-7 !min-w-7 !px-2 text-[11px]",
                   isTodayActive && "is-active",
                 )}
                 onClick={() => openDailyNote()}
@@ -401,7 +401,7 @@ export function LeftSidebar() {
               <button
                 type="button"
                 className={cn(
-                  "daily-chip !h-6 !px-1.5 text-[10px]",
+                  "daily-chip !h-7 !min-w-7 !px-2 text-[11px]",
                   isYesterdayActive && "is-active",
                 )}
                 onClick={() => openDailyNoteForDate(yesterday)}

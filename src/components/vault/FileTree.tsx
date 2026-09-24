@@ -330,13 +330,17 @@ const TreeRow = memo(function TreeRow({
       )}
 
       <div
-        className="titlebar-no-drag relative ml-auto flex shrink-0 opacity-70 group-hover:opacity-100"
+        className={cn(
+          "titlebar-no-drag relative ml-auto flex shrink-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100",
+          (isActive || isFocused) && "opacity-100",
+        )}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
         <button
           type="button"
-          className="icon-btn flex h-6 w-6 items-center justify-center"
+          tabIndex={-1}
+          className="icon-btn !h-7 !w-7"
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -376,10 +380,10 @@ function MenuBtn({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors",
+        "flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)]",
         danger
           ? "text-[var(--danger)] hover:bg-[rgba(255,69,58,0.1)]"
-          : "text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
+          : "text-[var(--text-secondary)] hover:bg-[var(--fill-hover)] hover:text-[var(--text-primary)]",
       )}
     >
       {icon}
@@ -656,6 +660,18 @@ export const FileTree = memo(function FileTree() {
           setActiveNote(node.id);
           closeDrawersIfNarrow();
         }
+        return;
+      }
+      if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+        e.preventDefault();
+        const el = document.getElementById(`tree-row-${node.id}`);
+        const rect = el?.getBoundingClientRect();
+        setCtx({
+          kind: "item",
+          nodeId: node.id,
+          x: rect ? rect.left + 28 : 24,
+          y: rect ? rect.bottom : 24,
+        });
       }
     },
     [
@@ -665,6 +681,7 @@ export const FileTree = memo(function FileTree() {
       setActiveNote,
       showMore,
       virtualizer,
+      setCtx,
     ],
   );
 
@@ -676,10 +693,34 @@ export const FileTree = memo(function FileTree() {
       if (t?.closest?.("[data-nexus-confirm]")) return;
       setCtx(null);
     };
+    const menuItems = () =>
+      Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          "[data-nexus-ctx-menu] [role='menuitem']",
+        ),
+      );
+    const focusItem = (index: number) => {
+      const list = menuItems();
+      if (!list.length) return;
+      const next = (index + list.length) % list.length;
+      list[next]?.focus();
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setCtx(null);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCtx(null);
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const list = menuItems();
+        const current = list.indexOf(document.activeElement as HTMLButtonElement);
+        if (e.key === "ArrowDown") focusItem(current < 0 ? 0 : current + 1);
+        else focusItem(current < 0 ? list.length - 1 : current - 1);
+      }
     };
     const timer = window.setTimeout(() => {
+      focusItem(0);
       window.addEventListener("pointerdown", onPointerDown, true);
       window.addEventListener("keydown", onKey);
     }, 0);
@@ -1022,7 +1063,7 @@ export const FileTree = memo(function FileTree() {
 
       {dragId ? (
         <div className="pointer-events-none sticky bottom-1 mt-3 rounded-md border border-dashed border-[rgba(0,200,255,0.28)] bg-[rgba(0,200,255,0.05)] px-2 py-1.5 text-center text-[10.5px] text-[var(--text-muted)]">
-          Drop on a folder to nest · drop empty space for root
+          Drop onto a folder to move it inside. Drop on empty space to leave it at the top.
         </div>
       ) : null}
 
@@ -1138,7 +1179,7 @@ export const FileTree = memo(function FileTree() {
                   />
                   <MenuBtn
                     icon={<Trash2 size={13} />}
-                    label="Delete"
+                    label="Move to Trash"
                     danger
                     onClick={() => {
                       const id = ctxNode.id;
@@ -1151,7 +1192,7 @@ export const FileTree = memo(function FileTree() {
 
               {ctx.kind === "empty" ? (
                 <p className="px-2.5 py-1 text-[10px] text-[var(--text-muted)]">
-                  Creates at vault root
+                  New items go at the top of the vault
                 </p>
               ) : null}
             </div>,

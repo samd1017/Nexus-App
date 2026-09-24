@@ -30,7 +30,7 @@ export function EmptyState({
       )}
     >
       {icon ? (
-        <div className="mx-auto mb-2 flex justify-center text-[var(--text-muted)] opacity-40">
+        <div className="mx-auto mb-2 flex justify-center text-[var(--text-secondary)]">
           {icon}
         </div>
       ) : null}
@@ -38,7 +38,7 @@ export function EmptyState({
         {title}
       </p>
       {description ? (
-        <p className="mt-1 text-[11.5px] leading-snug text-[var(--text-muted)]">
+        <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
           {description}
         </p>
       ) : null}
