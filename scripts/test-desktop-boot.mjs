@@ -612,6 +612,25 @@ assert.equal(opened, 2);
 assert.equal(visible, true);
 assert.equal(cssSrc.includes(".editor-status"), true);
 assert.equal(cssSrc.includes("[data-nexus-confirm] [role=\"dialog\"]"), true);
+assert.equal(cssSrc.includes("[data-settings-lead]"), true);
+assert.equal(cssSrc.includes("[data-panel-empty]"), true);
+assert.equal(cssSrc.includes('data-testid="vault-first-run"'), true);
+assert.equal(settingsSrc.includes("holdOpenFocus"), true);
+assert.equal(settingsSrc.includes("data-settings-nav=\"appearance\""), true);
+assert.equal(paletteSrc.includes("holdOpenFocus"), true);
+assert.equal(paletteSrc.includes("data-search-caret") || paletteSrc.includes("holdOpenFocus"), true);
+assert.equal(keysSrc.includes("reclaimAfterFocus"), true);
+assert.equal(
+  editorSrc.includes('data-editor-empty={emptyVault ? "vault" : "note"}'),
+  true,
+);
+const focusSrc = readFileSync(
+  new URL("../src/lib/chrome/focus-ring.ts", import.meta.url),
+  "utf8",
+);
+assert.equal(focusSrc.includes("export function holdOpenFocus"), true);
+assert.equal(focusSrc.includes("data-settings-landed"), true);
+assert.equal(focusSrc.includes("data-search-caret"), true);
 const toastSrc = readFileSync(
   new URL("../src/components/chrome/Toast.tsx", import.meta.url),
   "utf8",

@@ -2148,3 +2148,24 @@ button:focus-visible,
   font-weight: 600;
 }
 
+/* Section leads, empty link panels, and the first-run line stay white on dark. */
+[data-settings-lead],
+[data-panel-empty],
+[data-testid="tree-empty-folder-banner"],
+[data-testid="tree-empty-folder-status"] {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+[data-editor-empty] h2,
+[data-editor-empty] p,
+[data-testid="vault-first-run-list"] p {
+  color: #fff;
+}
+[data-testid="vault-first-run"],
+[data-editor-empty="vault"] h2 {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
+

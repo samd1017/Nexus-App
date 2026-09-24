@@ -29,6 +29,7 @@ import {
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { ConfirmDialog } from "@/components/chrome/ConfirmDialog";
+import { holdOpenFocus } from "@/lib/chrome/focus-ring";
 import { useVaultStore } from "@/lib/vault/store";
 import { rebuildDurableIndexFromNodes } from "@/lib/vault/durable-index";
 import {
@@ -136,19 +137,22 @@ export function SettingsPanel() {
     const root = dialogRef.current;
     // Focus dialog container on open
     const prev = document.activeElement as HTMLElement | null;
+    let releaseFocus = () => {};
     if (root) {
       if (!root.hasAttribute("tabindex")) root.tabIndex = -1;
       // Rebuild confirm focuses Cancel itself. Do not pull that focus back.
       // Otherwise land on Appearance — a real section, not the empty dialog shell.
       if (!document.querySelector("[data-nexus-confirm]")) {
-        const firstSection = root.querySelector<HTMLElement>(
-          '[data-settings-nav="appearance"]',
-        );
-        (firstSection ?? root).focus({ preventScroll: true });
         document
           .getElementById("settings-section-appearance")
           ?.scrollIntoView({ block: "start" });
       }
+      releaseFocus = holdOpenFocus(
+        root,
+        () =>
+          root.querySelector<HTMLElement>('[data-settings-nav="appearance"]'),
+        () => Boolean(document.querySelector("[data-nexus-confirm]")),
+      );
     }
     const onKey = (e: KeyboardEvent) => {
       // Rebuild / Reset own the keyboard until they close.
@@ -208,6 +212,7 @@ export function SettingsPanel() {
     };
     window.addEventListener("keydown", onKey);
     return () => {
+      releaseFocus();
       window.removeEventListener("keydown", onKey);
       prev?.focus?.({ preventScroll: true });
     };

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
+import { holdOpenFocus } from "@/lib/chrome/focus-ring";
 import {
   FileText,
   FolderOpen,
@@ -284,16 +285,10 @@ function CommandPaletteOpen() {
       } else {
         setQuery("");
       }
-      // Ensure keystrokes land in the palette without an extra click
-      const t = window.setTimeout(() => {
-        const input = inputRef.current;
-        input?.focus();
-        input?.select();
-        input
-          ?.closest("[data-testid='search-field']")
-          ?.setAttribute("data-keyboard-focus", "control");
-      }, 0);
-      return () => window.clearTimeout(t);
+      // Keystrokes land in the field even if the note takes the cursor after paint.
+      const root = inputRef.current?.closest("[role='dialog']") as HTMLElement | null;
+      if (!root) return;
+      return holdOpenFocus(root, () => inputRef.current, () => false, true);
     } else {
       setQuery("");
       setDebouncedSearch("");

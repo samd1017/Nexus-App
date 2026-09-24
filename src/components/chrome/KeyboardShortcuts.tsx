@@ -14,6 +14,7 @@ import { openCommandPalette } from "@/components/search/CommandPalette";
 import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
+import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import {
   matchHotkey,
   type HotkeyId,
@@ -206,19 +207,36 @@ export function KeyboardShortcuts() {
         }
         // Home: a note returns to the list. Search and dialogs already closed above.
         const target = e.target as HTMLElement | null;
-        if (!target || typeof target.closest !== "function") return;
-        if (target.closest("[data-file-tree]")) return;
+        const active = document.activeElement as HTMLElement | null;
+        const inList = (el: HTMLElement | null) =>
+          Boolean(el && typeof el.closest === "function" && el.closest("[data-file-tree]"));
+        if (inList(target) || inList(active)) return;
         if (document.querySelector("[role='dialog']")) return;
-        const inNote =
-          Boolean(target.closest("[data-testid='nexus-editor']")) ||
-          Boolean(target.closest(".ProseMirror")) ||
-          Boolean(target.closest(".note-title-input")) ||
-          target.isContentEditable === true;
-        if (!inNote) return;
+        const inNote = (el: HTMLElement | null) =>
+          Boolean(
+            el &&
+              typeof el.closest === "function" &&
+              (el.closest("[data-testid='nexus-editor']") ||
+                el.closest(".ProseMirror") ||
+                el.closest(".note-title-input") ||
+                el.isContentEditable === true),
+          );
+        if (!inNote(target) && !inNote(active)) return;
         const tree = document.querySelector<HTMLElement>("[data-file-tree]");
         if (!tree) return;
         e.preventDefault();
-        tree.focus({ preventScroll: true });
+        const home = () => {
+          if (!tree.isConnected) return;
+          tree.focus({ preventScroll: true });
+          tree.setAttribute("data-tree-focused", "1");
+        };
+        home();
+        // The note can take the cursor back in the same turn. Land on the list after that.
+        reclaimAfterFocus(() => {
+          const now = document.activeElement as HTMLElement | null;
+          if (inList(now) || !inNote(now)) return;
+          home();
+        });
       }
 
       // Delete active note (not while typing)

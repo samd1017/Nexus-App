@@ -184,6 +184,21 @@ export function EditorPane({
   });
   const createNote = useVaultStore((s) => s.createNote);
 
+  useEffect(() => {
+    if (isSecondary || noteCount !== 0) return;
+    if (document.querySelector("[data-nexus-confirm], [role='dialog']")) return;
+    const tree = document.querySelector<HTMLElement>("[data-file-tree]");
+    if (!tree) return;
+    const active = document.activeElement as HTMLElement | null;
+    const idle =
+      !active ||
+      active === document.body ||
+      active === document.documentElement ||
+      Boolean(active.closest?.("[data-editor-empty='vault']"));
+    if (!idle) return;
+    tree.focus({ preventScroll: true });
+  }, [isSecondary, noteCount]);
+
   if (!note || note.kind !== "note") {
     if (isSecondary) {
       return (
