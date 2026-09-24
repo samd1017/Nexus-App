@@ -46,6 +46,12 @@ function folderHasNothing(id: string): boolean {
   return vaultIndex.getChildIds(id).length === 0 && extra === 0;
 }
 
+/** Label only: in a paged vault a folder whose page never loaded is not known to be empty. */
+function emptyKnown(id: string): boolean {
+  const s = useVaultStore.getState();
+  return !s.shellCatalog || s.shellLoaded?.[id] !== undefined;
+}
+
 
 /**
  * Pointer-based tree DnD — works in browser AND Tauri/WKWebView (Mac app).
@@ -429,26 +435,19 @@ const TreeRow = memo(function TreeRow({
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-2">
           <span
-            className={cn(
-              "min-w-0 cursor-grab truncate active:cursor-grabbing",
-              folderEmpty && "shrink-0 max-w-[62%]",
-            )}
+            className="min-w-0 cursor-grab truncate active:cursor-grabbing"
           >
             {displayName(node)}
           </span>
-          {folderEmpty && expanded ? (
-            // The row below says the whole line when the folder is open.
-            <span className="nexus-empty-tag shrink-0" data-testid="tree-empty-folder-tag">
-              empty
-            </span>
-          ) : folderEmpty ? (
+          {folderEmpty && emptyKnown(node.id) ? (
+            // A short tag fits beside any name. Open, the row below says the
+            // whole line; the list's hint says it while the folder has the cursor.
             <span
-              role="status"
-              data-testid="tree-empty-folder-status"
-              data-empty-parent={node.id}
-              className="min-w-0 truncate text-[12px] font-semibold text-white"
+              className="nexus-empty-tag shrink-0"
+              data-testid="tree-empty-folder-tag"
+              title="This folder is empty. Enter starts a note."
             >
-              Enter starts a note.
+              empty
             </span>
           ) : null}
         </span>
@@ -1574,22 +1573,25 @@ export const FileTree = memo(function FileTree() {
           <span
             role="status"
             data-testid="tree-empty-folder-status"
+            title="This folder is empty. Enter starts a note."
             className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white"
           >
             Enter starts a note.
           </span>
           <button
             type="button"
-            className="mr-1 shrink-0 rounded-md px-2 text-[12px] text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
-            style={{ height: 26 }}
-            title="Enter starts a note in this folder"
+            className="mr-1 flex shrink-0 items-center justify-center rounded-md text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
+            style={{ height: 26, width: 26 }}
+            aria-label="New note in this folder"
+            title="New note in this folder"
+            data-testid="tree-empty-new-note"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               if (parentId) createAndRename("note", parentId);
             }}
           >
-            New note
+            <FilePlus size={14} />
           </button>
         </div>
       );

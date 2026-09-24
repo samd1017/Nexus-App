@@ -1546,6 +1546,18 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(shellSrc.includes("if (vaultHasNoNotes()) startFirstNote();"), true);
   assert.equal(keysSrc.includes("if (vaultHasNoNotes()) startFirstNote();"), true);
 }
+// Empty folders in the list: a short tag that fits beside any name, shown only
+// when the folder is known to be empty; the open row keeps its line with room.
+{
+  assert.equal(treeSrc.includes("return !s.shellCatalog || s.shellLoaded?.[id] !== undefined;"), true);
+  assert.equal(treeSrc.includes("{folderEmpty && emptyKnown(node.id) ? ("), true);
+  assert.equal(treeSrc.includes('max-w-[62%]'), false);
+  assert.equal(treeSrc.includes('data-testid="tree-empty-new-note"'), true);
+  assert.equal(treeSrc.includes('aria-label="New note in this folder"'), true);
+  // The Enter claim still reads the same flag as before.
+  assert.equal(treeSrc.includes('folderEmpty={row.kind === "folder" && folderHasNothing(row.id)}'), true);
+  assert.equal(treeSrc.includes('data-folder-empty={folderEmpty ? "1" : undefined}'), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
