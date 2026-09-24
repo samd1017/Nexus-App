@@ -1249,6 +1249,9 @@ pub fn vault_shell_mount(
 ) -> Result<crate::shell_catalog::ShellMount, String> {
     let db_path = shell_db_path(&app, &vault_root)?;
     if let Some(mut snap) = crate::shell_catalog::read_page_snapshot(&db_path) {
+        if let Some(total) = crate::shell_catalog::read_note_total_sidecar(&db_path) {
+            crate::shell_catalog::apply_note_total(&mut snap, total);
+        }
         snap.db_path = db_path;
         return Ok(snap);
     }
@@ -1265,6 +1268,9 @@ pub fn vault_shell_mount(
         ) {
             Ok(mut disk) if !disk.rows.is_empty() => {
                 disk.db_path = db_path.clone();
+                if let Some(total) = crate::shell_catalog::read_note_total_sidecar(&db_path) {
+                    crate::shell_catalog::apply_note_total(&mut disk, total);
+                }
                 if disk.titles_live {
                     let _ = crate::shell_catalog::write_page_snapshot(&db_path, &disk);
                 }

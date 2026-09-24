@@ -2399,9 +2399,9 @@ fn index_priority_files(
     indexed
 }
 
-/// Saved paths whose files are gone. Does not list the folder and does not
-/// insert names. Each page is its own short read, then a yield, so a large
-/// catalog does not hold one write lock.
+/// Saved paths whose files are gone. Not part of Ready: a filled reopen does
+/// not stat the catalog. Tests call this directly.
+#[cfg(test)]
 fn drop_missing_catalog_files(
     conn: &mut Connection,
     vault_root: &Path,
@@ -2542,10 +2542,9 @@ pub fn fill_from_disk_with_opts<'a>(
             Some("Titles and open notes are searchable".into()),
             &mut on_progress,
         );
-        // The page is already searchable. Do not tune, list the folder, or
-        // commit name batches. Those writes were the hitch after Ready.
-        // An opened note is indexed on its own. Saved paths that no longer
-        // exist are dropped a page at a time, after this announcement.
+        // The page is already searchable. Do not tune, list the folder,
+        // commit name batches, or stat saved paths. Those were the hitch
+        // after Ready. An opened note is indexed on its own.
         let indexed_open = index_priority_files(
             conn,
             vault_root,
@@ -2553,7 +2552,6 @@ pub fn fill_from_disk_with_opts<'a>(
             deep_head,
             &mut is_cancelled,
         );
-        let removed = drop_missing_catalog_files(conn, vault_root, &mut is_cancelled);
         let stored: i64 = conn
             .query_row(
                 "SELECT value FROM meta_kv WHERE key = 'shell_note_count'",
@@ -2564,24 +2562,12 @@ pub fn fill_from_disk_with_opts<'a>(
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         let notes = if stored > 0 {
-            (stored - removed).max(0)
+            stored
         } else {
-            conn.query_row(
-                "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND deleted=0",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(TITLE_READY_FLUSH as i64)
+            TITLE_READY_FLUSH as i64
         };
         if notes > TITLE_READY_FLUSH as i64 {
             crate::shell_catalog::update_page_snapshot_notes(opts.db_path, notes);
-            if removed > 0 {
-                let _ = conn.execute(
-                    "INSERT INTO meta_kv(key, value) VALUES ('shell_note_count', ?1)
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    params![notes.to_string()],
-                );
-            }
             emit(
                 &mut progress,
                 "catalog-counted",
@@ -4514,10 +4500,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             |_| {},
         )
         .unwrap();
-        assert!(!fts_path_at(&db, "drop/gone.md"));
+        assert!(
+            fts_path_at(&db, "drop/gone.md"),
+            "a filled reopen must not stat the catalog to drop a file"
+        );
+        assert_eq!(DIR_LISTS.with(|c| c.get()), 0);
         assert!(fts_path_at(&db, "keep/n0000.md"));
         assert_eq!(EXISTING_CATALOG_ROWS_LOADED.with(|c| c.get()), -1);
         assert!(again.notes >= TITLE_INTERACTIVE_CAP as i64);
+        let removed = drop_missing_catalog_files(&mut conn, &vault, &mut || false);
+        assert!(removed >= 1);
+        assert!(!fts_path_at(&db, "drop/gone.md"));
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 

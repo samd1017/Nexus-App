@@ -14,6 +14,9 @@ use std::time::SystemTime;
 pub const SHELL_FULL_MAX_NOTES: i64 = 399;
 /// One tree page. Expand / "more" fetches another page, not the folder.
 pub const SHELL_CHILD_PAGE: i64 = 200;
+/// Names read while sorting one directory page. One official bucket fits
+/// under this. A larger flat folder returns that page and stops.
+pub const DIR_PAGE_SCAN_CAP: usize = 8192;
 /// Backlink panel and status count share one bounded reverse-index read.
 pub const SHELL_BACKLINK_LIMIT: i64 = 80;
 /// Tag rail. Counts come from `tag_map`, not a body scan.
@@ -209,16 +212,52 @@ pub fn write_page_snapshot(db_path: &str, mount: &ShellMount) -> Result<(), Stri
     std::fs::write(path, body).map_err(|e| e.to_string())
 }
 
+fn note_total_path(db_path: &str) -> PathBuf {
+    PathBuf::from(format!("{db_path}.notes"))
+}
+
+/// The stored vault total, a few bytes beside the index. Reading it does
+/// not open the database.
+pub fn read_note_total_sidecar(db_path: &str) -> Option<i64> {
+    if db_path.is_empty() {
+        return None;
+    }
+    let n = std::fs::read_to_string(note_total_path(db_path))
+        .ok()?
+        .trim()
+        .parse::<i64>()
+        .ok()?;
+    if n > 0 { Some(n) } else { None }
+}
+
+pub fn write_note_total_sidecar(db_path: &str, notes: i64) {
+    if db_path.is_empty() || notes <= 0 {
+        return;
+    }
+    let _ = std::fs::write(note_total_path(db_path), notes.to_string());
+}
+
+/// Raise the window's note total when a stored count is already known.
+pub fn apply_note_total(mount: &mut ShellMount, total: i64) {
+    if total <= mount.notes {
+        return;
+    }
+    let shown = mount.rows.iter().filter(|r| r.kind == "note").count() as i64;
+    mount.notes = total;
+    mount.omitted_notes = (total - shown).max(0);
+}
+
 pub fn update_page_snapshot_notes(db_path: &str, notes: i64) {
+    if notes > 0 {
+        write_note_total_sidecar(db_path, notes);
+    }
     let Some(mut mount) = read_page_snapshot(db_path) else {
         return;
     };
     if notes <= mount.notes {
         return;
     }
-    let shown = mount.rows.iter().filter(|r| r.kind == "note").count() as i64;
-    mount.notes = notes;
-    mount.omitted_notes = (notes - shown).max(0);
+    apply_note_total(&mut mount, notes);
     let _ = write_page_snapshot(db_path, &mount);
 }
 
@@ -296,6 +335,9 @@ pub fn store_catalog_counts(conn: &Connection, notes: i64, folders: i64) {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![COUNT_FOLDERS_KEY, folders.to_string()],
     );
+    if let Some(path) = conn.path() {
+        write_note_total_sidecar(path, notes);
+    }
 }
 
 pub fn clear_catalog_counts(conn: &Connection) {
@@ -847,9 +889,48 @@ fn is_note_name(name: &str) -> bool {
     b.len() >= 3 && b[b.len() - 3..].eq_ignore_ascii_case(b".md")
 }
 
+#[cfg(test)]
+thread_local! {
+    static DIR_PAGE_SEEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_dir_page_seen() {
+    DIR_PAGE_SEEN.with(|c| c.set(c.get() + 1));
+}
+
+#[cfg(not(test))]
+fn note_dir_page_seen() {}
+
+#[cfg(test)]
+pub fn reset_dir_page_seen() {
+    DIR_PAGE_SEEN.with(|c| c.set(0));
+}
+
+#[cfg(test)]
+pub fn dir_page_seen() -> usize {
+    DIR_PAGE_SEEN.with(|c| c.get())
+}
+
+fn slot_for(rel: &str, name: &str, folder: bool) -> PageSlot {
+    let child_rel = if rel.is_empty() {
+        name.to_string()
+    } else {
+        format!("{rel}/{name}")
+    };
+    PageSlot {
+        rel: child_rel,
+        name: name.to_string(),
+        folder,
+        mtime: 0,
+    }
+}
+
 /// List one directory and keep the first display page (folders, then names).
 /// Does not open subdirectories. Modification time is read only for rows
-/// that stay on the page, so a fat folder does not stat every name.
+/// that stay on the page. The scan stops after `DIR_PAGE_SCAN_CAP` names, so
+/// a flat folder of hundreds of thousands of files does not block the page.
+/// `Hub 0.md` is included by name when that file exists.
 pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>, String> {
     let rel = normalize_rel(rel);
     let abs = if rel.is_empty() {
@@ -865,17 +946,32 @@ pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>
     }
     let limit = limit.clamp(1, SHELL_CHILD_PAGE) as usize;
     let mut entries: Vec<PageSlot> = Vec::with_capacity(limit);
+    for name in ["Hub 0.md", "Hub.md"] {
+        if abs.join(name).is_file() {
+            insert_page_slot(&mut entries, limit, slot_for(&rel, name, false));
+            break;
+        }
+    }
     let rd = match std::fs::read_dir(&abs) {
         Ok(rd) => rd,
         Err(err) => return Err(err.to_string()),
     };
+    let mut seen = 0usize;
     for entry in rd.flatten() {
+        if seen >= DIR_PAGE_SCAN_CAP {
+            break;
+        }
+        seen += 1;
+        note_dir_page_seen();
         let name_os = entry.file_name();
         let name = name_os.to_string_lossy();
         if name.starts_with('.') || SKIP_DIRS.iter().any(|s| *s == name.as_ref()) {
             continue;
         }
         let name = name.into_owned();
+        if entries.iter().any(|e| e.name == name) {
+            continue;
+        }
         // A `.md` name is a note. file_type() stats when the directory entry
         // has no type, which made a cold open wait on every file in the
         // open folder. Modification time is read only for the page that stays.
@@ -894,21 +990,7 @@ pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>
                 continue;
             }
         }
-        let child_rel = if rel.is_empty() {
-            name.clone()
-        } else {
-            format!("{rel}/{name}")
-        };
-        insert_page_slot(
-            &mut entries,
-            limit,
-            PageSlot {
-                rel: child_rel,
-                name,
-                folder,
-                mtime: 0,
-            },
-        );
+        insert_page_slot(&mut entries, limit, slot_for(&rel, &name, folder));
     }
     for slot in &mut entries {
         let abs = root.join(&slot.rel);
@@ -984,9 +1066,6 @@ pub fn mount_disk_window(root: &Path, prefer: Option<&str>) -> Result<ShellMount
     for _ in 0..3 {
         let Some(rel) = next.take() else { break };
         let page = dir_page_rows(root, &rel, 32)?;
-        if page.len() >= 32 {
-            truncated = true;
-        }
         let parent_id = rows
             .iter()
             .find(|r| r.path == rel)
@@ -1028,11 +1107,9 @@ pub fn mount_disk_window(root: &Path, prefer: Option<&str>) -> Result<ShellMount
         }
     }
     let note_rows = rows.iter().filter(|r| r.kind == "note").count() as i64;
-    let notes = if truncated {
-        SHELL_FULL_MAX_NOTES + 1
-    } else {
-        note_rows
-    };
+    // The visible page is the honest count until a stored total is applied.
+    // A truncated folder stays a window (`materialize: false`) either way.
+    let notes = note_rows;
     let active = rows.iter().find(|r| r.kind == "note").map(|r| r.id.clone());
     let root_ids = rows
         .iter()
@@ -2671,8 +2748,83 @@ mod tests {
         );
         assert!(mount.titles_live);
         assert!(!mount.materialize);
-        assert!(mount.notes > SHELL_FULL_MAX_NOTES);
+        assert!(mount.notes <= 80, "the page count is not a stand-in total");
         assert!(mount.db_path.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flat_directory_page_stops_before_the_rest_of_the_names() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-flat-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = dir.join("vault");
+        fs::create_dir_all(&root).unwrap();
+        let extra = DIR_PAGE_SCAN_CAP + 2_000;
+        for i in 0..extra {
+            fs::write(root.join(format!("n{i:06}.md")), "x\n").unwrap();
+        }
+        fs::write(root.join("Hub 0.md"), "# Hub 0\n").unwrap();
+        reset_dir_page_seen();
+        let page = dir_page_rows(&root, "", 32).unwrap();
+        assert!(
+            dir_page_seen() <= DIR_PAGE_SCAN_CAP,
+            "scanned {} names of a flat folder",
+            dir_page_seen()
+        );
+        assert_eq!(page.iter().filter(|r| r.kind == "note").count(), 32);
+        assert!(
+            page.iter().any(|r| r.name == "Hub 0.md"),
+            "Hub 0 is on the page without reading every name"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stored_note_total_replaces_the_page_count() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-total-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("index.sqlite");
+        fs::write(&db, b"sqlite-stand-in").unwrap();
+        let db_path = db.to_string_lossy().to_string();
+        write_note_total_sidecar(&db_path, 500_000);
+        assert_eq!(read_note_total_sidecar(&db_path), Some(500_000));
+        let mut mount = ShellMount {
+            materialize: false,
+            pending: false,
+            notes: 12,
+            folders: 2,
+            rows: vec![ShellRow {
+                id: "hub".into(),
+                path: "00-Inbox/00/Hub 0.md".into(),
+                name: "Hub 0.md".into(),
+                kind: "note".into(),
+                parent_id: Some("inbox".into()),
+                mtime: 1,
+                child_notes: 0,
+            }],
+            root_ids: vec!["inbox".into()],
+            active_note_id: Some("hub".into()),
+            omitted_notes: 0,
+            loaded: Vec::new(),
+            db_path: db_path.clone(),
+            titles_live: true,
+        };
+        apply_note_total(&mut mount, read_note_total_sidecar(&db_path).unwrap());
+        assert_eq!(mount.notes, 500_000);
+        assert_eq!(mount.omitted_notes, 499_999);
         let _ = fs::remove_dir_all(&dir);
     }
 }
