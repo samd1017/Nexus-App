@@ -140,7 +140,7 @@ export function SettingsPanel() {
   // knows where they are after scrolling or leaving the tabs.
   useEffect(() => {
     if (!open) return;
-    const body = dialogRef.current?.querySelector<HTMLElement>(".settings-body");
+    const body = dialogRef.current?.querySelector<HTMLElement>("[data-settings-scroll]");
     if (!body) return;
     const pick = () => {
       const top = body.getBoundingClientRect().top;
@@ -446,7 +446,7 @@ export function SettingsPanel() {
           ))}
         </div>
 
-        <div className="settings-body min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+        <div className="settings-body min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4" data-settings-scroll>
           {/* Appearance */}
           <Section title="Appearance" sectionId="appearance">
             <p
