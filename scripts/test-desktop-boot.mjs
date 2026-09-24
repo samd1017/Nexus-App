@@ -1125,6 +1125,8 @@ assert.equal(settingsSrc.includes("totalNotes={noteCount}"), true);
 // The first-run probe has a string form that survives CDP without returnByValue.
 assert.equal(storeSrc.includes("probeFirstRunText: () => {"), true);
 assert.equal(storeSrc.includes("return JSON.stringify(soak?.probeFirstRun?.() ?? {});"), true);
+// The quick tour never sits on top of Settings or Trash.
+assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

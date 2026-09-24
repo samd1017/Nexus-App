@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Network, Search, Link2, X, Sparkles } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   isFirstRunCoachDone,
   markFirstRunCoachDone,
@@ -17,6 +18,8 @@ export function FirstRunCoach() {
   const mode = useVaultStore((s) => s.mode);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
   const commandOpen = useVaultStore((s) => s.commandOpen);
+  const deleteAsking = useVaultStore((s) => Boolean(s.pendingDelete));
+  const settingsOpen = usePrefsStore((s) => s.settingsOpen);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const setToast = useVaultStore((s) => s.setToast);
   const [visible, setVisible] = useState(false);
@@ -53,9 +56,9 @@ export function FirstRunCoach() {
     if (vaultEmpty && vaultId) setEmptyVaultId(vaultId);
   }, [vaultEmpty, vaultId]);
 
-  // Don't cover fullscreen graph or the command palette. An empty vault shows
+  // Don't cover fullscreen graph, search, Settings, or Trash. An empty vault shows
   // its own first step (Enter starts a note); the tour waits for a first note.
-  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen || vaultEmpty || emptyVaultId === vaultId) return null;
+  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen || settingsOpen || deleteAsking || vaultEmpty || emptyVaultId === vaultId) return null;
 
   const dismiss = () => {
     markFirstRunCoachDone();
