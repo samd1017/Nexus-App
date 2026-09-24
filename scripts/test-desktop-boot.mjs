@@ -30,6 +30,7 @@ const {
   vaultRootsMatch,
   savedPageBannerUp,
   rememberSavedPage,
+  readSavedPageCookie,
   takePrefetchedDesktopShell,
 } = await import("../src/lib/vault/desktop-boot.ts");
 
@@ -135,11 +136,50 @@ globalThis.localStorage = {
     return mem.has(key) ? mem.get(key) : null;
   },
 };
-rememberSavedPage("/vault", [{ name: "Hub 0.md" }, { name: "" }]);
+assert.equal(rememberSavedPage("/vault", [{ name: "Hub 0.md" }, { name: "" }]), true);
 const stored = readSavedPage(mem.get(DESKTOP_SAVED_PAGE_KEY));
 assert.deepEqual(stored, { root: "/vault", names: ["Hub 0.md"] });
-rememberSavedPage("", [{ name: "nope" }]);
+assert.equal(rememberSavedPage("", [{ name: "nope" }]), false);
 assert.deepEqual(readSavedPage(mem.get(DESKTOP_SAVED_PAGE_KEY)), stored);
+
+let cookieJar = "";
+globalThis.localStorage = {
+  setItem() {
+    throw new Error("storage denied");
+  },
+  getItem() {
+    return null;
+  },
+};
+globalThis.document = {
+  get cookie() {
+    return cookieJar;
+  },
+  set cookie(value) {
+    cookieJar = value;
+  },
+  getElementById() {
+    return { hidden: true, textContent: "" };
+  },
+};
+globalThis.window = { __NEXUS_BOOT__: {} };
+assert.equal(rememberSavedPage("/vault", [{ name: "Hub 0.md" }]), true);
+assert.equal(globalThis.window.__NEXUS_BOOT__.savedPageWrite, "ok");
+const fromCookie = readSavedPage(readSavedPageCookie(cookieJar));
+assert.deepEqual(fromCookie, { root: "/vault", names: ["Hub 0.md"] });
+globalThis.document = {
+  get cookie() {
+    return "";
+  },
+  set cookie(_value) {
+    throw new Error("cookie denied");
+  },
+  getElementById() {
+    return null;
+  },
+};
+assert.equal(rememberSavedPage("/vault", [{ name: "Hub 0.md" }]), false);
+assert.equal(globalThis.window.__NEXUS_BOOT__.savedPageWrite, "failed");
 
 const { readFileSync } = await import("node:fs");
 const html = readFileSync(new URL("../desktop/index.html", import.meta.url), "utf8");
@@ -154,6 +194,7 @@ assert.equal(pageJs.includes(SAVED_PAGE_READY_MESSAGE), true);
 assert.equal(pageJs.includes(DESKTOP_SAVED_PAGE_KEY), true);
 assert.equal(pageJs.includes("nexus-desktop-vault-root"), true);
 assert.equal(pageJs.includes('data-open-progress", "ready"'), true);
+assert.equal(pageJs.includes("document.cookie"), true);
 const bootFn = bootSrc.slice(bootSrc.indexOf("async function bootDesktop"));
 const yieldAt = bootFn.indexOf("await afterPaint()");
 const prefetchAt = bootFn.indexOf("await prefetchSavedPage()");

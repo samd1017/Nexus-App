@@ -18,13 +18,40 @@
         if (prefs && prefs.state && prefs.state.openLastVault === false) return;
       } catch (ignorePrefs) {}
     }
-    var raw = localStorage.getItem(PAGE_KEY);
-    if (!raw) return;
-    var page = JSON.parse(raw);
     var norm = function (value) {
       return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
     };
-    if (!page || !page.names || !page.names.length || norm(page.root) !== norm(root)) return;
+    var pageFrom = function (raw) {
+      if (!raw) return null;
+      try {
+        var page = JSON.parse(raw);
+        if (!page || !page.names || !page.names.length || norm(page.root) !== norm(root)) return null;
+        return page;
+      } catch (ignoreRaw) {
+        return null;
+      }
+    };
+    var raw = null;
+    try {
+      raw = localStorage.getItem(PAGE_KEY);
+    } catch (ignoreStore) {}
+    var page = pageFrom(raw);
+    if (!page) {
+      var parts = String(document.cookie || "").split(";");
+      var prefix = PAGE_KEY + "=";
+      var c;
+      for (c = 0; c < parts.length; c++) {
+        var bit = parts[c].replace(/^\s+/, "");
+        if (bit.indexOf(prefix) !== 0) continue;
+        try {
+          page = pageFrom(decodeURIComponent(bit.slice(prefix.length)));
+        } catch (ignoreCookie) {
+          page = null;
+        }
+        if (page) break;
+      }
+    }
+    if (!page) return;
     var host = document.getElementById("nexus-boot-banner");
     if (!host) return;
     var names = [];

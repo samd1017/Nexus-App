@@ -1051,7 +1051,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 		return { indexed: 0, errors: 0, skipped: true };
 	}
 	if (!canReadDiskSearchHeads()) {
-		if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+		if (!savedPageStatusHeld()) {
 			setOpenProgress({
 				phase: "ready",
 				scanned: 0,
@@ -1174,7 +1174,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
 					}
-					if (getOpenProgress().message === SAVED_PAGE_READY_MESSAGE) return;
+					if (savedPageStatusHeld()) return;
 					setOpenProgress({
 						phase: "indexing",
 						scanned: p.scanned,
@@ -1239,7 +1239,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 				};
 			}
 			if (
-				getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE &&
+				!savedPageStatusHeld() &&
 				(getSearchIndexState() === "ready-fts" || skipped >= (notes || noteCount))
 			) {
 				setOpenProgress({
@@ -1265,7 +1265,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 			if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
 				const message =
 					err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
-				if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+				if (!savedPageStatusHeld()) {
 					setOpenProgress({
 						phase: "error",
 						scanned: 0,
@@ -1280,7 +1280,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 					? `SQLite FTS fill failed: ${err.message}`
 					: "SQLite FTS fill failed";
 			console.error("[nexus] native FTS fill failed (no JS 100k fallback)", err);
-			if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+			if (!savedPageStatusHeld()) {
 				setOpenProgress({
 					phase: "error",
 					scanned: 0,
@@ -1291,7 +1291,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 			throw err instanceof Error ? err : new Error(message);
 		}
 	}
-	if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+	if (!savedPageStatusHeld()) {
 		setOpenProgress({
 			phase: "indexing",
 			scanned: 0,
@@ -1306,7 +1306,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 			isCancelled: () => gen !== vaultGen,
 			onProgress: (done, total) => {
 				if (gen !== vaultGen) return;
-				if (getOpenProgress().message === SAVED_PAGE_READY_MESSAGE) return;
+				if (savedPageStatusHeld()) return;
 				setOpenProgress({
 					phase: "indexing",
 					scanned: done,
@@ -1319,7 +1319,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 		if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
 			const message =
 				err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
-			if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+			if (!savedPageStatusHeld()) {
 				setOpenProgress({
 					phase: "error",
 					scanned: 0,
@@ -1341,7 +1341,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 	if (noteCount > 0 && result.indexed === 0 && result.errors > 0) {
 		const root = desktopRoot || st.vaultPath || "vault";
 		const message = desktopFsForbiddenMessage(root);
-		if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+		if (!savedPageStatusHeld()) {
 			setOpenProgress({
 				phase: "error",
 				scanned: 0,
@@ -1368,7 +1368,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 			searchReady: true,
 		};
 	}
-	if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+	if (!savedPageStatusHeld()) {
 		setOpenProgress({
 			phase: "ready",
 			scanned: noteCount,
@@ -1862,6 +1862,13 @@ function continueFilledIndexAfterReady(
 	})();
 }
 
+/** Early Ready is on screen, or the shell already announced that same page. */
+function savedPageStatusHeld(): boolean {
+	const message = getOpenProgress().message;
+	if (message === SAVED_PAGE_READY_MESSAGE) return true;
+	return savedPageBannerUp();
+}
+
 /** The saved page is the announcement. The index file opens afterward. */
 function announceFilledPageReady(shell: ShellMount, root: string): void {
 	diskSearchReady = true;
@@ -1878,7 +1885,11 @@ function announceFilledPageReady(shell: ShellMount, root: string): void {
 		(typeof localStorage !== "undefined"
 			? localStorage.getItem(DESKTOP_ROOT_STORAGE_KEY) || ""
 			: "");
-	if (pageRoot) rememberSavedPage(pageRoot, shell.rows);
+	if (pageRoot && !rememberSavedPage(pageRoot, shell.rows)) {
+		useVaultStore.setState({
+			toast: "This page is ready, but it could not be saved for the next open.",
+		});
+	}
 }
 
 /**

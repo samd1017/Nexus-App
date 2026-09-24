@@ -127,23 +127,77 @@ export function savedPageBannerUp(): boolean {
 }
 
 type PageStorage = {
+  getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 };
 
-/** Remember a titles-live page so the next window can draw it before any module. */
+type BootMark = { savedPageWrite?: "ok" | "failed" };
+
+function bootMark(): BootMark | null {
+  const win = (globalThis as { window?: { __NEXUS_BOOT__?: BootMark } }).window;
+  if (!win) return null;
+  return (win.__NEXUS_BOOT__ ??= {});
+}
+
+/** Cookie copy of the saved page. The parse-time script can read it with no module. */
+export function readSavedPageCookie(cookie: string | null | undefined): string | null {
+  if (!cookie) return null;
+  const prefix = `${DESKTOP_SAVED_PAGE_KEY}=`;
+  for (const part of cookie.split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed.startsWith(prefix)) continue;
+    try {
+      return decodeURIComponent(trimmed.slice(prefix.length));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function writeSavedPageCookie(payload: string): boolean {
+  const doc = (globalThis as { document?: { cookie?: string } }).document;
+  if (!doc) return false;
+  try {
+    const encoded = encodeURIComponent(payload);
+    doc.cookie = `${DESKTOP_SAVED_PAGE_KEY}=${encoded}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    return readSavedPageCookie(doc.cookie) === payload || (doc.cookie ?? "").includes(encoded);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remember a titles-live page so the next window can draw it before any module.
+ * Returns false when neither store kept the page — the next launch would wait
+ * on the shell. Callers surface that; this does not hide it.
+ */
 export function rememberSavedPage(
   root: string,
-  rows: Array<{ name?: unknown }> | null | undefined,
-): void {
+  rows: Array<{ name?: unknown; path?: unknown }> | null | undefined,
+): boolean {
   const record = savedPageRecord(root, rows);
-  if (!record) return;
+  const mark = (ok: boolean) => {
+    const boot = bootMark();
+    if (boot) boot.savedPageWrite = ok ? "ok" : "failed";
+    return ok;
+  };
+  if (!record) return mark(false);
+  const payload = JSON.stringify(record);
+  let ok = false;
   const storage = (globalThis as { localStorage?: PageStorage }).localStorage;
-  if (!storage) return;
-  try {
-    storage.setItem(DESKTOP_SAVED_PAGE_KEY, JSON.stringify(record));
-  } catch {
-    // Private mode or a full disk. The next launch waits for the shell.
+  if (storage) {
+    for (let attempt = 0; attempt < 2 && !ok; attempt += 1) {
+      try {
+        storage.setItem(DESKTOP_SAVED_PAGE_KEY, payload);
+        ok = storage.getItem(DESKTOP_SAVED_PAGE_KEY) === payload;
+      } catch {
+        ok = false;
+      }
+    }
   }
+  if (writeSavedPageCookie(payload)) ok = true;
+  return mark(ok);
 }
 
 /** A mount can be drawn before the index file opens. */
