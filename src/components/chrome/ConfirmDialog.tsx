@@ -230,7 +230,7 @@ export function ConfirmDialog({
         aria-labelledby="nexus-confirm-title"
         aria-describedby="nexus-confirm-message"
         className={cn(
-          "nexus-dialog-in nexus-dark-island w-full max-w-[380px] rounded-[var(--radius-xl)] border border-[var(--border)]",
+          "nexus-dialog-in nexus-dark-island w-full max-w-[440px] rounded-[var(--radius-xl)] border border-[var(--border)]",
           "bg-[var(--bg-elevated,#16161A)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.55)]",
         )}
         onMouseDown={(e) => e.stopPropagation()}
@@ -277,7 +277,7 @@ export function ConfirmDialog({
             type="button"
             data-confirm-cancel
             data-testid="confirm-cancel"
-            className="ghost-btn !h-10 min-w-[96px] px-4 text-[14px] font-semibold text-white"
+            className="ghost-btn !h-10 min-w-[96px] whitespace-nowrap px-4 text-[14px] font-semibold text-white"
             onClick={onCancel}
           >
             {cancelLabel}
@@ -287,7 +287,7 @@ export function ConfirmDialog({
             type="button"
             data-confirm-action
             className={cn(
-              "primary-btn !h-10 min-w-[96px] px-4 text-[14px] font-semibold",
+              "primary-btn !h-10 min-w-[96px] whitespace-nowrap px-4 text-[14px] font-semibold",
               danger &&
                 "!border-[rgba(255,69,58,0.45)] !bg-[rgba(255,69,58,0.9)] !text-white hover:!bg-[var(--danger)]",
             )}
