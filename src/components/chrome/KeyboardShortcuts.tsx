@@ -203,6 +203,21 @@ export function KeyboardShortcuts() {
           store.setToast("Focus mode off");
           return;
         }
+        // Home: a note returns to the list. Search and dialogs already closed above.
+        const target = e.target as HTMLElement | null;
+        if (!target || typeof target.closest !== "function") return;
+        if (target.closest("[data-file-tree]")) return;
+        if (document.querySelector("[role='dialog']")) return;
+        const inNote =
+          Boolean(target.closest("[data-testid='nexus-editor']")) ||
+          Boolean(target.closest(".ProseMirror")) ||
+          Boolean(target.closest(".note-title-input")) ||
+          target.isContentEditable === true;
+        if (!inNote) return;
+        const tree = document.querySelector<HTMLElement>("[data-file-tree]");
+        if (!tree) return;
+        e.preventDefault();
+        tree.focus({ preventScroll: true });
       }
 
       // Delete active note (not while typing)

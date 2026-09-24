@@ -68,6 +68,7 @@ export function AttachmentsRail() {
     return (
       <EmptyState
         icon={<Paperclip size={22} />}
+        status="attachments"
         title="No attachments yet"
         description="Paste or drop images and PDFs into a note. They land in assets/ and open here."
         compact

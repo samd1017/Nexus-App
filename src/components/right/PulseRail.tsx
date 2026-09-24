@@ -351,6 +351,7 @@ export function PulseRail() {
       ) ? (
         <EmptyState
           compact
+          status="pulse"
           icon={<Activity size={18} />}
           title={filter === "inbox" ? "Inbox clear" : "No matching activity"}
           description={
@@ -494,7 +495,11 @@ export function PulseRail() {
           Recently deleted
         </div>
         {trash.length === 0 ? (
-          <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
+          <p
+            role="status"
+            data-panel-empty="trash"
+            className="px-1 text-[12.5px] leading-snug text-[var(--text-secondary)]"
+          >
             Soft-deleted notes appear here for restore.
           </p>
         ) : (

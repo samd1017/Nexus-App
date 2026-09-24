@@ -1122,12 +1122,13 @@ export const FileTree = memo(function FileTree() {
       {flatRows.length === 0 ? (
         <EmptyState
           compact
+          status="vault"
           className={cn(
             "mx-2 my-4",
             treeHasFocus && "ring-2 ring-[rgba(0,200,255,0.85)]",
           )}
           title="Nothing in this vault yet"
-          description="Enter or New note. The name you type is the file."
+          description="Enter starts a note."
         >
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button

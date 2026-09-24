@@ -10,6 +10,8 @@ type Props = {
   compact?: boolean;
   /** Optional action slot (button, link) below description */
   children?: ReactNode;
+  /** When set, the card is announced as status (not a control). */
+  status?: string;
 };
 
 /** Shared empty placeholder for FileTree, Graph, right-panel sections. */
@@ -20,9 +22,12 @@ export function EmptyState({
   className,
   compact = false,
   children,
+  status,
 }: Props) {
   return (
     <div
+      role={status ? "status" : undefined}
+      data-panel-empty={status}
       className={cn(
         "rounded-[12px] border border-dashed border-[var(--border)] text-center",
         compact ? "px-3 py-6" : "px-4 py-8",

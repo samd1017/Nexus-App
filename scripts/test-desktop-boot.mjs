@@ -292,16 +292,53 @@ const settingsSrc = readFileSync(
 );
 assert.equal(settingsSrc.includes('initialFocus="cancel"'), true);
 assert.equal(settingsSrc.includes("data-settings-rebuild"), true);
+assert.equal(settingsSrc.includes('data-settings-lead="appearance"'), true);
+assert.equal(settingsSrc.includes('data-settings-lead="editor"'), true);
+assert.equal(settingsSrc.includes('data-settings-lead="graph"'), true);
+assert.equal(
+  settingsSrc.includes("This vault has no notes yet. Enter starts a note."),
+  true,
+);
 const treeSrc = readFileSync(
   new URL("../src/components/vault/FileTree.tsx", import.meta.url),
   "utf8",
 );
 assert.equal(treeSrc.includes("Enter starts a note."), true);
+assert.equal(treeSrc.includes('status="vault"'), true);
 const editorSrc = readFileSync(
   new URL("../src/components/editor/EditorPane.tsx", import.meta.url),
   "utf8",
 );
 assert.equal(editorSrc.includes("data-editor-empty"), true);
+assert.equal(editorSrc.includes("Enter starts a note."), true);
+assert.equal(editorSrc.includes("Click a note in the list to open it."), true);
+const panelSrc = readFileSync(
+  new URL("../src/components/right/RightPanel.tsx", import.meta.url),
+  "utf8",
+);
+for (const kind of ["note", "backlinks", "unlinked", "broken", "tags", "outline"]) {
+  assert.equal(panelSrc.includes(`kind="${kind}"`), true, kind);
+}
+assert.equal(
+  panelSrc.includes("Open a note. Enter starts a note in the list."),
+  true,
+);
+const keysSrc = readFileSync(
+  new URL("../src/components/chrome/KeyboardShortcuts.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(keysSrc.includes('"[data-file-tree]"'), true);
+assert.equal(keysSrc.includes('"[data-testid=\'nexus-editor\']"'), true);
+const confirmSrc = readFileSync(
+  new URL("../src/components/chrome/ConfirmDialog.tsx", import.meta.url),
+  "utf8",
+);
+const cancelAt = confirmSrc.indexOf("data-confirm-cancel");
+const actionAt = confirmSrc.indexOf("data-confirm-action");
+assert.ok(cancelAt > 0 && actionAt > cancelAt);
+const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+assert.equal(cssSrc.includes("outline: 2px solid #5ad8ff"), true);
+assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);
 assert.equal(shellSrc.includes("paintedFromPage"), true);
 assert.equal(shellSrc.includes("bg-black"), true);
 assert.equal(shellSrc.includes("text-[32px]"), true);

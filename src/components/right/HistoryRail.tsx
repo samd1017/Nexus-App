@@ -27,8 +27,9 @@ export function HistoryRail() {
     return (
       <EmptyState
         icon={<History size={22} />}
+        status="note"
         title="No note selected"
-        description="Open a note to see versions captured before each edit."
+        description="Open a note. Enter starts a note in the list."
         compact
       />
     );
@@ -38,6 +39,7 @@ export function HistoryRail() {
     return (
       <EmptyState
         icon={<History size={22} />}
+        status="history"
         title="No versions yet"
         description={`Edit ${noteTitle(note)} and Nexus keeps a snapshot of the previous text. Soft-deleted notes still restore from Pulse.`}
         compact

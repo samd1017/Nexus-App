@@ -252,7 +252,13 @@ export function SettingsPanel() {
         <div className="settings-body min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {/* Appearance */}
           <Section title="Appearance">
-            <Label>Accent color</Label>
+            <p
+              data-settings-lead="appearance"
+              className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
+            >
+              Color, theme, and density apply as soon as you pick them.
+            </p>
+            <Label className="mt-4">Accent color</Label>
             <div className="mt-2 flex flex-wrap gap-2">
               {(Object.keys(ACCENT_PRESETS) as Exclude<AccentPreset, "custom">[]).map(
                 (key) => {
@@ -375,7 +381,13 @@ export function SettingsPanel() {
 
           {/* Editor */}
           <Section title="Editor">
-            <Label>Default mode</Label>
+            <p
+              data-settings-lead="editor"
+              className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
+            >
+              How a note opens, and how large the type is while you write.
+            </p>
+            <Label className="mt-4">Default mode</Label>
             <Segmented
               className="mt-2"
               value={prefs.defaultEditorMode}
@@ -421,7 +433,13 @@ export function SettingsPanel() {
 
           {/* Graph */}
           <Section title="Graph">
-            <Label>Default view</Label>
+            <p
+              data-settings-lead="graph"
+              className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
+            >
+              Keep the graph in the side panel, or leave it hidden until you open it.
+            </p>
+            <Label className="mt-4">Default view</Label>
             <Segmented
               className="mt-2"
               value={prefs.defaultGraphView}
@@ -486,7 +504,9 @@ export function SettingsPanel() {
                         ? ". They stay in this browser until you open a folder."
                         : ". Note text loads when you open it."}
                   </>
-                ) : null}
+                ) : (
+                  <> This vault has no notes yet. Enter starts a note.</>
+                )}
               </p>
               <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} />
             </div>
@@ -735,7 +755,7 @@ export function SettingsPanel() {
                       <button
                         type="button"
                         className={cn(
-                          "rounded-md border px-2 py-0.5 font-mono text-[11px]",
+                          "rounded-md border px-2 py-0.5 font-mono text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5ad8ff]",
                           recordingHotkey === s.id
                             ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]"
                             : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-primary)]",

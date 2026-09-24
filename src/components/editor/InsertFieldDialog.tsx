@@ -46,6 +46,7 @@ export function InsertFieldDialog({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };

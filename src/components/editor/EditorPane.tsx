@@ -221,8 +221,8 @@ export function EditorPane({
         </h2>
         <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-[var(--text-secondary)]">
           {emptyVault
-            ? "Create your first note, open today's daily page, or search anytime."
-            : `Choose a file from the vault, search with ${formatShortcut("K")}, or create a note.`}
+            ? "Enter starts a note."
+            : "Click a note in the list to open it."}
         </p>
         <p className="mt-2 text-[12px] tracking-wide text-[var(--text-muted)]">
           {NEXUS_TAGLINE}

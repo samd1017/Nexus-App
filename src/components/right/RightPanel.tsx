@@ -30,7 +30,6 @@ const GraphView = lazy(async () => {
 import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { getBodyGen, isContentLoaded, subscribeBodyGen } from "@/lib/vault/content";
 import {
   getUnreadPulseCount,
@@ -39,6 +38,19 @@ import {
 } from "@/lib/vault/pulse";
 
 const DEFAULT_RIGHT_WIDTH = 340;
+const OPEN_NOTE_HINT = "Open a note. Enter starts a note in the list.";
+
+function PanelStatus({ kind, children }: { kind: string; children: string }) {
+  return (
+    <p
+      role="status"
+      data-panel-empty={kind}
+      className="px-1 text-[12.5px] leading-snug text-[var(--text-secondary)]"
+    >
+      {children}
+    </p>
+  );
+}
 /** Shell page reloads must not re-render the panel or the graph host. */
 const SHELL_PANEL_NODES: Record<string, import("@/lib/vault/types").VaultNode> = {};
 
@@ -398,18 +410,20 @@ export function RightPanel() {
           )}
         >
           {tab === "backlinks" ? (
+            !note || note.kind !== "note" ? (
+            <div className="p-3">
+              <PanelStatus kind="note">{OPEN_NOTE_HINT}</PanelStatus>
+            </div>
+            ) : (
             <div className="flex flex-col gap-5 p-3">
               <section>
                 <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                   Linked mentions
                 </div>
                 {groupedBacklinks.length === 0 ? (
-                  <EmptyState
-                    compact
-                    icon={<Link2 size={18} />}
-                    title="No backlinks yet"
-                    description="Other notes that [[mention this]] will appear here."
-                  />
+                  <PanelStatus kind="backlinks">
+                    No backlinks yet. Other notes that mention this one show up here.
+                  </PanelStatus>
                 ) : (
                   <ul className="flex flex-col gap-1">
                     {groupedBacklinks.map((b) => (
@@ -464,9 +478,9 @@ export function RightPanel() {
                   Unlinked mentions
                 </div>
                 {unlinkedMentions.length === 0 ? (
-                  <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
+                  <PanelStatus kind="unlinked">
                     No other notes say this title in plain text.
-                  </p>
+                  </PanelStatus>
                 ) : (
                   <ul className="flex flex-col gap-1">
                     {unlinkedMentions.map((u) => (
@@ -528,9 +542,9 @@ export function RightPanel() {
                   ) : null}
                 </div>
                 {brokenLinks.length === 0 ? (
-                  <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
-                    All [[wikilinks]] resolve.
-                  </p>
+                  <PanelStatus kind="broken">
+                    All wikilinks in this note resolve.
+                  </PanelStatus>
                 ) : (
                   <ul className="flex flex-col gap-1">
                     {brokenLinks.map((bl) => (
@@ -574,9 +588,9 @@ export function RightPanel() {
                     Loading note…
                   </p>
                 ) : tags.length === 0 ? (
-                  <p className="px-1 text-[11.5px] text-[var(--text-muted)]">
-                    No #tags in this note.
-                  </p>
+                  <PanelStatus kind="tags">
+                    No tags in this note.
+                  </PanelStatus>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
                     {tags.map((tag) => (
@@ -594,9 +608,15 @@ export function RightPanel() {
                 )}
               </section>
             </div>
+            )
           ) : null}
 
           {tab === "outline" ? (
+            !note || note.kind !== "note" ? (
+            <div className="p-3">
+              <PanelStatus kind="note">{OPEN_NOTE_HINT}</PanelStatus>
+            </div>
+            ) : (
             <div className="p-3">
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Outline
@@ -607,11 +627,9 @@ export function RightPanel() {
                   Loading note…
                 </p>
               ) : outline.length === 0 ? (
-                <EmptyState
-                  compact
-                  title="No headings"
-                  description="Use # headings to structure the note."
-                />
+                <PanelStatus kind="outline">
+                  No headings yet. A # heading in the note shows up here.
+                </PanelStatus>
               ) : (
                 <ul className="flex flex-col gap-0.5">
                   {outline.map((h, i) => (
@@ -630,6 +648,7 @@ export function RightPanel() {
                 </ul>
               )}
             </div>
+            )
           ) : null}
 
           {tab === "graph" ? (
