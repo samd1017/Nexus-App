@@ -859,9 +859,10 @@ function CommandPaletteOpen() {
       pendingFolderEnterRef.current = null;
       return;
     }
-    if (hits.length > 0) return;
     const folder = folderForEnter(folderHits, q);
     if (!folder) return;
+    // A note that matches the words still loses to a folder named exactly.
+    if (hits.length > 0 && !folder.exact) return;
     window.clearTimeout(pending.timer);
     pendingFolderEnterRef.current = null;
     revealFolderInList(folder.id);
@@ -1655,9 +1656,9 @@ function CommandPaletteOpen() {
                 return;
               }
               // The catalog has not answered yet. What is selected now is
-              // usually "Create note", which would make a note beside the
-              // folder instead of in it.
-              if (!folder && hits.length === 0 && catalogFolderPending) {
+              // "Create note" or a note that only shares the words; either
+              // would skip a folder with exactly this name.
+              if (!folder && !exactNote && catalogFolderPending) {
                 e.preventDefault();
                 e.stopPropagation();
                 pendingFolderEnterRef.current = { q, timer: window.setTimeout(runHeldEnter, 4000) };

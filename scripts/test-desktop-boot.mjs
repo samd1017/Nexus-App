@@ -1430,7 +1430,8 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(statBody.includes("joinRoot(root, rel)"), true);
   // While the catalog is still being asked, Enter waits instead of running the
   // selected "Create note" beside the folder. No folder: the selection runs.
-  assert.equal(paletteSrc.includes("if (!folder && hits.length === 0 && catalogFolderPending) {"), true);
+  assert.equal(paletteSrc.includes("if (!folder && !exactNote && catalogFolderPending) {"), true);
+  assert.equal(paletteSrc.includes("if (hits.length > 0 && !folder.exact) return;"), true);
   assert.equal(paletteSrc.includes("pendingFolderEnterRef.current = { q, timer: window.setTimeout(runHeldEnter, 4000) };"), true);
   assert.equal(paletteSrc.includes("if (pendingFolderEnterRef.current?.q === q) runHeldEnter();"), true);
   assert.equal(paletteSrc.includes("selected?.click();"), true);
