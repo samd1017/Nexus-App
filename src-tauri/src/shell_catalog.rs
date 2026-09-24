@@ -132,6 +132,10 @@ pub struct ShellMount {
     pub omitted_notes: i64,
     pub loaded: Vec<ShellLoaded>,
     pub db_path: String,
+    /// The open page is already in the search index. The next launch can
+    /// paint Ready from this page without opening the database file first.
+    #[serde(default)]
+    pub titles_live: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,7 +187,38 @@ fn pending_mount() -> ShellMount {
         omitted_notes: 0,
         loaded: Vec::new(),
         db_path: String::new(),
+        titles_live: false,
     }
+}
+
+fn page_snapshot_path(db_path: &str) -> PathBuf {
+    PathBuf::from(format!("{db_path}.page.json"))
+}
+
+/// The last Ready page, beside the index. Small enough to read without the
+/// database file.
+pub fn write_page_snapshot(db_path: &str, mount: &ShellMount) -> Result<(), String> {
+    if db_path.is_empty() || !mount.titles_live || mount.pending || mount.rows.is_empty() {
+        return Ok(());
+    }
+    let path = page_snapshot_path(db_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let body = serde_json::to_vec(mount).map_err(|e| e.to_string())?;
+    std::fs::write(path, body).map_err(|e| e.to_string())
+}
+
+pub fn read_page_snapshot(db_path: &str) -> Option<ShellMount> {
+    if db_path.is_empty() || !Path::new(db_path).is_file() {
+        return None;
+    }
+    let body = std::fs::read(page_snapshot_path(db_path)).ok()?;
+    let mount: ShellMount = serde_json::from_slice(&body).ok()?;
+    if !mount.titles_live || mount.pending || mount.rows.is_empty() {
+        return None;
+    }
+    Some(mount)
 }
 
 pub fn ensure_shell_indexes(conn: &Connection) -> Result<(), String> {
@@ -565,6 +600,7 @@ fn build_window(
         active_note_id: active,
         loaded,
         db_path: String::new(),
+        titles_live: false,
     })
 }
 
@@ -1107,6 +1143,7 @@ pub fn mount_catalog(
                 omitted_notes: 0,
                 loaded: Vec::new(),
                 db_path: String::new(),
+                titles_live: false,
             });
         }
     }
@@ -1469,6 +1506,58 @@ fn like_prefix(q: &str) -> String {
     s
 }
 
+fn note_fts_has_row(conn: &Connection) -> bool {
+    conn.query_row("SELECT 1 FROM note_fts LIMIT 1", [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0)
+        == 1
+}
+
+/// Prefix match on the search index. This does not scan `note_meta`.
+fn suggest_from_fts(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<ShellSuggestHit>, String> {
+    let token: String = query
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+        .take(64)
+        .collect();
+    if token.len() < 2 {
+        return Ok(Vec::new());
+    }
+    let match_q = format!("\"{token}\"*");
+    let mut stmt = conn
+        .prepare("SELECT note_id, path, title FROM note_fts WHERE note_fts MATCH ?1 LIMIT ?2")
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![match_q, limit], |r| {
+            let path: String = r.get(1)?;
+            let title: String = r.get(2)?;
+            let name = path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(path.as_str())
+                .to_string();
+            let shown = if title.trim().is_empty() {
+                name.clone()
+            } else {
+                title
+            };
+            Ok(ShellSuggestHit {
+                id: r.get(0)?,
+                path,
+                name,
+                kind: "note".into(),
+                title: shown,
+                parent_id: None,
+                mtime: 0,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(mapped.filter_map(|r| r.ok()).collect())
+}
+
 /// Title and path prefix. A leading-wildcard scan of every title is not a keystroke.
 pub fn query_suggest(conn: &Connection, query: &str, limit: i64) -> Result<Vec<ShellSuggestHit>, String> {
     let limit = limit.clamp(1, SHELL_SUGGEST_LIMIT);
@@ -1476,7 +1565,21 @@ pub fn query_suggest(conn: &Connection, query: &str, limit: i64) -> Result<Vec<S
     if q.is_empty() {
         return query_recent_hits(conn, limit);
     }
+    // A filled vault answers from FTS. Scanning every title holds the
+    // database and freezes a keystroke. The open page is already searchable
+    // in memory when this returns nothing.
+    if note_fts_has_row(conn) {
+        return suggest_from_fts(conn, &q, limit);
+    }
     let prefix = like_prefix(&q);
+    suggest_like_query(conn, &prefix, limit)
+}
+
+fn suggest_like_query(
+    conn: &Connection,
+    prefix: &str,
+    limit: i64,
+) -> Result<Vec<ShellSuggestHit>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime,
@@ -2361,6 +2464,49 @@ mod tests {
         assert_eq!(notes[0], "n000.md");
         assert_eq!(*notes.last().unwrap(), "n198.md");
         assert!(notes.iter().all(|name| *name != "n249.md"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_snapshot_roundtrips_without_the_database() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-snap-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("index.sqlite");
+        fs::write(&db, b"sqlite-stand-in").unwrap();
+        let db_path = db.to_string_lossy().to_string();
+        let mount = ShellMount {
+            materialize: false,
+            pending: false,
+            notes: 100_000,
+            folders: 7,
+            rows: vec![ShellRow {
+                id: "hub".into(),
+                path: "00-Inbox/00/Hub 0.md".into(),
+                name: "Hub 0.md".into(),
+                kind: "note".into(),
+                parent_id: Some("inbox".into()),
+                mtime: 1,
+                child_notes: 0,
+            }],
+            root_ids: vec!["inbox".into()],
+            active_note_id: Some("hub".into()),
+            omitted_notes: 99_999,
+            loaded: Vec::new(),
+            db_path: db_path.clone(),
+            titles_live: true,
+        };
+        write_page_snapshot(&db_path, &mount).unwrap();
+        let read = read_page_snapshot(&db_path).expect("snapshot");
+        assert!(read.titles_live);
+        assert_eq!(read.rows[0].path, "00-Inbox/00/Hub 0.md");
+        assert_eq!(read.notes, 100_000);
         let _ = fs::remove_dir_all(&dir);
     }
 }

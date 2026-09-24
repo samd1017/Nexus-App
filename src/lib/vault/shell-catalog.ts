@@ -6,7 +6,7 @@
  * (under the full-graph threshold) still materialize every note.
  */
 
-import type { VaultNode } from "./types";
+import { noteTitle, type VaultNode } from "./types";
 import { deskNodeId } from "./desk-node-id";
 
 /** Must match Rust `SHELL_FULL_MAX_NOTES`. */
@@ -70,6 +70,8 @@ export type ShellMount = {
   omittedNotes: number;
   loaded: ShellLoaded[];
   dbPath: string;
+  /** Saved page is already searchable. Ready does not wait on the index file. */
+  titlesLive?: boolean;
 };
 
 export type ShellPage = {
@@ -392,7 +394,38 @@ function normalizeMount(raw: Record<string, unknown>): ShellMount {
     omittedNotes: num(raw.omittedNotes ?? raw.omitted_notes),
     loaded,
     dbPath: String(raw.dbPath ?? raw.db_path ?? ""),
+    titlesLive: Boolean(raw.titlesLive ?? raw.titles_live),
   };
+}
+
+/** Titles on the open page. Does not touch the index, so a keystroke is not
+ * waiting on a large database. Farther titles arrive from search after. */
+export function searchOpenPageTitles(
+  nodes: Record<string, VaultNode>,
+  query: string,
+  limit: number,
+): { noteId: string; path: string; title: string; snippet: string; score: number; matchType: "title" }[] {
+  const q = query.trim().toLowerCase();
+  if (!q || limit <= 0) return [];
+  const out: { noteId: string; path: string; title: string; snippet: string; score: number; matchType: "title" }[] = [];
+  for (const id in nodes) {
+    const n = nodes[id];
+    if (!n || n.kind !== "note") continue;
+    const title = noteTitle(n);
+    const path = n.path || "";
+    if (!title.toLowerCase().includes(q) && !path.toLowerCase().includes(q)) continue;
+    out.push({
+      noteId: n.id,
+      path,
+      title: title || n.name,
+      snippet: path,
+      score: title.toLowerCase().startsWith(q) ? 2 : 1,
+      matchType: "title",
+    });
+    if (out.length >= limit) break;
+  }
+  out.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+  return out;
 }
 
 export type ShellMountOutcome =

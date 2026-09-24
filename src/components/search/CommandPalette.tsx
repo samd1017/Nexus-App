@@ -56,6 +56,7 @@ import {
   fetchShellSuggest,
   fetchShellTagNotes,
   fetchShellTags,
+  searchOpenPageTitles,
 } from "@/lib/vault/shell-catalog";
 import { presentLinkContext } from "@/lib/markdown/wikilinks";
 
@@ -372,7 +373,7 @@ function CommandPaletteOpen() {
         !isAskMode &&
         !hasPathFolderOp
       ) {
-        return [];
+        return searchOpenPageTitles(nodes, needle, PALETTE_RESULT_LIMIT);
       }
       if (wantsOrphans || wantsBroken || hasPathFolderOp) return [];
     }
@@ -556,6 +557,8 @@ function CommandPaletteOpen() {
         if (cancelled) return;
         if (!catalogReady && ftsHits.length === 0) return;
         const merged = mergeCatalogAndFtsHits(catalogHits, ftsHits, PALETTE_RESULT_LIMIT);
+        // An empty index reply must not hide titles already on the open page.
+        if (merged.length === 0) return;
         if (!titleLive || ftsHits.length === 0) {
           setAsyncHits(merged);
           return;

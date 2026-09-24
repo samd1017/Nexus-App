@@ -12,6 +12,7 @@ import { searchVault as fuseSearchVault } from "./fuse-search";
 import { indexedSearch } from "./indexed-search";
 import { getScaleFlags, type SearchBackendKind } from "@/lib/vault/scale-flags";
 import { getDurableIndex } from "@/lib/vault/durable-index";
+import { searchOpenPageTitles } from "@/lib/vault/shell-catalog";
 import {
   getSearchIndexState,
   sqliteEngineShortLabel,
@@ -72,15 +73,21 @@ class FtsSearchBackend implements SearchBackend {
     query: string,
     limit = 40,
   ): Promise<SearchHit[]> {
+    const page = searchOpenPageTitles(nodes, query, limit);
     const idx = getDurableIndex();
+    let rest: SearchHit[] = [];
     if (idx?.ready && idx.searchFtsAsync) {
       try {
-        return await idx.searchFtsAsync(query, limit);
+        rest = await idx.searchFtsAsync(query, limit);
       } catch {
-        return idx.searchFts(query, limit);
+        rest = idx.searchFts(query, limit);
       }
+    } else {
+      rest = this.search(nodes, query, limit);
     }
-    return this.search(nodes, query, limit);
+    if (page.length === 0) return rest;
+    const seen = new Set(page.map((hit) => hit.noteId));
+    return [...page, ...rest.filter((hit) => !seen.has(hit.noteId))].slice(0, limit);
   }
 }
 

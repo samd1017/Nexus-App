@@ -180,13 +180,35 @@ pub fn resolve_index_path(app_data: &Path, vault_root: &str) -> PathBuf {
 }
 
 fn open_conn(db_path: &str) -> Result<Connection, String> {
+    open_conn_with(db_path, false)
+}
+
+/// The shell open. A file that is already WAL skips `journal_mode`, which
+/// can checkpoint a large database, and keeps a small cache until the fill
+/// tunes the writer after Ready.
+fn open_shell_conn(db_path: &str) -> Result<Connection, String> {
+    open_conn_with(db_path, true)
+}
+
+fn open_conn_with(db_path: &str, shell: bool) -> Result<Connection, String> {
     if let Some(parent) = Path::new(db_path).parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir index: {e}"))?;
     }
+    if shell {
+        let _ = crate::index_fill::discard_oversized_journal(Path::new(db_path));
+    }
+    let already_wal = shell && crate::index_fill::sqlite_header_is_wal(Path::new(db_path));
     let conn = Connection::open(db_path).map_err(|e| format!("sqlite open: {e}"))?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;",
-    )
+    let pragmas = if shell {
+        if already_wal {
+            "PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+        } else {
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+        }
+    } else {
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+    };
+    conn.execute_batch(pragmas)
         .map_err(|e| format!("pragma: {e}"))?;
     // Readers (search / list_links) and the dedicated fill writer share the
     // file. Without a busy timeout the UI connection errors immediately and
@@ -601,25 +623,30 @@ pub fn vault_index_open(
             kind: "sqlite".into(),
         });
     }
-    let conn = open_conn(&db_path)?;
-    // Schema only (no vault_root write yet)
-    ensure_schema(&conn, &vault_id, None)?;
-
-    // Wipe if this DB was bound to a different vault root
-    if let Some(root) = vault_root.as_deref() {
-        let stored: Option<String> = conn
-            .query_row(
-                "SELECT value FROM meta_kv WHERE key = 'vault_root'",
-                [],
-                |r| r.get(0),
-            )
-            .ok();
-        if let Some(s) = stored {
-            if s != root {
-                wipe_tx(&conn)?;
-            }
+    let conn = open_shell_conn(&db_path)?;
+    let version: i32 = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let stored_root: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'vault_root'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    if version != SCHEMA_VERSION {
+        ensure_schema(&conn, &vault_id, vault_root.as_deref())?;
+    } else if let Some(root) = vault_root.as_deref() {
+        if stored_root.as_deref().is_some_and(|s| s != root) {
+            wipe_tx(&conn)?;
+            ensure_schema(&conn, &vault_id, Some(root))?;
         }
-        ensure_schema(&conn, &vault_id, Some(root))?;
     }
 
     conn.execute(
@@ -1111,11 +1138,7 @@ fn shell_busy_map(err: String) -> String {
     }
 }
 
-fn ensure_shell_conn(
-    app: &tauri::AppHandle,
-    state: &mut IndexState,
-    vault_root: &str,
-) -> Result<String, String> {
+fn shell_db_path(app: &tauri::AppHandle, vault_root: &str) -> Result<String, String> {
     crate::vault_scope::register_and_grant(app, vault_root)?;
     use tauri::Manager;
     let data = app
@@ -1126,27 +1149,44 @@ fn ensure_shell_conn(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let db_path = path.to_string_lossy().to_string();
-    if !state.conns.contains_key(&db_path) {
-        // A leftover vault-sized journal replays inside this open. The
-        // database file already has the last checkpoint; drop the tail.
-        let _ = crate::index_fill::discard_oversized_journal(Path::new(&db_path));
-        let conn = open_conn(&db_path)?;
-        let version: i32 = conn
-            .query_row(
-                "SELECT value FROM meta_kv WHERE key = 'schema_version'",
-                [],
-                |r| r.get::<_, String>(0),
-            )
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        if version != SCHEMA_VERSION {
-            ensure_schema(&conn, "shell", Some(vault_root))?;
-        }
-        state.conns.insert(db_path.clone(), conn);
-    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn ensure_shell_conn(
+    app: &tauri::AppHandle,
+    state: &mut IndexState,
+    vault_root: &str,
+) -> Result<String, String> {
+    let db_path = shell_db_path(app, vault_root)?;
+    attach_shell_db(state, &db_path, Some(vault_root))?;
     Ok(db_path)
+}
+
+fn schema_version_of(conn: &Connection) -> i32 {
+    conn.query_row(
+        "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(0)
+}
+
+fn attach_shell_db(
+    state: &mut IndexState,
+    db_path: &str,
+    vault_root: Option<&str>,
+) -> Result<(), String> {
+    if state.conns.contains_key(db_path) {
+        return Ok(());
+    }
+    let conn = open_shell_conn(db_path)?;
+    if schema_version_of(&conn) != SCHEMA_VERSION {
+        ensure_schema(&conn, "shell", vault_root)?;
+    }
+    state.conns.insert(db_path.to_string(), conn);
+    Ok(())
 }
 
 /// Short lock waits. The index mutex is dropped before the sleep, so one
@@ -1157,6 +1197,12 @@ fn with_shell_conn<T>(
     db_path: &str,
     mut f: impl FnMut(&mut Connection) -> Result<T, String>,
 ) -> Result<T, String> {
+    {
+        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        if !guard.conns.contains_key(db_path) && Path::new(db_path).is_file() {
+            attach_shell_db(&mut guard, db_path, None)?;
+        }
+    }
     let mut last = "shell_busy".to_string();
     for attempt in 0..crate::shell_catalog::SHELL_BUSY_TRIES {
         let outcome = {
@@ -1201,6 +1247,11 @@ pub fn vault_shell_mount(
     vault_root: String,
     prefer_path: Option<String>,
 ) -> Result<crate::shell_catalog::ShellMount, String> {
+    let db_path = shell_db_path(&app, &vault_root)?;
+    if let Some(mut snap) = crate::shell_catalog::read_page_snapshot(&db_path) {
+        snap.db_path = db_path;
+        return Ok(snap);
+    }
     let db_path = {
         let mut guard = state.lock().map_err(|e| e.to_string())?;
         ensure_shell_conn(&app, &mut guard, &vault_root)?
@@ -1282,7 +1333,20 @@ pub fn vault_shell_mount(
         }
     }
     let mut mounted = mounted.ok_or(last_busy)?;
-    mounted.db_path = db_path;
+    mounted.db_path = db_path.clone();
+    if !mounted.pending {
+        let live = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            guard
+                .conns
+                .get(&db_path)
+                .is_some_and(|conn| crate::index_fill::title_search_already_live(conn))
+        };
+        mounted.titles_live = live;
+        if live {
+            let _ = crate::shell_catalog::write_page_snapshot(&db_path, &mounted);
+        }
+    }
     Ok(mounted)
 }
 

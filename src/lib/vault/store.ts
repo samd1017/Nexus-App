@@ -155,6 +155,7 @@ import {
   sqliteFillReadyMessage,
   sqliteFillSettledMessage,
   isInFlightFillError,
+  isTitleSearchLive,
   FILL_IN_PROGRESS_TOAST,
   shouldBlockDesktopOpen,
   shouldJoinDesktopFill,
@@ -1061,18 +1062,21 @@ async function runCompleteDiskSearchIndex(opts?: {
 		sqlite?.kind === "sqlite" &&
 		typeof sqlite.fillFromDisk === "function"
 	) {
-		setSearchIndexState("idle");
-		setOpenProgress({
-			phase: "indexing",
-			scanned: 0,
-			totalHint: noteCount,
-			message: "Workspace ready — title search first, then note heads…",
-		});
+		const pageAlreadyReady = isTitleSearchLive(getSearchIndexState());
+		if (!pageAlreadyReady) {
+			setSearchIndexState("idle");
+			setOpenProgress({
+				phase: "indexing",
+				scanned: 0,
+				totalHint: noteCount,
+				message: "Workspace ready — title search first, then note heads…",
+			});
+		}
 		await yieldToUi(true);
 		try {
 			const seededBefore = await seedLinkIndexFromDurable(sqlite);
 			if (!seededBefore) vaultLinkIndex.markPending();
-			let interactiveFillSettled = false;
+			let interactiveFillSettled = pageAlreadyReady;
 			const native = await sqlite.fillFromDisk(8000, {
 				forceRebuild: opts?.forceRebuild === true,
 				settleAtPhase: opts?.waitFor === "done" ? "done" : "meta",
@@ -1898,23 +1902,45 @@ async function mountDesktopVaultAt(
 	{
 		const st = useVaultStore.getState();
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-		await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
-		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-		try {
-			await completeDiskSearchIndex({ forceRebuild: opts?.forceRebuild === true });
-		} catch (e) {
-			const message =
-				e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
-			set({ toast: message });
-			if (getOpenProgress().phase !== "error") {
-				setOpenProgress({
-					phase: "error",
-					scanned: 0,
-					totalHint: null,
-					message,
-				});
+		const titlesLive = shellMount?.titlesLive === true && opts?.forceRebuild !== true;
+		if (titlesLive) {
+			diskSearchReady = true;
+			setSearchIndexState("ready-meta");
+			const pageNotes = (shellMount?.rows ?? []).filter((r) => r.kind === "note").length;
+			setOpenProgress({
+				phase: "ready",
+				scanned: Math.max(1, Math.min(32, pageNotes || 1)),
+				totalHint: null,
+				message: "Ready · titles and open notes",
+			});
+			void (async () => {
+				await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
+				maybeSyncDurableIndex(st.vaultId, st.mode, useVaultStore.getState().nodes);
+				await completeDiskSearchIndex({ forceRebuild: false });
+			})().catch((e) => {
+				const message =
+					e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
+				set({ toast: message });
+			});
+		} else {
+			await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
+			maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+			try {
+				await completeDiskSearchIndex({ forceRebuild: opts?.forceRebuild === true });
+			} catch (e) {
+				const message =
+					e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
+				set({ toast: message });
+				if (getOpenProgress().phase !== "error") {
+					setOpenProgress({
+						phase: "error",
+						scanned: 0,
+						totalHint: null,
+						message,
+					});
+				}
+				throw e;
 			}
-			throw e;
 		}
 	}
 	applyLaunchNotePreference();

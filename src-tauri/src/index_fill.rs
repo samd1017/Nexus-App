@@ -72,7 +72,7 @@ pub const TITLE_READY_FLUSH: usize = 32;
 pub const DISCOVER_TAIL_YIELD_MS: u64 = 32;
 /// Names read from one directory after Ready, before the fill yields.
 /// The rest of a fat folder is not scanned in that same pass.
-const POST_READY_DIR_BATCH: usize = 64;
+const POST_READY_DIR_BATCH: usize = 16;
 /// Passive checkpoint during the title tail. The journal must not grow with
 /// the vault, or search and the tree slow down the longer the listing runs.
 pub const TAIL_CHECKPOINT_EVERY: i64 = 2048;
@@ -1451,6 +1451,21 @@ const JOURNAL_DB_MIN: u64 = 1024 * 1024;
 /// The index is a cache. Replaying a vault-sized journal blocks the first page.
 /// When the database file already has a checkpoint, drop that tail. Returns
 /// true when the journal files were removed.
+/// Byte 18 of a SQLite header is 2 when the file is already in WAL mode.
+/// Setting `journal_mode=WAL` again can checkpoint a large file.
+pub fn sqlite_header_is_wal(path: &Path) -> bool {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut buf = [0u8; 20];
+    if file.read(&mut buf).unwrap_or(0) < 20 {
+        return false;
+    }
+    buf.starts_with(b"SQLite format 3\0") && buf[18] == 2
+}
+
 pub fn discard_oversized_journal(db_path: &Path) -> bool {
     discard_oversized_journal_with(db_path, JOURNAL_REPLAY_CAP, JOURNAL_DB_MIN)
 }
@@ -2376,9 +2391,6 @@ pub fn fill_from_disk_with_opts<'a>(
         // Paint Ready before the cache grows and the folder is read again.
         std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
         tune_fill_connection(conn);
-        if !crate::shell_catalog::shell_search_indexes_ready(conn) {
-            let _ = crate::shell_catalog::ensure_shell_indexes(conn);
-        }
     }
     on_progress(&progress);
     // Heads for notes already on the open page (mount seeded them) before
@@ -2512,9 +2524,6 @@ pub fn fill_from_disk_with_opts<'a>(
             sink.tail_yield = true;
             std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
             tune_fill_connection(sink.conn);
-            if !crate::shell_catalog::shell_search_indexes_ready(sink.conn) {
-                let _ = crate::shell_catalog::ensure_shell_indexes(sink.conn);
-            }
         },
         &mut |sink, prefix| {
             let scanned = prefix.len() as i64;
@@ -3859,6 +3868,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert!(
             flagged < 500 && legacy < 500,
             "warm Ready took {flagged}ms flagged / {legacy}ms legacy"
+        );
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn wal_header_is_recognized_without_opening() {
+        let (vault, db) = temp_pair("wal-header");
+        {
+            let _conn = open_test_conn(&db);
+        }
+        assert!(
+            sqlite_header_is_wal(&db),
+            "a closed WAL database should be recognizable from its header"
         );
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
