@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
-import { holdOpenFocus } from "@/lib/chrome/focus-ring";
+import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { revealFolderInList } from "@/lib/chrome/reveal-list";
 import {
   FileText,
@@ -286,10 +286,16 @@ function CommandPaletteOpen() {
       } else {
         setQuery("");
       }
+      const prev = document.activeElement as HTMLElement | null;
       // Keystrokes land in the field even if the note takes the cursor after paint.
       const root = inputRef.current?.closest("[role='dialog']") as HTMLElement | null;
       if (!root) return;
-      return holdOpenFocus(root, () => inputRef.current, () => false, true);
+      const release = holdOpenFocus(root, () => inputRef.current, () => false, true);
+      return () => {
+        release();
+        // Closing search goes back where you were, or to the list.
+        requestAnimationFrame(() => restoreFocusOrList(prev));
+      };
     } else {
       setQuery("");
       setDebouncedSearch("");
@@ -1807,8 +1813,15 @@ function CommandPaletteOpen() {
                 type="button"
                 onClick={() => {
                   const title = (searchText || q).trim() || "Untitled";
-                  createNote(null, title);
+                  const id = createNote(null, title);
                   setCommandOpen(false);
+                  // The query already named it. Start writing.
+                  if (id) {
+                    const write = () =>
+                      window.dispatchEvent(new CustomEvent("nexus-write-note", { detail: id }));
+                    requestAnimationFrame(write);
+                    window.setTimeout(write, 120);
+                  }
                 }}
               >
                 Create “{(searchText || q).trim().slice(0, 48)}”

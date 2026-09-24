@@ -9,6 +9,38 @@ export function reclaimAfterFocus(run: () => void): void {
 }
 
 /**
+ * After a dialog, menu, or search closes, the cursor goes back where it was.
+ * If that control is gone (a context menu item, a removed row), the list is home.
+ * Returns true when something took focus.
+ */
+export function restoreFocusOrList(prev: HTMLElement | null): boolean {
+  if (typeof document === "undefined") return false;
+  const active = document.activeElement as HTMLElement | null;
+  if (active && active !== document.body && active !== document.documentElement) {
+    return true;
+  }
+  if (
+    prev &&
+    prev.isConnected &&
+    prev !== document.body &&
+    typeof prev.focus === "function"
+  ) {
+    try {
+      prev.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+    if (document.activeElement === prev) return true;
+  }
+  const tree = document.querySelector<HTMLElement>("[data-file-tree]");
+  if (tree) {
+    tree.focus({ preventScroll: true });
+    return document.activeElement === tree;
+  }
+  return false;
+}
+
+/**
  * Keep a dialog's landing control focused while it is open.
  * A busy vault can move the cursor to the note after paint; that loses.
  * Returns a cleanup. `pause` skips the hold (a confirm owns the cursor).

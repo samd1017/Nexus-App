@@ -158,7 +158,7 @@ const TreeRow = memo(function TreeRow({
   isFocused?: boolean;
   onFocusRow?: (id: string) => void;
   onToggleFolder: (id: string) => void;
-  onRenameFinished?: () => void;
+  onRenameFinished?: (id: string, committed: boolean) => void;
   folderEmpty?: boolean;
   onEmptyEnter?: (folderId: string) => void;
 }) {
@@ -227,14 +227,14 @@ const TreeRow = memo(function TreeRow({
       renameNode(node.id, next);
     }
     skipBlur.current = true;
-    onRenameFinished?.();
+    onRenameFinished?.(node.id, true);
   };
 
   const cancelRename = () => {
     skipBlur.current = true;
     setRenamingId(null);
     setNameDraft(displayName(node));
-    onRenameFinished?.();
+    onRenameFinished?.(node.id, false);
   };
 
   const openNote = (e?: React.MouseEvent) => {
@@ -661,6 +661,8 @@ export const FileTree = memo(function FileTree() {
     });
   }, [flatRows, virtualizer]);
 
+  const justCreatedRef = useRef<string | null>(null);
+
   useEffect(() => {
     const onRename = (e: Event) => {
       const id = (e as CustomEvent<string>).detail;
@@ -672,8 +674,16 @@ export const FileTree = memo(function FileTree() {
         virtualizer.scrollToIndex(idx, { align: "center" });
       }
     };
+    const onCreated = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) justCreatedRef.current = id;
+    };
     window.addEventListener("nexus-rename-node", onRename);
-    return () => window.removeEventListener("nexus-rename-node", onRename);
+    window.addEventListener("nexus-created-note", onCreated);
+    return () => {
+      window.removeEventListener("nexus-rename-node", onRename);
+      window.removeEventListener("nexus-created-note", onCreated);
+    };
   }, [virtualizer]);
 
   const focusedId = flatRows[focusedIndex]?.id ?? null;
@@ -705,8 +715,35 @@ export const FileTree = memo(function FileTree() {
     parentRef.current?.focus({ preventScroll: true });
   }, [armEmptyFolder]);
 
-  const returnTreeFocus = useCallback(() => {
-    parentRef.current?.focus({ preventScroll: true });
+  // Rename always ends somewhere obvious. A note that was just created and
+  // named goes straight to writing; anything else returns to the list. A click
+  // that already moved the cursor elsewhere wins.
+  const returnTreeFocus = useCallback((id?: string, committed?: boolean) => {
+    const fresh = Boolean(id && justCreatedRef.current === id);
+    if (fresh) justCreatedRef.current = null;
+    const land = () => {
+      const active = document.activeElement as HTMLElement | null;
+      const idle =
+        !active ||
+        active === document.body ||
+        active === document.documentElement ||
+        Boolean(active.closest?.("[data-file-tree]"));
+      if (!idle) return;
+      if (fresh && committed) {
+        window.dispatchEvent(
+          new CustomEvent("nexus-write-note", {
+            detail: useVaultStore.getState().activeNoteId ?? undefined,
+          }),
+        );
+        return;
+      }
+      parentRef.current?.focus({ preventScroll: true });
+    };
+    land();
+    if (fresh && committed) {
+      requestAnimationFrame(land);
+      window.setTimeout(land, 80);
+    }
   }, []);
 
   const pendingFolderFocusRef = useRef<string | null>(null);
@@ -775,6 +812,7 @@ export const FileTree = memo(function FileTree() {
   }, [flatRows, folderFocusTick, virtualizer, onFocusRow]);
 
   const openCreatedRename = useCallback((noteId: string) => {
+    justCreatedRef.current = noteId;
     const safe =
       typeof CSS !== "undefined" && typeof CSS.escape === "function"
         ? CSS.escape(noteId)

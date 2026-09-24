@@ -217,6 +217,7 @@ export function EditorPane({
   const startFirstNote = useCallback(() => {
     const id = useVaultStore.getState().createNote(null, "Untitled");
     if (!id) return;
+    window.dispatchEvent(new CustomEvent("nexus-created-note", { detail: id }));
     const safe =
       typeof CSS !== "undefined" && typeof CSS.escape === "function"
         ? CSS.escape(id)
@@ -320,7 +321,14 @@ export function EditorPane({
             ? "Enter starts a note."
             : "Click a note in the list to open it."}
         </p>
-        {emptyVault ? null : (
+        {emptyVault ? (
+          <p
+            className="mt-2 max-w-sm text-[14px] font-medium leading-relaxed text-white/85"
+            data-testid="vault-first-run-invite"
+          >
+            Give it a name, press Enter, and you are writing.
+          </p>
+        ) : (
           <p
             className="nexus-keys-hint mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[12.5px] font-medium text-white"
             data-testid="note-keys-hint"

@@ -29,7 +29,7 @@ import {
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { ConfirmDialog } from "@/components/chrome/ConfirmDialog";
-import { holdOpenFocus } from "@/lib/chrome/focus-ring";
+import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { useVaultStore } from "@/lib/vault/store";
 import { rebuildDurableIndexFromNodes } from "@/lib/vault/durable-index";
 import {
@@ -246,6 +246,7 @@ export function SettingsPanel() {
       releaseFocus();
       window.removeEventListener("keydown", onKey);
       prev?.focus?.({ preventScroll: true });
+      requestAnimationFrame(() => restoreFocusOrList(prev));
     };
   }, [open, setOpen]);
 

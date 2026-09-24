@@ -63,6 +63,7 @@ import {
   readDesktopNote,
   listDesktopTrash,
   deskNodeId,
+  assertDesktopRootReadable,
 } from "./tauri-adapter";
 import {
   DesktopFsForbiddenError,
@@ -1234,7 +1235,17 @@ async function runCompleteDiskSearchIndex(opts?: {
 				})
 			) {
 				const root = desktopRoot || st.vaultPath || "vault";
-				throw new DesktopFsForbiddenError(root);
+				// An empty index is only a scope failure if the folder cannot be
+				// read. A brand-new vault whose first note was made after the walk
+				// also reports nothing, and that is not an error.
+				let readable = false;
+				try {
+					await assertDesktopRootReadable(root);
+					readable = true;
+				} catch {
+					readable = false;
+				}
+				if (!readable) throw new DesktopFsForbiddenError(root);
 			}
 			diskSearchReady = true;
 			if (getSearchIndexState() === "idle") {
@@ -1366,7 +1377,16 @@ async function runCompleteDiskSearchIndex(opts?: {
 	for (const n of Object.values(useVaultStore.getState().nodes)) {
 		if (n.kind === "note" && n.content !== undefined) upsertDurableNoteFromNode(n);
 	}
-	if (noteCount > 0 && result.indexed === 0 && result.errors > 0) {
+	let rootReadable = false;
+	if (noteCount > 0 && result.indexed === 0 && result.errors > 0 && desktopRoot) {
+		try {
+			await assertDesktopRootReadable(desktopRoot);
+			rootReadable = true;
+		} catch {
+			rootReadable = false;
+		}
+	}
+	if (noteCount > 0 && result.indexed === 0 && result.errors > 0 && !rootReadable) {
 		const root = desktopRoot || st.vaultPath || "vault";
 		const message = desktopFsForbiddenMessage(root);
 		if (!savedPageStatusHeld()) {

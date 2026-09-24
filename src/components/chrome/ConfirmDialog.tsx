@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { markControlFocus, reclaimAfterFocus } from "@/lib/chrome/focus-ring";
+import { markControlFocus, reclaimAfterFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { confirmEnterAction } from "@/lib/chrome/rebuild-confirm";
 
 type Props = {
@@ -183,7 +183,10 @@ export function ConfirmDialog({
       };
       restore();
       reclaimAfterFocus(restore);
-      window.setTimeout(restore, 48);
+      window.setTimeout(() => {
+        restore();
+        if (!document.querySelector("[data-nexus-confirm]")) restoreFocusOrList(null);
+      }, 48);
     };
   }, [open, danger, initialFocus]);
 

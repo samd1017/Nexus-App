@@ -132,8 +132,10 @@ export function openProgressTail(
   totalHint: number | null | undefined,
 ): string {
   if (!(scanned > 0)) return "";
+  // Ready counts notes in the vault. While listing, the count is files seen.
+  if (phase === "ready") return ` · ${scanned.toLocaleString()} notes`;
   const count = ` · ${scanned.toLocaleString()} items`;
-  if (phase === "ready" || phase === "error") return count;
+  if (phase === "error") return count;
   const ratio = fillProgressRatio(scanned, totalHint);
   if (ratio == null) return count;
   return `${count} · ${Math.round(ratio * 100)}%`;

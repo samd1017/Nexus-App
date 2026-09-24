@@ -136,7 +136,10 @@ function OpenProgressBanner() {
           {progress.message ||
             (isError ? "Open failed" : isReady ? "Ready" : "Opening vault…")}
         </span>
-        {progress.scanned > 0 ? (
+        {progress.scanned > 0 &&
+        // The saved-page Ready is a window of the vault; its row count is not
+        // the vault size, so it shows no number beside it.
+        !(isReady && progress.message.includes("titles and open notes")) ? (
           <span className={isReady ? "text-[var(--success)]/80" : "text-[var(--text-muted)]"}>
             {openProgressTail(progress.phase, progress.scanned, progress.totalHint)}
           </span>

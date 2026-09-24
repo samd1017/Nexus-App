@@ -917,6 +917,23 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     return () => window.clearTimeout(t);
   }, [editor, noteId, content]);
 
+  // A note that was just named in the list hands the cursor to its body.
+  useEffect(() => {
+    if (!editor) return;
+    const onWrite = (e: Event) => {
+      const target = (e as CustomEvent<string | undefined>).detail;
+      if (target && target !== noteId) return;
+      if (editor.isDestroyed) return;
+      try {
+        editor.commands.focus("end");
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("nexus-write-note", onWrite);
+    return () => window.removeEventListener("nexus-write-note", onWrite);
+  }, [editor, noteId]);
+
   useEffect(() => {
     if (!editor) return;
     const flushNow = () => {
