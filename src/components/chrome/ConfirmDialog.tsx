@@ -10,6 +10,8 @@ type Props = {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** Where focus lands when the dialog opens. Danger defaults to Cancel. */
+  initialFocus?: "cancel" | "confirm";
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -22,6 +24,7 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   danger = false,
+  initialFocus,
   onConfirm,
   onCancel,
 }: Props) {
@@ -42,11 +45,14 @@ export function ConfirmDialog({
         ? (document.activeElement as HTMLElement | null)
         : null;
     prevFocusRef.current = prev;
-    // Danger starts on Cancel so Enter does not delete. Other asks start
-    // on the action. Callbacks stay in refs so a parent re-render cannot
-    // pull focus back out of the dialog.
+    // Cancel is the safe landing: danger, and any ask that says so.
+    // Other asks start on the action. Callbacks stay in refs so a parent
+    // re-render cannot pull focus back out of the dialog.
     const t = window.setTimeout(() => {
-      const target = danger ? cancelRef.current : confirmRef.current;
+      const preferCancel = initialFocus
+        ? initialFocus === "cancel"
+        : danger;
+      const target = preferCancel ? cancelRef.current : confirmRef.current;
       (target ?? cancelRef.current)?.focus({ preventScroll: true });
     }, 0);
 
@@ -116,7 +122,7 @@ export function ConfirmDialog({
         }
       }
     };
-  }, [open, danger]);
+  }, [open, danger, initialFocus]);
 
   if (!open || typeof document === "undefined") return null;
 

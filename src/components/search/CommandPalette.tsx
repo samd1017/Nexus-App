@@ -1465,7 +1465,7 @@ function CommandPaletteOpen() {
             ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="Search, path: folder:, or ask: what links Hermes…"
+            placeholder="Search notes"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
             onKeyDownCapture={(e) => {
@@ -1819,13 +1819,13 @@ function CommandPaletteOpen() {
               className={cn(GROUP_HEADING, "mt-1")}
             >
               {trashItems.length === 0 ? (
-                <Command.Item
-                  value="no-trash"
-                  className={ITEM_CLASS}
-                  onSelect={() => {}}
+                <div
+                  role="status"
+                  data-search-empty="trash"
+                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
                 >
-                  <span className="text-[var(--text-muted)]">Trash is empty</span>
-                </Command.Item>
+                  Trash is empty
+                </div>
               ) : null}
               {trashItems.map((t) => (
                 <Command.Item
@@ -1857,13 +1857,13 @@ function CommandPaletteOpen() {
               className={cn(GROUP_HEADING, "mt-1")}
             >
               {orphans.length === 0 ? (
-                <Command.Item
-                  value="no-orphans"
-                  className={ITEM_CLASS}
-                  onSelect={() => {}}
+                <div
+                  role="status"
+                  data-search-empty="orphans"
+                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
                 >
-                  <span className="text-[var(--text-muted)]">No orphan notes</span>
-                </Command.Item>
+                  No orphan notes
+                </div>
               ) : null}
               {orphans.map((o) => (
                 <Command.Item
@@ -1898,15 +1898,13 @@ function CommandPaletteOpen() {
               className={cn(GROUP_HEADING, "mt-1")}
             >
               {brokenLinks.length === 0 ? (
-                <Command.Item
-                  value="no-broken"
-                  className={ITEM_CLASS}
-                  onSelect={() => {}}
+                <div
+                  role="status"
+                  data-search-empty="broken"
+                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
                 >
-                  <span className="text-[var(--text-muted)]">
-                    No broken links in this vault
-                  </span>
-                </Command.Item>
+                  No broken links in this vault
+                </div>
               ) : (
                 brokenLinks.map((bl, i) => (
                   <Command.Item

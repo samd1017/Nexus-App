@@ -146,8 +146,9 @@ export function EditorStatusBar({ noteId }: { noteId: string }) {
       <span className="ml-auto flex items-center gap-2">
         <button
           type="button"
-          className="rounded px-1 py-0.5 hover:bg-white/[0.06] hover:text-[var(--text-primary)]"
+          className="rounded px-1.5 py-0.5 hover:bg-white/[0.06] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
           title="Outgoing links — open the graph"
+          aria-label={`${links.out} outgoing links`}
           onClick={() => openLinks("graph")}
         >
           {links.out} out
@@ -157,8 +158,9 @@ export function EditorStatusBar({ noteId }: { noteId: string }) {
         </span>
         <button
           type="button"
-          className="rounded px-1 py-0.5 hover:bg-white/[0.06] hover:text-[var(--text-primary)]"
+          className="rounded px-1.5 py-0.5 hover:bg-white/[0.06] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
           title="Incoming links — open backlinks"
+          aria-label={`${links.inn} incoming links`}
           onClick={() => openLinks("backlinks")}
         >
           {links.inn} in

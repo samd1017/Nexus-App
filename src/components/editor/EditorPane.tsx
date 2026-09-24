@@ -209,7 +209,10 @@ export function EditorPane({
     }
     const emptyVault = noteCount === 0;
     return (
-      <div className="fade-in flex h-full flex-col items-center justify-center px-8 text-center">
+      <div
+        className="fade-in flex h-full flex-col items-center justify-center px-8 text-center"
+        data-editor-empty={emptyVault ? "vault" : "note"}
+      >
         <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] text-[var(--accent)] shadow-[0_0_40px_rgba(0,200,255,0.12)]">
           <NexusMark size={36} className="text-[var(--text-primary)]" />
         </div>

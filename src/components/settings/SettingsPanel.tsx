@@ -524,6 +524,7 @@ export function SettingsPanel() {
                 <button
                   type="button"
                   className="ghost-btn !h-9 shrink-0 px-3 text-[13px]"
+                  data-settings-rebuild
                   onClick={() => setConfirmKind("rebuild")}
                 >
                   Rebuild
@@ -853,6 +854,7 @@ export function SettingsPanel() {
             <button
               type="button"
               className="ghost-btn !h-9 shrink-0 px-3 text-[13px] !text-[var(--danger)]"
+              data-settings-reset
               onClick={() => setConfirmKind("reset")}
             >
               Reset
@@ -863,6 +865,7 @@ export function SettingsPanel() {
       <ConfirmDialog
         open={confirmKind !== null}
         danger={confirmKind === "reset"}
+        initialFocus="cancel"
         title={confirmKind === "rebuild" ? "Rebuild search?" : "Reset settings?"}
         message={
           confirmKind === "rebuild"

@@ -276,6 +276,33 @@ const shellSrc = readFileSync(new URL("../src/components/layout/AppShell.tsx", i
 const earlyHold = shellSrc.indexOf("data-early-ready");
 const startingAt = shellSrc.indexOf("Starting");
 assert.ok(earlyHold > 0 && startingAt > earlyHold);
+const paletteSrc = readFileSync(
+  new URL("../src/components/search/CommandPalette.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(paletteSrc.includes('placeholder="Search notes"'), true);
+assert.equal(paletteSrc.includes("what links Hermes"), false);
+assert.equal(paletteSrc.includes('data-search-empty="trash"'), true);
+assert.equal(paletteSrc.includes('data-search-empty="orphans"'), true);
+assert.equal(paletteSrc.includes('data-search-empty="broken"'), true);
+assert.equal(paletteSrc.includes("onSelect={() => {}}"), false);
+const settingsSrc = readFileSync(
+  new URL("../src/components/settings/SettingsPanel.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(settingsSrc.includes('initialFocus="cancel"'), true);
+assert.equal(settingsSrc.includes("data-settings-rebuild"), true);
+const treeSrc = readFileSync(
+  new URL("../src/components/vault/FileTree.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(treeSrc.includes("Enter starts a note."), true);
+const editorSrc = readFileSync(
+  new URL("../src/components/editor/EditorPane.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(editorSrc.includes("data-editor-empty"), true);
+assert.equal(shellSrc.includes("paintedFromPage"), true);
 assert.equal(shellSrc.includes("bg-black"), true);
 assert.equal(shellSrc.includes("text-[32px]"), true);
 assert.equal(shellSrc.includes("text-white"), true);

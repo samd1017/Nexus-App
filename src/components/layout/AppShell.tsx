@@ -439,7 +439,11 @@ export function AppShell() {
   if (!ready) {
     const earlyHost =
       typeof document === "undefined" ? null : document.getElementById("nexus-boot-banner");
-    if (earlyHost && !earlyHost.hidden) {
+    const painted =
+      typeof window !== "undefined" &&
+      (window as unknown as { __NEXUS_BOOT__?: { paintedFromPage?: boolean } }).__NEXUS_BOOT__
+        ?.paintedFromPage === true;
+    if ((earlyHost && !earlyHost.hidden) || painted) {
       return <div className="h-full bg-[var(--bg-deepest)]" data-early-ready="" />;
     }
     return (

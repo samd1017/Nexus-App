@@ -1041,7 +1041,7 @@ export const FileTree = memo(function FileTree() {
           key={row.id}
           id={`tree-row-${row.id}`}
           role="treeitem"
-          aria-label="Nothing here yet"
+          aria-label="This folder is empty. Enter starts a note."
           data-testid="tree-empty-folder"
           data-empty-parent={parentId ?? ""}
           className={cn(
@@ -1054,8 +1054,8 @@ export const FileTree = memo(function FileTree() {
           <button
             type="button"
             className="mr-1 shrink-0 rounded-md px-2 text-[12px] text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
-            style={{ height: 24 }}
-            title="Enter makes a note in this folder"
+            style={{ height: 26 }}
+            title="Enter starts a note in this folder"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
