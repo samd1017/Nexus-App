@@ -10,8 +10,9 @@ use std::time::Duration;
 
 use crate::fill_join::{fill_is_inflight, start_or_join, FillRole, JoinedFill};
 use crate::index_fill::{
-    fill_from_disk_with_opts, replace_source_links, FillOpts, FillUntil, IndexFillProgress,
-    IndexFillResult, DEFAULT_DEEP_HEAD, DEFAULT_SHORT_HEAD,
+    fill_from_disk_with_opts, mark_title_search_live, replace_source_links,
+    title_search_already_live, FillOpts, FillUntil, IndexFillProgress, IndexFillResult,
+    DEFAULT_DEEP_HEAD, DEFAULT_SHORT_HEAD, TITLE_READY_FLUSH,
 };
 
 pub const SCHEMA_VERSION: i32 = 3;
@@ -184,7 +185,7 @@ fn open_conn(db_path: &str) -> Result<Connection, String> {
     }
     let conn = Connection::open(db_path).map_err(|e| format!("sqlite open: {e}"))?;
     conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY;",
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;",
     )
         .map_err(|e| format!("pragma: {e}"))?;
     // Readers (search / list_links) and the dedicated fill writer share the
@@ -1001,6 +1002,55 @@ pub async fn vault_index_fill_from_disk(
         .clamp(256, 4_096) as usize;
     let force = force_rebuild.unwrap_or(false);
     let priority = priority_paths.unwrap_or_default();
+    // Titles from an earlier fill are already searchable. Say Ready before
+    // the writer connection, the large cache, and another folder read.
+    if !force {
+        let live = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let live = guard
+                .conns
+                .get(&db_path)
+                .map(title_search_already_live)
+                .unwrap_or(false);
+            if live {
+                if let Some(conn) = guard.conns.get_mut(&db_path) {
+                    mark_title_search_live(conn);
+                }
+            }
+            live
+        };
+        if live {
+            let page = TITLE_READY_FLUSH as i64;
+            emit_fill_progress(
+                &app,
+                &IndexFillProgress {
+                    db_path: db_path.clone(),
+                    scanned: page,
+                    total: 0,
+                    indexed: 0,
+                    skipped: 0,
+                    errors: 0,
+                    phase: "ready-meta".into(),
+                    message: Some("Title/path search ready".into()),
+                    search_state: "ready-meta".into(),
+                },
+            );
+            emit_fill_progress(
+                &app,
+                &IndexFillProgress {
+                    db_path: db_path.clone(),
+                    scanned: page,
+                    total: 0,
+                    indexed: 0,
+                    skipped: 0,
+                    errors: 0,
+                    phase: "done".into(),
+                    message: Some("Titles and open notes are searchable".into()),
+                    search_state: "ready-fts-partial".into(),
+                },
+            );
+        }
+    }
     clear_fill_cancel(&db_path);
     match start_or_join(&db_path) {
         FillRole::Joiner(joiner) => {

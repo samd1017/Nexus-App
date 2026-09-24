@@ -1421,13 +1421,66 @@ fn cooperate_after_write(started: Instant) {
 /// Bulk title and head writes. A larger page cache and rarer WAL checkpoints
 /// keep the index from re-reading itself as it grows. automerge stays on so
 /// a search during fill does not walk an unbounded set of FTS segments.
+/// `journal_size_limit` caps the file left after a passive checkpoint so the
+/// next launch does not replay a vault-sized log. Never `TRUNCATE` — that
+/// hung a full catalog.
 fn tune_fill_connection(conn: &Connection) {
     let _ = conn.execute_batch(
         "PRAGMA cache_size=-524288;
          PRAGMA temp_store=MEMORY;
          PRAGMA mmap_size=1073741824;
-         PRAGMA wal_autocheckpoint=100000;",
+         PRAGMA wal_autocheckpoint=100000;
+         PRAGMA journal_size_limit=8388608;",
     );
+}
+
+const TITLE_SEARCH_LIVE_KEY: &str = "title_search_live";
+
+/// Remember that the open page is already in FTS, so the next launch can
+/// paint Ready before it opens a second connection or reads the folder.
+pub fn mark_title_search_live(conn: &Connection) {
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES (?1, '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![TITLE_SEARCH_LIVE_KEY],
+    );
+}
+
+pub fn clear_title_search_live(conn: &Connection) {
+    let _ = conn.execute(
+        "DELETE FROM meta_kv WHERE key = ?1",
+        params![TITLE_SEARCH_LIVE_KEY],
+    );
+}
+
+/// True when a previous fill already committed titles. A stored catalog
+/// total plus one FTS row covers indexes written before that flag existed.
+pub fn title_search_already_live(conn: &Connection) -> bool {
+    let flag: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = ?1",
+            params![TITLE_SEARCH_LIVE_KEY],
+            |r| r.get(0),
+        )
+        .ok();
+    if flag.as_deref() == Some("1") {
+        return true;
+    }
+    let notes: i64 = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'shell_note_count'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if notes <= TITLE_READY_FLUSH as i64 {
+        return false;
+    }
+    conn.query_row("SELECT 1 FROM note_fts LIMIT 1", [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0)
+        == 1
 }
 
 /// FTS segment merge. Runs after Ready so a filled vault does not merge
@@ -2186,7 +2239,17 @@ pub fn fill_from_disk_with_opts<'a>(
 ) -> Result<IndexFillResult, String> {
     ensure_fill_depth_column(conn);
     ensure_note_fts_row(conn);
-    tune_fill_connection(conn);
+    if opts.force_rebuild {
+        clear_title_search_live(conn);
+    }
+    // A filled catalog already answers title search. Announce the page
+    // before the large cache and before another directory read. Cold open
+    // still walks the first page below, then tunes.
+    let titles_live =
+        opts.until == FillUntil::Deep && !opts.force_rebuild && title_search_already_live(conn);
+    if !titles_live && opts.until != FillUntil::Deep {
+        tune_fill_connection(conn);
+    }
 
     let short_head = opts.short_head_chars.clamp(256, 4_096);
     let deep_head = opts.deep_head_chars.clamp(short_head, 32_000);
@@ -2212,6 +2275,34 @@ pub fn fill_from_disk_with_opts<'a>(
         message: Some("Opening the first page…".into()),
         search_state: String::new(),
     };
+    if titles_live {
+        mark_title_search_live(conn);
+        emit(
+            &mut progress,
+            "ready-meta",
+            "ready-meta",
+            TITLE_READY_FLUSH as i64,
+            0,
+            0,
+            0,
+            Some("Title/path search ready".into()),
+            &mut on_progress,
+        );
+        emit(
+            &mut progress,
+            "done",
+            "ready-fts-partial",
+            TITLE_READY_FLUSH as i64,
+            0,
+            0,
+            0,
+            Some("Titles and open notes are searchable".into()),
+            &mut on_progress,
+        );
+        // Paint Ready before the cache grows and the folder is read again.
+        std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+        tune_fill_connection(conn);
+    }
     on_progress(&progress);
     // Heads for notes already on the open page (mount seeded them) before
     // this walk reaches the rest of the vault. Deep fill announces Ready
@@ -2313,6 +2404,7 @@ pub fn fill_from_disk_with_opts<'a>(
             let scanned = prefix.len() as i64;
             let mut bridge = bridge.borrow_mut();
             let b = &mut *bridge;
+            mark_title_search_live(sink.conn);
             emit(
                 &mut b.progress,
                 "ready-meta",
@@ -2337,7 +2429,10 @@ pub fn fill_from_disk_with_opts<'a>(
             );
             // Let the UI paint Ready and accept a keystroke before the next
             // directory batch. The rest of a fat folder is not read here.
+            // The large page cache waits until that paint, so a cold open
+            // is not behind a 1GB map of an index that already exists.
             std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+            tune_fill_connection(sink.conn);
         },
         &mut |sink, prefix| {
             let scanned = prefix.len() as i64;
@@ -2385,6 +2480,10 @@ pub fn fill_from_disk_with_opts<'a>(
     );
     let mut progress = bridge.borrow().progress.clone();
     drop(bridge);
+    // A vault smaller than the first page never took the post-Ready tune.
+    if !interactive_done.get() {
+        tune_fill_connection(conn);
+    }
     if interactive_done.get() {
         let notes = listed;
         if walk_done {
@@ -3588,6 +3687,97 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "Ready read {looked} directory entries in an 80-file folder"
         );
         assert!(fts_path_at(&db, "00-Inbox/00/Hub 79.md"));
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn warm_ready_does_not_reread_the_folder() {
+        let (vault, db) = temp_pair("warm-ready");
+        write_official_shaped(&vault, 40);
+        reset_fill_probes();
+        {
+            let mut conn = open_test_conn(&db);
+            fill_from_disk_with_opts(
+                &mut conn,
+                &vault,
+                FillOpts {
+                    deep_head_chars: 8000,
+                    short_head_chars: 768,
+                    force_rebuild: false,
+                    db_path: "test.sqlite",
+                    priority_rels: &[],
+                    until: FillUntil::Deep,
+                },
+                || false,
+                |_| {},
+            )
+            .unwrap();
+            assert!(
+                title_search_already_live(&conn),
+                "the first page must remember that titles are searchable"
+            );
+        }
+        let time_reopen = |db: &Path, vault: &Path| -> u128 {
+            reset_fill_probes();
+            let mut conn = open_test_conn(db);
+            let started = Instant::now();
+            let ready_ms = Cell::new(0u128);
+            let looked = Cell::new(usize::MAX);
+            fill_from_disk_with_opts(
+                &mut conn,
+                vault,
+                FillOpts {
+                    deep_head_chars: 8000,
+                    short_head_chars: 768,
+                    force_rebuild: false,
+                    db_path: "test.sqlite",
+                    priority_rels: &[],
+                    until: FillUntil::Deep,
+                },
+                || false,
+                |p| {
+                    if p.phase == "ready-meta" && ready_ms.get() == 0 {
+                        ready_ms.set(started.elapsed().as_millis().max(1));
+                        looked.set(DIR_ENTRIES_BEFORE_READY.with(|c| c.get()));
+                        assert!(
+                            p.scanned > 0 && p.scanned <= TITLE_READY_FLUSH as i64,
+                            "warm Ready scanned {}",
+                            p.scanned
+                        );
+                        assert!(fts_path_at(db, "00-Inbox/00/Hub 0.md"));
+                    }
+                },
+            )
+            .unwrap();
+            assert!(ready_ms.get() > 0, "warm open must announce Ready");
+            assert_eq!(
+                looked.get(),
+                0,
+                "warm Ready read {} directory entries",
+                looked.get()
+            );
+            ready_ms.get()
+        };
+        let flagged = time_reopen(&db, &vault);
+        {
+            let conn = open_test_conn(&db);
+            clear_title_search_live(&conn);
+            conn.execute(
+                "INSERT INTO meta_kv(key, value) VALUES ('shell_note_count', '100000')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .unwrap();
+            assert!(
+                title_search_already_live(&conn),
+                "a stored catalog total plus an FTS row is still a warm index"
+            );
+        }
+        let legacy = time_reopen(&db, &vault);
+        assert!(
+            flagged < 500 && legacy < 500,
+            "warm Ready took {flagged}ms flagged / {legacy}ms legacy"
+        );
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
