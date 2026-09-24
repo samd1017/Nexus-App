@@ -1117,11 +1117,13 @@ assert.equal(cssSrc.includes('.tree-item [data-testid="tree-empty-folder-status"
 // Paged vaults: an exact folder name not yet loaded is looked up in the catalog,
 // merged, its children fetched, and listed. Desktop catalog only; never the browser shell.
 {
-  const at = paletteSrc.indexOf("void fetchShellByPaths(shellDbPath, [wanted])");
+  const at = paletteSrc.indexOf("void (catalogDb ? fetchShellByPaths(catalogDb, [wanted]) : Promise.resolve(null))");
   assert.ok(at > 0);
   const block = paletteSrc.slice(paletteSrc.lastIndexOf("useEffect(() => {", at), paletteSrc.indexOf("}, [q, qLower", at));
-  assert.equal(block.includes("if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB) return;"), true);
+  assert.equal(block.includes("if (!folderLookup) return;"), true);
+  assert.equal(paletteSrc.includes("const catalogDb = shellDbPath && shellDbPath !== BROWSER_SHELL_DB ? shellDbPath : null;"), true);
   assert.equal(block.includes('(rows ?? []).filter((r) => r.kind === "folder")'), true);
+  assert.equal(block.includes("st.vaultId === vaultAtLookup"), true);
   assert.equal(block.includes("mergeShellRows(st.nodes, st.rootIds, folders)"), true);
   assert.equal(block.includes("loadShellChildren(f.id)"), true);
   assert.equal(block.includes("window.setTimeout(() => {") && block.includes("}, 200);"), true);
@@ -1390,8 +1392,20 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(body.includes("if (st.commandOpen) st.setCommandOpen(false);"), true);
   assert.ok(body.indexOf("setCommandOpen(false)") < body.indexOf("revealFileList("));
   assert.equal(paletteSrc.includes("restoreFocusOrList(revealInFlight() ? null : prev)"), true);
-  assert.equal(paletteSrc.includes("const folder = hits.length === 0 ? folderForEnter(folderHits, q) : null;"), true);
-  assert.equal(paletteSrc.includes("if (folder && (!selected || folder.exact)) {"), true);
+  // A folder named exactly what was typed wins Enter, unless a note is too.
+  assert.equal(paletteSrc.includes("found && (found.exact ? !exactNote : hits.length === 0 && !selected) ? found : null;"), true);
+  // An empty folder is not in the catalog: the disk is asked for that exact path,
+  // on a paged desktop vault even before its catalog file is known.
+  assert.equal(paletteSrc.includes("const onDisk = await statDesktopFolder(root, wanted);"), true);
+  assert.equal(paletteSrc.includes("if (onDisk) folders = [diskFolderRow(wanted, onDisk.mtime, deskNodeId)];"), true);
+  assert.equal(paletteSrc.includes('shellCatalog && (catalogDb || useVaultStore.getState().mode === "desktop"),'), true);
+  const adapterSrc = readFileSync(new URL("../src/lib/vault/tauri-adapter.ts", import.meta.url), "utf8");
+  const statAt = adapterSrc.indexOf("export async function statDesktopFolder(");
+  assert.ok(statAt > 0);
+  const statBody = adapterSrc.slice(statAt, adapterSrc.indexOf("\n}\n", statAt));
+  assert.equal(statBody.includes("if (!s.isDirectory) return null;"), true);
+  assert.equal(statBody.includes('part.startsWith(".")'), true);
+  assert.equal(statBody.includes("joinRoot(root, rel)"), true);
   // While the catalog is still being asked, Enter waits instead of running the
   // selected "Create note" beside the folder. No folder: the selection runs.
   assert.equal(paletteSrc.includes("if (!folder && hits.length === 0 && catalogFolderPending) {"), true);
@@ -1408,6 +1422,15 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.deepEqual(folderForEnter(fs, "/EmptyFolder/ "), { id: "b", exact: true });
   assert.deepEqual(folderForEnter(fs, "Empty"), { id: "a", exact: false });
   assert.equal(folderForEnter([], "EmptyFolder"), null);
+  // The row for a folder found on disk uses the ids the catalog gives paths.
+  const { diskFolderRow } = await import(new URL("../src/lib/search/folder-enter.ts", import.meta.url).href);
+  const { deskNodeId } = await import(new URL("../src/lib/vault/desk-node-id.ts", import.meta.url).href);
+  assert.deepEqual(diskFolderRow("EmptyFolder", 7, deskNodeId), {
+    id: "desk_EmptyFolder", path: "EmptyFolder", name: "EmptyFolder", kind: "folder", parentId: null, mtime: 7,
+  });
+  assert.deepEqual(diskFolderRow("/Archive/Empty Shelf/", 0, deskNodeId), {
+    id: deskNodeId("Archive/Empty Shelf"), path: "Archive/Empty Shelf", name: "Empty Shelf", kind: "folder", parentId: "desk_Archive", mtime: 0,
+  });
 }
 // Runtime: the held-Enter queue. The module imports the app store, so load a
 // copy with a stub store and a minimal document/window, then drive the real code.

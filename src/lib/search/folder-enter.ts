@@ -11,3 +11,21 @@ export function folderForEnter(
   if (exact) return { id: exact.id, exact: true };
   return { id: folders[0]!.id, exact: false };
 }
+
+/** A catalog row for a folder found on disk, under the id the catalog would give it. */
+export function diskFolderRow(
+  path: string,
+  mtime: number,
+  idFor: (path: string) => string,
+): { id: string; path: string; name: string; kind: "folder"; parentId: string | null; mtime: number } {
+  const clean = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const cut = clean.lastIndexOf("/");
+  return {
+    id: idFor(clean),
+    path: clean,
+    name: cut >= 0 ? clean.slice(cut + 1) : clean,
+    kind: "folder",
+    parentId: cut >= 0 ? idFor(clean.slice(0, cut)) : null,
+    mtime,
+  };
+}

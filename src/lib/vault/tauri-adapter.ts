@@ -471,6 +471,27 @@ export async function listDesktopTrash(
   }
 }
 
+/**
+ * The folder at `relPath`, when it is on disk. The catalog learns folders from
+ * the notes inside them, so an empty folder is only found here.
+ */
+export async function statDesktopFolder(
+  root: string,
+  relPath: string,
+): Promise<{ mtime: number } | null> {
+  const rel = relPath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!rel || rel.split("/").some((part) => !part || part.startsWith("."))) return null;
+  try {
+    const { stat } = await import("@tauri-apps/plugin-fs");
+    const s = await stat(joinRoot(root, rel));
+    if (!s.isDirectory) return null;
+    const m = s.mtime ? (typeof s.mtime === "number" ? s.mtime : new Date(s.mtime).getTime()) : 0;
+    return { mtime: Number.isFinite(m) ? m : 0 };
+  } catch {
+    return null;
+  }
+}
+
 export async function createDesktopFolder(
   root: string,
   relPath: string,

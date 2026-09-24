@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Command } from "cmdk";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { revealFolderInList, revealInFlight } from "@/lib/chrome/reveal-list";
-import { folderForEnter } from "@/lib/search/folder-enter";
+import { diskFolderRow, folderForEnter } from "@/lib/search/folder-enter";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
   FileText,
@@ -37,7 +37,9 @@ import {
   Pin,
   Paperclip,
 } from "lucide-react";
-import { useVaultStore } from "@/lib/vault/store";
+import { getDesktopRoot, useVaultStore } from "@/lib/vault/store";
+import { statDesktopFolder } from "@/lib/vault/tauri-adapter";
+import { deskNodeId } from "@/lib/vault/desk-node-id";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   searchWithBackend as searchVault,
@@ -785,10 +787,14 @@ function CommandPaletteOpen() {
 
   // A paged vault only holds the folders it has shown. When none of them is
   // named exactly what was typed, ask the catalog for that folder at the vault
-  // root (or that exact path), load it, and list it. Nothing happens when it
-  // does not exist.
+  // root (or that exact path), then the disk, load it, and list it. Nothing
+  // happens when it does not exist.
+  const catalogDb = shellDbPath && shellDbPath !== BROWSER_SHELL_DB ? shellDbPath : null;
+  const folderLookup = Boolean(
+    shellCatalog && (catalogDb || useVaultStore.getState().mode === "desktop"),
+  );
   useEffect(() => {
-    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB) return;
+    if (!folderLookup) return;
     if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp) return;
     if (qLower.startsWith("is:")) return;
     const wanted = q.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -803,12 +809,21 @@ function CommandPaletteOpen() {
       }
     }
     let cancelled = false;
+    const vaultAtLookup = useVaultStore.getState().vaultId;
     const t = window.setTimeout(() => {
-      void fetchShellByPaths(shellDbPath, [wanted]).then((rows) => {
+      void (catalogDb ? fetchShellByPaths(catalogDb, [wanted]) : Promise.resolve(null)).then(async (rows) => {
         if (cancelled) return;
-        const folders = (rows ?? []).filter((r) => r.kind === "folder");
+        let folders = (rows ?? []).filter((r) => r.kind === "folder");
+        // The catalog knows folders through the notes inside them, so an
+        // empty folder is missing there. Ask the disk for that exact path.
+        const root = getDesktopRoot();
+        if (!folders.length && root && useVaultStore.getState().mode === "desktop") {
+          const onDisk = await statDesktopFolder(root, wanted);
+          if (cancelled) return;
+          if (onDisk) folders = [diskFolderRow(wanted, onDisk.mtime, deskNodeId)];
+        }
         const st = useVaultStore.getState();
-        if (folders.length && st.shellCatalog && st.shellDbPath === shellDbPath) {
+        if (folders.length && st.shellCatalog && st.shellDbPath === shellDbPath && st.vaultId === vaultAtLookup) {
           const merged = mergeShellRows(st.nodes, st.rootIds, folders);
           useVaultStore.setState({ nodes: merged.nodes, rootIds: merged.rootIds });
           // Learn what is inside, so a folder with notes is not taken for empty.
@@ -825,12 +840,10 @@ function CommandPaletteOpen() {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, shellCatalog, shellDbPath, runHeldEnter]);
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, folderLookup, catalogDb, shellDbPath, runHeldEnter]);
 
   const catalogFolderPending = Boolean(
-    shellCatalog &&
-      shellDbPath &&
-      shellDbPath !== BROWSER_SHELL_DB &&
+    folderLookup &&
       q &&
       !isAskMode &&
       !isCommandMode &&
@@ -1629,8 +1642,13 @@ function CommandPaletteOpen() {
               const top = hits[0];
               // A folder found after the list settled may not be selected, so
               // Enter would do nothing and leave search holding the keyboard.
-              const folder = hits.length === 0 ? folderForEnter(folderHits, q) : null;
-              if (folder && (!selected || folder.exact)) {
+              // A folder named exactly what was typed wins, unless a note is too.
+              const found = folderForEnter(folderHits, q);
+              const want = q.trim().toLowerCase();
+              const exactNote = hits.some((h) => h.title.trim().toLowerCase() === want);
+              const folder =
+                found && (found.exact ? !exactNote : hits.length === 0 && !selected) ? found : null;
+              if (folder) {
                 e.preventDefault();
                 e.stopPropagation();
                 revealFolderInList(folder.id);
