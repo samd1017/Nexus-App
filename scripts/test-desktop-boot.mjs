@@ -1600,6 +1600,7 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(paletteSrc.includes("revealFolderInList(id, { settle: useVaultStore.getState().settleFolderForEnter(id) });"), true);
   assert.equal((paletteSrc.match(/revealSearchedFolder\(/g) ?? []).length >= 4, true);
   assert.equal(paletteSrc.includes("revealFolderInList(folder.id)"), false);
+  assert.equal(storeSrc.includes("probeFolderText: (name: string) => {"), true);
   const adapterSrc2 = readFileSync(new URL("../src/lib/vault/tauri-adapter.ts", import.meta.url), "utf8");
   const cAt = adapterSrc2.indexOf("export async function countDesktopFolderEntries(");
   const cBody = adapterSrc2.slice(cAt, adapterSrc2.indexOf("\n}\n", cAt));

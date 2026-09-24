@@ -6016,6 +6016,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				openEmptyVault: () => void;
 				probeFirstRun: () => Record<string, unknown>;
 				probeFirstRunText: () => string;
+				probeFolderText: (name: string) => string;
 				setActiveNote: (id: string | null) => void;
 				setSecondaryNote: (id: string | null) => void;
 				setRightTab: (tab: string) => void;
@@ -6092,6 +6093,28 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		},
 		// Same fields as a JSON string. A CDP Runtime.evaluate without
 		// returnByValue hands back an object reference, which prints as {}.
+		// Read-only: what the app holds for a folder by name or path, as JSON text.
+		probeFolderText: (name: string) => {
+			const s = useVaultStore.getState();
+			const want = String(name ?? "").replace(/^\/+|\/+$/g, "").toLowerCase();
+			const folder = Object.values(s.nodes).find(
+				(n) => n.kind === "folder" && (n.path.toLowerCase() === want || n.name.toLowerCase() === want),
+			);
+			if (!folder) return JSON.stringify({ found: false, shellCatalog: s.shellCatalog });
+			const kids = Object.values(s.nodes).filter((n) => n.parentId === folder.id).map((n) => n.path);
+			const tree = document.querySelector("[data-file-tree]");
+			return JSON.stringify({
+				found: true,
+				id: folder.id,
+				path: folder.path,
+				shellCatalog: s.shellCatalog,
+				children: kids,
+				shellLoaded: s.shellLoaded[folder.id] ?? null,
+				shellUnloaded: s.shellUnloaded[folder.id] ?? null,
+				emptyRow: Boolean(document.querySelector(`[data-node-id="${CSS.escape(folder.id)}"][data-folder-empty="1"]`)),
+				armed: tree?.getAttribute("data-empty-armed") === folder.id,
+			});
+		},
 		probeFirstRunText: () => {
 			const soak = (window as unknown as {
 				__NEXUS_SOAK__?: { probeFirstRun?: () => Record<string, unknown> };
