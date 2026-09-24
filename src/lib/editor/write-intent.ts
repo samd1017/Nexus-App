@@ -65,6 +65,12 @@ function leaveAlone(t: EventTarget | null): boolean {
   );
 }
 
+/** Text is still held for this note: what is typed in its editor goes after it. */
+function queuedBehind(path: string, t: EventTarget | null): boolean {
+  if (!held || held.path !== path || Date.now() > held.until) return false;
+  return Boolean((t as HTMLElement | null)?.closest?.(".ProseMirror"));
+}
+
 function hold(path: string, text: string): void {
   if (held && held.path === path && Date.now() <= held.until) held.text += text;
   else held = { path, text, until: Date.now() + HELD_TEXT_MS };
@@ -87,7 +93,7 @@ const MOVE_KEYS = new Set([
 function onKey(e: KeyboardEvent): void {
   const path = livePath();
   if (!path || e.isComposing || e.defaultPrevented) return;
-  if (leaveAlone(e.target)) return;
+  if (leaveAlone(e.target) && !queuedBehind(path, e.target)) return;
   if (MOVE_KEYS.has(e.key) || /^F\d{1,2}$/.test(e.key)) {
     clearWriteFocus();
     return;
@@ -109,7 +115,7 @@ function onKey(e: KeyboardEvent): void {
 function onPaste(e: ClipboardEvent): void {
   const path = livePath();
   if (!path || e.defaultPrevented) return;
-  if (leaveAlone(e.target)) return;
+  if (leaveAlone(e.target) && !queuedBehind(path, e.target)) return;
   const text = e.clipboardData?.getData("text/plain") ?? "";
   if (!text) return;
   e.preventDefault();

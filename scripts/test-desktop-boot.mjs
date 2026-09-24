@@ -875,11 +875,16 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
   // A field or a dialog keeps the cursor. The list row the name was typed in
   // does not: moving in the list ends the request instead.
   assert.equal(visualSrc.includes(`"input, textarea, select, [role='dialog'], [data-nexus-confirm], [cmdk-root]"`), true);
+  assert.equal(visualSrc.includes(`!active.closest?.("[data-testid='tree-rename']") &&`), true);
+  // The committed name field ignores the blur the handoff causes.
+  assert.ok(treeSrc.indexOf("skipBlur.current = true;") > 0);
   assert.equal(visualSrc.includes("writeFocusPending(pathAtApply)"), true);
   assert.equal(visualSrc.includes("writeWantedUntil"), false);
   // Text held for the note is written as a normal edit once the refill is done.
-  assert.equal(visualSrc.includes("writeHeldText(editor, pathAtApply, () => applying.current);"), true);
-  assert.equal(visualSrc.includes("writeHeldText(editor, pathNow(), () => applying.current);"), true);
+  assert.equal(visualSrc.includes("writeHeldText(editor, pathAtApply, refillPending);"), true);
+  assert.equal(visualSrc.includes("writeHeldText(editor, pathNow(), refillPending);"), true);
+  // It waits for a body the store has and the editor has not shown yet.
+  assert.equal(visualSrc.includes("if (body === baselineMd.current || body === lastWrittenRef.current) return false;"), true);
   assert.equal(visualSrc.includes("if (!ed.view.pasteText(text)) ed.commands.insertContent(text);"), true);
 }
 // Runtime: typing and pasting after naming a note, before its editor has the
@@ -928,10 +933,15 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
     const before = fired.length;
     assert.equal(key("v", inList, { ctrlKey: true }).defaultPrevented, false);
     assert.equal(fired.length, before + 1);
+    // While text is held, keys in the note's editor queue behind it, in order.
+    const inEditor = { closest: (sel) => (sel === ".ProseMirror" || sel.includes("contenteditable") ? {} : null) };
+    assert.equal(key("y", inEditor).defaultPrevented, true);
     // Only the note's own editor gets the text, once.
     assert.equal(wi.takeHeldWrite("Untitled.md"), null);
-    assert.equal(wi.takeHeldWrite("FirstRun Note.md"), "body after name x\n");
+    assert.equal(wi.takeHeldWrite("FirstRun Note.md"), "body after name x\ny");
     assert.equal(wi.takeHeldWrite("FirstRun Note.md"), null);
+    // Nothing held: the editor types for itself.
+    assert.equal(key("z", inEditor).defaultPrevented, false);
     // Moving in the list ends the request; later typing stays in the list.
     key("ArrowDown");
     assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);

@@ -191,11 +191,13 @@ function placeCaretForWriting(ed: Editor): void {
     if (!ed.isFocused) {
       // The reader already moved on (a field, a dialog). Let them. The list
       // row the name was typed in does not count: moving in the list with
-      // keys or a click ends the request in write-intent.
+      // keys or a click ends the request in write-intent. Nor does the name
+      // field itself, which still has focus for a frame after it commits.
       const active = document.activeElement as HTMLElement | null;
       if (
         active &&
         active !== document.body &&
+        !active.closest?.("[data-testid='tree-rename']") &&
         active.closest?.(
           "input, textarea, select, [role='dialog'], [data-nexus-confirm], [cmdk-root]",
         )
@@ -920,6 +922,16 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     return () => registerVisualFindAdapter(null, pane);
   }, [editor, pane]);
 
+  // The store holds a body this editor has not shown yet (the renamed title,
+  // a rescan). Held text waits for it, or the refill would write over it.
+  const refillPending = useCallback(() => {
+    if (applying.current) return true;
+    const body = useVaultStore.getState().nodes[noteIdRef.current]?.content;
+    if (body === undefined) return false;
+    if (body === baselineMd.current || body === lastWrittenRef.current) return false;
+    return !isOnlySerializationNoise(baselineMd.current, body);
+  }, []);
+
   // Turn leftover empty `-` Focus/Later bullets into tasks, then sync.
   // Keep one TipTap instance across notes — remounting @45k is a 0.7–1.1s hitch.
   useEffect(() => {
@@ -984,7 +996,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         if (applyGen !== contentApplyGen.current) return;
         paintEditorExtras(editor);
         applying.current = false;
-        writeHeldText(editor, pathAtApply, () => applying.current);
+        writeHeldText(editor, pathAtApply, refillPending);
       });
     });
   }, [editor, content, noteId, updateNoteContent, commit]);
@@ -1019,7 +1031,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     const pathNow = () => useVaultStore.getState().nodes[noteId]?.path ?? null;
     const writeTimers: number[] = [];
     const begin = () => {
-      writeHeldText(editor, pathNow(), () => applying.current);
+      writeHeldText(editor, pathNow(), refillPending);
       if (!writeFocusPending(pathNow())) return;
       // The renamed title rewrites the body a moment later, and a folder rescan
       // can refill it after that. The content apply above places the caret
