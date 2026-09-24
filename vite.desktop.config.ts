@@ -24,6 +24,11 @@ export default defineConfig({
     },
   },
   envPrefix: ["VITE_", "TAURI_"],
+  optimizeDeps: {
+    // Let the document out before the app graph is crawled. The saved-page
+    // script paints from local storage and must not wait on that crawl.
+    holdUntilCrawlEnd: false,
+  },
   server: {
     // Tauri expects a fixed port; bind all interfaces so the webview can reach it.
     host: host || "0.0.0.0",

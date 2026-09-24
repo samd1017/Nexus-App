@@ -8,6 +8,14 @@ export const SAVED_PAGE_READY_MESSAGE = "Ready · titles and open notes";
 export const DESKTOP_ROOT_STORAGE_KEY = "nexus-desktop-vault-root";
 export const DESKTOP_PREFS_STORAGE_KEY = "nexus-prefs-v1";
 export const DESKTOP_VAULT_STORAGE_KEY = "nexus-vault-v1";
+/** Last titles-live page. Names only — the catalog stays on disk. */
+export const DESKTOP_SAVED_PAGE_KEY = "nexus-desktop-saved-page";
+export const SAVED_PAGE_NAME_CAP = 12;
+
+export type SavedPageRecord = {
+  root: string;
+  names: string[];
+};
 
 export function readOpenLastVault(raw: string | null): boolean {
   if (!raw) return true;
@@ -38,6 +46,70 @@ export function shouldPrefetchSavedPage(opts: {
   openLastVault: boolean;
 }): boolean {
   return opts.inTauri && Boolean(opts.root) && opts.openLastVault;
+}
+
+export function namesFromPageRows(
+  rows: Array<{ name?: unknown }> | null | undefined,
+): string[] {
+  const names: string[] = [];
+  for (const row of rows ?? []) {
+    const name = typeof row?.name === "string" ? row.name.trim() : "";
+    if (!name) continue;
+    names.push(name);
+    if (names.length >= SAVED_PAGE_NAME_CAP) break;
+  }
+  return names;
+}
+
+/** A real saved page: this vault, and at least one name. */
+export function savedPageRecord(
+  root: string | null | undefined,
+  rows: Array<{ name?: unknown }> | null | undefined,
+): SavedPageRecord | null {
+  const trimmed = typeof root === "string" ? root.trim() : "";
+  const names = namesFromPageRows(rows);
+  if (!trimmed || names.length === 0) return null;
+  return { root: trimmed, names };
+}
+
+export function readSavedPage(raw: string | null): SavedPageRecord | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { root?: unknown; names?: unknown };
+    if (typeof parsed?.root !== "string" || !Array.isArray(parsed.names)) return null;
+    return savedPageRecord(parsed.root, parsed.names.map((name) => ({ name })));
+  } catch {
+    return null;
+  }
+}
+
+export function savedPageMatchesLaunch(
+  page: SavedPageRecord | null,
+  root: string | null,
+  openLastVault: boolean,
+): boolean {
+  if (!page || !openLastVault || !root) return false;
+  return page.root === root && page.names.length > 0;
+}
+
+type PageStorage = {
+  setItem(key: string, value: string): void;
+};
+
+/** Remember a titles-live page so the next window can draw it before any module. */
+export function rememberSavedPage(
+  root: string,
+  rows: Array<{ name?: unknown }> | null | undefined,
+): void {
+  const record = savedPageRecord(root, rows);
+  if (!record) return;
+  const storage = (globalThis as { localStorage?: PageStorage }).localStorage;
+  if (!storage) return;
+  try {
+    storage.setItem(DESKTOP_SAVED_PAGE_KEY, JSON.stringify(record));
+  } catch {
+    // Private mode or a full disk. The next launch waits for the shell.
+  }
 }
 
 /** A mount can be drawn before the index file opens. */

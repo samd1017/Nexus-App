@@ -1,6 +1,15 @@
 /**
- * First script in the desktop window.
- * Reads the saved page, paints Ready, then loads the rest of the app.
+ * Desktop module. The saved page is already painted by /saved-page.js
+ * (a classic script, no imports) before this file is fetched.
+ *
+ * Awaits that can sit on the warm Ready clock, in order:
+ * 1. Before this module: the dev server used to hold optimized dependencies
+ *    until it had crawled this file's import of the app. saved-page.js does
+ *    not wait on that crawl.
+ * 2. vault_shell_mount — synchronous on the webview thread. A filled reopen
+ *    reads a page snapshot; a miss lists a directory page or opens the index
+ *    on this same thread. Either way it runs only after one painted frame.
+ * 3. import("./main.tsx") — the rest of the app, after that frame.
  */
 import {
   DESKTOP_PREFS_STORAGE_KEY,
@@ -8,6 +17,7 @@ import {
   DESKTOP_VAULT_STORAGE_KEY,
   readLastNotePath,
   readOpenLastVault,
+  rememberSavedPage,
   SAVED_PAGE_READY_MESSAGE,
   savedPageTitlesLive,
   shouldPrefetchSavedPage,
@@ -81,7 +91,7 @@ async function prefetchSavedPage(): Promise<void> {
   const invoke = tauriInvoke();
   const started = performance.now();
   const boot = ((window as unknown as { __NEXUS_BOOT__?: Record<string, unknown> }).__NEXUS_BOOT__ ??= {});
-  boot.t0 = started;
+  if (typeof boot.t0 !== "number") boot.t0 = started;
   if (!shouldPrefetchSavedPage({ inTauri: Boolean(invoke), root, openLastVault: openLast }) || !invoke || !root) {
     return;
   }
@@ -93,9 +103,16 @@ async function prefetchSavedPage(): Promise<void> {
   boot.root = root;
   boot.mount = mount;
   boot.mountMs = Math.round(performance.now() - started);
-  if (savedPageTitlesLive(mount as { titlesLive?: boolean; pending?: boolean; rows?: unknown[] })) {
-    paintSavedPage(mount as { rows?: Array<{ name?: string; kind?: string }> });
+  const live = mount as {
+    titlesLive?: boolean;
+    pending?: boolean;
+    rows?: Array<{ name?: string; kind?: string }>;
+  };
+  if (savedPageTitlesLive(live)) {
+    paintSavedPage(live);
+    rememberSavedPage(root, live.rows);
     boot.announced = true;
+    boot.invokeMs = boot.mountMs;
   }
 }
 
@@ -109,16 +126,22 @@ function afterPaint(): Promise<void> {
 }
 
 async function bootDesktop(): Promise<void> {
+  const boot = ((window as unknown as { __NEXUS_BOOT__?: Record<string, unknown> }).__NEXUS_BOOT__ ??= {});
+  if (typeof boot.t0 !== "number") boot.t0 = performance.now();
+  // Commit the page script's Ready line before vault_shell_mount.
+  // That command runs on this thread and used to finish before any pixels.
+  await afterPaint();
+  if (boot.paintedFromPage === true) {
+    boot.readyFrameMs = Math.round(performance.now());
+  }
   try {
     await prefetchSavedPage();
   } catch {
-    // The shell still loads. Ready stays unannounced.
+    // The shell still loads. A page already on screen stays up.
   }
-  const boot = (window as unknown as { __NEXUS_BOOT__?: Record<string, unknown> }).__NEXUS_BOOT__;
-  if (boot?.announced === true) {
+  if (boot.announced === true && typeof boot.readyFrameMs !== "number") {
     await afterPaint();
-    const t0 = typeof boot.t0 === "number" ? boot.t0 : performance.now();
-    boot.readyFrameMs = Math.round(performance.now() - t0);
+    boot.readyFrameMs = Math.round(performance.now());
   }
   const app = await import("./main.tsx");
   app.mountDesktop();

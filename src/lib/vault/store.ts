@@ -131,6 +131,8 @@ import {
 } from "./body-archive";
 import { yieldToUi } from "./yield-ui";
 import {
+  DESKTOP_ROOT_STORAGE_KEY,
+  rememberSavedPage,
   SAVED_PAGE_READY_MESSAGE,
   takePrefetchedDesktopShell,
 } from "./desktop-boot";
@@ -1840,7 +1842,7 @@ function continueFilledIndexAfterReady(
 }
 
 /** The saved page is the announcement. The index file opens afterward. */
-function announceFilledPageReady(shell: ShellMount): void {
+function announceFilledPageReady(shell: ShellMount, root: string): void {
 	diskSearchReady = true;
 	setSearchIndexState("ready-meta");
 	const pageNotes = (shell.rows ?? []).filter((r) => r.kind === "note").length;
@@ -1850,6 +1852,12 @@ function announceFilledPageReady(shell: ShellMount): void {
 		totalHint: null,
 		message: SAVED_PAGE_READY_MESSAGE,
 	});
+	const pageRoot =
+		root ||
+		(typeof localStorage !== "undefined"
+			? localStorage.getItem(DESKTOP_ROOT_STORAGE_KEY) || ""
+			: "");
+	if (pageRoot) rememberSavedPage(pageRoot, shell.rows);
 }
 
 /**
@@ -2025,7 +2033,7 @@ async function mountDesktopVaultAt(
 		const st = useVaultStore.getState();
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 		if (shellMount && filledPageIsSearchable(shellMount, opts?.forceRebuild)) {
-			announceFilledPageReady(shellMount);
+			announceFilledPageReady(shellMount, root);
 			continueFilledIndexAfterReady(st.vaultId, st.mode, shellMount.dbPath, root);
 		} else {
 			await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
@@ -2195,7 +2203,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						const st = useVaultStore.getState();
 						if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 						if (shell && filledPageIsSearchable(shell)) {
-							announceFilledPageReady(shell);
+							announceFilledPageReady(shell, root);
 							continueFilledIndexAfterReady(st.vaultId, st.mode, shell.dbPath, root);
 						} else {
 							await prepareDurableIndex(st.vaultId, st.mode, shell?.dbPath);
