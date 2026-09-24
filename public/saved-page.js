@@ -21,7 +21,10 @@
     var raw = localStorage.getItem(PAGE_KEY);
     if (!raw) return;
     var page = JSON.parse(raw);
-    if (!page || page.root !== root || !page.names || !page.names.length) return;
+    var norm = function (value) {
+      return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    };
+    if (!page || !page.names || !page.names.length || norm(page.root) !== norm(root)) return;
     var host = document.getElementById("nexus-boot-banner");
     if (!host) return;
     var names = [];

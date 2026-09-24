@@ -53,9 +53,12 @@ function OpenProgressBanner() {
   useEffect(() => subscribeOpenProgress(setProgress), []);
 
   useEffect(() => {
-    if (progress.phase !== "ready" && progress.phase !== "error") return;
+    // Hand off only once the shell is showing the same saved page.
+    // An error leaves the early line up; it must not flash a scope failure.
+    if (progress.phase !== "ready") return;
+    if (!progress.message.includes("titles and open notes")) return;
     document.getElementById("nexus-boot-banner")?.remove();
-  }, [progress.phase]);
+  }, [progress.phase, progress.message]);
 
   // Auto-dismiss ready flash so the banner doesn't stick forever
   useEffect(() => {

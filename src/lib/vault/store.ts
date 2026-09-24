@@ -134,6 +134,8 @@ import {
   DESKTOP_ROOT_STORAGE_KEY,
   rememberSavedPage,
   SAVED_PAGE_READY_MESSAGE,
+  savedPageBannerUp,
+  savedPageTitlesLive,
   takePrefetchedDesktopShell,
 } from "./desktop-boot";
 import {
@@ -1400,6 +1402,7 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 		if (prefetched) {
 			const built = nodesFromShellRows(prefetched.rows);
 			scopeGrantFollowsReady = true;
+			rememberSavedPage(desktopRoot, prefetched.rows);
 			return {
 				scan: {
 					nodes: built.nodes,
@@ -1411,13 +1414,17 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 			};
 		}
 	}
-	setOpenProgress({
-		phase: "walking",
-		scanned: 0,
-		totalHint: null,
-		message: metaOnly ? "Scanning vault metadata…" : "Opening vault…"
-	});
+	const keepSavedPage = mode === "desktop" && savedPageBannerUp();
+	if (!keepSavedPage) {
+		setOpenProgress({
+			phase: "walking",
+			scanned: 0,
+			totalHint: null,
+			message: metaOnly ? "Scanning vault metadata…" : "Opening vault…"
+		});
+	}
 	const onProgress = (scanned: number) => {
+		if (savedPageBannerUp()) return;
 		setOpenProgress({
 			phase: "walking",
 			scanned,
@@ -1428,7 +1435,13 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 	try {
 		if (mode === "desktop") {
 			if (!desktopRoot) throw new Error("No desktop vault root");
-			await ensureDesktopVaultFsScope(desktopRoot);
+			if (keepSavedPage) {
+				// The page is already on screen. A refused grant is a toast
+				// after Ready, not a banner that replaces it.
+				scopeGrantFollowsReady = true;
+			} else {
+				await ensureDesktopVaultFsScope(desktopRoot);
+			}
 			if (metaOnly) {
 				const outcome = await mountShellCatalog(desktopRoot, opts?.preferPath);
 				if (outcome.status === "busy") {
@@ -1460,14 +1473,20 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 						signatures: {} as Record<string, string>,
 					};
 					const shown = shell.materialize ? shell.notes : shell.rows.length;
-					setOpenProgress({
-						phase: "indexing",
-						scanned: shown,
-						totalHint: shell.notes || shown,
-						message: shell.materialize
-							? "Metadata ready — indexing search from files…"
-							: "Catalog ready — opening a window of the vault…",
-					});
+					if (savedPageTitlesLive(shell)) {
+						rememberSavedPage(desktopRoot, shell.rows);
+						scopeGrantFollowsReady = true;
+					}
+					if (!keepSavedPage && !savedPageTitlesLive(shell)) {
+						setOpenProgress({
+							phase: "indexing",
+							scanned: shown,
+							totalHint: shell.notes || shown,
+							message: shell.materialize
+								? "Metadata ready — indexing search from files…"
+								: "Catalog ready — opening a window of the vault…",
+						});
+					}
 					return { scan, metaOnly: true, shell };
 				}
 				// A catalog miss must not list every file before Ready.
@@ -1538,12 +1557,14 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 			shell,
 		};
 	} catch (e) {
-		setOpenProgress({
-			phase: "error",
-			scanned: 0,
-			totalHint: null,
-			message: e instanceof Error ? e.message : "Open failed"
-		});
+		if (!savedPageBannerUp()) {
+			setOpenProgress({
+				phase: "error",
+				scanned: 0,
+				totalHint: null,
+				message: e instanceof Error ? e.message : "Open failed"
+			});
+		}
 		throw e;
 	}
 }
@@ -1977,7 +1998,7 @@ async function mountDesktopVaultAt(
 			connecting: false,
 			toast: message,
 		});
-		if (getOpenProgress().phase !== "error") {
+		if (getOpenProgress().phase !== "error" && !savedPageBannerUp()) {
 			setOpenProgress({
 				phase: "error",
 				scanned: 0,
@@ -2044,7 +2065,7 @@ async function mountDesktopVaultAt(
 				const message =
 					e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
 				set({ toast: message });
-				if (getOpenProgress().phase !== "error") {
+				if (getOpenProgress().phase !== "error" && !savedPageBannerUp()) {
 					setOpenProgress({
 						phase: "error",
 						scanned: 0,

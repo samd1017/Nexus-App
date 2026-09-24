@@ -40,13 +40,15 @@ function storage(key: string): string | null {
   }
 }
 
-function paintSavedPage(mount: { rows?: Array<{ name?: string; kind?: string }> }): void {
+function paintSavedPage(mount: { rows?: Array<{ name?: string; kind?: string; path?: string }> }): void {
   const host = document.getElementById("nexus-boot-banner");
   if (!host) return;
   const names = (mount.rows ?? [])
-    .map((row) => row.name || "")
+    .map((row) => row.name || row.path?.split(/[/\\]/).pop() || "")
     .filter(Boolean)
     .slice(0, 12);
+  const boot = (window as unknown as { __NEXUS_BOOT__?: { paintedFromPage?: boolean } }).__NEXUS_BOOT__;
+  if (boot?.paintedFromPage === true && names.length === 0) return;
   host.replaceChildren();
   const bar = document.createElement("div");
   bar.setAttribute("role", "status");

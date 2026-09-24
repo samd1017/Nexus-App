@@ -49,11 +49,15 @@ export function shouldPrefetchSavedPage(opts: {
 }
 
 export function namesFromPageRows(
-  rows: Array<{ name?: unknown }> | null | undefined,
+  rows: Array<{ name?: unknown; path?: unknown }> | null | undefined,
 ): string[] {
   const names: string[] = [];
   for (const row of rows ?? []) {
-    const name = typeof row?.name === "string" ? row.name.trim() : "";
+    let name = typeof row?.name === "string" ? row.name.trim() : "";
+    if (!name && typeof row?.path === "string") {
+      const path = row.path.replace(/\\/g, "/");
+      name = path.split("/").filter(Boolean).pop() || "";
+    }
     if (!name) continue;
     names.push(name);
     if (names.length >= SAVED_PAGE_NAME_CAP) break;
@@ -83,13 +87,43 @@ export function readSavedPage(raw: string | null): SavedPageRecord | null {
   }
 }
 
+/** Slash and trailing-slash differences are the same vault. */
+export function vaultRootsMatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const norm = (value: string | null | undefined) =>
+    String(value || "")
+      .replace(/\\/g, "/")
+      .replace(/\/+$/, "");
+  const left = norm(a);
+  return left.length > 0 && left === norm(b);
+}
+
 export function savedPageMatchesLaunch(
   page: SavedPageRecord | null,
   root: string | null,
   openLastVault: boolean,
 ): boolean {
   if (!page || !openLastVault || !root) return false;
-  return page.root === root && page.names.length > 0;
+  return vaultRootsMatch(page.root, root) && page.names.length > 0;
+}
+
+type BannerHost = {
+  hidden?: boolean;
+  textContent?: string | null;
+};
+
+/**
+ * The document already drew the saved page. Leave that line up until the
+ * shell is showing the same Ready. An error must not take it down.
+ */
+export function savedPageBannerUp(): boolean {
+  const doc = (globalThis as { document?: { getElementById?: (id: string) => BannerHost | null } })
+    .document;
+  const host = doc?.getElementById?.("nexus-boot-banner");
+  if (!host || host.hidden) return false;
+  return (host.textContent ?? "").includes(SAVED_PAGE_READY_MESSAGE);
 }
 
 type PageStorage = {

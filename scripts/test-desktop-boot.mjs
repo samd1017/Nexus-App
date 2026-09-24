@@ -9,7 +9,7 @@ if (!process.env.NEXUS_TSX) {
   const r = spawnSync("npx", ["--yes", "tsx", "scripts/test-desktop-boot.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
-    timeout: 30_000,
+    timeout: 90_000,
     env: { ...process.env, NEXUS_TSX: "1" },
   });
   if (r.stdout) process.stdout.write(r.stdout);
@@ -27,6 +27,8 @@ const {
   savedPageRecord,
   readSavedPage,
   savedPageMatchesLaunch,
+  vaultRootsMatch,
+  savedPageBannerUp,
   rememberSavedPage,
   takePrefetchedDesktopShell,
 } = await import("../src/lib/vault/desktop-boot.ts");
@@ -99,9 +101,30 @@ assert.deepEqual(roundTrip, page);
 assert.equal(readSavedPage("{"), null);
 assert.equal(readSavedPage(null), null);
 assert.equal(savedPageMatchesLaunch(page, "/vault", true), true);
+assert.equal(savedPageMatchesLaunch(page, "/vault/", true), true);
+assert.equal(savedPageMatchesLaunch(page, "\\vault", true), true);
+assert.equal(vaultRootsMatch("/vault/", "\\vault"), true);
+assert.equal(vaultRootsMatch("", "/vault"), false);
 assert.equal(savedPageMatchesLaunch(page, "/other", true), false);
 assert.equal(savedPageMatchesLaunch(page, "/vault", false), false);
 assert.equal(savedPageMatchesLaunch(null, "/vault", true), false);
+assert.deepEqual(savedPageRecord("/vault", [{ path: "00-Inbox/Hub 0.md" }]), {
+  root: "/vault",
+  names: ["Hub 0.md"],
+});
+globalThis.document = {
+  getElementById(id) {
+    if (id !== "nexus-boot-banner") return null;
+    return { hidden: false, textContent: "Ready · titles and open notesHub 0" };
+  },
+};
+assert.equal(savedPageBannerUp(), true);
+globalThis.document = {
+  getElementById() {
+    return { hidden: true, textContent: "Ready · titles and open notes" };
+  },
+};
+assert.equal(savedPageBannerUp(), false);
 
 const mem = new Map();
 globalThis.localStorage = {
@@ -136,5 +159,45 @@ const yieldAt = bootFn.indexOf("await afterPaint()");
 const prefetchAt = bootFn.indexOf("await prefetchSavedPage()");
 const appAt = bootFn.indexOf('import("./main.tsx")');
 assert.ok(yieldAt >= 0 && yieldAt < prefetchAt && prefetchAt < appAt);
+assert.equal(bootSrc.includes("hidden = true"), false);
+assert.equal(bootSrc.includes(".remove("), false);
+
+const shellSrc = readFileSync(new URL("../src/components/layout/AppShell.tsx", import.meta.url), "utf8");
+const removeAt = shellSrc.indexOf('getElementById("nexus-boot-banner")?.remove()');
+assert.ok(removeAt > 0);
+const handoff = shellSrc.slice(Math.max(0, removeAt - 500), removeAt);
+assert.equal(handoff.includes('progress.phase !== "ready"'), true);
+assert.equal(handoff.includes("titles and open notes"), true);
+assert.equal(handoff.includes('progress.phase !== "error"'), false);
+
+const { spawnSync } = await import("node:child_process");
+const { fileURLToPath } = await import("node:url");
+const built = spawnSync(
+  "npx",
+  ["vite", "build", "--config", "vite.desktop.config.ts", "--logLevel", "error"],
+  {
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
+    encoding: "utf8",
+    timeout: 60_000,
+  },
+);
+if (built.stdout) process.stdout.write(built.stdout);
+if (built.status !== 0) {
+  if (built.stderr) process.stderr.write(built.stderr);
+  throw new Error("desktop production build failed");
+}
+const distHtml = readFileSync(new URL("../dist-desktop/index.html", import.meta.url), "utf8");
+const distPage = readFileSync(new URL("../dist-desktop/saved-page.js", import.meta.url), "utf8");
+assert.match(distHtml, /<script src="\.\/saved-page\.js"><\/script>/);
+assert.equal(distHtml.includes('type="module" src="./saved-page.js"'), false);
+assert.equal(distPage.includes(SAVED_PAGE_READY_MESSAGE), true);
+const tauriConf = JSON.parse(
+  readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+);
+const scriptSrc = tauriConf.app.security.csp
+  .split(";")
+  .map((part) => part.trim())
+  .find((part) => part.startsWith("script-src"));
+assert.equal(scriptSrc, "script-src 'self'");
 
 console.log("desktop-boot: PASS");
