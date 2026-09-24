@@ -814,6 +814,55 @@ assert.equal(treeSrc.includes("createNoteWhenReady("), true);
   assert.equal(shellSrc.includes("exitGraphForViewport();") && shellSrc.includes("vaultHasNoNotes()"), true);
 }
 assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : undefined}'), true);
+// Shared first-run path, in order: leave the map, open the list, wait for the
+// vault, create Untitled, mark it new, then open its name.
+{
+  const at = (s) => firstNoteSrc.indexOf(s);
+  const exitAt = at('if (s.settings.graphMode === "fullscreen") exitGraphForViewport();');
+  const revealAt = at("revealFileList(() => {");
+  const createAt = at('createNoteWhenReady(null, "Untitled", (id) => {');
+  const markAt = at('new CustomEvent("nexus-created-note", { detail: id })');
+  const renameAt = at("scheduleEmptyNoteRename(");
+  assert.ok(exitAt > 0 && exitAt < revealAt && revealAt < createAt && createAt < markAt && markAt < renameAt);
+  assert.equal(firstNoteSrc.includes('new CustomEvent("nexus-rename-node", { detail: noteId })'), true);
+  // Empty means no notes, and a large vault still at zero with nothing listed.
+  assert.equal(firstNoteSrc.includes("if (!s.vaultId) return false;"), true);
+  assert.equal(
+    firstNoteSrc.includes("if (s.shellCatalog) return s.catalogNoteCount <= 0 && s.rootIds.length === 0;"),
+    true,
+  );
+  // The map card never calls a bare create that a still-opening vault would drop.
+  const graphSrc = readFileSync(new URL("../src/components/graph/GraphView.tsx", import.meta.url), "utf8");
+  assert.equal(graphSrc.includes('onClick={() => createNote(null, "Untitled")}'), false);
+  assert.equal(graphSrc.includes('import { startFirstNote } from "@/lib/vault/first-note";'), true);
+  // Enter anywhere: only in an empty vault, never over a modal, and never from a
+  // field, a button, a link, the note, or the list (which has its own Enter).
+  const enterAt = keysSrc.indexOf("vaultHasNoNotes() &&");
+  assert.ok(enterAt > 0);
+  const enterBlock = keysSrc.slice(enterAt - 300, keysSrc.indexOf("startFirstNote();", enterAt) + 40);
+  assert.equal(enterBlock.includes('e.key === "Enter"'), true);
+  assert.equal(enterBlock.includes("!e.metaKey") && enterBlock.includes("!e.ctrlKey") && enterBlock.includes("!e.shiftKey"), true);
+  assert.equal(enterBlock.includes("[data-nexus-confirm], [role='dialog'][aria-modal='true']"), true);
+  assert.equal(
+    enterBlock.includes("input, textarea, select, button, a, [contenteditable='true'], [data-file-tree]"),
+    true,
+  );
+  assert.equal(enterBlock.includes("e.preventDefault();"), true);
+  // It runs before the rename and Escape handling in the same listener.
+  assert.ok(enterAt < keysSrc.indexOf('e.key === "F2"'));
+  // Auto-leave the map: only for an empty vault, only in the first seconds after open.
+  const landAt = shellSrc.indexOf("const openedAt = Date.now();");
+  assert.ok(landAt > 0);
+  const landBlock = shellSrc.slice(landAt, shellSrc.indexOf("}, [vaultId]);", landAt));
+  assert.equal(landBlock.includes("if (Date.now() - openedAt > 5000) return;"), true);
+  assert.equal(landBlock.includes('if (st.settings.graphMode !== "fullscreen" || !vaultHasNoNotes()) return;'), true);
+  assert.equal(landBlock.includes("exitGraphForViewport();"), true);
+  assert.equal(landBlock.includes("revealFileList("), true);
+  assert.equal(landBlock.includes("window.setTimeout(unsub, 5200)"), true);
+  // The first-run pane uses the same path, so there is one way to make the first note.
+  assert.equal(editorSrc.includes("startFirstNote as startFirstNoteAnywhere"), true);
+  assert.equal(editorSrc.includes('useVaultStore.getState().createNote(null, "Untitled")'), false);
+}
 // Dialogs are one opaque dark card in both themes and never start transparent.
 assert.equal(settingsSrc.includes("nexus-dark-island"), true);
 assert.equal(confirmSrc.includes("nexus-dark-island"), true);
