@@ -803,6 +803,15 @@ assert.equal(whenReadySrc.includes("if (s.connecting || done) return;"), true);
 assert.equal(editorSrc.includes("createNoteWhenReady("), true);
 assert.equal(treeSrc.includes("createNoteWhenReady("), true);
 assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : undefined}'), true);
+// Dialogs are one opaque dark card in both themes and never start transparent.
+assert.equal(settingsSrc.includes("nexus-dark-island"), true);
+assert.equal(confirmSrc.includes("nexus-dark-island"), true);
+assert.equal(paletteSrc.includes("nexus-dark-island"), true);
+assert.equal(settingsSrc.includes('data-testid="settings-title"'), true);
+{
+  const kf = cssSrc.slice(cssSrc.indexOf("@keyframes nexusDialogIn"), cssSrc.indexOf(".nexus-dialog-in {"));
+  assert.equal(kf.includes("opacity"), false);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
