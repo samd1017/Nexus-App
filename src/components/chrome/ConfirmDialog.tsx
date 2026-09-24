@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { markControlFocus } from "@/lib/chrome/focus-ring";
+import { markControlFocus, reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { confirmEnterAction } from "@/lib/chrome/rebuild-confirm";
 
 type Props = {
@@ -16,6 +16,8 @@ type Props = {
   initialFocus?: "cancel" | "confirm";
   /** Stable hook for the open dialog, when a caller needs one. */
   testId?: string;
+  /** Selector focused again after Cancel, once the dialog is gone. */
+  returnTo?: string;
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -30,13 +32,17 @@ export function ConfirmDialog({
   danger = false,
   initialFocus,
   testId,
+  returnTo,
   onConfirm,
   onCancel,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
+  const returnToRef = useRef(returnTo);
+  returnToRef.current = returnTo;
 
   const onCancelRef = useRef(onCancel);
   const onConfirmRef = useRef(onConfirm);
@@ -59,19 +65,41 @@ export function ConfirmDialog({
       return target ?? cancelRef.current;
     };
     const focusLanding = () => {
+      const panel = panelRef.current;
+      if (!panel?.isConnected) return;
       const landing = landingOf();
-      landing?.focus({ preventScroll: true });
-      if (landing) markControlFocus(landing, document);
+      if (!landing) return;
+      landing.focus({ preventScroll: true });
+      markControlFocus(landing, document);
+      if (document.activeElement === landing) {
+        overlayRef.current?.setAttribute(
+          "data-confirm-landed",
+          landing === cancelRef.current ? "cancel" : "confirm",
+        );
+      }
     };
-    const t = window.setTimeout(focusLanding, 0);
+    // Land immediately, then again after the paint. A long vault can move
+    // focus to the note in the same turn the dialog opens.
+    focusLanding();
+    const raf = window.requestAnimationFrame(focusLanding);
+    const soon = window.setTimeout(focusLanding, 0);
+    const later = window.setTimeout(focusLanding, 48);
     // A busy vault can move focus back to the note after the dialog paints.
-    // Keep the landing button while this confirm is open.
+    // focus() inside this focusin loses to the call that is still finishing,
+    // so the landing button is taken back on the next turn.
+    const reclaim = () => {
+      const panel = panelRef.current;
+      if (!panel?.isConnected) return;
+      const active = document.activeElement;
+      if (active && panel.contains(active)) return;
+      focusLanding();
+    };
     const onFocusIn = (e: FocusEvent) => {
       const panel = panelRef.current;
       if (!panel) return;
       const next = e.target as Node | null;
       if (next && panel.contains(next)) return;
-      focusLanding();
+      reclaimAfterFocus(reclaim);
     };
     document.addEventListener("focusin", onFocusIn, true);
 
@@ -127,17 +155,30 @@ export function ConfirmDialog({
     };
     window.addEventListener("keydown", onKey, true);
     return () => {
-      window.clearTimeout(t);
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(soon);
+      window.clearTimeout(later);
       document.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKey, true);
-      const back = prevFocusRef.current;
-      if (back && back.isConnected && typeof back.focus === "function") {
-        try {
-          back.focus({ preventScroll: true });
-        } catch {
-          /* ignore */
+      const restore = () => {
+        if (document.querySelector("[data-nexus-confirm]")) return;
+        const selector = returnToRef.current;
+        const picked = selector
+          ? document.querySelector<HTMLElement>(selector)
+          : null;
+        const back =
+          picked && picked.isConnected ? picked : prevFocusRef.current;
+        if (back && back.isConnected && typeof back.focus === "function") {
+          try {
+            back.focus({ preventScroll: true });
+          } catch {
+            /* ignore */
+          }
         }
-      }
+      };
+      restore();
+      reclaimAfterFocus(restore);
+      window.setTimeout(restore, 48);
     };
   }, [open, danger, initialFocus]);
 
@@ -146,6 +187,7 @@ export function ConfirmDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 px-4 backdrop-blur-[2px]"
+      ref={overlayRef}
       data-nexus-confirm="true"
       data-confirm-focus={preferCancel ? "cancel" : "confirm"}
       data-testid={testId}

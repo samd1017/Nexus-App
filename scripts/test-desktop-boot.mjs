@@ -569,7 +569,49 @@ assert.equal(trashSrc.includes('testId="trash-confirm"'), true);
 assert.equal(trashSrc.includes('initialFocus="cancel"'), true);
 assert.equal(confirmSrc.includes("data-confirm-message"), true);
 assert.equal(confirmSrc.includes("data-confirm-focus"), true);
+assert.equal(confirmSrc.includes("data-confirm-landed"), true);
 assert.equal(confirmSrc.includes("panel.contains"), true);
+assert.equal(confirmSrc.includes("reclaimAfterFocus"), true);
+assert.equal(confirmSrc.includes("queueMicrotask") || confirmSrc.includes("reclaimAfterFocus"), true);
+assert.equal(settingsSrc.includes('returnTo={'), true);
+assert.equal(settingsSrc.includes('[data-testid="settings-rebuild"]'), true);
+assert.equal(treeSrc.includes("reclaimAfterFocus"), true);
+assert.equal(treeSrc.includes("scheduleEmptyNoteRename"), true);
+const enterSrc = readFileSync(
+  new URL("../src/lib/chrome/empty-folder-enter.ts", import.meta.url),
+  "utf8",
+);
+assert.equal(enterSrc.includes("aria-label='Folder map'"), true);
+assert.equal(enterSrc.includes("scheduleEmptyNoteRename"), true);
+const { reclaimAfterFocus } = await import("../src/lib/chrome/focus-ring.ts");
+const { scheduleEmptyNoteRename } = await import(
+  "../src/lib/chrome/empty-folder-enter.ts"
+);
+const order = [];
+function stealFocus() {
+  order.push("steal");
+  reclaimAfterFocus(() => order.push("reclaim"));
+  order.push("steal-returns");
+}
+stealFocus();
+await new Promise((resolve) => setTimeout(resolve, 40));
+assert.ok(order.indexOf("steal-returns") < order.indexOf("reclaim"));
+let opened = 0;
+let visible = false;
+scheduleEmptyNoteRename(
+  "note-1",
+  () => {
+    opened += 1;
+    if (opened >= 2) visible = true;
+  },
+  () => visible,
+  4,
+);
+await new Promise((resolve) => setTimeout(resolve, 80));
+assert.equal(opened, 2);
+assert.equal(visible, true);
+assert.equal(cssSrc.includes(".editor-status"), true);
+assert.equal(cssSrc.includes("[data-nexus-confirm] [role=\"dialog\"]"), true);
 const toastSrc = readFileSync(
   new URL("../src/components/chrome/Toast.tsx", import.meta.url),
   "utf8",

@@ -2132,3 +2132,19 @@ button:focus-visible,
   font-weight: 700;
 }
 
+/* Confirm copy stays white. The card stays dark even when the vault theme is light. */
+[data-nexus-confirm] [role="dialog"] {
+  background: #16161a;
+  color: #fff;
+}
+[data-nexus-confirm] [role="dialog"] h2 {
+  color: #fff;
+}
+
+/* Status line under the note: white on the dark editor. */
+.editor-status {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+

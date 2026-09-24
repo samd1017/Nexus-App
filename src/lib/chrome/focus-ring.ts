@@ -1,3 +1,13 @@
+/**
+ * focus() inside a capture focusin handler loses. The call that moved focus
+ * finishes after those handlers, so the stealer stays put. Run again once
+ * that call has returned, and once more on the next frame.
+ */
+export function reclaimAfterFocus(run: () => void): void {
+  queueMicrotask(run);
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+}
+
 /** Mark the keyboard-focused chrome control so the ring is queryable. */
 export function markControlFocus(el: HTMLElement | null, doc: Document): void {
   doc.querySelectorAll('[data-keyboard-focus="control"]').forEach((node) => {

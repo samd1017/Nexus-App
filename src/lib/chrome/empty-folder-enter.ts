@@ -33,7 +33,29 @@ export function claimEmptyFolderEnter(input: {
 }
 
 const STEAL_SELECTOR =
-  "[data-graph-host], [data-testid='nexus-editor'], .ProseMirror, .note-title-input, .daily-chip, [aria-label='Daily note'], [aria-label='Week days']";
+  "[data-graph-host], [aria-label='Folder map'], [aria-label='Folder map path'], [data-testid='nexus-editor'], .ProseMirror, .note-title-input, .daily-chip, [aria-label='Daily note'], [aria-label='Week days']";
+
+/** Keep asking until the new note's rename field is actually on screen. */
+export function scheduleEmptyNoteRename(
+  noteId: string,
+  open: (id: string) => void,
+  isOpen: () => boolean,
+  frames = 8,
+): void {
+  const later =
+    typeof requestAnimationFrame === "function"
+      ? requestAnimationFrame
+      : (cb: () => void) => {
+          setTimeout(cb, 0);
+        };
+  const tick = (left: number) => {
+    if (isOpen()) return;
+    open(noteId);
+    if (left <= 0) return;
+    later(() => tick(left - 1));
+  };
+  tick(frames);
+}
 
 /** True when a control took focus without a click while an empty folder was armed. */
 export function isProgrammaticFocusSteal(

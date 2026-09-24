@@ -36,7 +36,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
-import { claimEmptyFolderEnter, isProgrammaticFocusSteal } from "@/lib/chrome/empty-folder-enter";
+import { claimEmptyFolderEnter, isProgrammaticFocusSteal, scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
+import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -660,6 +661,26 @@ export const FileTree = memo(function FileTree() {
     parentRef.current?.focus({ preventScroll: true });
   }, []);
 
+  const openCreatedRename = useCallback((noteId: string) => {
+    const safe =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(noteId)
+        : noteId.replace(/["\\]/g, "\\$&");
+    scheduleEmptyNoteRename(
+      noteId,
+      (id) => {
+        setRenamingId(id);
+        window.dispatchEvent(new CustomEvent("nexus-rename-node", { detail: id }));
+      },
+      () =>
+        Boolean(
+          document.querySelector(
+            `[data-testid="tree-rename"][data-rename-for="${safe}"]`,
+          ),
+        ),
+    );
+  }, []);
+
   useEffect(() => {
     let fromPointer = false;
     const cssId = (id: string) => {
@@ -687,6 +708,16 @@ export const FileTree = memo(function FileTree() {
     const onPointerUp = () => {
       fromPointer = false;
     };
+    const reclaimHolding = (folderId: string) => {
+      const rename = document.querySelector<HTMLElement>("[data-testid='tree-rename']");
+      if (rename) {
+        if (document.activeElement !== rename) rename.focus({ preventScroll: true });
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest?.("[data-folder-empty='1']")) return;
+      focusEmptyRow(folderId);
+    };
     const onFocusIn = (e: FocusEvent) => {
       const next = e.target as Element | null;
       const onEmpty = Boolean(next?.closest?.("[data-folder-empty='1']"));
@@ -698,7 +729,8 @@ export const FileTree = memo(function FileTree() {
       const holding = armedEmptyRef.current;
       if (!isProgrammaticFocusSteal(next, Boolean(holding), fromPointer)) return;
       if (!holding) return;
-      focusEmptyRow(holding);
+      // Same turn as the stealer's focus() — wait until that call returns.
+      reclaimAfterFocus(() => reclaimHolding(holding));
     };
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -724,7 +756,9 @@ export const FileTree = memo(function FileTree() {
       e.preventDefault();
       e.stopImmediatePropagation();
       const id = useVaultStore.getState().createNote(folderId, "Untitled");
-      if (id) requestAnimationFrame(() => setRenamingId(id));
+      if (!id) return;
+      armedEmptyRef.current = null;
+      openCreatedRename(id);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("pointerup", onPointerUp, true);
@@ -736,7 +770,7 @@ export const FileTree = memo(function FileTree() {
       window.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [armEmptyFolder]);
+  }, [armEmptyFolder, openCreatedRename]);
 
   const handleTreeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -773,7 +807,10 @@ export const FileTree = memo(function FileTree() {
         if (folderId) {
           e.preventDefault();
           const id = createNote(folderId, "Untitled");
-          if (id) requestAnimationFrame(() => setRenamingId(id));
+          if (id) {
+            armedEmptyRef.current = null;
+            openCreatedRename(id);
+          }
           return;
         }
       }
@@ -911,6 +948,7 @@ export const FileTree = memo(function FileTree() {
       virtualizer,
       setCtx,
       createNote,
+      openCreatedRename,
     ],
   );
 

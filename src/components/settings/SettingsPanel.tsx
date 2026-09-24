@@ -991,16 +991,11 @@ export function SettingsPanel() {
             : "Restore appearance, editor, and shortcuts to their original settings. This vault stays as it is."
         }
         confirmLabel={confirmKind === "rebuild" ? "Rebuild" : "Reset"}
+        returnTo={
+          confirmKind === "rebuild" ? '[data-testid="settings-rebuild"]' : undefined
+        }
         onCancel={() => {
-          const backToRebuild = confirmKind === "rebuild";
           setConfirmKind(null);
-          if (backToRebuild) {
-            requestAnimationFrame(() => {
-              document
-                .querySelector<HTMLElement>('[data-testid="settings-rebuild"]')
-                ?.focus();
-            });
-          }
         }}
         onConfirm={() => {
           if (confirmKind === "rebuild") {
