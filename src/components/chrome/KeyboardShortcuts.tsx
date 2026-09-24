@@ -16,6 +16,7 @@ import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { revealFileList } from "@/lib/chrome/reveal-list";
+import { startFirstNote, vaultHasNoNotes } from "@/lib/vault/first-note";
 import { scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import {
   matchHotkey,
@@ -170,6 +171,31 @@ export function KeyboardShortcuts() {
         const ok = runHotkey(matched);
         if (ok) e.preventDefault();
         return;
+      }
+
+      // Enter in an empty vault starts the first note from anywhere, including
+      // the fullscreen folder map, where neither the list nor the editor pane is
+      // on screen to hear it. The list keeps its own Enter.
+      if (
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        vaultHasNoNotes() &&
+        !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
+      ) {
+        const t = e.target as HTMLElement | null;
+        const typing = Boolean(
+          t?.closest?.(
+            "input, textarea, select, button, a, [contenteditable='true'], [data-file-tree]",
+          ),
+        );
+        if (!typing) {
+          e.preventDefault();
+          startFirstNote();
+          return;
+        }
       }
 
       // F2 from the note renames it in the list. The list owns F2 on its own rows.

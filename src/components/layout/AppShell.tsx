@@ -36,7 +36,9 @@ import {
 } from "@/lib/vault/native-index";
 import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
 import { bindWindowState } from "@/lib/desktop/window-state";
-import { toggleGraphForViewport } from "@/lib/layout/viewport";
+import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
+import { revealFileList } from "@/lib/chrome/reveal-list";
+import { vaultHasNoNotes } from "@/lib/vault/first-note";
 import { cn } from "@/lib/utils";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
@@ -338,6 +340,36 @@ export function AppShell() {
         /* picker-less open is best-effort in dev */
       });
   }, []);
+
+  // A vault that opens empty lands on the list, where Enter starts the first
+  // note. An open that puts it straight into the fullscreen map (a saved graph
+  // preference, or a scripted open) is undone in the first moments only, so a
+  // reader who opens the map later on purpose stays there.
+  useEffect(() => {
+    if (!vaultId) return;
+    const openedAt = Date.now();
+    const land = () => {
+      if (Date.now() - openedAt > 5000) return;
+      const st = useVaultStore.getState();
+      if (st.settings.graphMode !== "fullscreen" || !vaultHasNoNotes()) return;
+      exitGraphForViewport();
+      revealFileList((tree) => {
+        const active = document.activeElement as HTMLElement | null;
+        if (!active || active === document.body || active.closest?.("[data-graph-host]")) {
+          tree.focus({ preventScroll: true });
+        }
+      });
+    };
+    land();
+    const unsub = useVaultStore.subscribe((s, prev) => {
+      if (s.settings.graphMode !== prev.settings.graphMode || s.rootIds !== prev.rootIds) land();
+    });
+    const stop = window.setTimeout(unsub, 5200);
+    return () => {
+      unsub();
+      window.clearTimeout(stop);
+    };
+  }, [vaultId]);
 
   // Responsive panels: auto-close on narrow vault open + when crossing below tablet width
   useEffect(() => {

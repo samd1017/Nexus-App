@@ -49,6 +49,7 @@ import {
   type GraphFilterState,
 } from "@/lib/graph/graph-filters";
 import { graphEmptyCopy } from "@/lib/graph/graph-empty";
+import { startFirstNote } from "@/lib/vault/first-note";
 
 /** Stable empty map so a null store snapshot cannot throw during graph render. */
 const EMPTY_GRAPH_NODES: Record<string, VaultNode> = {};
@@ -807,7 +808,6 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
   const accentPreset = usePrefsStore((s) => s.accentPreset);
   const accentCustom = usePrefsStore((s) => s.accentCustom);
   const reducedMotion = usePrefsStore((s) => s.reducedMotion);
-  const createNote = useVaultStore((s) => s.createNote);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const [hoverName, setHoverName] = useState<string | null>(null);
   const [hoverTip, setHoverTip] = useState<{
@@ -2385,7 +2385,8 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
         <button
           type="button"
           className="primary-btn min-h-8 px-3 text-[12px]"
-          onClick={() => createNote(null, "Untitled")}
+          data-testid="graph-empty-new-note"
+          onClick={() => startFirstNote()}
         >
           <FilePlus2 size={13} />
           New note
