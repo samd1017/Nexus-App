@@ -891,12 +891,12 @@ export const FileTree = memo(function FileTree() {
         ),
     );
   }, []);
+  // One way to fill an empty folder, for a plain Enter and for an Enter held
+  // while a searched folder was still landing.
   createInFolderRef.current = (folderId: string) => {
-    const nid = useVaultStore.getState().createNote(folderId, "Untitled");
-    if (!nid) return;
     armedEmptyRef.current = null;
     parentRef.current?.removeAttribute("data-empty-armed");
-    openCreatedRename(nid);
+    createNoteWhenReady(folderId, "Untitled", openCreatedRename);
   };
 
   useEffect(() => {
@@ -1021,12 +1021,8 @@ export const FileTree = memo(function FileTree() {
       if (!folderId) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      const id = useVaultStore.getState().createNote(folderId, "Untitled");
-      if (!id) return;
-      armedEmptyRef.current = null;
-      parentRef.current?.removeAttribute("data-empty-armed");
       clearReclaim();
-      openCreatedRename(id);
+      createInFolderRef.current(folderId);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("pointerup", onPointerUp, true);

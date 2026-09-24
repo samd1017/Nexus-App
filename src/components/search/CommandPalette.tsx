@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
-import { revealFolderInList } from "@/lib/chrome/reveal-list";
+import { revealFolderInList, revealInFlight } from "@/lib/chrome/reveal-list";
+import { folderForEnter } from "@/lib/search/folder-enter";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
   FileText,
@@ -309,8 +310,9 @@ function CommandPaletteOpen() {
       const release = holdOpenFocus(root, () => inputRef.current, () => false, true);
       return () => {
         release();
-        // Closing search goes back where you were, or to the list.
-        requestAnimationFrame(() => restoreFocusOrList(prev));
+        // Closing search goes back where you were, or to the list. A folder
+        // picked in search is landing in the list: the list takes the cursor.
+        requestAnimationFrame(() => restoreFocusOrList(revealInFlight() ? null : prev));
       };
     } else {
       setQuery("");
@@ -803,6 +805,33 @@ function CommandPaletteOpen() {
       window.clearTimeout(t);
     };
   }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, shellCatalog, shellDbPath]);
+
+  const catalogFolderLookup = Boolean(
+    shellCatalog &&
+      shellDbPath &&
+      shellDbPath !== BROWSER_SHELL_DB &&
+      q &&
+      !isAskMode &&
+      !isCommandMode &&
+      !isTagBrowse &&
+      !hasPathFolderOp &&
+      !qLower.startsWith("is:"),
+  );
+  // Enter pressed before the catalog answered goes to the folder when it does.
+  const pendingFolderEnterRef = useRef<{ q: string; until: number } | null>(null);
+  useEffect(() => {
+    const pending = pendingFolderEnterRef.current;
+    if (!pending) return;
+    if (pending.q !== q || Date.now() > pending.until) {
+      pendingFolderEnterRef.current = null;
+      return;
+    }
+    if (hits.length > 0) return;
+    const folder = folderForEnter(folderHits, q);
+    if (!folder) return;
+    pendingFolderEnterRef.current = null;
+    revealFolderInList(folder.id);
+  }, [folderHits, hits.length, q]);
 
   const askAnswer = useMemo(() => {
     if (!isAskMode) return null;
@@ -1569,13 +1598,33 @@ function CommandPaletteOpen() {
               const selected = root?.querySelector(
                 "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
               );
-              if (selected) return;
+              if (selected?.getAttribute("data-testid") === "search-folder-hit") return;
+              if (!q || isAskMode || isCommandMode || isTagBrowse) return;
               const top = hits[0];
-              if (!top || !q || isAskMode || isCommandMode || isTagBrowse) return;
-              e.preventDefault();
-              e.stopPropagation();
-              setActiveNote(top.noteId);
-              setCommandOpen(false);
+              // A folder found after the list settled is never selected, so
+              // Enter would do nothing and leave search holding the keyboard.
+              const folder = hits.length === 0 ? folderForEnter(folderHits, q) : null;
+              if (folder && (!selected || folder.exact)) {
+                e.preventDefault();
+                e.stopPropagation();
+                pendingFolderEnterRef.current = null;
+                revealFolderInList(folder.id);
+                return;
+              }
+              if (selected) return;
+              if (top) {
+                e.preventDefault();
+                e.stopPropagation();
+                setActiveNote(top.noteId);
+                setCommandOpen(false);
+                return;
+              }
+              // The catalog is still being asked for a folder by this name.
+              if (catalogFolderLookup) {
+                e.preventDefault();
+                e.stopPropagation();
+                pendingFolderEnterRef.current = { q, until: Date.now() + 4000 };
+              }
             }}
           />
           <button

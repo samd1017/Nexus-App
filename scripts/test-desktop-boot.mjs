@@ -1338,7 +1338,33 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   // Both landings (row found, or armed off-screen) apply a held Enter.
   assert.equal((treeSrc.match(/applyHeldEnter\(id\);/g) ?? []).length >= 2, true);
   assert.equal(treeSrc.includes("if (finishReveal(id) && folderHasNothing(id)) createInFolderRef.current(id);"), true);
-  assert.equal(treeSrc.includes('const nid = useVaultStore.getState().createNote(folderId, "Untitled");'), true);
+  // A plain Enter and a held Enter fill the folder the same way, and wait out
+  // a vault that is still opening instead of dropping the key.
+  assert.equal(treeSrc.includes('createNoteWhenReady(folderId, "Untitled", openCreatedRename);'), true);
+  assert.equal(treeSrc.includes("createInFolderRef.current(folderId);"), true);
+  assert.equal(treeSrc.includes('useVaultStore.getState().createNote(folderId, "Untitled")'), false);
+}
+// Search: a folder reveal closes search so it cannot take the next Enter, and a
+// plain Enter goes to the folder even when it was found after the list settled.
+{
+  const revealSrc3 = readFileSync(new URL("../src/lib/chrome/reveal-list.ts", import.meta.url), "utf8");
+  const at = revealSrc3.indexOf("export function revealFolderInList");
+  const body = revealSrc3.slice(at, revealSrc3.indexOf("\n}\n", at));
+  assert.equal(body.includes("if (st.commandOpen) st.setCommandOpen(false);"), true);
+  assert.ok(body.indexOf("setCommandOpen(false)") < body.indexOf("revealFileList("));
+  assert.equal(paletteSrc.includes("restoreFocusOrList(revealInFlight() ? null : prev)"), true);
+  assert.equal(paletteSrc.includes("const folder = hits.length === 0 ? folderForEnter(folderHits, q) : null;"), true);
+  assert.equal(paletteSrc.includes("if (folder && (!selected || folder.exact)) {"), true);
+  assert.equal(paletteSrc.includes("pendingFolderEnterRef.current = { q, until: Date.now() + 4000 };"), true);
+  const { folderForEnter } = await import(new URL("../src/lib/search/folder-enter.ts", import.meta.url).href);
+  const fs = [
+    { id: "a", name: "EmptyFolder old", path: "Archive/EmptyFolder old" },
+    { id: "b", name: "EmptyFolder", path: "EmptyFolder" },
+  ];
+  assert.deepEqual(folderForEnter(fs, "emptyfolder"), { id: "b", exact: true });
+  assert.deepEqual(folderForEnter(fs, "/EmptyFolder/ "), { id: "b", exact: true });
+  assert.deepEqual(folderForEnter(fs, "Empty"), { id: "a", exact: false });
+  assert.equal(folderForEnter([], "EmptyFolder"), null);
 }
 // Runtime: the held-Enter queue. The module imports the app store, so load a
 // copy with a stub store and a minimal document/window, then drive the real code.

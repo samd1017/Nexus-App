@@ -91,6 +91,9 @@ export function finishReveal(id: string): boolean {
 export function revealFolderInList(folderId: string): void {
   pendingFolder = folderId;
   inFlight = { id: folderId, until: Date.now() + 3000, enter: false };
+  // Search is a modal field: left open, it would take the next Enter.
+  const st = useVaultStore.getState();
+  if (st.commandOpen) st.setCommandOpen(false);
   revealFileList(() => {
     window.dispatchEvent(
       new CustomEvent("nexus-reveal-folder", { detail: folderId }),
