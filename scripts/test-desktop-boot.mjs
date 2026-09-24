@@ -789,6 +789,14 @@ assert.equal(visualSrc.includes("nexus-write-note"), true);
 assert.equal(treeSrc.includes("justCreatedRef"), true);
 assert.equal(confirmSrc.includes("restoreFocusOrList"), true);
 assert.equal(paletteSrc.includes("focusBeforeSearch"), true);
+// A stolen Enter in a Cancel-first ask cancels; the tree never fights an open ask.
+assert.equal(confirmSrc.includes("if (outside && preferCancel) onCancelRef.current();"), true);
+assert.equal(confirmSrc.includes("slowReclaim"), true);
+assert.equal(treeSrc.includes("const dialogOpen = () =>"), true);
+// The early band never swallows clicks on the title bar.
+const savedPageSrc = readFileSync(new URL("../public/saved-page.js", import.meta.url), "utf8");
+assert.equal(savedPageSrc.includes('host.style.pointerEvents = "none"'), true);
+assert.equal(settingsSrc.includes("setCommandOpen(false)"), true);
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

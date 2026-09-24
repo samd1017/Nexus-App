@@ -1574,28 +1574,6 @@ export const FileTree = memo(function FileTree() {
         });
       }}
     >
-      {focusedEmptyFolder ? (
-        <p
-          role="status"
-          data-testid="tree-empty-folder-banner"
-          data-empty-parent={focusedEmptyFolder}
-          className="sticky top-0 z-[1] mx-1 mb-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12px] leading-snug text-[var(--text-secondary)]"
-          onPointerDown={() => {
-            armEmptyFolder(focusedEmptyFolder);
-            const tree = parentRef.current;
-            const row =
-              tree?.querySelector<HTMLElement>(
-                `[data-folder-empty="1"][data-empty-parent="${focusedEmptyFolder}"]`,
-              ) ??
-              tree?.querySelector<HTMLElement>(
-                `[data-node-id="${focusedEmptyFolder}"][data-folder-empty="1"]`,
-              );
-            row?.focus({ preventScroll: true });
-          }}
-        >
-          This folder is empty. Enter starts a note.
-        </p>
-      ) : null}
       {flatRows.length === 0 ? (
         <EmptyState
           compact
@@ -1658,6 +1636,29 @@ export const FileTree = memo(function FileTree() {
       ) : (
         flatRows.map((row) => renderRow(row))
       )}
+
+      {focusedEmptyFolder ? (
+        <p
+          role="status"
+          data-testid="tree-empty-folder-banner"
+          data-empty-parent={focusedEmptyFolder}
+          className="sticky bottom-1 z-[1] mx-1 mt-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12px] leading-snug text-[var(--text-secondary)]"
+          onPointerDown={() => {
+            armEmptyFolder(focusedEmptyFolder);
+            const tree = parentRef.current;
+            const row =
+              tree?.querySelector<HTMLElement>(
+                `[data-folder-empty="1"][data-empty-parent="${focusedEmptyFolder}"]`,
+              ) ??
+              tree?.querySelector<HTMLElement>(
+                `[data-node-id="${focusedEmptyFolder}"][data-folder-empty="1"]`,
+              );
+            row?.focus({ preventScroll: true });
+          }}
+        >
+          This folder is empty. Enter starts a note.
+        </p>
+      ) : null}
 
       {dragId ? (
         <div className="pointer-events-none sticky bottom-1 mt-3 rounded-md border border-dashed border-[rgba(0,200,255,0.28)] bg-[rgba(0,200,255,0.05)] px-2 py-1.5 text-center text-[10.5px] text-[var(--text-muted)]">
