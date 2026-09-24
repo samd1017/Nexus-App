@@ -467,6 +467,40 @@ assert.equal(emptyFolderIdFromTarget(null), null);
 const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 assert.equal(cssSrc.includes("outline: 2px solid #5ad8ff"), true);
 assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);
+assert.equal(cssSrc.includes('data-keyboard-focus="row"'), true);
+assert.equal(cssSrc.includes('data-keyboard-focus="control"'), true);
+assert.equal(cssSrc.includes("inset 0 0 0 3px #5ad8ff"), true);
+assert.equal(treeSrc.includes('data-keyboard-focus={isFocused ? "row" : undefined}'), true);
+assert.equal(treeSrc.includes('data-testid="tree-rename"'), true);
+assert.equal(treeSrc.includes("data-rename-original"), true);
+assert.equal(treeSrc.includes("renameKeyAction"), true);
+assert.equal(treeSrc.includes('e.key === "F2"'), true);
+assert.equal(editorSrc.includes('data-testid={emptyVault ? "vault-first-run"'), true);
+const emptySrc = readFileSync(
+  new URL("../src/components/ui/EmptyState.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(emptySrc.includes('data-testid={status === "vault" ? "vault-first-run-list"'), true);
+const { shouldSkipLaunchNote } = await import("../src/lib/vault/launch-note.ts");
+assert.equal(shouldSkipLaunchNote(0), true);
+assert.equal(shouldSkipLaunchNote(1), false);
+assert.equal(storeSrc.includes("shouldSkipLaunchNote(noteCount)"), true);
+assert.equal(storeSrc.includes("openEmptyVault"), true);
+const { renameKeyAction } = await import("../src/lib/chrome/rename-key.ts");
+assert.equal(renameKeyAction("Escape"), "restore");
+assert.equal(renameKeyAction("Enter"), "commit");
+assert.equal(renameKeyAction("F2"), "ignore");
+const { treeRowIdFromTarget } = await import("../src/lib/vault/empty-folder-target.ts");
+const noteRow = {
+  getAttribute(name) {
+    return name === "data-node-id" ? "note-1" : null;
+  },
+  closest(selector) {
+    return selector === "[role='treeitem'][data-node-id]" ? this : null;
+  },
+};
+assert.equal(treeRowIdFromTarget(noteRow), "note-1");
+assert.equal(treeRowIdFromTarget(null), null);
 assert.equal(shellSrc.includes("focusedEmptyFolderId()"), true);
 assert.equal(shellSrc.includes("paintedFromPage"), true);
 assert.equal(shellSrc.includes("bg-black"), true);

@@ -28,6 +28,7 @@ export function EmptyState({
     <div
       role={status ? "status" : undefined}
       data-panel-empty={status}
+      data-testid={status === "vault" ? "vault-first-run-list" : undefined}
       className={cn(
         "rounded-[12px] border border-dashed border-[var(--border)] text-center",
         compact ? "px-3 py-6" : "px-4 py-8",
@@ -43,7 +44,14 @@ export function EmptyState({
         {title}
       </p>
       {description ? (
-        <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
+        <p
+          className={cn(
+            "mt-1 leading-relaxed",
+            status === "vault"
+              ? "text-[15px] font-semibold text-white"
+              : "text-[12.5px] text-[var(--text-secondary)]",
+          )}
+        >
           {description}
         </p>
       ) : null}

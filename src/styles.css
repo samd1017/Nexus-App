@@ -2048,3 +2048,20 @@
   outline-offset: 2px;
 }
 
+/* Keyboard cursor on dark chrome. Inset on rows so the scrollport cannot clip it. */
+.tree-item.is-focused,
+.tree-item[data-keyboard-focus="row"] {
+  outline: 3px solid #5ad8ff;
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 3px #5ad8ff;
+  background: rgba(90, 216, 255, 0.2);
+}
+
+button:focus-visible,
+[role="dialog"] button:focus,
+[data-keyboard-focus="control"] {
+  outline: 3px solid #5ad8ff;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(90, 216, 255, 0.8);
+}
+

@@ -219,7 +219,16 @@ export function EditorPane({
         <h2 className="text-[22px] font-semibold tracking-tight">
           {emptyVault ? "Start your vault" : "Select a note"}
         </h2>
-        <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-[var(--text-secondary)]">
+        <p
+          role={emptyVault ? "status" : undefined}
+          data-testid={emptyVault ? "vault-first-run" : undefined}
+          className={cn(
+            "mt-2 max-w-sm leading-relaxed",
+            emptyVault
+              ? "text-[22px] font-semibold text-white"
+              : "text-[14px] text-[var(--text-secondary)]",
+          )}
+        >
           {emptyVault
             ? "Enter starts a note."
             : "Click a note in the list to open it."}

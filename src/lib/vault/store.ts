@@ -15,6 +15,7 @@ import type {
 } from "./types";
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
+import { shouldSkipLaunchNote } from "./launch-note";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import {
   buildSyntheticVault,
@@ -1777,6 +1778,11 @@ function applyLaunchNotePreference() {
 		if (mode === "last") return;
 		const st = useVaultStore.getState();
 		if (!st.vaultId) return;
+		let noteCount = 0;
+		for (const id in st.nodes) {
+			if (st.nodes[id]?.kind === "note") noteCount += 1;
+		}
+		if (shouldSkipLaunchNote(noteCount)) return;
 		if (mode === "smart") {
 			const activeId = st.activeNoteId;
 			const active = activeId ? st.nodes[activeId] : null;
@@ -5841,6 +5847,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				open45k: () => Promise<void>;
 				createNote: (parentId?: string | null, title?: string) => string | null;
 				openRebuildConfirm: () => void;
+				openEmptyVault: () => void;
 				setActiveNote: (id: string | null) => void;
 				setSecondaryNote: (id: string | null) => void;
 				setRightTab: (tab: string) => void;
@@ -5873,6 +5880,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			useVaultStore.getState().createNote(parentId ?? null, title ?? "Untitled"),
 		openRebuildConfirm: () => {
 			window.dispatchEvent(new Event("nexus-open-rebuild"));
+		},
+		openEmptyVault: () => {
+			useVaultStore.getState().openLocalVault("First Run", {
+				nodes: {},
+				rootIds: [],
+				vaultName: "First Run",
+			});
 		},
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),

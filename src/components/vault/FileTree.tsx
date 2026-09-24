@@ -34,7 +34,8 @@ import {
 import { useTreeStructureTick } from "@/lib/vault/tree-tick";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
-import { emptyFolderIdFromTarget } from "@/lib/vault/empty-folder-target";
+import { renameKeyAction } from "@/lib/chrome/rename-key";
+import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -261,8 +262,15 @@ const TreeRow = memo(function TreeRow({
       data-node-id={node.id}
       data-node-kind={node.kind}
       data-folder-empty={folderEmpty ? "1" : undefined}
+      data-keyboard-focus={isFocused ? "row" : undefined}
       data-testid={node.kind === "note" ? "tree-note-row" : "tree-folder-row"}
       onKeyDown={(e) => {
+        if (!renaming && e.key === "F2") {
+          e.preventDefault();
+          e.stopPropagation();
+          setRenamingId(node.id);
+          return;
+        }
         if (!folderEmpty || renaming) return;
         if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
         const target = e.target as HTMLElement | null;
@@ -332,19 +340,19 @@ const TreeRow = memo(function TreeRow({
           autoFocus
           className="min-w-0 flex-1 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[13px] text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
           aria-label="File name. Enter keeps it. Escape puts the old name back."
+          data-testid="tree-rename"
+          data-rename-for={node.id}
+          data-rename-original={displayName(node)}
           value={nameDraft}
           onChange={(e) => setNameDraft(e.target.value)}
           onBlur={commitRename}
           onKeyDown={(e) => {
             e.stopPropagation();
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commitRename();
-            }
-            if (e.key === "Escape") {
-              e.preventDefault();
-              cancelRename();
-            }
+            const action = renameKeyAction(e.key);
+            if (action === "ignore") return;
+            e.preventDefault();
+            if (action === "commit") commitRename();
+            else cancelRename();
           }}
           onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
@@ -637,6 +645,23 @@ export const FileTree = memo(function FileTree() {
     (e: React.KeyboardEvent) => {
       const rows = flatRowsRef.current;
       if (renamingId) return;
+      if (e.key === "F2") {
+        e.preventDefault();
+        const fromRow =
+          treeRowIdFromTarget(e.target) ||
+          treeRowIdFromTarget(
+            typeof document !== "undefined" ? document.activeElement : null,
+          );
+        const id = fromRow || rows[focusedIndex]?.id;
+        if (!id) return;
+        setRenamingId(id);
+        const idx = rows.findIndex((r) => r.id === id);
+        if (idx >= 0) {
+          setFocusedIndex(idx);
+          virtualizer.scrollToIndex(idx, { align: "center" });
+        }
+        return;
+      }
       if (
         e.key === "Enter" &&
         !e.metaKey &&
@@ -751,11 +776,6 @@ export const FileTree = memo(function FileTree() {
             virtualizer.scrollToIndex(parentIdx, { align: "auto" });
           }
         }
-        return;
-      }
-      if (e.key === "F2") {
-        e.preventDefault();
-        setRenamingId(node.id);
         return;
       }
       if (e.key === "Enter") {
@@ -1078,6 +1098,9 @@ export const FileTree = memo(function FileTree() {
           )}
           style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
           role="treeitem"
+          data-keyboard-focus={
+            treeHasFocus && focusedId === row.id ? "row" : undefined
+          }
           aria-label={`${hidden.toLocaleString()} more in this folder`}
           data-tree-more={String(hidden)}
           data-more-parent={row.moreParentId ?? ""}
@@ -1105,6 +1128,9 @@ export const FileTree = memo(function FileTree() {
             "tree-item flex w-full items-center gap-2 text-[12px] text-[var(--text-muted)]",
             treeHasFocus && focusedId === row.id && "is-focused",
           )}
+          data-keyboard-focus={
+            treeHasFocus && focusedId === row.id ? "row" : undefined
+          }
           style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
         >
           <span className="min-w-0 flex-1 truncate">Nothing here yet</span>
@@ -1175,7 +1201,7 @@ export const FileTree = memo(function FileTree() {
       aria-activedescendant={focusedId ? `tree-row-${focusedId}` : undefined}
       onFocus={(e) => {
         setTreeHasFocus(true);
-        const id = emptyFolderIdFromTarget(e.target);
+        const id = treeRowIdFromTarget(e.target);
         if (!id) return;
         const idx = flatRowsRef.current.findIndex((row) => row.id === id);
         if (idx >= 0) setFocusedIndex(idx);

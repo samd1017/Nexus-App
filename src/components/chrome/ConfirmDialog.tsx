@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { markControlFocus } from "@/lib/chrome/focus-ring";
 import { confirmEnterAction } from "@/lib/chrome/rebuild-confirm";
 
 type Props = {
@@ -57,7 +58,9 @@ export function ConfirmDialog({
         ? initialFocus === "cancel"
         : danger;
       const target = preferCancel ? cancelRef.current : confirmRef.current;
-      (target ?? cancelRef.current)?.focus({ preventScroll: true });
+      const landing = target ?? cancelRef.current;
+      landing?.focus({ preventScroll: true });
+      if (landing) markControlFocus(landing, document);
     }, 0);
 
     const onKey = (e: KeyboardEvent) => {

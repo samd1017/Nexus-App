@@ -12,6 +12,7 @@ import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
+import { installKeyboardFocusRings } from "@/lib/chrome/focus-ring";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
@@ -233,6 +234,8 @@ export function AppShell() {
     applyPrefsToDom(getPrefs());
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => installKeyboardFocusRings(document), []);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;

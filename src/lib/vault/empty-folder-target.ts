@@ -1,3 +1,12 @@
+/** Id of the tree row under the event target, or null. */
+export function treeRowIdFromTarget(target: EventTarget | null): string | null {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.closest !== "function") return null;
+  const row = el.closest("[role='treeitem'][data-node-id]");
+  const id = row?.getAttribute("data-node-id")?.trim();
+  return id || null;
+}
+
 /** Empty folder id from a focused row, or null when the target is not that row. */
 export function emptyFolderIdFromTarget(target: EventTarget | null): string | null {
   const el = target as HTMLElement | null;
