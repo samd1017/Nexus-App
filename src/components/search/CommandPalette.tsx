@@ -86,6 +86,7 @@ import {
   isTitleSearchLive,
   mergeCatalogAndFtsHits,
   searchEmptyStateMessage,
+  searchEmptyStatus,
 } from "@/lib/vault/sqlite-fill-progress";
 import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
@@ -1409,6 +1410,12 @@ function CommandPaletteOpen() {
   };
 
   const searchEngine = describeSearchEngine();
+  const emptyStatus = searchEmptyStatus({
+    titleSearchLive,
+    memorySearch: searchEngine.id !== "sqlite-fts5-bm25",
+    failed: searchIndexState === "error" || noteSearchFailed,
+    pending: noteSearchPending,
+  });
   const engineBit = searchEngine.uiLabel;
   const notesHeading = isEmptyQuery
     ? "Recent notes"
@@ -1743,15 +1750,8 @@ function CommandPaletteOpen() {
             <div
               role="status"
               aria-live="polite"
-              data-search-status={
-                searchIndexState === "error" || noteSearchFailed
-                  ? "failed"
-                  : noteSearchPending
-                    ? "pending"
-                    : titleSearchLive
-                      ? "miss"
-                      : "reading"
-              }
+              data-search-status={emptyStatus}
+              data-testid={emptyStatus === "miss" ? "search-miss" : undefined}
               className="flex items-center gap-2 px-3 py-3 text-[13px] leading-snug text-[var(--text-secondary)]"
             >
               <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
@@ -1980,12 +1980,12 @@ function CommandPaletteOpen() {
             </>
           ) : (
             <>
-              {createActions.length > 0 || showCreateNote ? (
+              {createActions.length > 0 || (showCreateNote && emptyStatus !== "miss") ? (
                 <Command.Group
                   heading="Create"
                   className={cn(GROUP_HEADING, "mt-1")}
                 >
-                  {showCreateNote ? (
+                  {showCreateNote && emptyStatus !== "miss" ? (
                     <Command.Item
                       value={`create-note-${searchText || q}`}
                       onSelect={() => {

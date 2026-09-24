@@ -303,6 +303,29 @@ export function isNoteHeadSearchLive(state: SearchIndexState): boolean {
  * Empty palette row after a query. After ready-meta, title search is live —
  * do not tell the user to wait until Ready (that is full deep FTS).
  */
+export type SearchEmptyStatus = "failed" | "pending" | "miss" | "reading";
+
+/** Memory search can answer before the sqlite fill clock reaches ready-meta. */
+export function searchAnswersNow(args: {
+  titleSearchLive: boolean;
+  memorySearch?: boolean;
+}): boolean {
+  return args.titleSearchLive || args.memorySearch === true;
+}
+
+/** Same decision as the empty-palette sentence, so the status attribute cannot drift. */
+export function searchEmptyStatus(args: {
+  titleSearchLive: boolean;
+  memorySearch?: boolean;
+  failed?: boolean;
+  pending?: boolean;
+}): SearchEmptyStatus {
+  if (args.failed) return "failed";
+  if (args.pending) return "pending";
+  if (searchAnswersNow(args)) return "miss";
+  return "reading";
+}
+
 export function searchEmptyStateMessage(args: {
   titleSearchLive: boolean;
   headsReady: boolean;

@@ -281,6 +281,9 @@ const paletteSrc = readFileSync(
   "utf8",
 );
 assert.equal(paletteSrc.includes('placeholder="Search notes"'), true);
+assert.equal(paletteSrc.includes("searchEmptyStatus"), true);
+assert.equal(paletteSrc.includes('data-testid={emptyStatus === "miss" ? "search-miss"'), true);
+assert.equal(paletteSrc.includes('emptyStatus !== "miss"'), true);
 assert.equal(paletteSrc.includes("what links Hermes"), false);
 assert.equal(paletteSrc.includes('data-search-empty="trash"'), true);
 assert.equal(paletteSrc.includes('data-search-empty="orphans"'), true);

@@ -31,6 +31,7 @@ const {
   isTitleSearchLive,
   isNoteHeadSearchLive,
   searchEmptyStateMessage,
+  searchEmptyStatus,
   searchStateFromPhase,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
@@ -414,6 +415,27 @@ assert.equal(
     failed: false,
   }),
   "No notes match.",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: false, memorySearch: true }),
+  "miss",
+  "a finished memory search with no hit is a miss, not still reading",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: true, memorySearch: false }),
+  "miss",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: false, memorySearch: false }),
+  "reading",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: true, pending: true }),
+  "pending",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: true, failed: true }),
+  "failed",
 );
 
 {
