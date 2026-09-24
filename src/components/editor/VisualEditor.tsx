@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
-import { clearWriteFocus, writeFocusPending } from "@/lib/editor/write-intent";
+import { clearWriteFocus, takeHeldWrite, writeFocusPending } from "@/lib/editor/write-intent";
 import StarterKit from "@tiptap/starter-kit";
 import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
 import { SafePlaceholder } from "@/lib/editor/safe-placeholder";
@@ -189,13 +189,15 @@ function placeCaretForWriting(ed: Editor): void {
     const inHeading = selection.$from.parent.type.name === "heading";
     if (ed.isFocused && !inHeading) return;
     if (!ed.isFocused) {
-      // The reader already moved on (the list, a field, a dialog). Let them.
+      // The reader already moved on (a field, a dialog). Let them. The list
+      // row the name was typed in does not count: moving in the list with
+      // keys or a click ends the request in write-intent.
       const active = document.activeElement as HTMLElement | null;
       if (
         active &&
         active !== document.body &&
         active.closest?.(
-          "input, textarea, select, [data-file-tree], [role='dialog'], [data-nexus-confirm]",
+          "input, textarea, select, [role='dialog'], [data-nexus-confirm], [cmdk-root]",
         )
       ) {
         clearWriteFocus();
@@ -212,6 +214,39 @@ function placeCaretForWriting(ed: Editor): void {
     }
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Writes what was typed or pasted for this note before its editor had the
+ * cursor, at the writing line under the title, as a normal edit so it saves.
+ * `busy` is true while the editor is refilling from the store.
+ */
+function writeHeldText(
+  ed: Editor,
+  path: string | null | undefined,
+  busy?: () => boolean,
+  tries = 0,
+): void {
+  if (ed.isDestroyed || !path) return;
+  if (busy?.()) {
+    if (tries < 30) requestAnimationFrame(() => writeHeldText(ed, path, busy, tries + 1));
+    return;
+  }
+  const text = takeHeldWrite(path);
+  if (!text) return;
+  try {
+    const inHeading = ed.state.selection.$from.parent.type.name === "heading";
+    if (!ed.isFocused || inHeading) {
+      if (ed.state.doc.lastChild?.type.name === "heading") {
+        ed.chain().insertContentAt(ed.state.doc.content.size, { type: "paragraph" }).focus("end").run();
+      } else {
+        ed.commands.focus("end");
+      }
+    }
+    if (!ed.view.pasteText(text)) ed.commands.insertContent(text);
+  } catch {
+    /* editor went away mid-write; the text was already taken */
   }
 }
 
@@ -267,7 +302,6 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const contentRef = useRef(content);
   // Bumps so a note switch does not apply a stale setContent.
   const contentApplyGen = useRef(0);
-  const writeWantedUntil = useRef(0);
   /** Path of the note this editor last showed, for saves after a re-key. */
   const notePathRef = useRef<string | null>(null);
   // Follow renames of the note this editor is showing.
@@ -942,16 +976,15 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       if (editor.isDestroyed) return;
       applying.current = true;
       editor.commands.setContent(html, { emitUpdate: false });
-      if (
-        Date.now() < writeWantedUntil.current ||
-        writeFocusPending(useVaultStore.getState().nodes[noteAtSchedule]?.path)
-      ) {
+      const pathAtApply = useVaultStore.getState().nodes[noteAtSchedule]?.path;
+      if (writeFocusPending(pathAtApply)) {
         placeCaretForWriting(editor);
       }
       requestAnimationFrame(() => {
         if (applyGen !== contentApplyGen.current) return;
         paintEditorExtras(editor);
         applying.current = false;
+        writeHeldText(editor, pathAtApply, () => applying.current);
       });
     });
   }, [editor, content, noteId, updateNoteContent, commit]);
@@ -986,10 +1019,11 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     const pathNow = () => useVaultStore.getState().nodes[noteId]?.path ?? null;
     const writeTimers: number[] = [];
     const begin = () => {
+      writeHeldText(editor, pathNow(), () => applying.current);
       if (!writeFocusPending(pathNow())) return;
-      // The renamed title rewrites the body a moment later. The content apply
-      // below places the caret again right after that rewrite.
-      writeWantedUntil.current = Date.now() + 2500;
+      // The renamed title rewrites the body a moment later, and a folder rescan
+      // can refill it after that. The content apply above places the caret
+      // again after each refill; these cover a refill that changes nothing.
       const place = () => {
         if (writeFocusPending(pathNow())) placeCaretForWriting(editor);
       };
@@ -998,6 +1032,8 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         window.setTimeout(place, 180),
         window.setTimeout(place, 420),
         window.setTimeout(place, 900),
+        window.setTimeout(place, 1800),
+        window.setTimeout(place, 3200),
       );
     };
     begin();

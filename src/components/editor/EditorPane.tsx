@@ -18,7 +18,7 @@ import {
   ArrowLeftRight,
   Pin,
 } from "lucide-react";
-import { useVaultStore, getBreadcrumbTrail, noteFileIsMissing } from "@/lib/vault/store";
+import { useVaultStore, getBreadcrumbTrail, noteFileIsMissing, wroteHereRecently } from "@/lib/vault/store";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
 import { VisualEditor } from "./VisualEditor";
@@ -171,14 +171,23 @@ export function EditorPane({
       // A remembered note whose file is gone (an old daily note, a file
       // removed outside Nexus) used to strand the pane on an error page.
       // Try once more, then let it go and hand the cursor to the list.
-      retry = window.setTimeout(() => {
+      // A note this app just created or renamed is mid-write on disk, not gone:
+      // keep reading until the write lands instead of letting it go.
+      let tries = 0;
+      const attempt = () => {
         void ensureNoteBody(id).then((again: string | null) => {
           if (cancelled || again !== null) return;
+          if (wroteHereRecently(path) && tries < 8) {
+            tries += 1;
+            retry = window.setTimeout(attempt, 600);
+            return;
+          }
           const st = useVaultStore.getState();
           if (
             isSecondary ||
             st.activeNoteId !== id ||
             st.dirtyNoteIds.includes(id) ||
+            wroteHereRecently(path) ||
             !noteFileIsMissing(id)
           ) {
             setHydrateError(true);
@@ -194,7 +203,8 @@ export function EditorPane({
             if (!active || active === document.body) tree.focus({ preventScroll: true });
           });
         });
-      }, 400);
+      };
+      retry = window.setTimeout(attempt, 400);
     });
     return () => {
       cancelled = true;

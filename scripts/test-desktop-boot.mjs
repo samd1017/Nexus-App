@@ -867,12 +867,170 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
 // and never pulls it back from the list, a field, or a dialog.
 {
   const intentSrc = readFileSync(new URL("../src/lib/editor/write-intent.ts", import.meta.url), "utf8");
-  assert.equal(intentSrc.includes("export function requestWriteFocus(path: string, ms = 2500)"), true);
+  assert.equal(intentSrc.includes("export const WRITE_FOCUS_MS = 6000;"), true);
+  assert.equal(intentSrc.includes("export function requestWriteFocus(path: string, ms = WRITE_FOCUS_MS)"), true);
   assert.equal(treeSrc.includes("if (path) requestWriteFocus(path);"), true);
   assert.equal(paletteSrc.includes("if (path) requestWriteFocus(path);"), true);
   assert.equal(visualSrc.includes("writeFocusPending(pathNow())"), true);
-  assert.equal(visualSrc.includes("[data-file-tree], [role='dialog'], [data-nexus-confirm]"), true);
-  assert.equal(visualSrc.includes("writeFocusPending(useVaultStore.getState().nodes[noteAtSchedule]?.path)"), true);
+  // A field or a dialog keeps the cursor. The list row the name was typed in
+  // does not: moving in the list ends the request instead.
+  assert.equal(visualSrc.includes(`"input, textarea, select, [role='dialog'], [data-nexus-confirm], [cmdk-root]"`), true);
+  assert.equal(visualSrc.includes("writeFocusPending(pathAtApply)"), true);
+  assert.equal(visualSrc.includes("writeWantedUntil"), false);
+  // Text held for the note is written as a normal edit once the refill is done.
+  assert.equal(visualSrc.includes("writeHeldText(editor, pathAtApply, () => applying.current);"), true);
+  assert.equal(visualSrc.includes("writeHeldText(editor, pathNow(), () => applying.current);"), true);
+  assert.equal(visualSrc.includes("if (!ed.view.pasteText(text)) ed.commands.insertContent(text);"), true);
+}
+// Runtime: typing and pasting after naming a note, before its editor has the
+// cursor, are held for that note; moving away ends the request.
+{
+  const saved = { window: globalThis.window, CustomEvent: globalThis.CustomEvent };
+  const listeners = {};
+  const fired = [];
+  globalThis.window = {
+    addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
+    dispatchEvent: (ev) => fired.push(ev),
+  };
+  globalThis.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = init?.detail; } };
+  const inList = { closest: (sel) => (sel.includes("[data-editor-pane]") ? null : sel.includes("input") ? null : {}) };
+  const inField = { closest: (sel) => (sel.includes("input") ? {} : null) };
+  const key = (k, target = inList, extra = {}) => {
+    const ev = { key: k, target, isComposing: false, defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, ...extra,
+      preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() {} };
+    for (const fn of listeners.keydown ?? []) fn(ev);
+    return ev;
+  };
+  const paste = (text, target = inList) => {
+    const ev = { target, defaultPrevented: false, clipboardData: { getData: () => text },
+      preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() {} };
+    for (const fn of listeners.paste ?? []) fn(ev);
+    return ev;
+  };
+  try {
+    const wi = await import(new URL("../src/lib/editor/write-intent.ts", import.meta.url).href);
+    assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);
+    // Nothing is held before a note asks for the cursor.
+    assert.equal(key("a").defaultPrevented, false);
+    wi.requestWriteFocus("FirstRun Note.md");
+    assert.equal(fired.at(-1)?.type, "nexus-write-note");
+    assert.equal(wi.writeFocusPending("FirstRun Note.md"), true);
+    assert.equal(wi.writeFocusPending("Untitled.md"), false);
+    // A paste and keys that land in the list are held for the note, in order.
+    assert.equal(paste("body after name").defaultPrevented, true);
+    assert.equal(key(" ").defaultPrevented, true);
+    assert.equal(key("x").defaultPrevented, true);
+    assert.equal(key("Enter").defaultPrevented, true);
+    // A field keeps its own typing.
+    assert.equal(key("q", inField).defaultPrevented, false);
+    assert.equal(paste("into a field", inField).defaultPrevented, false);
+    // Ctrl/Cmd+V asks the editor for the cursor so the paste lands there.
+    const before = fired.length;
+    assert.equal(key("v", inList, { ctrlKey: true }).defaultPrevented, false);
+    assert.equal(fired.length, before + 1);
+    // Only the note's own editor gets the text, once.
+    assert.equal(wi.takeHeldWrite("Untitled.md"), null);
+    assert.equal(wi.takeHeldWrite("FirstRun Note.md"), "body after name x\n");
+    assert.equal(wi.takeHeldWrite("FirstRun Note.md"), null);
+    // Moving in the list ends the request; later typing stays in the list.
+    key("ArrowDown");
+    assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);
+    assert.equal(key("b").defaultPrevented, false);
+    // A click outside the editor ends it too; a click in the editor does not.
+    wi.requestWriteFocus("FirstRun Note.md");
+    for (const fn of listeners.pointerdown ?? []) fn({ target: { closest: (sel) => (sel === "[data-editor-pane]" ? {} : null) } });
+    assert.equal(wi.writeFocusPending("FirstRun Note.md"), true);
+    for (const fn of listeners.pointerdown ?? []) fn({ target: { closest: () => null } });
+    assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);
+    // The request outlasts the rescan after a rename (six seconds), then ends.
+    const realNow = Date.now;
+    try {
+      const t0 = realNow();
+      Date.now = () => t0;
+      wi.requestWriteFocus("FirstRun Note.md");
+      Date.now = () => t0 + 5900;
+      assert.equal(wi.writeFocusPending("FirstRun Note.md"), true);
+      Date.now = () => t0 + 6100;
+      assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);
+    } finally {
+      Date.now = realNow;
+    }
+  } finally {
+    globalThis.window = saved.window;
+    globalThis.CustomEvent = saved.CustomEvent;
+  }
+}
+// Runtime: a folder rescan that races the app's own create/rename keeps the
+// open note, its name, and its text. An outside edit is still taken.
+{
+  const { keepIdsByPath, keepRecentLocalBodies, keepRenamedShellIds } = await import(
+    new URL("../src/lib/vault/stable-ids.ts", import.meta.url).href
+  );
+  const note = (id, path, content, extra = {}) => ({ id, path, name: path.split("/").pop(), kind: "note", parentId: null, mtime: 1, content, ...extra });
+  const typed = "# FirstRun Note\n\nbody after name HAND OFF\n";
+  // Renamed in the app; the store still uses the id from the old name.
+  const prev = { "desk_Untitled.md": note("desk_Untitled.md", "FirstRun Note.md", typed) };
+  const oursAll = new Set(["FirstRun Note.md", "Untitled.md"]);
+  const written = { "FirstRun Note.md": ["# FirstRun Note\n\n"], "Untitled.md": ["# Untitled\n\n"] };
+  const ours = (path, body) => oursAll.has(path) && (body === undefined || (written[path] ?? []).includes(body));
+  const settle = (incoming, roots) => {
+    const kept = keepIdsByPath(prev, incoming, roots);
+    return keepRecentLocalBodies(prev, kept.nodes, kept.rootIds, ours);
+  };
+  // 1. Scan taken before the disk rename: the old name, same id, title-only copy.
+  let r = settle({ "desk_Untitled.md": note("desk_Untitled.md", "Untitled.md", "# Untitled\n\n") }, ["desk_Untitled.md"]);
+  assert.equal(r.nodes["desk_Untitled.md"].path, "FirstRun Note.md", "the note keeps its new name");
+  assert.equal(r.nodes["desk_Untitled.md"].content, typed, "the typed text stays");
+  assert.deepEqual(r.rootIds, ["desk_Untitled.md"]);
+  // 2. Scan taken before the file was written at all.
+  r = settle({}, []);
+  assert.equal(r.nodes["desk_Untitled.md"].content, typed);
+  assert.deepEqual(r.rootIds, ["desk_Untitled.md"]);
+  // 3. Scan after the rename, lazy (no bodies): the id is kept, the text stays.
+  r = settle({ "desk_FirstRun Note.md": note("desk_FirstRun Note.md", "FirstRun Note.md", undefined) }, ["desk_FirstRun Note.md"]);
+  assert.deepEqual(Object.keys(r.nodes), ["desk_Untitled.md"]);
+  assert.equal(r.nodes["desk_Untitled.md"].content, typed);
+  // 4. Scan after the rename with the title-only copy the rename wrote.
+  r = settle({ "desk_FirstRun Note.md": note("desk_FirstRun Note.md", "FirstRun Note.md", "# FirstRun Note\n\n") }, ["desk_FirstRun Note.md"]);
+  assert.equal(r.nodes["desk_Untitled.md"].content, typed);
+  // 5. A body the app never wrote is an outside edit: taken, not hidden.
+  r = settle({ "desk_FirstRun Note.md": note("desk_FirstRun Note.md", "FirstRun Note.md", "# From another app\n") }, ["desk_FirstRun Note.md"]);
+  assert.equal(r.nodes["desk_Untitled.md"].content, "# From another app\n");
+  // 6. Old writes expire: past the window the scan is taken as is.
+  oursAll.clear();
+  r = settle({}, []);
+  assert.deepEqual(Object.keys(r.nodes), []);
+  // 7. Rename, then a new Untitled under the old name: both keep their ids.
+  const prev2 = {
+    "desk_Untitled.md": note("desk_Untitled.md", "X.md", "# X\n"),
+    "desk_Untitled.md__1": note("desk_Untitled.md__1", "Untitled.md", "# Untitled\n"),
+  };
+  const k2 = keepIdsByPath(prev2, {
+    "desk_X.md": note("desk_X.md", "X.md", undefined),
+    "desk_Untitled.md": note("desk_Untitled.md", "Untitled.md", undefined),
+  }, ["desk_X.md", "desk_Untitled.md"]);
+  assert.equal(k2.nodes["desk_Untitled.md"].path, "X.md");
+  assert.equal(k2.nodes["desk_Untitled.md__1"].path, "Untitled.md");
+  // 8. Paged catalog: "Untitled.md is gone" must not drop the note renamed from it.
+  const shellNodes = {
+    "desk_Untitled.md": note("desk_Untitled.md", "FirstRun Note.md", typed),
+    "desk_Gone.md": note("desk_Gone.md", "Gone.md", undefined),
+    "desk_Old": { id: "desk_Old", path: "Old", name: "Old", kind: "folder", parentId: null, mtime: 1 },
+    "desk_Old/a.md": note("desk_Old/a.md", "Old/a.md", undefined, { parentId: "desk_Old" }),
+  };
+  const gone = keepRenamedShellIds(shellNodes, ["desk_Untitled.md", "desk_Gone.md", "desk_Old/a.md", "desk_Missing.md"], ["Untitled.md", "Gone.md", "Old"], () => false);
+  assert.deepEqual(gone, ["desk_Gone.md", "desk_Old/a.md", "desk_Missing.md"]);
+  assert.deepEqual(keepRenamedShellIds(shellNodes, ["desk_Gone.md"], ["Gone.md"], (p) => p === "Gone.md"), []);
+}
+// Store wiring for the above: every app write is recorded with its body, the
+// rescan and the catalog forget use it, and a mid-write note is not let go.
+{
+  assert.equal(storeSrc.includes("markLocalWrite(path, content);"), true);
+  assert.equal(storeSrc.includes("markLocalWrite(newPath, node.kind === \"note\" ? contentForDiskWrite(nodes[id]) : undefined, oldPath);"), true);
+  assert.equal(storeSrc.includes("const held = keepRecentLocalBodies(prev, kept.nodes, kept.rootIds, diskCopyIsOurs);"), true);
+  assert.equal(storeSrc.includes("goneIds = keepRenamedShellIds(live.nodes, goneIds, gonePaths, wroteHereRecently);"), true);
+  assert.equal(storeSrc.includes("if (!nextActive && active && nodes[active]?.kind === \"note\") nextActive = active;"), true);
+  assert.equal(editorSrc.includes("if (wroteHereRecently(path) && tries < 8) {"), true);
 }
 // Vault scale, with the count and the memory line, sits directly under the Vault lead.
 {

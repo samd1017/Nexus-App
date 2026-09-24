@@ -16,7 +16,7 @@ import type {
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
 import { shouldSkipLaunchNote } from "./launch-note";
-import { keepIdsByPath } from "./stable-ids";
+import { keepIdsByPath, keepRecentLocalBodies, keepRenamedShellIds } from "./stable-ids";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import {
   buildSyntheticVault,
@@ -520,6 +520,45 @@ let diskSearchReady = false;
 /** In-flight body hydrates — dedupe concurrent ensureNoteBody */
 let bodyHydrateInflight = new Map<string, Promise<string | null>>();
 const missingBodyIds = new Set<string>();
+// Paths this app created, renamed, or wrote in the last few seconds. A folder
+// rescan or a disk read that races those writes must not replace or drop the
+// text the app holds for them: it is newer than anything on disk.
+const localWrites = new Map<string, { at: number; bodies: string[] }>();
+const LOCAL_WRITE_TRUST_MS = 10_000;
+
+function markLocalWrite(path: string | null | undefined, body?: string, from?: string): void {
+	if (!path) return;
+	const prior = localWrites.get(path)?.bodies ?? [];
+	const carried = from ? (localWrites.get(from)?.bodies ?? []) : [];
+	const bodies = [...carried, ...prior];
+	if (typeof body === "string") bodies.push(body);
+	localWrites.set(path, { at: Date.now(), bodies: bodies.slice(-6) });
+}
+
+/** True when the app itself wrote this path moments ago. */
+export function wroteHereRecently(path: string | null | undefined): boolean {
+	if (!path) return false;
+	const entry = localWrites.get(path);
+	if (!entry) return false;
+	if (Date.now() - entry.at > LOCAL_WRITE_TRUST_MS) {
+		localWrites.delete(path);
+		return false;
+	}
+	return true;
+}
+
+/**
+ * The rescan's copy of a path the app just wrote is only the app's own older
+ * write (or no body at all). A body the app never wrote is an outside edit and
+ * goes through the normal conflict handling instead.
+ */
+export function diskCopyIsOurs(path: string, diskBody: string | undefined): boolean {
+	if (!wroteHereRecently(path)) return false;
+	if (diskBody === undefined) return true;
+	const bodies = localWrites.get(path)?.bodies ?? [];
+	const want = diskBody.replace(/\s+$/, "");
+	return bodies.some((b) => b === diskBody || b.replace(/\s+$/, "") === want);
+}
 const failedBodyIds = new Set<string>();
 
 function isMissingFileError(e: unknown): boolean {
@@ -1792,6 +1831,7 @@ async function persistNoteIfFsa(
 	opts?: { ack?: boolean },
 ) {
 	const ack = opts?.ack !== false;
+	markLocalWrite(path, content);
 	if (desktopRoot) {
 		await writeDesktopNote(desktopRoot, path, content);
 		if (ack) desktopWatchAck?.();
@@ -3733,10 +3773,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				}
 			}
 			let goneIds: string[] = [];
+			let gonePaths: string[] = [];
 			if (db === BROWSER_SHELL_DB || (db && root)) {
 				const forgotten = await fetchShellForget(db, root || db, paths);
 				if (forgotten && get().shellDbPath === db) {
 					goneIds = forgotten.ids.slice();
+					gonePaths = forgotten.paths.slice();
 					for (const rel of forgotten.paths) {
 						goneIds.push(deskNodeId(rel));
 					}
@@ -3744,6 +3786,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 			if (goneIds.length && get().shellCatalog) {
 				const live = get();
+				goneIds = keepRenamedShellIds(live.nodes, goneIds, gonePaths, wroteHereRecently);
 				const dropped = dropShellIds(live.nodes, live.rootIds, goneIds);
 				if (dropped.dropped.length) {
 					const activeGone =
@@ -4025,6 +4068,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					path: newPath + n.path.slice(oldPath.length),
 					mtime: Date.now()
 				};
+				if (n.kind === "note") markLocalWrite(nodes[cid].path, undefined, n.path);
 				dirtyIds.push(cid);
 			});
 			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
@@ -4033,6 +4077,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (typeof content === "string") setBodyInArchive(newPath, content);
 		}
 		try { ensureVaultIndex(get().nodes).markDirty(dirtyIds); } catch {}
+		markLocalWrite(oldPath);
+		markLocalWrite(newPath, node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined, oldPath);
 		set({ nodes });
 		// Keep durable FTS path/title in sync after rename
 		{
@@ -4095,6 +4141,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		else if (typeof opts?.content === "string") content = opts.content;
 		else if (opts?.template) content = buildTemplateContent(opts.template, titleClean);
 		else content = `# ${titleClean}\n\n`;
+		markLocalWrite(path, content);
 		stage.nodes[id] = {
 			id,
 			path,
@@ -4993,8 +5040,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const prev = get().nodes;
 		// A rescan names files by path; keep the ids the open notes already use.
 		const kept = keepIdsByPath(prev, nodesIn, rootIdsIn);
-		let nodes = kept.nodes;
-		const rootIds = kept.rootIds;
+		// Notes the app just created, renamed, or wrote keep the text it holds.
+		const held = keepRecentLocalBodies(prev, kept.nodes, kept.rootIds, diskCopyIsOurs);
+		let nodes = held.nodes;
+		const rootIds = held.rootIds;
 		const fingerprint = (map: Record<string, VaultNode>) => {
 			let notes = 0;
 			let mtimeXor = 0;
@@ -5030,7 +5079,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (!local || local.kind !== "note") continue;
 			const diskId = nodes[dirtyId]?.kind === "note" ? dirtyId : Object.values(nodes).find((n) => n.kind === "note" && n.path === local.path)?.id;
 			if (!diskId || !nodes[diskId]) {
-				const restoredId = makeId(local.path, get().mode);
+				// Restore under the id the note already has, so the open editor keeps it.
+				const restoredId = nodes[dirtyId] ? makeId(local.path, get().mode) : dirtyId;
 				const parentPathStr = parentPath(local.path);
 				let parentId = null;
 				if (parentPathStr) parentId = Object.values(nodes).find((n) => n.kind === "folder" && n.path === parentPathStr)?.id ?? null;
@@ -5141,6 +5191,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 			conflictToast = `Conflict — kept your edits; disk copy saved as ${pathToName(sibling)}`;
 		}
+		if (!nextActive && active && nodes[active]?.kind === "note") nextActive = active;
 		const remappedExpanded = [];
 		for (const id of get().expandedFolders) {
 			const p = prev[id]?.path;
