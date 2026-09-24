@@ -800,8 +800,19 @@ assert.equal(settingsSrc.includes("setCommandOpen(false)"), true);
 // A first note asked for while the vault is still opening is made once it opens.
 const whenReadySrc = readFileSync(new URL("../src/lib/vault/create-when-ready.ts", import.meta.url), "utf8");
 assert.equal(whenReadySrc.includes("if (s.connecting || done) return;"), true);
-assert.equal(editorSrc.includes("createNoteWhenReady("), true);
+// Every first-note entry (list, empty pane, folder map, Enter anywhere) waits for the vault.
+const firstNoteSrc = readFileSync(new URL("../src/lib/vault/first-note.ts", import.meta.url), "utf8");
+assert.equal(firstNoteSrc.includes('createNoteWhenReady(null, "Untitled"'), true);
+assert.equal(firstNoteSrc.includes('if (s.settings.graphMode === "fullscreen") exitGraphForViewport();'), true);
+assert.equal(editorSrc.includes("startFirstNoteAnywhere()"), true);
 assert.equal(treeSrc.includes("createNoteWhenReady("), true);
+{
+  const graphSrc = readFileSync(new URL("../src/components/graph/GraphView.tsx", import.meta.url), "utf8");
+  assert.equal(graphSrc.includes('data-testid="graph-empty-new-note"'), true);
+  assert.equal(graphSrc.includes("onClick={() => startFirstNote()}"), true);
+  assert.equal(keysSrc.includes("vaultHasNoNotes()") && keysSrc.includes("startFirstNote();"), true);
+  assert.equal(shellSrc.includes("exitGraphForViewport();") && shellSrc.includes("vaultHasNoNotes()"), true);
+}
 assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : undefined}'), true);
 // Dialogs are one opaque dark card in both themes and never start transparent.
 assert.equal(settingsSrc.includes("nexus-dark-island"), true);
@@ -892,7 +903,7 @@ assert.equal(storeSrc.includes("probeFirstRun"), true);
   // It never calls createNote while connecting, which would toast and drop it.
   const subAt = whenReadySrc.indexOf("useVaultStore.subscribe");
   assert.ok(whenReadySrc.indexOf("createNote(", subAt) > whenReadySrc.indexOf("if (s.connecting || done) return;"));
-  assert.equal(editorSrc.includes('createNoteWhenReady(null, "Untitled"'), true);
+  assert.equal(firstNoteSrc.includes('createNoteWhenReady(null, "Untitled"'), true);
   assert.equal(treeSrc.includes('createNoteWhenReady(null, "Untitled", openCreatedRename)'), true);
 }
 // The quick tour is a region, never a modal, and key homes only yield to modals.
