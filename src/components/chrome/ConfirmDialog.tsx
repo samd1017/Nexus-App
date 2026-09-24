@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { confirmEnterAction } from "@/lib/chrome/rebuild-confirm";
 
 type Props = {
   open: boolean;
@@ -66,22 +67,19 @@ export function ConfirmDialog({
         onCancelRef.current();
         return;
       }
-      // Only confirm on Enter when Confirm button itself is focused
+      // Enter rebuilds only when Rebuild itself is focused. Cancel dismisses.
       if (e.key === "Enter") {
-        const active = document.activeElement;
-        if (active === confirmRef.current) {
-          e.preventDefault();
-          e.stopPropagation();
-          onConfirmRef.current();
-        } else if (active === cancelRef.current) {
-          e.preventDefault();
-          e.stopPropagation();
-          onCancelRef.current();
-        } else {
-          // Trap: do not auto-confirm destructive actions
-          e.preventDefault();
-          e.stopPropagation();
-        }
+        const focus =
+          document.activeElement === confirmRef.current
+            ? "confirm"
+            : document.activeElement === cancelRef.current
+              ? "cancel"
+              : "other";
+        const action = confirmEnterAction(focus);
+        e.preventDefault();
+        e.stopPropagation();
+        if (action === "rebuild") onConfirmRef.current();
+        else if (action === "dismiss") onCancelRef.current();
         return;
       }
       if (e.key === "Tab" && panelRef.current) {
@@ -181,6 +179,7 @@ export function ConfirmDialog({
             ref={cancelRef}
             type="button"
             data-confirm-cancel
+            data-testid="confirm-cancel"
             className="ghost-btn !h-9 px-3 text-[13px]"
             onClick={onCancel}
           >

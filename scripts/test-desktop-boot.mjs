@@ -293,6 +293,8 @@ const settingsSrc = readFileSync(
 assert.equal(settingsSrc.includes('initialFocus="cancel"'), true);
 assert.equal(settingsSrc.includes("data-settings-rebuild"), true);
 assert.equal(settingsSrc.includes('data-testid="settings-rebuild"'), true);
+assert.equal(settingsSrc.includes("nexus-open-rebuild"), true);
+assert.equal(settingsSrc.includes('e.key !== "Enter" && e.key !== " "'), true);
 assert.equal(settingsSrc.includes("Rebuild search"), true);
 assert.equal(settingsSrc.includes('testId={confirmKind === "rebuild" ? "rebuild-confirm"'), true);
 const rebuildBtn = settingsSrc.indexOf('data-testid="settings-rebuild"');
@@ -312,8 +314,12 @@ const treeSrc = readFileSync(
 assert.equal(treeSrc.includes("Enter starts a note."), true);
 assert.equal(treeSrc.includes('status="vault"'), true);
 assert.equal(treeSrc.includes('data-testid="tree-empty-folder-status"'), true);
+assert.equal(treeSrc.includes('data-testid="tree-empty-folder-banner"'), true);
+assert.equal(treeSrc.includes('data-folder-empty={folderEmpty ? "1" : undefined}'), true);
 assert.equal(treeSrc.includes("data-focused-empty-folder"), true);
 assert.equal(treeSrc.includes("folderHasNothing"), true);
+assert.equal(treeSrc.includes("emptyFolderIdFromTarget"), true);
+assert.equal(treeSrc.includes("onEmptyEnter"), true);
 const editorSrc = readFileSync(
   new URL("../src/components/editor/EditorPane.tsx", import.meta.url),
   "utf8",
@@ -346,6 +352,118 @@ const confirmSrc = readFileSync(
 const cancelAt = confirmSrc.indexOf("data-confirm-cancel");
 const actionAt = confirmSrc.indexOf("data-confirm-action");
 assert.ok(cancelAt > 0 && actionAt > cancelAt);
+assert.equal(confirmSrc.includes("confirmEnterAction"), true);
+assert.equal(confirmSrc.includes('data-testid="confirm-cancel"'), true);
+assert.equal(storeSrc.includes('new Event("nexus-open-rebuild")'), true);
+
+const { confirmEnterAction, openRebuildConfirmIn } = await import(
+  "../src/lib/chrome/rebuild-confirm.ts"
+);
+const { emptyFolderIdFromTarget } = await import(
+  "../src/lib/vault/empty-folder-target.ts"
+);
+assert.equal(confirmEnterAction("cancel"), "dismiss");
+assert.equal(confirmEnterAction("confirm"), "rebuild");
+assert.equal(confirmEnterAction("other"), "stay");
+
+class MiniEl {
+  constructor(doc, tag) {
+    this.doc = doc;
+    this.tag = tag;
+    this.attrs = new Map();
+    this.children = [];
+    this.parent = null;
+    this.listeners = new Map();
+    this.textContent = "";
+    this.type = "";
+  }
+  setAttribute(name, value) {
+    this.attrs.set(name, String(value));
+  }
+  getAttribute(name) {
+    return this.attrs.has(name) ? this.attrs.get(name) : null;
+  }
+  append(...nodes) {
+    for (const node of nodes) {
+      node.parent = this;
+      this.children.push(node);
+    }
+  }
+  remove() {
+    if (this.parent) {
+      this.parent.children = this.parent.children.filter((child) => child !== this);
+    }
+    this.parent = null;
+    if (this.doc.activeElement === this) this.doc.activeElement = this.doc.body;
+  }
+  focus() {
+    this.doc.activeElement = this;
+  }
+  addEventListener(type, fn) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(fn);
+    this.listeners.set(type, list);
+  }
+  dispatchEvent(event) {
+    for (const fn of this.listeners.get(event.type) ?? []) fn(event);
+    return true;
+  }
+  closest(selector) {
+    let el = this;
+    while (el) {
+      if (
+        selector === "[data-folder-empty='1']" &&
+        el.getAttribute?.("data-folder-empty") === "1"
+      ) {
+        return el;
+      }
+      el = el.parent;
+    }
+    return null;
+  }
+}
+
+const miniDoc = {
+  activeElement: null,
+  body: null,
+  createElement(tag) {
+    return new MiniEl(this, tag);
+  },
+};
+miniDoc.body = new MiniEl(miniDoc, "body");
+miniDoc.activeElement = miniDoc.body;
+
+const rebuildButton = miniDoc.createElement("button");
+rebuildButton.textContent = "Rebuild search";
+miniDoc.body.append(rebuildButton);
+let rebuilt = 0;
+const host = openRebuildConfirmIn(miniDoc, rebuildButton, () => {
+  rebuilt += 1;
+});
+assert.equal(host.dialog.getAttribute("data-testid"), "rebuild-confirm");
+assert.equal(miniDoc.activeElement, host.cancel);
+assert.equal(host.cancel.textContent, "Cancel");
+host.dialog.dispatchEvent({ type: "keydown", key: "Enter", preventDefault() {} });
+assert.equal(rebuilt, 0);
+assert.equal(host.dialog.parent, null);
+assert.equal(miniDoc.activeElement, rebuildButton);
+
+const again = openRebuildConfirmIn(miniDoc, rebuildButton, () => {
+  rebuilt += 1;
+});
+again.confirm.focus();
+again.dialog.dispatchEvent({ type: "keydown", key: "Enter", preventDefault() {} });
+assert.equal(rebuilt, 1);
+assert.equal(again.dialog.parent, null);
+
+const folderRow = new MiniEl(miniDoc, "div");
+folderRow.setAttribute("data-folder-empty", "1");
+folderRow.setAttribute("data-node-id", "folder-9");
+const folderLabel = new MiniEl(miniDoc, "span");
+folderLabel.parent = folderRow;
+assert.equal(emptyFolderIdFromTarget(folderLabel), "folder-9");
+assert.equal(emptyFolderIdFromTarget(rebuildButton), null);
+assert.equal(emptyFolderIdFromTarget(null), null);
 const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 assert.equal(cssSrc.includes("outline: 2px solid #5ad8ff"), true);
 assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);

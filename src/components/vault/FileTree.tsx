@@ -34,6 +34,7 @@ import {
 import { useTreeStructureTick } from "@/lib/vault/tree-tick";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
+import { emptyFolderIdFromTarget } from "@/lib/vault/empty-folder-target";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -141,6 +142,7 @@ const TreeRow = memo(function TreeRow({
   onToggleFolder,
   onRenameFinished,
   folderEmpty = false,
+  onEmptyEnter,
 }: {
   nodeId: string;
   depth: number;
@@ -155,6 +157,7 @@ const TreeRow = memo(function TreeRow({
   onToggleFolder: (id: string) => void;
   onRenameFinished?: () => void;
   folderEmpty?: boolean;
+  onEmptyEnter?: (folderId: string) => void;
 }) {
   // Narrow selectors — avoid whole-nodes subscription
   const node = useVaultStore((s) => s.nodes[nodeId]);
@@ -259,6 +262,15 @@ const TreeRow = memo(function TreeRow({
       data-node-kind={node.kind}
       data-folder-empty={folderEmpty ? "1" : undefined}
       data-testid={node.kind === "note" ? "tree-note-row" : "tree-folder-row"}
+      onKeyDown={(e) => {
+        if (!folderEmpty || renaming) return;
+        if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
+        const target = e.target as HTMLElement | null;
+        if (target?.closest("input,button,[role='button'],a")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onEmptyEnter?.(node.id);
+      }}
       onPointerDown={(e) => {
         if (renaming) return;
         if (e.button !== 0) return;
@@ -339,8 +351,20 @@ const TreeRow = memo(function TreeRow({
           onPointerDown={(e) => e.stopPropagation()}
         />
       ) : (
-        <span className="min-w-0 flex-1 cursor-grab truncate active:cursor-grabbing">
-          {displayName(node)}
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="min-w-0 cursor-grab truncate active:cursor-grabbing">
+            {displayName(node)}
+          </span>
+          {folderEmpty ? (
+            <span
+              role="status"
+              data-testid="tree-empty-folder-status"
+              data-empty-parent={node.id}
+              className="shrink-0 text-[11px] text-[var(--text-secondary)]"
+            >
+              Enter starts a note.
+            </span>
+          ) : null}
         </span>
       )}
 
@@ -613,6 +637,24 @@ export const FileTree = memo(function FileTree() {
     (e: React.KeyboardEvent) => {
       const rows = flatRowsRef.current;
       if (renamingId) return;
+      if (
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        const folderId =
+          emptyFolderIdFromTarget(e.target) ||
+          emptyFolderIdFromTarget(
+            typeof document !== "undefined" ? document.activeElement : null,
+          );
+        if (folderId) {
+          e.preventDefault();
+          const id = createNote(folderId, "Untitled");
+          if (id) requestAnimationFrame(() => setRenamingId(id));
+          return;
+        }
+      }
       if (rows.length === 0) {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -1098,6 +1140,10 @@ export const FileTree = memo(function FileTree() {
         onToggleFolder={toggleFolderReveal}
         onRenameFinished={returnTreeFocus}
         folderEmpty={row.kind === "folder" && folderHasNothing(row.id)}
+        onEmptyEnter={(folderId) => {
+          const id = createNote(folderId, "Untitled");
+          if (id) requestAnimationFrame(() => setRenamingId(id));
+        }}
       />
     );
   };
@@ -1127,7 +1173,13 @@ export const FileTree = memo(function FileTree() {
       tabIndex={0}
       data-tree-focused={treeHasFocus ? "1" : "0"}
       aria-activedescendant={focusedId ? `tree-row-${focusedId}` : undefined}
-      onFocus={() => setTreeHasFocus(true)}
+      onFocus={(e) => {
+        setTreeHasFocus(true);
+        const id = emptyFolderIdFromTarget(e.target);
+        if (!id) return;
+        const idx = flatRowsRef.current.findIndex((row) => row.id === id);
+        if (idx >= 0) setFocusedIndex(idx);
+      }}
       onBlur={(e) => {
         const next = e.relatedTarget as Node | null;
         if (next && e.currentTarget.contains(next)) return;
@@ -1147,7 +1199,7 @@ export const FileTree = memo(function FileTree() {
       {focusedEmptyFolder ? (
         <p
           role="status"
-          data-testid="tree-empty-folder-status"
+          data-testid="tree-empty-folder-banner"
           data-empty-parent={focusedEmptyFolder}
           className="sticky top-0 z-[1] mx-1 mb-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12px] leading-snug text-[var(--text-secondary)]"
         >

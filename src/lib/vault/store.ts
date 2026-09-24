@@ -5840,6 +5840,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				open: (n: number) => Promise<void>;
 				open45k: () => Promise<void>;
 				createNote: (parentId?: string | null, title?: string) => string | null;
+				openRebuildConfirm: () => void;
 				setActiveNote: (id: string | null) => void;
 				setSecondaryNote: (id: string | null) => void;
 				setRightTab: (tab: string) => void;
@@ -5870,6 +5871,9 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		open45k: () => useVaultStore.getState().openLargeTestVault(),
 		createNote: (parentId?: string | null, title?: string) =>
 			useVaultStore.getState().createNote(parentId ?? null, title ?? "Untitled"),
+		openRebuildConfirm: () => {
+			window.dispatchEvent(new Event("nexus-open-rebuild"));
+		},
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),
 		setSecondaryNote: (id: string | null) =>

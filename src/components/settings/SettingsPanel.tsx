@@ -123,13 +123,25 @@ export function SettingsPanel() {
   }, [open, prefs.accentCustom]);
 
   useEffect(() => {
+    const onOpen = () => {
+      setOpen(true);
+      setConfirmKind("rebuild");
+    };
+    window.addEventListener("nexus-open-rebuild", onOpen);
+    return () => window.removeEventListener("nexus-open-rebuild", onOpen);
+  }, [setOpen]);
+
+  useEffect(() => {
     if (!open) return;
     const root = dialogRef.current;
     // Focus dialog container on open
     const prev = document.activeElement as HTMLElement | null;
     if (root) {
       if (!root.hasAttribute("tabindex")) root.tabIndex = -1;
-      root.focus({ preventScroll: true });
+      // Rebuild confirm focuses Cancel itself. Do not pull that focus back.
+      if (!document.querySelector("[data-nexus-confirm]")) {
+        root.focus({ preventScroll: true });
+      }
     }
     const onKey = (e: KeyboardEvent) => {
       // Rebuild / Reset own the keyboard until they close.
@@ -277,6 +289,11 @@ export function SettingsPanel() {
             aria-label="Rebuild search"
             title="Opens a confirm. Enter on Cancel leaves search as it is."
             onClick={() => setConfirmKind("rebuild")}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              setConfirmKind("rebuild");
+            }}
           >
             Rebuild search
           </button>
