@@ -886,6 +886,25 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
 // An open empty folder shows a short tag; the row below carries the full line.
 assert.equal(treeSrc.includes('data-testid="tree-empty-folder-tag"'), true);
 assert.equal(cssSrc.includes('.tree-item [data-testid="tree-empty-folder-status"] {'), true);
+// Large vaults: the name-field retry waits longer, never reopens a settled name,
+// and a revealed folder that is not on screen is still armed for Enter.
+{
+  const { scheduleEmptyNoteRename, settleRename } = await import(
+    new URL("../src/lib/chrome/empty-folder-enter.ts", import.meta.url).href
+  );
+  let opens = 0;
+  scheduleEmptyNoteRename("settle-me", () => { opens += 1; }, () => false, 2);
+  await new Promise((r) => setTimeout(r, 130));
+  const before = opens;
+  settleRename("settle-me");
+  await new Promise((r) => setTimeout(r, 700));
+  assert.ok(before > 0);
+  assert.equal(opens, before, "a settled name must not reopen");
+  assert.equal(enterSrc.includes("waits >= 18"), true);
+  assert.equal(enterSrc.includes("export function startRenameBuffer(id: string, ms = 2600)"), true);
+  assert.equal(treeSrc.includes("if (id) settleRename(id);"), true);
+  assert.equal(treeSrc.includes("if (folderHasNothing(id)) armEmptyFolder(id);"), true);
+}
 // Dialogs are one opaque dark card in both themes and never start transparent.
 assert.equal(settingsSrc.includes("nexus-dark-island"), true);
 assert.equal(confirmSrc.includes("nexus-dark-island"), true);
