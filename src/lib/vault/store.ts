@@ -16,6 +16,7 @@ import type {
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
 import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
 import { shouldSkipLaunchNote } from "./launch-note";
+import { keepIdsByPath } from "./stable-ids";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import {
   buildSyntheticVault,
@@ -4987,10 +4988,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			get()._applyExternalSnapshotNow(pending.nodes, pending.rootIds);
 		}, wait);
 	},
-	_applyExternalSnapshotNow: (nodesIn, rootIds) => {
+	_applyExternalSnapshotNow: (nodesIn, rootIdsIn) => {
 		flushStageNow(set);
-		let nodes = nodesIn;
 		const prev = get().nodes;
+		// A rescan names files by path; keep the ids the open notes already use.
+		const kept = keepIdsByPath(prev, nodesIn, rootIdsIn);
+		let nodes = kept.nodes;
+		const rootIds = kept.rootIds;
 		const fingerprint = (map: Record<string, VaultNode>) => {
 			let notes = 0;
 			let mtimeXor = 0;

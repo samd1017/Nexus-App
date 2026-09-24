@@ -1127,6 +1127,42 @@ assert.equal(storeSrc.includes("probeFirstRunText: () => {"), true);
 assert.equal(storeSrc.includes("return JSON.stringify(soak?.probeFirstRun?.() ?? {});"), true);
 // The quick tour never sits on top of Settings or Trash.
 assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
+// A rescan after an in-app rename keeps the note's id, so the open editor does
+// not save into a missing id and reload the note from disk.
+{
+  const { keepIdsByPath } = await import(new URL("../src/lib/vault/stable-ids.ts", import.meta.url).href);
+  const note = (id, path, parentId = null, content) => ({ id, path, name: path.split("/").pop(), kind: "note", parentId, mtime: 1, content });
+  const folder = (id, path, parentId = null) => ({ id, path, name: path.split("/").pop(), kind: "folder", parentId, mtime: 1 });
+  // The renamed note: created as Untitled, renamed in the app, rescanned by its new path.
+  const prev = { n_Untitled_md: note("n_Untitled_md", "FirstRun Note.md", null, "# FirstRun Note\n\nHello") };
+  const incoming = { "desk_FirstRun Note.md": note("desk_FirstRun Note.md", "FirstRun Note.md", null, "# FirstRun Note\n\n") };
+  const kept = keepIdsByPath(prev, incoming, ["desk_FirstRun Note.md"]);
+  assert.deepEqual(Object.keys(kept.nodes), ["n_Untitled_md"]);
+  assert.equal(kept.nodes.n_Untitled_md.id, "n_Untitled_md");
+  assert.deepEqual(kept.rootIds, ["n_Untitled_md"]);
+  assert.equal(kept.remapped, 1);
+  // Children follow a folder that keeps its id.
+  const prev2 = { f1: folder("f1", "Ideas"), a: note("a", "Ideas/One.md", "f1") };
+  const inc2 = { desk_Ideas: folder("desk_Ideas", "Ideas"), "desk_Ideas/One.md": note("desk_Ideas/One.md", "Ideas/One.md", "desk_Ideas") };
+  const k2 = keepIdsByPath(prev2, inc2, ["desk_Ideas"]);
+  assert.equal(k2.nodes.a.parentId, "f1");
+  assert.deepEqual(Object.keys(k2.nodes).sort(), ["a", "f1"]);
+  // An id the rescan already uses for another file is never taken.
+  const prev3 = { x: note("x", "Old.md") };
+  const inc3 = { x: note("x", "Other.md"), desk_Old: note("desk_Old", "Old.md") };
+  const k3 = keepIdsByPath(prev3, inc3, ["x", "desk_Old"]);
+  assert.equal(k3.nodes.x.path, "Other.md");
+  assert.equal(k3.nodes.desk_Old.path, "Old.md");
+  // Nothing to keep: the same objects come back.
+  const same = { y: note("y", "Y.md") };
+  const k4 = keepIdsByPath({ y: note("y", "Y.md") }, same, ["y"]);
+  assert.equal(k4.nodes, same);
+  assert.equal(k4.remapped, 0);
+  // Wired into the rescan, and the editor saves by path if an id still changes.
+  assert.equal(storeSrc.includes("const kept = keepIdsByPath(prev, nodesIn, rootIdsIn);"), true);
+  assert.equal(visualSrc.includes("if (!nodesNow[id] && path) {"), true);
+  assert.equal(visualSrc.includes("if (notePath && noteIdRef.current === noteId) notePathRef.current = notePath;"), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

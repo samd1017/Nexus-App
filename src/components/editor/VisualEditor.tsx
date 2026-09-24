@@ -268,6 +268,10 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   // Bumps so a note switch does not apply a stale setContent.
   const contentApplyGen = useRef(0);
   const writeWantedUntil = useRef(0);
+  /** Path of the note this editor last showed, for saves after a re-key. */
+  const notePathRef = useRef<string | null>(null);
+  // Follow renames of the note this editor is showing.
+  if (notePath && noteIdRef.current === noteId) notePathRef.current = notePath;
   /** Morning autofocus: once per note id open */
   const morningFocusedFor = useRef<string | null>(null);
   contentRef.current = content;
@@ -454,7 +458,21 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       // properties, so an unedited flush would save the body and drop them.
       if (!userEdited.current) return;
       if (!ed || ed.isDestroyed) return;
-      const id = noteIdRef.current;
+      let id = noteIdRef.current;
+      // A rescan can re-key a renamed note. Save into the note that now has the
+      // path this editor was showing, instead of an id that no longer exists.
+      {
+        const nodesNow = useVaultStore.getState().nodes;
+        const path = notePathRef.current;
+        if (!nodesNow[id] && path) {
+          for (const nid in nodesNow) {
+            if (nodesNow[nid]?.kind === "note" && nodesNow[nid]?.path === path) {
+              id = nid;
+              break;
+            }
+          }
+        }
+      }
       let serialized: string;
       try {
         serialized = htmlDocToMarkdown(ed.view.dom as HTMLElement);
@@ -885,6 +903,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       morningFocusedFor.current = null;
     }
     noteIdRef.current = noteId;
+    notePathRef.current = useVaultStore.getState().nodes[noteId]?.path ?? notePathRef.current;
     try {
       if (editor && !editor.isDestroyed) {
         editor.view.dom.setAttribute("data-note-id", noteId);
