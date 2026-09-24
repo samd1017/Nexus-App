@@ -223,8 +223,6 @@ import type { TrashEntry } from "./trash";
 import { trashEntryFromRel } from "./trash";
 import { assertBodyLoaded, bumpBodyGen } from "./content";
 import {
-  nativeMetaWalk,
-  vaultScanFromNodeMeta,
   setOpenProgress,
   getOpenProgress,
   isIndexFillInFlight,
@@ -1429,23 +1427,23 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 					});
 					return { scan, metaOnly: true, shell };
 				}
-				const native = await nativeMetaWalk(desktopRoot);
-				if (native && native.length > 0) {
-					onProgress(native.length);
-					const scan = vaultScanFromNodeMeta(native);
-					const n = Object.keys(scan.nodes).length;
-					setOpenProgress({
-						phase: "indexing",
-						scanned: n,
-						totalHint: n,
-						message: "Metadata ready — indexing search from files…",
-					});
-					return {
-						scan,
-						metaOnly: true,
-						shell: null,
-					};
-				}
+				// A catalog miss must not list every file before Ready.
+				return {
+					scan: { nodes: {}, rootIds: [], signatures: {} },
+					metaOnly: true,
+					shell: {
+						materialize: false,
+						pending: true,
+						notes: 0,
+						folders: 0,
+						rows: [],
+						rootIds: [],
+						activeNoteId: null,
+						omittedNotes: 0,
+						loaded: [],
+						dbPath: "",
+					},
+				};
 			}
 			const scan = await openDesktopVaultAt(desktopRoot, {
 				metaOnly,

@@ -194,17 +194,20 @@ fn open_conn_with(db_path: &str, shell: bool) -> Result<Connection, String> {
     if let Some(parent) = Path::new(db_path).parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir index: {e}"))?;
     }
-    if shell {
-        let _ = crate::index_fill::discard_oversized_journal(Path::new(db_path));
-    }
-    let already_wal = shell && crate::index_fill::sqlite_header_is_wal(Path::new(db_path));
+    // Every open, including the fill writer. A second `journal_mode=WAL` on a
+    // file that is already WAL checkpoints the whole index and was the fixed
+    // cost before the first page.
+    let _ = crate::index_fill::discard_oversized_journal(Path::new(db_path));
+    let already_wal = crate::index_fill::sqlite_header_is_wal(Path::new(db_path));
     let conn = Connection::open(db_path).map_err(|e| format!("sqlite open: {e}"))?;
-    let pragmas = if shell {
-        if already_wal {
+    let pragmas = if already_wal {
+        if shell {
             "PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
         } else {
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+            "PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
         }
+    } else if shell {
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
     } else {
         "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
     };
@@ -1076,6 +1079,53 @@ pub async fn vault_index_fill_from_disk(
                     search_state: "ready-fts-partial".into(),
                 },
             );
+            let stored: i64 = {
+                let guard = state.lock().map_err(|e| e.to_string())?;
+                guard
+                    .conns
+                    .get(&db_path)
+                    .and_then(|conn| {
+                        conn.query_row(
+                            "SELECT value FROM meta_kv WHERE key = 'shell_note_count'",
+                            [],
+                            |r| r.get::<_, String>(0),
+                        )
+                        .ok()
+                    })
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0)
+            };
+            let notes = if stored > 0 { stored } else { page };
+            if notes > page {
+                crate::shell_catalog::write_note_total_sidecar(&db_path, notes);
+                crate::shell_catalog::update_page_snapshot_notes(&db_path, notes);
+                emit_fill_progress(
+                    &app,
+                    &IndexFillProgress {
+                        db_path: db_path.clone(),
+                        scanned: notes,
+                        total: notes,
+                        indexed: 0,
+                        skipped: 0,
+                        errors: 0,
+                        phase: "catalog-counted".into(),
+                        message: None,
+                        search_state: "ready-fts-partial".into(),
+                    },
+                );
+            }
+            // The page is already searchable. Do not open a writer. That
+            // connection was setting WAL mode again and checkpointing the file.
+            if !fill_is_inflight(&db_path) {
+                return Ok(IndexFillResult {
+                    indexed: 0,
+                    skipped: notes,
+                    errors: 0,
+                    notes,
+                    edges: 0,
+                    search_state: "ready-fts-partial".into(),
+                });
+            }
         }
     }
     clear_fill_cancel(&db_path);
