@@ -38,6 +38,7 @@ import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-
 import { claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { takePendingFolderReveal } from "@/lib/chrome/reveal-list";
+import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -1010,8 +1011,7 @@ export const FileTree = memo(function FileTree() {
       if (rows.length === 0) {
         if (e.key === "Enter") {
           e.preventDefault();
-          const id = createNote(null, "Untitled");
-          if (id) openCreatedRename(id);
+          createNoteWhenReady(null, "Untitled", openCreatedRename);
         }
         return;
       }
@@ -1589,10 +1589,7 @@ export const FileTree = memo(function FileTree() {
             <button
               type="button"
               className="primary-btn min-h-8 px-3 text-[12px]"
-              onClick={() => {
-                const id = createNote(null, "Untitled");
-                if (id) openCreatedRename(id);
-              }}
+              onClick={() => createNoteWhenReady(null, "Untitled", openCreatedRename)}
             >
               New note
             </button>

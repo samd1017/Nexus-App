@@ -134,6 +134,37 @@ export function SettingsPanel() {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const [stayHint, setStayHint] = useState(false);
+  const [currentSection, setCurrentSection] = useState("appearance");
+
+  // The tab for the section in view carries a cyan underline, so the reader
+  // knows where they are after scrolling or leaving the tabs.
+  useEffect(() => {
+    if (!open) return;
+    const body = dialogRef.current?.querySelector<HTMLElement>(".settings-body");
+    if (!body) return;
+    const pick = () => {
+      const top = body.getBoundingClientRect().top;
+      const sections = Array.from(
+        body.querySelectorAll<HTMLElement>("[data-settings-section]"),
+      );
+      if (!sections.length) return;
+      let next = sections[0].dataset.settingsSection ?? "appearance";
+      const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
+      if (atEnd) {
+        next = sections[sections.length - 1].dataset.settingsSection ?? next;
+      } else {
+        for (const el of sections) {
+          if (el.getBoundingClientRect().top - top <= 48) {
+            next = el.dataset.settingsSection ?? next;
+          }
+        }
+      }
+      setCurrentSection((cur) => (cur === next ? cur : next));
+    };
+    pick();
+    body.addEventListener("scroll", pick, { passive: true });
+    return () => body.removeEventListener("scroll", pick);
+  }, [open]);
   const stayTimerRef = useRef(0);
 
   useEffect(() => () => window.clearTimeout(stayTimerRef.current), []);
@@ -383,6 +414,8 @@ export function SettingsPanel() {
               key={id}
               type="button"
               role="tab"
+              aria-selected={currentSection === id}
+              data-current={currentSection === id ? "1" : undefined}
               className="nexus-settings-nav"
               data-settings-nav={id}
               data-testid={`settings-nav-${id}`}

@@ -41,6 +41,7 @@ import { FrontmatterEditor } from "./FrontmatterEditor";
 import { setFindEditorMode, setFindFocusPane, getFindFocusPane } from "@/lib/editor/find-target";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { revealFileList } from "@/lib/chrome/reveal-list";
+import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
 import { scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import {
   formatDateLong,
@@ -215,23 +216,23 @@ export function EditorPane({
     return n;
   });
   const startFirstNote = useCallback(() => {
-    const id = useVaultStore.getState().createNote(null, "Untitled");
-    if (!id) return;
-    window.dispatchEvent(new CustomEvent("nexus-created-note", { detail: id }));
-    const safe =
-      typeof CSS !== "undefined" && typeof CSS.escape === "function"
-        ? CSS.escape(id)
-        : id.replace(/["\\]/g, "\\$&");
-    scheduleEmptyNoteRename(
-      id,
-      (noteId) => {
-        window.dispatchEvent(new CustomEvent("nexus-rename-node", { detail: noteId }));
-      },
-      () =>
-        Boolean(
-          document.querySelector(`[data-testid="tree-rename"][data-rename-for="${safe}"]`),
-        ),
-    );
+    createNoteWhenReady(null, "Untitled", (id) => {
+      window.dispatchEvent(new CustomEvent("nexus-created-note", { detail: id }));
+      const safe =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function"
+          ? CSS.escape(id)
+          : id.replace(/["\\]/g, "\\$&");
+      scheduleEmptyNoteRename(
+        id,
+        (noteId) => {
+          window.dispatchEvent(new CustomEvent("nexus-rename-node", { detail: noteId }));
+        },
+        () =>
+          Boolean(
+            document.querySelector(`[data-testid="tree-rename"][data-rename-for="${safe}"]`),
+          ),
+      );
+    });
   }, []);
 
   useEffect(() => {

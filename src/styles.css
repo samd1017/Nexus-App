@@ -2330,3 +2330,33 @@ button:focus-visible,
 .nexus-toast-in {
   animation: nexusToastIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
+
+/* One selection language: the chosen search result wears the same cyan bar as
+   the open note in the list. */
+.cmdk-item {
+  transition:
+    background 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.cmdk-item[aria-selected="true"],
+.cmdk-item[data-selected="true"] {
+  background: rgba(90, 216, 255, 0.12);
+  box-shadow: inset 3px 0 0 #5ad8ff;
+  color: #fff;
+}
+
+/* Settings: the section in view is underlined, whether or not its tab has focus. */
+.nexus-settings-nav {
+  position: relative;
+}
+.nexus-settings-nav[data-current="1"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -3px;
+  height: 2px;
+  border-radius: 2px;
+  background: #5ad8ff;
+}
