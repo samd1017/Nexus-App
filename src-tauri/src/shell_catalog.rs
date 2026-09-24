@@ -196,6 +196,26 @@ pub fn ensure_shell_indexes(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Indexes the first page needs. Title and path indexes are built after Ready
+/// so a large catalog is not indexed before the window is on screen.
+pub fn ensure_page_indexes(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS note_meta_parent ON note_meta(parent_id);
+         CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);",
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn shell_search_indexes_ready(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'note_meta_title_norm'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+        == 1
+}
+
 const COUNT_NOTES_KEY: &str = "shell_note_count";
 const COUNT_FOLDERS_KEY: &str = "shell_folder_count";
 
@@ -1042,7 +1062,8 @@ pub fn mount_catalog(
     prefer_path: Option<&str>,
     allow_walk: bool,
 ) -> Result<ShellMount, String> {
-    ensure_shell_indexes(conn)?;
+    // Title and path indexes are built after Ready. The page uses parent and mtime.
+    ensure_page_indexes(conn)?;
     let (mut notes, mut folders) = catalog_counts_fast(conn)?;
     if notes == 0 && folders == 0 {
         if !allow_walk {

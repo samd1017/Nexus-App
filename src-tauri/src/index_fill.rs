@@ -1175,7 +1175,11 @@ fn collect_md_notes_publishing<'a>(
             }
             out.push(disk_note_from_lite(lite));
             listed = out.len() as i64;
-            let batch_due = out.len() % DISCOVER_BATCH == 0;
+            let batch_due = if announced {
+                out.len().saturating_sub(published) >= POST_READY_DIR_BATCH
+            } else {
+                out.len() % DISCOVER_BATCH == 0
+            };
             let ready_due = !announced && ready_at != usize::MAX && out.len() >= ready_at;
             if batch_due || ready_due {
                 flush_unpublished(&mut publish, &out, &mut published);
@@ -1183,10 +1187,9 @@ fn collect_md_notes_publishing<'a>(
             if ready_due {
                 if let Some(sink) = publish.as_mut() {
                     on_ready(sink, &out);
-                    // After the Ready event is queued. Merging a large index
-                    // stays off the path that paints the first page.
-                    merge_fts_segments(sink.conn);
-                    backfill_note_fts_row_if_needed(sink.conn);
+                    // Merging or copying the whole index here locked the
+                    // database for the rest of the vault. Those run in the
+                    // small batches below, after the page is on screen.
                 }
                 announced = true;
             }
@@ -1258,15 +1261,18 @@ fn publish_discovered(sink: &mut DiscoverPublish<'_>, notes: &[DiskNote], scanne
         *sink.indexed = indexed_before;
         *sink.errors += titles.len() as i64;
     }
-    if sink.tail_yield {
-        if committed && scanned - sink.last_checkpoint_at >= TAIL_CHECKPOINT_EVERY {
-            let _ = sink.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-            sink.last_checkpoint_at = scanned;
-            #[cfg(test)]
-            TAIL_WAL_CHECKPOINTS.with(|c| c.set(c.get() + 1));
-        }
-        std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
-    } else {
+        if sink.tail_yield {
+            if committed && scanned - sink.last_checkpoint_at >= TAIL_CHECKPOINT_EVERY {
+                let _ = sink.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+                sink.last_checkpoint_at = scanned;
+                #[cfg(test)]
+                TAIL_WAL_CHECKPOINTS.with(|c| c.set(c.get() + 1));
+            }
+            // A few FTS row ids per batch. One copy of every row used to
+            // hold the database after Ready.
+            let _ = backfill_note_fts_row_chunk(sink.conn, POST_READY_DIR_BATCH as i64);
+            std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+        } else {
         cooperate_after_write(started);
     }
     if sink.allow_heads && *sink.headed < EARLY_HEAD_CAP {
@@ -1435,6 +1441,32 @@ fn tune_fill_connection(conn: &Connection) {
 }
 
 const TITLE_SEARCH_LIVE_KEY: &str = "title_search_live";
+
+/// A journal larger than this is not replayed on open. The database file
+/// already holds the last checkpoint; the fill catches up after the page.
+const JOURNAL_REPLAY_CAP: u64 = 8 * 1024 * 1024;
+/// Below this, the database file is only a header and the journal is the index.
+const JOURNAL_DB_MIN: u64 = 1024 * 1024;
+
+/// The index is a cache. Replaying a vault-sized journal blocks the first page.
+/// When the database file already has a checkpoint, drop that tail. Returns
+/// true when the journal files were removed.
+pub fn discard_oversized_journal(db_path: &Path) -> bool {
+    discard_oversized_journal_with(db_path, JOURNAL_REPLAY_CAP, JOURNAL_DB_MIN)
+}
+
+pub fn discard_oversized_journal_with(db_path: &Path, wal_cap: u64, db_min: u64) -> bool {
+    let wal = PathBuf::from(format!("{}-wal", db_path.display()));
+    let shm = PathBuf::from(format!("{}-shm", db_path.display()));
+    let wal_len = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+    let db_len = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
+    if wal_len <= wal_cap || db_len < db_min {
+        return false;
+    }
+    let removed_wal = std::fs::remove_file(&wal).is_ok();
+    let _ = std::fs::remove_file(&shm);
+    removed_wal
+}
 
 /// Remember that the open page is already in FTS, so the next launch can
 /// paint Ready before it opens a second connection or reads the folder.
@@ -1840,27 +1872,69 @@ pub fn ensure_note_fts_row(conn: &Connection) {
     );
 }
 
-fn backfill_note_fts_row_if_needed(conn: &Connection) {
-    let mapped: Option<String> = conn
+fn fts_row_map_done(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT value FROM meta_kv WHERE key = 'fts_row_mapped'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .as_deref()
+        == Some("1")
+}
+
+/// Copy at most `limit` FTS row ids. Returns true when the side table is caught up.
+fn backfill_note_fts_row_chunk(conn: &Connection, limit: i64) -> bool {
+    if fts_row_map_done(conn) {
+        return true;
+    }
+    let cursor: i64 = conn
         .query_row(
-            "SELECT value FROM meta_kv WHERE key = 'fts_row_mapped'",
+            "SELECT value FROM meta_kv WHERE key = 'fts_row_cursor'",
             [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let next: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(rowid), 0) FROM (
+               SELECT rowid FROM note_fts
+               WHERE rowid > ?1 AND note_id IS NOT NULL
+               ORDER BY rowid
+               LIMIT ?2
+             )",
+            params![cursor, limit],
             |r| r.get(0),
         )
-        .ok();
-    if mapped.as_deref() == Some("1") {
-        return;
+        .unwrap_or(0);
+    if next <= cursor {
+        let _ = conn.execute(
+            "INSERT INTO meta_kv(key, value) VALUES ('fts_row_mapped', '1')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        );
+        return true;
     }
     let _ = conn.execute(
         "INSERT OR IGNORE INTO note_fts_row(note_id, fts_rowid)
-         SELECT note_id, rowid FROM note_fts WHERE note_id IS NOT NULL",
-        [],
+         SELECT note_id, rowid FROM note_fts
+         WHERE rowid > ?1 AND rowid <= ?2 AND note_id IS NOT NULL",
+        params![cursor, next],
     );
     let _ = conn.execute(
-        "INSERT INTO meta_kv(key, value) VALUES ('fts_row_mapped', '1')
+        "INSERT INTO meta_kv(key, value) VALUES ('fts_row_cursor', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [],
+        params![next.to_string()],
     );
+    false
+}
+
+fn backfill_note_fts_row_if_needed(conn: &Connection) {
+    while !backfill_note_fts_row_chunk(conn, 256) {
+        std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+    }
 }
 
 pub fn delete_note_fts(conn: &Connection, id: &str) -> Result<(), String> {
@@ -2302,6 +2376,9 @@ pub fn fill_from_disk_with_opts<'a>(
         // Paint Ready before the cache grows and the folder is read again.
         std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
         tune_fill_connection(conn);
+        if !crate::shell_catalog::shell_search_indexes_ready(conn) {
+            let _ = crate::shell_catalog::ensure_shell_indexes(conn);
+        }
     }
     on_progress(&progress);
     // Heads for notes already on the open page (mount seeded them) before
@@ -2431,8 +2508,13 @@ pub fn fill_from_disk_with_opts<'a>(
             // directory batch. The rest of a fat folder is not read here.
             // The large page cache waits until that paint, so a cold open
             // is not behind a 1GB map of an index that already exists.
+            // Later commits yield immediately, not only after the open window.
+            sink.tail_yield = true;
             std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
             tune_fill_connection(sink.conn);
+            if !crate::shell_catalog::shell_search_indexes_ready(sink.conn) {
+                let _ = crate::shell_catalog::ensure_shell_indexes(sink.conn);
+            }
         },
         &mut |sink, prefix| {
             let scanned = prefix.len() as i64;
@@ -3779,6 +3861,53 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "warm Ready took {flagged}ms flagged / {legacy}ms legacy"
         );
         let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn oversized_journal_is_dropped_when_a_checkpoint_exists() {
+        let (vault, db) = temp_pair("journal-drop");
+        {
+            let conn = open_test_conn(&db);
+            conn.execute(
+                "CREATE TABLE keep (id INTEGER PRIMARY KEY, label TEXT)",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO keep(label) VALUES ('checkpointed')", [])
+                .unwrap();
+        }
+        // The last connection folds a small journal on close. A vault-sized
+        // tail left beside an already-checkpointed file is what open must drop.
+        let wal = PathBuf::from(format!("{}-wal", db.display()));
+        let shm = PathBuf::from(format!("{}-shm", db.display()));
+        fs::write(&wal, vec![0u8; 64]).unwrap();
+        fs::write(&shm, vec![0u8; 32]).unwrap();
+        let wal_len = fs::metadata(&wal).unwrap().len();
+        assert!(
+            discard_oversized_journal_with(&db, wal_len - 1, 1),
+            "a checkpointed database must not replay a large journal"
+        );
+        assert!(!wal.exists(), "the journal tail should be gone");
+        assert!(!shm.exists(), "the journal index should be gone");
+        {
+            let conn = open_test_conn(&db);
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM keep", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 1);
+        }
+        let (vault_keep, db_keep) = temp_pair("journal-keep");
+        fs::write(&db_keep, vec![0u8; 100]).unwrap();
+        let wal_keep = PathBuf::from(format!("{}-wal", db_keep.display()));
+        fs::write(&wal_keep, vec![0u8; 64]).unwrap();
+        let db_len = fs::metadata(&db_keep).unwrap().len();
+        assert!(
+            !discard_oversized_journal_with(&db_keep, 0, db_len.saturating_add(1)),
+            "a journal that still holds the only copy must stay"
+        );
+        assert!(wal_keep.exists());
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+        let _ = fs::remove_dir_all(vault_keep.parent().unwrap());
     }
 
     #[test]

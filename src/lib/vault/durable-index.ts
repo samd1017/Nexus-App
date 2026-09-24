@@ -144,6 +144,7 @@ export interface DurableIndex {
     errors: number;
     notes: number;
     edges?: number;
+    scanned?: number;
     searchState?: string;
   }>;
   /** Persisted wikilink groups — desktop seeds the JS link index without bodies. */

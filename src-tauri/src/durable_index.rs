@@ -1128,8 +1128,22 @@ fn ensure_shell_conn(
     }
     let db_path = path.to_string_lossy().to_string();
     if !state.conns.contains_key(&db_path) {
+        // A leftover vault-sized journal replays inside this open. The
+        // database file already has the last checkpoint; drop the tail.
+        let _ = crate::index_fill::discard_oversized_journal(Path::new(&db_path));
         let conn = open_conn(&db_path)?;
-        ensure_schema(&conn, "shell", Some(vault_root))?;
+        let version: i32 = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if version != SCHEMA_VERSION {
+            ensure_schema(&conn, "shell", Some(vault_root))?;
+        }
         state.conns.insert(db_path.clone(), conn);
     }
     Ok(db_path)
