@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  ChevronDown,
   ChevronRight,
   FileText,
   Folder,
@@ -253,6 +252,7 @@ const TreeRow = memo(function TreeRow({
         "tree-item group relative flex w-full items-center gap-1.5 text-left select-none",
         isActive && "is-active",
         isFocused && "is-focused",
+        renaming && "is-renaming",
         isDragging && "opacity-40",
         isDropHover &&
           "ring-1 ring-[var(--accent)] bg-[rgba(0,200,255,0.1)]",
@@ -316,8 +316,11 @@ const TreeRow = memo(function TreeRow({
       }}
     >
       {node.kind === "folder" ? (
-        <span className="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--text-muted)]">
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span
+          className="nexus-tree-chevron flex h-4 w-4 shrink-0 items-center justify-center text-[var(--text-muted)]"
+          data-open={expanded ? "1" : "0"}
+        >
+          <ChevronRight size={14} />
         </span>
       ) : (
         <span className="w-4 shrink-0" />
@@ -343,7 +346,9 @@ const TreeRow = memo(function TreeRow({
         <input
           ref={inputRef}
           autoFocus
-          className="min-w-0 flex-1 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[13px] text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
+          className="nexus-rename-input min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-[13px] outline-none"
+          spellCheck={false}
+          autoComplete="off"
           aria-label="File name. Enter keeps it. Escape puts the old name back."
           data-testid="tree-rename"
           data-rename-for={node.id}
@@ -386,10 +391,21 @@ const TreeRow = memo(function TreeRow({
         </span>
       )}
 
+      {renaming ? (
+        <span
+          className="nexus-rename-hint ml-1 shrink-0"
+          data-testid="tree-rename-hint"
+          aria-hidden
+        >
+          <kbd>↵</kbd>
+          <kbd>esc</kbd>
+        </span>
+      ) : null}
       <div
         className={cn(
           "titlebar-no-drag relative ml-auto flex shrink-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100",
           (isActive || isFocused) && "opacity-100",
+          renaming && "hidden",
         )}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}

@@ -296,7 +296,7 @@ export function SettingsPanel() {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
+        className="nexus-dialog-in glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--accent-dim)] text-[var(--accent)]">

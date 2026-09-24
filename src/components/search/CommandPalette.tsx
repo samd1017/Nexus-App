@@ -1466,7 +1466,7 @@ function CommandPaletteOpen() {
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="w-full max-w-xl"
+        className="nexus-dialog-in w-full max-w-xl"
         onClick={(e) => e.stopPropagation()}
       >
       <Command
@@ -1795,6 +1795,33 @@ function CommandPaletteOpen() {
                   pending: noteSearchPending,
                 })}
               </span>
+            </div>
+          ) : null}
+
+          {emptyStatus === "miss" && showCreateNote && hits.length === 0 ? (
+            <div
+              className="nexus-miss-actions flex flex-wrap items-center gap-2 px-3 pb-3"
+              data-testid="search-miss-actions"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const title = (searchText || q).trim() || "Untitled";
+                  createNote(null, title);
+                  setCommandOpen(false);
+                }}
+              >
+                Create “{(searchText || q).trim().slice(0, 48)}”
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  inputRef.current?.focus();
+                }}
+              >
+                Clear search
+              </button>
             </div>
           ) : null}
 

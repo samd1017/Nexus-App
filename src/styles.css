@@ -2176,3 +2176,88 @@ button:focus-visible,
   font-weight: 700;
 }
 
+
+/* Rename: one unmistakable field on a quiet row, with the two keys beside it. */
+.tree-item.is-renaming,
+.tree-item.is-renaming.is-focused,
+.tree-item.is-renaming[data-keyboard-focus="row"] {
+  outline: none;
+  background: rgba(90, 216, 255, 0.1);
+  box-shadow: inset 3px 0 0 #5ad8ff;
+}
+.nexus-rename-input {
+  background: #0a1216;
+  color: #fff;
+  font-weight: 600;
+  border: 2px solid #5ad8ff;
+  box-shadow: 0 0 0 3px rgba(90, 216, 255, 0.22);
+  caret-color: #5ad8ff;
+}
+.nexus-rename-input::selection {
+  background: rgba(90, 216, 255, 0.45);
+  color: #fff;
+}
+.nexus-rename-hint {
+  display: inline-flex;
+  gap: 3px;
+  margin-right: 4px;
+}
+.nexus-rename-hint kbd {
+  font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+  padding: 3px 5px;
+  border-radius: 5px;
+  border: 1px solid rgba(90, 216, 255, 0.45);
+  background: rgba(90, 216, 255, 0.12);
+}
+
+/* Folder chevron turns instead of swapping glyphs. */
+.nexus-tree-chevron svg {
+  transition: transform 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.nexus-tree-chevron[data-open="1"] svg {
+  transform: rotate(90deg);
+}
+
+/* Dialogs arrive, they do not pop. */
+@keyframes nexusDialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.nexus-dialog-in {
+  animation: nexusDialogIn 170ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* A miss offers the next step. */
+.nexus-miss-actions button {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(90, 216, 255, 0.35);
+  background: rgba(90, 216, 255, 0.08);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.nexus-miss-actions button:hover {
+  background: rgba(90, 216, 255, 0.16);
+  border-color: rgba(90, 216, 255, 0.6);
+}
+.nexus-miss-actions button:focus-visible {
+  outline: 3px solid #5ad8ff;
+  outline-offset: 2px;
+}
+.nexus-keys-hint kbd {
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}

@@ -213,7 +213,7 @@ export function ConfirmDialog({
         aria-labelledby="nexus-confirm-title"
         aria-describedby="nexus-confirm-message"
         className={cn(
-          "w-full max-w-[380px] rounded-[var(--radius-xl)] border border-[var(--border)]",
+          "nexus-dialog-in w-full max-w-[380px] rounded-[var(--radius-xl)] border border-[var(--border)]",
           "bg-[var(--bg-elevated,#16161A)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.55)]",
         )}
         onMouseDown={(e) => e.stopPropagation()}

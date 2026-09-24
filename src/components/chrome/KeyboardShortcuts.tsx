@@ -271,7 +271,18 @@ export function KeyboardShortcuts() {
                 el.closest(".note-title-input") ||
                 el.isContentEditable === true),
           );
-        if (!inNote(target) && !inNote(active)) return;
+        // Esc always has a home: from the note, the side panel, an empty pane,
+        // or nowhere at all, it lands on the list.
+        const homeable = (el: HTMLElement | null) =>
+          !el ||
+          el === document.body ||
+          el === document.documentElement ||
+          inNote(el) ||
+          Boolean(
+            typeof el.closest === "function" &&
+              el.closest("[data-editor-empty], [data-right-panel]"),
+          );
+        if (!store.vaultId || !homeable(target) || !homeable(active)) return;
         e.preventDefault();
         // A collapsed list has no tree to land on. Let go of the note first so
         // keys typed while the list opens do not edit it.

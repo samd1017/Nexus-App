@@ -320,6 +320,16 @@ export function EditorPane({
             ? "Enter starts a note."
             : "Click a note in the list to open it."}
         </p>
+        {emptyVault ? null : (
+          <p
+            className="nexus-keys-hint mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[12.5px] font-medium text-white"
+            data-testid="note-keys-hint"
+          >
+            <kbd>Esc</kbd> list <span aria-hidden>·</span> <kbd>↑</kbd>
+            <kbd>↓</kbd> move <span aria-hidden>·</span> <kbd>↵</kbd> open{" "}
+            <span aria-hidden>·</span> <kbd>F2</kbd> rename
+          </p>
+        )}
         <p className="mt-2 text-[12px] tracking-wide text-[var(--text-muted)]">
           {NEXUS_TAGLINE}
         </p>

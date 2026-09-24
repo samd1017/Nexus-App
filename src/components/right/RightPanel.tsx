@@ -336,6 +336,7 @@ export function RightPanel() {
         onClick={() => setRightOpen(false)}
       />
       <aside
+        data-right-panel
         className="panel-slide panel-solid absolute inset-y-0 right-0 z-30 flex h-full shrink-0 flex-col border-l border-[var(--border)] bg-[var(--panel-solid)] lg:relative lg:z-0"
         style={{ width: rightWidth }}
       >
