@@ -1606,6 +1606,13 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(cBody.includes('if (!e.name || e.name.startsWith(".")) continue;'), true);
   assert.equal(cBody.includes('else if (e.name.toLowerCase().endsWith(".md")) notes += 1;'), true);
 }
+// The name field's first-frame select never selects over a name already being typed.
+{
+  const at = treeSrc.indexOf("const draft = typed?.text ? typed.text : displayName(node);");
+  assert.ok(at > 0);
+  const block = treeSrc.slice(at, treeSrc.indexOf("input.scrollIntoView", at));
+  assert.ok(block.indexOf("if (document.activeElement === input && input.value !== draft) return;") < block.indexOf("input.select();"));
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

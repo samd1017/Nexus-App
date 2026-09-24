@@ -223,10 +223,14 @@ const TreeRow = memo(function TreeRow({
       onRenameFinished?.(node.id, true);
       return;
     }
-    setNameDraft(typed?.text ? typed.text : displayName(node));
+    const draft = typed?.text ? typed.text : displayName(node);
+    setNameDraft(draft);
     requestAnimationFrame(() => {
       const input = inputRef.current;
       if (!input) return;
+      // The field can have the cursor before this frame. A name already being
+      // typed is not selected over, or its first letters are lost.
+      if (document.activeElement === input && input.value !== draft) return;
       input.focus();
       if (typed?.text) {
         const end = input.value.length;
