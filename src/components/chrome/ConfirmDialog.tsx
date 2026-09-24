@@ -12,6 +12,8 @@ type Props = {
   danger?: boolean;
   /** Where focus lands when the dialog opens. Danger defaults to Cancel. */
   initialFocus?: "cancel" | "confirm";
+  /** Stable hook for the open dialog, when a caller needs one. */
+  testId?: string;
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -25,6 +27,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   danger = false,
   initialFocus,
+  testId,
   onConfirm,
   onCancel,
 }: Props) {
@@ -130,6 +133,7 @@ export function ConfirmDialog({
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 px-4 backdrop-blur-[2px]"
       data-nexus-confirm="true"
+      data-testid={testId}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}

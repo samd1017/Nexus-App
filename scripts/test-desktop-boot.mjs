@@ -292,6 +292,12 @@ const settingsSrc = readFileSync(
 );
 assert.equal(settingsSrc.includes('initialFocus="cancel"'), true);
 assert.equal(settingsSrc.includes("data-settings-rebuild"), true);
+assert.equal(settingsSrc.includes('data-testid="settings-rebuild"'), true);
+assert.equal(settingsSrc.includes("Rebuild search"), true);
+assert.equal(settingsSrc.includes('testId={confirmKind === "rebuild" ? "rebuild-confirm"'), true);
+const rebuildBtn = settingsSrc.indexOf('data-testid="settings-rebuild"');
+const settingsBody = settingsSrc.indexOf("settings-body");
+assert.ok(rebuildBtn > 0 && settingsBody > rebuildBtn);
 assert.equal(settingsSrc.includes('data-settings-lead="appearance"'), true);
 assert.equal(settingsSrc.includes('data-settings-lead="editor"'), true);
 assert.equal(settingsSrc.includes('data-settings-lead="graph"'), true);
@@ -305,6 +311,9 @@ const treeSrc = readFileSync(
 );
 assert.equal(treeSrc.includes("Enter starts a note."), true);
 assert.equal(treeSrc.includes('status="vault"'), true);
+assert.equal(treeSrc.includes('data-testid="tree-empty-folder-status"'), true);
+assert.equal(treeSrc.includes("data-focused-empty-folder"), true);
+assert.equal(treeSrc.includes("folderHasNothing"), true);
 const editorSrc = readFileSync(
   new URL("../src/components/editor/EditorPane.tsx", import.meta.url),
   "utf8",
@@ -327,6 +336,7 @@ const keysSrc = readFileSync(
   new URL("../src/components/chrome/KeyboardShortcuts.tsx", import.meta.url),
   "utf8",
 );
+assert.equal(keysSrc.includes("focusedEmptyFolderId"), true);
 assert.equal(keysSrc.includes('"[data-file-tree]"'), true);
 assert.equal(keysSrc.includes('"[data-testid=\'nexus-editor\']"'), true);
 const confirmSrc = readFileSync(
@@ -339,6 +349,7 @@ assert.ok(cancelAt > 0 && actionAt > cancelAt);
 const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 assert.equal(cssSrc.includes("outline: 2px solid #5ad8ff"), true);
 assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);
+assert.equal(shellSrc.includes("focusedEmptyFolderId()"), true);
 assert.equal(shellSrc.includes("paintedFromPage"), true);
 assert.equal(shellSrc.includes("bg-black"), true);
 assert.equal(shellSrc.includes("text-[32px]"), true);

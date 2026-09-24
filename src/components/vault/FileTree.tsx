@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useVaultStore } from "@/lib/vault/store";
+import { vaultIndex } from "@/lib/vault/indexes";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import type { NoteTemplateId } from "@/lib/vault/templates";
@@ -33,6 +34,11 @@ import {
 import { useTreeStructureTick } from "@/lib/vault/tree-tick";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
+
+function folderHasNothing(id: string): boolean {
+  const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
+  return vaultIndex.getChildIds(id).length === 0 && extra === 0;
+}
 
 
 /**
@@ -134,6 +140,7 @@ const TreeRow = memo(function TreeRow({
   onFocusRow,
   onToggleFolder,
   onRenameFinished,
+  folderEmpty = false,
 }: {
   nodeId: string;
   depth: number;
@@ -147,6 +154,7 @@ const TreeRow = memo(function TreeRow({
   onFocusRow?: (id: string) => void;
   onToggleFolder: (id: string) => void;
   onRenameFinished?: () => void;
+  folderEmpty?: boolean;
 }) {
   // Narrow selectors — avoid whole-nodes subscription
   const node = useVaultStore((s) => s.nodes[nodeId]);
@@ -249,6 +257,7 @@ const TreeRow = memo(function TreeRow({
       tabIndex={-1}
       data-node-id={node.id}
       data-node-kind={node.kind}
+      data-folder-empty={folderEmpty ? "1" : undefined}
       data-testid={node.kind === "note" ? "tree-note-row" : "tree-folder-row"}
       onPointerDown={(e) => {
         if (renaming) return;
@@ -593,6 +602,7 @@ export const FileTree = memo(function FileTree() {
   const onFocusRow = useCallback((id: string) => {
     const idx = flatRowsRef.current.findIndex((r) => r.id === id);
     if (idx >= 0) setFocusedIndex(idx);
+    parentRef.current?.focus({ preventScroll: true });
   }, []);
 
   const returnTreeFocus = useCallback(() => {
@@ -709,6 +719,11 @@ export const FileTree = memo(function FileTree() {
       if (e.key === "Enter") {
         e.preventDefault();
         if (node.kind === "folder") {
+          if (folderHasNothing(node.id)) {
+            const id = createNote(node.id, "Untitled");
+            if (id) requestAnimationFrame(() => setRenamingId(id));
+            return;
+          }
           toggleFolderReveal(node.id);
         } else {
           setActiveNote(node.id);
@@ -1082,9 +1097,18 @@ export const FileTree = memo(function FileTree() {
         onFocusRow={onFocusRow}
         onToggleFolder={toggleFolderReveal}
         onRenameFinished={returnTreeFocus}
+        folderEmpty={row.kind === "folder" && folderHasNothing(row.id)}
       />
     );
   };
+
+  const focusedRow = flatRows[focusedIndex];
+  const focusedEmptyFolder =
+    focusedRow?.kind === "empty"
+      ? focusedRow.emptyParentId ?? null
+      : focusedRow?.kind === "folder" && folderHasNothing(focusedRow.id)
+        ? focusedRow.id
+        : null;
 
   return (
     <div
@@ -1092,6 +1116,7 @@ export const FileTree = memo(function FileTree() {
       data-file-tree
       data-tree-flat-rows={flatRows.length}
       data-tree-virtualized="1"
+      data-focused-empty-folder={focusedEmptyFolder ?? undefined}
       className={cn(
         "titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-3 outline-none",
         rootDropActive &&
@@ -1119,6 +1144,16 @@ export const FileTree = memo(function FileTree() {
         });
       }}
     >
+      {focusedEmptyFolder ? (
+        <p
+          role="status"
+          data-testid="tree-empty-folder-status"
+          data-empty-parent={focusedEmptyFolder}
+          className="sticky top-0 z-[1] mx-1 mb-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12px] leading-snug text-[var(--text-secondary)]"
+        >
+          This folder is empty. Enter starts a note.
+        </p>
+      ) : null}
       {flatRows.length === 0 ? (
         <EmptyState
           compact

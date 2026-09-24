@@ -18,6 +18,7 @@ import {
   matchHotkey,
   type HotkeyId,
 } from "@/lib/prefs/hotkeys";
+import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
 
 /** True if key matches letter (layout-safe: prefer e.code). */
 function isModLetter(e: KeyboardEvent, letter: string): boolean {
@@ -110,7 +111,7 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     case "newNote":
       if (!hasVault || overlayOpen) return false;
-      store.createNote(null);
+      store.createNote(focusedEmptyFolderId(), "Untitled");
       return true;
     case "daily":
       if (!hasVault || overlayOpen) return false;

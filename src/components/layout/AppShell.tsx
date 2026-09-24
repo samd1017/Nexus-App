@@ -12,6 +12,7 @@ import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
+import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
 import {
@@ -281,7 +282,7 @@ export function AppShell() {
         void useVaultStore.getState().flushDirty();
       },
       newNote: () => {
-        useVaultStore.getState().createNote(null, "Untitled");
+        useVaultStore.getState().createNote(focusedEmptyFolderId(), "Untitled");
       },
       toggleGraph: () => toggleGraphForViewport(),
       toggleSource: () => useVaultStore.getState().toggleEditorMode(),

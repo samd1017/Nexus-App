@@ -139,6 +139,26 @@ export function SettingsPanel() {
         setOpen(false);
         return;
       }
+      // R opens Rebuild from anywhere in Settings that is not a text field.
+      if (
+        (e.key === "r" || e.key === "R") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        const t = e.target as HTMLElement | null;
+        const tag = t?.tagName?.toLowerCase();
+        const typing =
+          tag === "input" ||
+          tag === "textarea" ||
+          tag === "select" ||
+          t?.isContentEditable === true;
+        if (!typing) {
+          e.preventDefault();
+          setConfirmKind("rebuild");
+        }
+      }
       // Simple focus trap — Tab cycles within dialog
       if (e.key !== "Tab" || !root) return;
       const focusable = root.querySelectorAll<HTMLElement>(
@@ -246,6 +266,19 @@ export function SettingsPanel() {
             aria-label="Close"
           >
             <X size={16} />
+          </button>
+        </div>
+        <div className="shrink-0 border-b border-[var(--border)] px-5 py-3">
+          <button
+            type="button"
+            className="ghost-btn !h-9 w-full justify-center px-3 text-[13px]"
+            data-testid="settings-rebuild"
+            data-settings-rebuild
+            aria-label="Rebuild search"
+            title="Opens a confirm. Enter on Cancel leaves search as it is."
+            onClick={() => setConfirmKind("rebuild")}
+          >
+            Rebuild search
           </button>
         </div>
 
@@ -531,26 +564,9 @@ export function SettingsPanel() {
                 }}
               />
             </div>
-            <div className="mt-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[13px] font-medium text-[var(--text-primary)]">
-                    Rebuild search index
-                  </div>
-                  <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
-                    Refresh titles if search looks out of date. Your notes stay where they are.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="ghost-btn !h-9 shrink-0 px-3 text-[13px]"
-                  data-settings-rebuild
-                  onClick={() => setConfirmKind("rebuild")}
-                >
-                  Rebuild
-                </button>
-              </div>
-            </div>
+            <p className="mt-4 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+              Rebuild search is the button under the title. Your notes stay where they are.
+            </p>
             <div className="mt-3">
 
               <div className="flex items-start justify-between gap-3">
@@ -886,6 +902,7 @@ export function SettingsPanel() {
         open={confirmKind !== null}
         danger={confirmKind === "reset"}
         initialFocus="cancel"
+        testId={confirmKind === "rebuild" ? "rebuild-confirm" : undefined}
         title={confirmKind === "rebuild" ? "Rebuild search?" : "Reset settings?"}
         message={
           confirmKind === "rebuild"
@@ -893,7 +910,17 @@ export function SettingsPanel() {
             : "Restore appearance, editor, and shortcuts to their original settings. This vault stays as it is."
         }
         confirmLabel={confirmKind === "rebuild" ? "Rebuild" : "Reset"}
-        onCancel={() => setConfirmKind(null)}
+        onCancel={() => {
+          const backToRebuild = confirmKind === "rebuild";
+          setConfirmKind(null);
+          if (backToRebuild) {
+            requestAnimationFrame(() => {
+              document
+                .querySelector<HTMLElement>('[data-testid="settings-rebuild"]')
+                ?.focus();
+            });
+          }
+        }}
         onConfirm={() => {
           if (confirmKind === "rebuild") {
             const st = useVaultStore.getState();
