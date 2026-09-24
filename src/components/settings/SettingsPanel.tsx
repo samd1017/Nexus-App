@@ -30,6 +30,7 @@ import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { ConfirmDialog } from "@/components/chrome/ConfirmDialog";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
+import { memoryLine } from "@/lib/settings/memory-copy";
 import { useVaultStore } from "@/lib/vault/store";
 import { rebuildDurableIndexFromNodes } from "@/lib/vault/durable-index";
 import {
@@ -54,6 +55,7 @@ function MemoryBudgetStatus({
   totalNotes: number;
 }) {
   const dirtyCount = useVaultStore((s) => s.dirtyNoteIds.length);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const [bodyStats, setBodyStats] = useState<BodyCacheStats | null>(null);
 
@@ -66,9 +68,6 @@ function MemoryBudgetStatus({
     return () => clearInterval(t);
   }, [open, vaultId, mode, dirtyCount, activeNoteId]);
 
-  // The loaded count is never shown alone; on a large vault it would read as
-  // the vault size.
-  const ofTotal = totalNotes > 0 ? ` of ${totalNotes.toLocaleString()}` : "";
   return (
     <div className="mt-2 border-t border-[var(--border)] pt-2">
       <div className="text-[12px] font-medium text-[var(--text-secondary)]">
@@ -78,17 +77,12 @@ function MemoryBudgetStatus({
         className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]"
         data-testid="settings-memory-line"
       >
-        {!vaultId
-          ? "Shown after you open a folder."
-          : !bodyStats
-            ? "Counting the notes held in memory…"
-            : bodyStats.max === 0
-              ? bodyStats.loaded > 0 && totalNotes > bodyStats.loaded
-                ? `Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory right now.`
-                : "This vault keeps note text in memory."
-              : bodyStats.underPressure
-              ? `Keeping the notes you are using. Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory, including ${bodyStats.protected.toLocaleString()} you are editing.`
-              : `Note text loads when you open a note. Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory right now.`}
+        {memoryLine({
+          vaultOpen: Boolean(vaultId),
+          stats: bodyStats,
+          total: totalNotes,
+          onDemand: mode === "desktop" || mode === "fsa" || shellCatalog,
+        })}
       </p>
     </div>
   );

@@ -881,7 +881,7 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
   const toggle = settingsSrc.indexOf('label="Confirm before delete"', lead);
   assert.ok(lead > 0 && scale > lead && toggle > scale);
   assert.equal(settingsSrc.includes('data-testid="settings-memory-line"'), true);
-  assert.equal(settingsSrc.includes("bodyStats.loaded > 0 && totalNotes > bodyStats.loaded"), true);
+  assert.equal(settingsSrc.includes('onDemand: mode === "desktop" || mode === "fsa" || shellCatalog,'), true);
 }
 // An open empty folder shows a short tag; the row below carries the full line.
 assert.equal(treeSrc.includes('data-testid="tree-empty-folder-tag"'), true);
@@ -1087,8 +1087,41 @@ assert.equal((confirmSrc.match(/whitespace-nowrap/g) ?? []).length >= 2, true);
 assert.equal(treeSrc.includes("<kbd>Enter</kbd>") && treeSrc.includes("<kbd>Esc</kbd>"), true);
 // The memory line never shows the loaded count without the vault total.
 assert.equal(settingsSrc.includes("totalNotes={noteCount}"), true);
-assert.equal(settingsSrc.includes("${ofTotal} notes is in memory right now."), true);
-assert.equal(/\$\{bodyStats\.loaded\.toLocaleString\(\)\} in memory right now/.test(settingsSrc), false);
+{
+  const { memoryLine } = await import(new URL("../src/lib/settings/memory-copy.ts", import.meta.url).href);
+  const stats = (loaded, max = 200, extra = {}) => ({ loaded, max, protected: 0, underPressure: false, ...extra });
+  assert.equal(memoryLine({ vaultOpen: false, stats: null, total: 0, onDemand: false }), "Shown after you open a folder.");
+  assert.equal(memoryLine({ vaultOpen: true, stats: stats(0, 0), total: 0, onDemand: false }), "No notes yet, so no note text is held in memory.");
+  // A small vault keeps every note's text.
+  assert.equal(memoryLine({ vaultOpen: true, stats: stats(0, 0), total: 42, onDemand: false }), "All 42 notes keep their text in memory.");
+  // A large paged vault: never a bare number.
+  assert.equal(
+    memoryLine({ vaultOpen: true, stats: stats(42), total: 100000, onDemand: true }),
+    "Note text loads when you open a note. Text for 42 of 100,000 notes is in memory right now.",
+  );
+  assert.equal(
+    memoryLine({ vaultOpen: true, stats: stats(0), total: 100000, onDemand: true }),
+    "No note text is in memory yet. It loads when you open a note.",
+  );
+  // Still counting: says so instead of implying the loaded count is the vault.
+  assert.match(memoryLine({ vaultOpen: true, stats: stats(42), total: -1, onDemand: true }), /Text for 42 notes .* The vault total appears once the folder is listed\.$/);
+  assert.match(
+    memoryLine({ vaultOpen: true, stats: stats(300, 200, { underPressure: true, protected: 2 }), total: 100000, onDemand: true }),
+    /Text for 300 of 100,000 notes is in memory, including 2 you are editing\./,
+  );
+  // A desktop vault with lazy text switched off never claims every note is in memory.
+  assert.equal(
+    memoryLine({ vaultOpen: true, stats: stats(0, 0), total: 100000, onDemand: true }),
+    "Note text loads when you open a note.",
+  );
+  // No line ever shows the loaded count without "of" a total or a counting note.
+  for (const total of [100000, -1]) {
+    for (const loaded of [1, 42, 5000]) {
+      const line = memoryLine({ vaultOpen: true, stats: stats(loaded), total, onDemand: true });
+      assert.ok(line.includes(" of ") || line.includes("once the folder is listed"), line);
+    }
+  }
+}
 // The first-run probe has a string form that survives CDP without returnByValue.
 assert.equal(storeSrc.includes("probeFirstRunText: () => {"), true);
 assert.equal(storeSrc.includes("return JSON.stringify(soak?.probeFirstRun?.() ?? {});"), true);
