@@ -209,7 +209,13 @@ for (const token of [
 ]) {
   assert.equal(pageJs.includes(token), true, token);
 }
-assert.equal(pageJs.includes('host.style.top = "44px"'), true);
+assert.equal(pageJs.includes('host.style.top = "0"'), true);
+assert.equal(pageJs.includes('host.style.paddingTop = "44px"'), true);
+assert.equal(pageJs.includes("background:#000000"), true);
+assert.equal(pageJs.includes("color:#ffffff"), true);
+assert.equal(pageJs.includes("font-size:32px"), true);
+assert.equal(pageJs.includes("document.title = READY"), true);
+assert.equal(pageJs.includes("requestAnimationFrame"), true);
 assert.equal(pageJs.includes("offsetHeight"), true);
 assert.equal(pageJs.includes('meta[name="nexus-boot-src"]'), true);
 const clockOrder = ["window=", "document=", "early=", "hit=", "reason=", "shell="];
@@ -219,7 +225,10 @@ for (const field of clockOrder) {
   assert.ok(at > cursor, field);
   cursor = at;
 }
-assert.equal(bootSrc.includes('host.style.top = "44px"'), true);
+assert.equal(bootSrc.includes('host.style.top = "0"'), true);
+assert.equal(bootSrc.includes('host.style.paddingTop = "44px"'), true);
+assert.equal(bootSrc.includes("background:#000000"), true);
+assert.equal(bootSrc.includes("font-size:32px"), true);
 assert.equal(bootSrc.includes('publishReadyClock("module")'), true);
 const storeSrc = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
 assert.equal(storeSrc.includes('publishReadyClock("shell")'), true);
@@ -264,6 +273,12 @@ assert.equal(bootSrc.includes("hidden = true"), false);
 assert.equal(bootSrc.includes(".remove("), false);
 
 const shellSrc = readFileSync(new URL("../src/components/layout/AppShell.tsx", import.meta.url), "utf8");
+const earlyHold = shellSrc.indexOf("data-early-ready");
+const startingAt = shellSrc.indexOf("Starting");
+assert.ok(earlyHold > 0 && startingAt > earlyHold);
+assert.equal(shellSrc.includes("bg-black"), true);
+assert.equal(shellSrc.includes("text-[32px]"), true);
+assert.equal(shellSrc.includes("text-white"), true);
 const removeAt = shellSrc.indexOf('getElementById("nexus-boot-banner")?.remove()');
 assert.ok(removeAt > 0);
 const handoff = shellSrc.slice(Math.max(0, removeAt - 500), removeAt);

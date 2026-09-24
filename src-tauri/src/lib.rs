@@ -80,9 +80,7 @@ fn log_ready_phase(phase: &str) {
 /// Marks one edge of the launch clock. `runtime` is the first user plugin,
 /// after the Tauri runtime exists. `plugins` is the last work before the
 /// event loop builds the webview. `window` (in setup) is the first line
-/// after that webview exists, so `plugins` → `window` is the system web
-/// view constructor (WKWebView `initWithFrame`, or WebView2 environment
-/// creation). That constructor is the launch floor on this stack.
+/// after that webview exists, so `plugins` → `window` is webview construction.
 fn ready_phase_plugin<R: tauri::Runtime>(
     id: &'static str,
     phase: &'static str,

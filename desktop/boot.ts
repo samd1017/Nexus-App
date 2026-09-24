@@ -53,28 +53,31 @@ function paintSavedPage(mount: { rows?: Array<{ name?: string; kind?: string; pa
   host.replaceChildren();
   const bar = document.createElement("div");
   bar.setAttribute("role", "status");
+  bar.setAttribute("aria-live", "polite");
+  bar.setAttribute("aria-label", SAVED_PAGE_READY_MESSAGE);
   bar.setAttribute("data-open-progress", "ready");
   bar.style.cssText = [
     "display:flex",
     "align-items:center",
-    "gap:8px",
-    "padding:6px 12px",
-    "font:12px/1.3 ui-sans-serif,system-ui,sans-serif",
-    "color:#30d158",
-    "background:rgba(48,209,88,0.08)",
-    "border-bottom:1px solid rgba(48,209,88,0.28)",
+    "min-height:64px",
+    "padding:16px 20px",
+    "font:700 32px/1.15 ui-sans-serif,system-ui,sans-serif",
+    "color:#ffffff",
+    "background:#000000",
+    "border-bottom:3px solid #30d158",
   ].join(";");
-  const dot = document.createElement("span");
-  dot.style.cssText = "width:6px;height:6px;border-radius:99px;background:#30d158;flex:none";
   const label = document.createElement("span");
   label.textContent = SAVED_PAGE_READY_MESSAGE;
-  bar.append(dot, label);
+  label.style.cssText = "color:#ffffff;font-weight:700;font-size:32px;line-height:1.15";
+  bar.append(label);
   host.append(bar);
   host.style.position = "fixed";
-  host.style.top = "44px";
+  host.style.top = "0";
   host.style.left = "0";
   host.style.right = "0";
-  host.style.zIndex = "80";
+  host.style.zIndex = "200";
+  host.style.paddingTop = "44px";
+  host.style.background = "#08080a";
   if (names.length) {
     const list = document.createElement("div");
     list.style.cssText = [

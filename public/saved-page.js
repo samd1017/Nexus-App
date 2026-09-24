@@ -140,22 +140,25 @@
     host.replaceChildren();
     var bar = document.createElement("div");
     bar.setAttribute("role", "status");
+    bar.setAttribute("aria-live", "polite");
+    bar.setAttribute("aria-label", READY);
     bar.setAttribute("data-open-progress", "ready");
+    // White on black at 32px. A faint green line is in the DOM but a screenshot
+    // of the first frame does not read it. No extra dot — it OCRs as a letter.
     bar.style.cssText = [
       "display:flex",
       "align-items:center",
-      "gap:8px",
-      "padding:6px 12px",
-      "font:12px/1.3 ui-sans-serif,system-ui,sans-serif",
-      "color:#30d158",
-      "background:rgba(48,209,88,0.08)",
-      "border-bottom:1px solid rgba(48,209,88,0.28)",
+      "min-height:64px",
+      "padding:16px 20px",
+      "font:700 32px/1.15 ui-sans-serif,system-ui,sans-serif",
+      "color:#ffffff",
+      "background:#000000",
+      "border-bottom:3px solid #30d158",
     ].join(";");
-    var dot = document.createElement("span");
-    dot.style.cssText = "width:6px;height:6px;border-radius:99px;background:#30d158;flex:none";
     var label = document.createElement("span");
     label.textContent = READY;
-    bar.append(dot, label);
+    label.style.cssText = "color:#ffffff;font-weight:700;font-size:32px;line-height:1.15";
+    bar.append(label);
     host.append(bar);
     var list = document.createElement("div");
     list.style.cssText = [
@@ -170,13 +173,20 @@
       list.append(row);
     }
     host.append(list);
-    // Same slot as the in-app Ready line: below the 44px title bar, not under the overlay.
+    // Same slot as the in-app Ready line: directly under the 44px title bar.
+    // The strip above it is solid title color so the top of the window is not blank.
     host.style.position = "fixed";
-    host.style.top = "44px";
+    host.style.top = "0";
     host.style.left = "0";
     host.style.right = "0";
-    host.style.zIndex = "80";
+    host.style.zIndex = "200";
+    host.style.paddingTop = "44px";
+    host.style.background = "#08080a";
     host.hidden = false;
+    host.removeAttribute("hidden");
+    try {
+      document.title = READY;
+    } catch (ignoreTitle) {}
     var boot = (window.__NEXUS_BOOT__ = window.__NEXUS_BOOT__ || {});
     boot.paintedFromPage = true;
     boot.t0 = performance.now();
@@ -186,20 +196,45 @@
   } catch (ignorePage) {
     if (!hit) reason = "throw";
   } finally {
-    if (hit) {
-      var paintedHost = document.getElementById("nexus-boot-banner");
-      if (paintedHost) void paintedHost.offsetHeight;
+    function injectBootModules() {
+      var boots = document.querySelectorAll('meta[name="nexus-boot-src"]');
+      var b;
+      for (b = 0; b < boots.length; b++) {
+        var src = boots[b].getAttribute("content");
+        if (!src) continue;
+        var mod = document.createElement("script");
+        mod.type = "module";
+        mod.src = src;
+        document.body.appendChild(mod);
+      }
     }
-    clockLine("early");
-    var boots = document.querySelectorAll('meta[name="nexus-boot-src"]');
-    var b;
-    for (b = 0; b < boots.length; b++) {
-      var src = boots[b].getAttribute("content");
-      if (!src) continue;
-      var mod = document.createElement("script");
-      mod.type = "module";
-      mod.src = src;
-      document.body.appendChild(mod);
+    if (!hit) {
+      clockLine("early");
+      injectBootModules();
+      return;
     }
+    var paintedHost = document.getElementById("nexus-boot-banner");
+    if (paintedHost) void paintedHost.offsetHeight;
+    // Show the window only after this line has been painted. A hidden
+    // webview may not run frames; the timeout still reveals.
+    var revealed = false;
+    function reveal() {
+      if (revealed) return;
+      revealed = true;
+      clockLine("early");
+      injectBootModules();
+    }
+    var frames = 0;
+    function frame() {
+      frames += 1;
+      if (frames >= 2) reveal();
+      else requestAnimationFrame(frame);
+    }
+    try {
+      requestAnimationFrame(frame);
+    } catch (ignoreFrame) {
+      reveal();
+    }
+    setTimeout(reveal, 48);
   }
 })();

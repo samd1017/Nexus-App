@@ -110,12 +110,12 @@ function OpenProgressBanner() {
   return (
     <div
       className={cn(
-        "flex shrink-0 flex-col border-b px-3 py-1.5 text-[12px]",
+        "flex shrink-0 flex-col border-b px-3",
         isError
-          ? "border-[rgba(255,69,58,0.3)] bg-[rgba(255,69,58,0.08)] text-[var(--danger)]"
+          ? "border-[rgba(255,69,58,0.3)] bg-[rgba(255,69,58,0.08)] py-1.5 text-[12px] text-[var(--danger)]"
           : isReady
-            ? "border-[rgba(48,209,88,0.28)] bg-[rgba(48,209,88,0.08)] text-[var(--success)]"
-            : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] text-[var(--text-secondary)]",
+            ? "min-h-16 border-b-[3px] border-[#30d158] bg-black py-4 text-[32px] font-bold leading-tight text-white"
+            : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] py-1.5 text-[12px] text-[var(--text-secondary)]",
       )}
       data-open-progress={progress.phase}
       role={valueNow != null ? "progressbar" : "status"}
@@ -125,15 +125,8 @@ function OpenProgressBanner() {
       aria-busy={!isError && !isReady ? true : undefined}
     >
       <div className="flex items-center gap-2">
-        {!isError ? (
-          <span
-            className={cn(
-              "inline-block h-1.5 w-1.5 rounded-full",
-              isReady
-                ? "bg-[var(--success)]"
-                : "animate-pulse bg-[var(--accent)]",
-            )}
-          />
+        {!isError && !isReady ? (
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
         ) : null}
         <span className="min-w-0 flex-1">
           {progress.message ||
@@ -444,6 +437,11 @@ export function AppShell() {
   }, [vaultId, mode, applyExternalSnapshot]);
 
   if (!ready) {
+    const earlyHost =
+      typeof document === "undefined" ? null : document.getElementById("nexus-boot-banner");
+    if (earlyHost && !earlyHost.hidden) {
+      return <div className="h-full bg-[var(--bg-deepest)]" data-early-ready="" />;
+    }
     return (
       <div className="flex h-full items-center justify-center bg-[var(--bg-deepest)]">
         <div className="text-center">
