@@ -597,6 +597,7 @@ thread_local! {
     /// Directory entries pulled before Ready. A fat folder must not add one
     /// entry per file.
     static DIR_ENTRIES_BEFORE_READY: Cell<usize> = Cell::new(0);
+    static DIR_LISTS: Cell<usize> = Cell::new(0);
 }
 
 #[cfg(test)]
@@ -752,12 +753,21 @@ fn child_rel(rel: &str, name: &str) -> String {
 /// first, smallest name first. A `.md` name is a note, so this pass does not
 /// stat every file before Ready. `truncated` means the tail reads the names
 /// that did not fit. Subdirectories are all collected.
+#[cfg(test)]
+fn note_dir_list() {
+    DIR_LISTS.with(|c| c.set(c.get() + 1));
+}
+
+#[cfg(not(test))]
+fn note_dir_list() {}
+
 fn list_dir_window(
     dir: &Path,
     rel: &str,
     file_limit: usize,
     skip: &HashSet<String>,
 ) -> (Vec<LiteEntry>, Vec<LiteEntry>, bool) {
+    note_dir_list();
     let mut dirs = Vec::new();
     let mut hot: BTreeSet<RankedFile> = BTreeSet::new();
     let mut cold: BTreeSet<RankedFile> = BTreeSet::new();
@@ -840,6 +850,7 @@ fn list_dir_ready_page(
     skip: &HashSet<String>,
     count_entries: bool,
 ) -> (Vec<LiteEntry>, Vec<LiteEntry>, bool) {
+    note_dir_list();
     let mut dirs = Vec::new();
     let mut files = Vec::new();
     let mut taken: HashSet<String> = HashSet::new();
@@ -2316,6 +2327,149 @@ pub fn fill_from_disk_on_conn(
 
 /// Phased fill: title seed, then one head pass.
 /// Desktop Partial/Deep emits `ready-meta` after the title FTS seed
+/// Index only the files named in `priority` (an opened note). A folder name
+/// is not listed. Notes already at deep depth are left alone.
+fn index_priority_files(
+    conn: &mut Connection,
+    vault_root: &Path,
+    priority: &[String],
+    deep_head: usize,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> i64 {
+    let mut files = Vec::new();
+    for raw in priority {
+        if is_cancelled() {
+            break;
+        }
+        let rel = raw.replace('\\', "/");
+        if rel.is_empty() || rel.split('/').any(|p| p.is_empty() || p == "..") {
+            continue;
+        }
+        let abs = vault_root.join(&rel);
+        if !abs.is_file() {
+            continue;
+        }
+        let depth: i64 = conn
+            .query_row(
+                "SELECT COALESCE(fill_depth, 0) FROM note_meta
+                 WHERE path=?1 AND kind='note' AND deleted=0",
+                params![rel],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if depth >= FILL_DEPTH_DEEP {
+            continue;
+        }
+        let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+        files.push(disk_note_from_lite(LiteEntry { abs, rel, name }));
+    }
+    if files.is_empty() {
+        return 0;
+    }
+    let indices: Vec<usize> = (0..files.len()).collect();
+    let mut batch = Vec::new();
+    let mut indexed = 0i64;
+    let mut errors = 0i64;
+    let mut written = HashSet::new();
+    let mut fresh = HashSet::new();
+    let mut headed = 0i64;
+    index_note_heads(
+        conn,
+        &files,
+        &indices,
+        deep_head,
+        FILL_DEPTH_DEEP,
+        is_cancelled,
+        &mut batch,
+        &mut indexed,
+        &mut errors,
+        &mut written,
+        &mut fresh,
+        &mut headed,
+        |_, _, _| {},
+    );
+    flush_note_batch(
+        conn,
+        &mut batch,
+        &mut indexed,
+        &mut errors,
+        &mut written,
+        &mut fresh,
+    );
+    indexed
+}
+
+/// Saved paths whose files are gone. Does not list the folder and does not
+/// insert names. Each page is its own short read, then a yield, so a large
+/// catalog does not hold one write lock.
+fn drop_missing_catalog_files(
+    conn: &mut Connection,
+    vault_root: &Path,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> i64 {
+    let mut removed = 0i64;
+    let mut after = String::new();
+    loop {
+        if is_cancelled() {
+            break;
+        }
+        let page: Vec<(String, String)> = {
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id, path FROM note_meta
+                 WHERE kind='note' AND deleted=0 AND path > ?1
+                 ORDER BY path
+                 LIMIT 64",
+            ) else {
+                break;
+            };
+            let Ok(rows) = stmt.query_map(params![after], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }) else {
+                break;
+            };
+            rows.flatten().collect()
+        };
+        if page.is_empty() {
+            break;
+        }
+        after = page.last().unwrap().1.clone();
+        let missing: Vec<String> = page
+            .into_iter()
+            .filter_map(|(id, path)| {
+                if path.starts_with('/') || path.split('/').any(|p| p.is_empty() || p == "..") {
+                    return None;
+                }
+                if vault_root.join(&path).is_file() {
+                    None
+                } else {
+                    Some(id)
+                }
+            })
+            .collect();
+        if !missing.is_empty() {
+            if let Ok(tx) = conn.unchecked_transaction() {
+                let mut page_removed = 0i64;
+                for id in &missing {
+                    let _ = tx.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id]);
+                    let _ = tx.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id]);
+                    let ok = delete_note_fts(&tx, id).is_ok()
+                        && tx
+                            .execute("DELETE FROM note_meta WHERE id = ?1", params![id])
+                            .is_ok();
+                    if ok {
+                        page_removed += 1;
+                    }
+                }
+                if tx.commit().is_ok() {
+                    removed += page_removed;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+    }
+    removed
+}
+
 /// (not after cataloging every empty body). Deep does not read a short
 /// head and then the same file again. `is_cancelled` is checked between
 /// batches so a remount can preempt.
@@ -2323,7 +2477,7 @@ pub fn fill_from_disk_with_opts<'a>(
     conn: &mut Connection,
     vault_root: &Path,
     opts: FillOpts<'_>,
-    is_cancelled: impl FnMut() -> bool + 'a,
+    mut is_cancelled: impl FnMut() -> bool + 'a,
     mut on_progress: impl FnMut(&IndexFillProgress),
 ) -> Result<IndexFillResult, String> {
     ensure_fill_depth_column(conn);
@@ -2388,9 +2542,66 @@ pub fn fill_from_disk_with_opts<'a>(
             Some("Titles and open notes are searchable".into()),
             &mut on_progress,
         );
-        // Paint Ready before the cache grows and the folder is read again.
-        std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
-        tune_fill_connection(conn);
+        // The page is already searchable. Do not tune, list the folder, or
+        // commit name batches. Those writes were the hitch after Ready.
+        // An opened note is indexed on its own. Saved paths that no longer
+        // exist are dropped a page at a time, after this announcement.
+        let indexed_open = index_priority_files(
+            conn,
+            vault_root,
+            opts.priority_rels,
+            deep_head,
+            &mut is_cancelled,
+        );
+        let removed = drop_missing_catalog_files(conn, vault_root, &mut is_cancelled);
+        let stored: i64 = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key = 'shell_note_count'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let notes = if stored > 0 {
+            (stored - removed).max(0)
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(TITLE_READY_FLUSH as i64)
+        };
+        if notes > TITLE_READY_FLUSH as i64 {
+            crate::shell_catalog::update_page_snapshot_notes(opts.db_path, notes);
+            if removed > 0 {
+                let _ = conn.execute(
+                    "INSERT INTO meta_kv(key, value) VALUES ('shell_note_count', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![notes.to_string()],
+                );
+            }
+            emit(
+                &mut progress,
+                "catalog-counted",
+                "ready-fts-partial",
+                notes,
+                0,
+                0,
+                0,
+                None,
+                &mut on_progress,
+            );
+        }
+        return Ok(IndexFillResult {
+            indexed: indexed_open,
+            skipped: notes,
+            errors: 0,
+            notes,
+            edges: 0,
+            search_state: "ready-fts-partial".into(),
+        });
     }
     on_progress(&progress);
     // Heads for notes already on the open page (mount seeded them) before
@@ -3847,6 +4058,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                 "warm Ready read {} directory entries",
                 looked.get()
             );
+            assert_eq!(
+                DIR_LISTS.with(|c| c.get()),
+                0,
+                "a filled vault must not list the folder again"
+            );
             ready_ms.get()
         };
         let flagged = time_reopen(&db, &vault);
@@ -3983,6 +4199,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         TAIL_WAL_CHECKPOINTS.with(|c| c.set(0));
         MAX_LISTING_RETAINED.with(|c| c.set(0));
         DIR_ENTRIES_BEFORE_READY.with(|c| c.set(0));
+        DIR_LISTS.with(|c| c.set(0));
     }
 
     fn ready_page_ms(vault: &Path, db: &Path) -> u128 {

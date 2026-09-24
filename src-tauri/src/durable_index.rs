@@ -1252,6 +1252,28 @@ pub fn vault_shell_mount(
         snap.db_path = db_path;
         return Ok(snap);
     }
+    // A filled index is large. The first page is a few directory names, so
+    // this open does not wait on that file. The snapshot makes the next
+    // launch skip the directory as well.
+    let large = std::fs::metadata(&db_path)
+        .map(|m| m.len() >= 1024 * 1024)
+        .unwrap_or(false);
+    if large {
+        match crate::shell_catalog::mount_disk_window(
+            Path::new(&vault_root),
+            prefer_path.as_deref(),
+        ) {
+            Ok(mut disk) if !disk.rows.is_empty() => {
+                disk.db_path = db_path.clone();
+                if disk.titles_live {
+                    let _ = crate::shell_catalog::write_page_snapshot(&db_path, &disk);
+                }
+                return Ok(disk);
+            }
+            Err(err) => return Err(err),
+            Ok(_) => {}
+        }
+    }
     let db_path = {
         let mut guard = state.lock().map_err(|e| e.to_string())?;
         ensure_shell_conn(&app, &mut guard, &vault_root)?

@@ -209,6 +209,19 @@ pub fn write_page_snapshot(db_path: &str, mount: &ShellMount) -> Result<(), Stri
     std::fs::write(path, body).map_err(|e| e.to_string())
 }
 
+pub fn update_page_snapshot_notes(db_path: &str, notes: i64) {
+    let Some(mut mount) = read_page_snapshot(db_path) else {
+        return;
+    };
+    if notes <= mount.notes {
+        return;
+    }
+    let shown = mount.rows.iter().filter(|r| r.kind == "note").count() as i64;
+    mount.notes = notes;
+    mount.omitted_notes = (notes - shown).max(0);
+    let _ = write_page_snapshot(db_path, &mount);
+}
+
 pub fn read_page_snapshot(db_path: &str) -> Option<ShellMount> {
     if db_path.is_empty() || !Path::new(db_path).is_file() {
         return None;
@@ -941,6 +954,104 @@ pub fn seed_folder_pages(
         }
     }
     flush_batch(conn, &mut batch)
+}
+
+/// The first window from the folder itself. Does not open the index.
+/// Root, then the first folder, then one more level, so `Hub 0` is on the
+/// page without reading sibling folders.
+pub fn mount_disk_window(root: &Path, prefer: Option<&str>) -> Result<ShellMount, String> {
+    if !root.is_dir() {
+        return Err(format!("not a directory: {}", root.display()));
+    }
+    let mut rows = Vec::new();
+    let mut seen = HashSet::new();
+    let mut loaded = Vec::new();
+    let mut truncated = false;
+    let root_rows = dir_page_rows(root, "", SHELL_CHILD_PAGE)?;
+    if root_rows.len() as i64 >= SHELL_CHILD_PAGE {
+        truncated = true;
+    }
+    push_unique(&mut rows, &mut seen, &root_rows);
+    loaded.push(ShellLoaded {
+        parent_id: "__root__".into(),
+        loaded: root_rows.len() as i64,
+        hidden: if truncated { 1 } else { 0 },
+    });
+    let mut next = root_rows
+        .iter()
+        .find(|r| r.kind == "folder")
+        .map(|r| r.path.clone());
+    for _ in 0..3 {
+        let Some(rel) = next.take() else { break };
+        let page = dir_page_rows(root, &rel, 32)?;
+        if page.len() >= 32 {
+            truncated = true;
+        }
+        let parent_id = rows
+            .iter()
+            .find(|r| r.path == rel)
+            .map(|r| r.id.clone())
+            .unwrap_or_default();
+        push_unique(&mut rows, &mut seen, &page);
+        if !parent_id.is_empty() {
+            loaded.push(ShellLoaded {
+                parent_id,
+                loaded: page.len() as i64,
+                hidden: if page.len() >= 32 { 1 } else { 0 },
+            });
+        }
+        if page.iter().any(|r| r.kind == "note") {
+            break;
+        }
+        next = page.into_iter().find(|r| r.kind == "folder").map(|r| r.path);
+    }
+    if let Some(raw) = prefer {
+        let path = normalize_rel(raw);
+        if !path.is_empty() {
+            let abs = root.join(&path);
+            if abs.is_file() {
+                let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+                push_unique(
+                    &mut rows,
+                    &mut seen,
+                    &[ShellRow {
+                        id: shell_node_id(&path),
+                        path: path.clone(),
+                        name,
+                        kind: "note".into(),
+                        parent_id: parent_id_of(&path),
+                        mtime: std::fs::metadata(&abs).map(|m| mtime_of(&m)).unwrap_or(0),
+                        child_notes: 0,
+                    }],
+                );
+            }
+        }
+    }
+    let note_rows = rows.iter().filter(|r| r.kind == "note").count() as i64;
+    let notes = if truncated {
+        SHELL_FULL_MAX_NOTES + 1
+    } else {
+        note_rows
+    };
+    let active = rows.iter().find(|r| r.kind == "note").map(|r| r.id.clone());
+    let root_ids = rows
+        .iter()
+        .filter(|r| r.parent_id.is_none())
+        .map(|r| r.id.clone())
+        .collect();
+    Ok(ShellMount {
+        materialize: false,
+        pending: false,
+        notes,
+        folders: rows.iter().filter(|r| r.kind == "folder").count() as i64,
+        omitted_notes: (notes - note_rows).max(0),
+        rows,
+        root_ids,
+        active_note_id: active,
+        loaded,
+        db_path: String::new(),
+        titles_live: note_rows > 0,
+    })
 }
 
 /// Commit the root page (and the open note's ancestor pages) and return.
@@ -2507,6 +2618,61 @@ mod tests {
         assert!(read.titles_live);
         assert_eq!(read.rows[0].path, "00-Inbox/00/Hub 0.md");
         assert_eq!(read.notes, 100_000);
+        update_page_snapshot_notes(&db_path, 100_000);
+        assert_eq!(read_page_snapshot(&db_path).unwrap().notes, 100_000);
+        update_page_snapshot_notes(&db_path, 500_000);
+        let raised = read_page_snapshot(&db_path).unwrap();
+        assert_eq!(raised.notes, 500_000);
+        assert_eq!(raised.omitted_notes, 499_999);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disk_window_includes_hub_0_without_the_index() {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-shell-disk-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = dir.join("vault");
+        const ROOTS: [&str; 7] = [
+            "00-Inbox",
+            "10-Projects",
+            "20-Areas",
+            "30-Resources",
+            "40-Archive",
+            "50-Daily",
+            "60-Systems",
+        ];
+        for root_name in ROOTS {
+            for bucket in 0..20 {
+                fs::create_dir_all(root.join(format!("{root_name}/{bucket:02}"))).unwrap();
+            }
+        }
+        fs::write(root.join("00-Inbox/00/Hub 0.md"), "# Hub 0\n").unwrap();
+        for i in 1..80 {
+            fs::write(root.join(format!("00-Inbox/00/Topic {i}.md")), "x\n").unwrap();
+        }
+        fs::write(root.join("60-Systems/19/Topic far.md"), "far\n").unwrap();
+        let mount = mount_disk_window(&root, None).unwrap();
+        assert!(
+            mount.rows.iter().any(|r| r.path == "00-Inbox/00/Hub 0.md"),
+            "Hub 0 is on the first page"
+        );
+        assert!(
+            mount
+                .rows
+                .iter()
+                .all(|r| r.path != "60-Systems/19/Topic far.md"),
+            "a far folder is not read for the first page"
+        );
+        assert!(mount.titles_live);
+        assert!(!mount.materialize);
+        assert!(mount.notes > SHELL_FULL_MAX_NOTES);
+        assert!(mount.db_path.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 }
