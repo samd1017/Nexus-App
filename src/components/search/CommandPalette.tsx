@@ -286,8 +286,12 @@ function CommandPaletteOpen() {
       }
       // Ensure keystrokes land in the palette without an extra click
       const t = window.setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
+        const input = inputRef.current;
+        input?.focus();
+        input?.select();
+        input
+          ?.closest("[data-testid='search-field']")
+          ?.setAttribute("data-keyboard-focus", "control");
       }, 0);
       return () => window.clearTimeout(t);
     } else {
@@ -1477,7 +1481,7 @@ function CommandPaletteOpen() {
             value={query}
             onValueChange={setQuery}
             placeholder="Search notes"
-            className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+            className="nexus-search-input h-12 w-full bg-transparent text-[15px] text-white outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
             onFocus={(e) => {
               e.currentTarget

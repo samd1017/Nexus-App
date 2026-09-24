@@ -42,6 +42,7 @@ export function ConfirmDialog({
   const onConfirmRef = useRef(onConfirm);
   onCancelRef.current = onCancel;
   onConfirmRef.current = onConfirm;
+  const preferCancel = initialFocus ? initialFocus === "cancel" : danger;
 
   useEffect(() => {
     if (!open) return;
@@ -53,15 +54,26 @@ export function ConfirmDialog({
     // Cancel is the safe landing: danger, and any ask that says so.
     // Other asks start on the action. Callbacks stay in refs so a parent
     // re-render cannot pull focus back out of the dialog.
-    const t = window.setTimeout(() => {
-      const preferCancel = initialFocus
-        ? initialFocus === "cancel"
-        : danger;
+    const landingOf = () => {
       const target = preferCancel ? cancelRef.current : confirmRef.current;
-      const landing = target ?? cancelRef.current;
+      return target ?? cancelRef.current;
+    };
+    const focusLanding = () => {
+      const landing = landingOf();
       landing?.focus({ preventScroll: true });
       if (landing) markControlFocus(landing, document);
-    }, 0);
+    };
+    const t = window.setTimeout(focusLanding, 0);
+    // A busy vault can move focus back to the note after the dialog paints.
+    // Keep the landing button while this confirm is open.
+    const onFocusIn = (e: FocusEvent) => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const next = e.target as Node | null;
+      if (next && panel.contains(next)) return;
+      focusLanding();
+    };
+    document.addEventListener("focusin", onFocusIn, true);
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -116,6 +128,7 @@ export function ConfirmDialog({
     window.addEventListener("keydown", onKey, true);
     return () => {
       window.clearTimeout(t);
+      document.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKey, true);
       const back = prevFocusRef.current;
       if (back && back.isConnected && typeof back.focus === "function") {
@@ -134,6 +147,7 @@ export function ConfirmDialog({
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 px-4 backdrop-blur-[2px]"
       data-nexus-confirm="true"
+      data-confirm-focus={preferCancel ? "cancel" : "confirm"}
       data-testid={testId}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
@@ -171,7 +185,9 @@ export function ConfirmDialog({
             </h2>
             <p
               id="nexus-confirm-message"
-              className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-secondary)]"
+              data-confirm-message
+              role="status"
+              className="mt-1.5 text-[15px] font-medium leading-relaxed text-white"
             >
               {message}
             </p>

@@ -139,8 +139,15 @@ export function SettingsPanel() {
     if (root) {
       if (!root.hasAttribute("tabindex")) root.tabIndex = -1;
       // Rebuild confirm focuses Cancel itself. Do not pull that focus back.
+      // Otherwise land on Appearance — a real section, not the empty dialog shell.
       if (!document.querySelector("[data-nexus-confirm]")) {
-        root.focus({ preventScroll: true });
+        const firstSection = root.querySelector<HTMLElement>(
+          '[data-settings-nav="appearance"]',
+        );
+        (firstSection ?? root).focus({ preventScroll: true });
+        document
+          .getElementById("settings-section-appearance")
+          ?.scrollIntoView({ block: "start" });
       }
     }
     const onKey = (e: KeyboardEvent) => {
@@ -184,15 +191,17 @@ export function SettingsPanel() {
         root.focus();
         return;
       }
-      const first = list[0];
+      const first =
+        root.querySelector<HTMLElement>('[data-settings-nav="appearance"]') ??
+        list[0];
       const last = list[list.length - 1];
       const active = document.activeElement as HTMLElement | null;
       if (e.shiftKey) {
-        if (!active || active === first || !root.contains(active)) {
+        if (!active || active === first || active === root || !root.contains(active)) {
           e.preventDefault();
           last.focus();
         }
-      } else if (!active || active === last || !root.contains(active)) {
+      } else if (!active || active === root || active === last || !root.contains(active)) {
         e.preventDefault();
         first.focus();
       }
@@ -299,12 +308,60 @@ export function SettingsPanel() {
           </button>
         </div>
 
+        <div
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--border)] px-4 py-2"
+          role="tablist"
+          aria-label="Settings sections"
+          data-testid="settings-sections"
+        >
+          {(
+            [
+              ["appearance", "Appearance"],
+              ["editor", "Editor"],
+              ["graph", "Graph"],
+              ["vault", "Vault"],
+            ] as const
+          ).map(([id, label], index, all) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              className="nexus-settings-nav"
+              data-settings-nav={id}
+              data-testid={`settings-nav-${id}`}
+              onClick={() => {
+                document
+                  .getElementById(`settings-section-${id}`)
+                  ?.scrollIntoView({ block: "start" });
+              }}
+              onKeyDown={(e) => {
+                const prev = e.key === "ArrowLeft" || e.key === "ArrowUp";
+                const next = e.key === "ArrowRight" || e.key === "ArrowDown";
+                if (!prev && !next) return;
+                e.preventDefault();
+                const step = prev ? -1 : 1;
+                const target = all[(index + step + all.length) % all.length];
+                document
+                  .getElementById(`settings-section-${target[0]}`)
+                  ?.scrollIntoView({ block: "start" });
+                document
+                  .querySelector<HTMLElement>(
+                    `[data-settings-nav="${target[0]}"]`,
+                  )
+                  ?.focus();
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="settings-body min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {/* Appearance */}
-          <Section title="Appearance">
+          <Section title="Appearance" sectionId="appearance">
             <p
               data-settings-lead="appearance"
-              className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
+              className="text-[15px] font-semibold leading-snug text-white"
             >
               Color, theme, and density apply as soon as you pick them.
             </p>
@@ -430,10 +487,10 @@ export function SettingsPanel() {
           </Section>
 
           {/* Editor */}
-          <Section title="Editor">
+          <Section title="Editor" sectionId="editor">
             <p
               data-settings-lead="editor"
-              className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
+              className="text-[15px] font-semibold leading-snug text-white"
             >
               How a note opens, and how large the type is while you write.
             </p>
@@ -482,10 +539,10 @@ export function SettingsPanel() {
           </Section>
 
           {/* Graph */}
-          <Section title="Graph">
+          <Section title="Graph" sectionId="graph">
             <p
               data-settings-lead="graph"
-              className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
+              className="text-[15px] font-semibold leading-snug text-white"
             >
               Keep the graph in the side panel, or leave it hidden until you open it.
             </p>
@@ -520,8 +577,15 @@ export function SettingsPanel() {
           </Section>
 
           {/* Vault */}
-          <Section title="Vault & Files">
+          <Section title="Vault & Files" sectionId="vault">
+            <p
+              data-settings-lead="vault"
+              className="text-[15px] font-semibold leading-snug text-white"
+            >
+              Deleting a note asks first. The folder stays on this device.
+            </p>
             <ToggleRow
+              className="mt-4"
               label="Confirm before delete"
               description="Ask before removing notes or folders"
               checked={prefs.confirmDelete}
@@ -988,13 +1052,18 @@ function HelpItem({
 
 function Section({
   title,
+  sectionId,
   children,
 }: {
   title: string;
+  sectionId?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section>
+    <section
+      id={sectionId ? `settings-section-${sectionId}` : undefined}
+      data-settings-section={sectionId}
+    >
       <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
         {title}
       </h3>

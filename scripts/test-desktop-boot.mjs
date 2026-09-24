@@ -306,6 +306,7 @@ assert.equal(settingsSrc.includes('testId={confirmKind === "rebuild" ? "rebuild-
 const rebuildBtn = settingsSrc.indexOf('data-testid="settings-rebuild"');
 const settingsBody = settingsSrc.indexOf("settings-body");
 assert.ok(rebuildBtn > 0 && settingsBody > rebuildBtn);
+assert.equal(settingsSrc.includes('data-settings-nav="appearance"'), true);
 assert.equal(settingsSrc.includes('data-settings-lead="appearance"'), true);
 assert.equal(settingsSrc.includes('data-settings-lead="editor"'), true);
 assert.equal(settingsSrc.includes('data-settings-lead="graph"'), true);
@@ -557,6 +558,8 @@ assert.equal(cssSrc.includes('data-keyboard-focus="control"'), true);
 assert.equal(cssSrc.includes("inset 0 0 0 3px #5ad8ff"), true);
 assert.equal(cssSrc.includes("nexus-rebuild-btn"), true);
 assert.equal(cssSrc.includes("nexus-search-field:focus-within"), true);
+assert.equal(cssSrc.includes("caret-color: #5ad8ff"), true);
+assert.equal(cssSrc.includes(".nexus-settings-nav:focus"), true);
 assert.equal(storeSrc.includes("Moved to Trash. You can put it back."), true);
 const trashSrc = readFileSync(
   new URL("../src/components/chrome/DeleteConfirmHost.tsx", import.meta.url),
@@ -564,6 +567,9 @@ const trashSrc = readFileSync(
 );
 assert.equal(trashSrc.includes('testId="trash-confirm"'), true);
 assert.equal(trashSrc.includes('initialFocus="cancel"'), true);
+assert.equal(confirmSrc.includes("data-confirm-message"), true);
+assert.equal(confirmSrc.includes("data-confirm-focus"), true);
+assert.equal(confirmSrc.includes("panel.contains"), true);
 const toastSrc = readFileSync(
   new URL("../src/components/chrome/Toast.tsx", import.meta.url),
   "utf8",

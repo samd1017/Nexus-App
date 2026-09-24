@@ -2086,11 +2086,42 @@ button:focus-visible,
 }
 
 /* Search field uses the same cyan ring, inset so the palette cannot clip it. */
+.nexus-search-input {
+  caret-color: #5ad8ff;
+  color: #fff;
+}
 .nexus-search-field:focus-within,
+.nexus-search-field:has(input:focus),
 .nexus-search-field[data-keyboard-focus="control"] {
+  border: 2px solid #5ad8ff;
   outline: 3px solid #5ad8ff;
   outline-offset: -3px;
   box-shadow: inset 0 0 0 3px #5ad8ff;
+}
+
+.nexus-settings-nav {
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #fff;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.nexus-settings-nav:focus,
+.nexus-settings-nav:focus-visible {
+  outline: 3px solid #5ad8ff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(90, 216, 255, 0.8);
+  background: rgba(90, 216, 255, 0.16);
+}
+
+[data-confirm-message] {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 [data-testid="trash-status"] {
