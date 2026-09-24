@@ -15,7 +15,7 @@ import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
-import { revealFileList } from "@/lib/chrome/reveal-list";
+import { queueRevealEnter, revealFileList, revealInFlight } from "@/lib/chrome/reveal-list";
 import { startFirstNote, vaultHasNoNotes } from "@/lib/vault/first-note";
 import { scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import {
@@ -171,6 +171,29 @@ export function KeyboardShortcuts() {
         const ok = runHotkey(matched);
         if (ok) e.preventDefault();
         return;
+      }
+
+      // A folder picked in search is still landing in the list. Enter now is
+      // meant for that folder, even if the note has the cursor again; hold it
+      // until the folder is armed.
+      if (
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        revealInFlight() &&
+        !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
+      ) {
+        const t = e.target as HTMLElement | null;
+        const field = Boolean(
+          t?.closest?.("input, textarea, select, [data-testid='tree-rename']"),
+        );
+        if (!field && queueRevealEnter()) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
       }
 
       // Enter in an empty vault starts the first note from anywhere, including

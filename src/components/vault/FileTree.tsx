@@ -37,7 +37,7 @@ import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
 import { bufferRenameKey, claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename, settleRename, startRenameBuffer, takeRenameBuffer } from "@/lib/chrome/empty-folder-enter";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
-import { takePendingFolderReveal } from "@/lib/chrome/reveal-list";
+import { finishReveal, takePendingFolderReveal } from "@/lib/chrome/reveal-list";
 import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 
@@ -824,6 +824,13 @@ export const FileTree = memo(function FileTree() {
     };
   }, [virtualizer]);
 
+  // Set below, once the rename helper exists: make a note in an empty folder
+  // and open its name. Used when Enter was held during the folder's reveal.
+  const createInFolderRef = useRef<(folderId: string) => void>(() => {});
+  const applyHeldEnter = (id: string) => {
+    if (finishReveal(id) && folderHasNothing(id)) createInFolderRef.current(id);
+  };
+
   useEffect(() => {
     const id = pendingFolderFocusRef.current;
     if (!id) return;
@@ -834,9 +841,13 @@ export const FileTree = memo(function FileTree() {
       const fallback = window.setTimeout(() => {
         if (pendingFolderFocusRef.current !== id) return;
         pendingFolderFocusRef.current = null;
-        if (!useVaultStore.getState().nodes[id]) return;
+        if (!useVaultStore.getState().nodes[id]) {
+          finishReveal(id);
+          return;
+        }
         if (folderHasNothing(id)) armEmptyFolder(id);
         parentRef.current?.focus({ preventScroll: true });
+        applyHeldEnter(id);
       }, 400);
       return () => window.clearTimeout(fallback);
     }
@@ -849,12 +860,14 @@ export const FileTree = memo(function FileTree() {
         if (pendingFolderFocusRef.current !== id) return;
         pendingFolderFocusRef.current = null;
         onFocusRow(id);
+        applyHeldEnter(id);
         return;
       }
       raf = requestAnimationFrame(land);
     };
     raf = requestAnimationFrame(land);
     return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flatRows, folderFocusTick, virtualizer, onFocusRow, armEmptyFolder]);
 
   const openCreatedRename = useCallback((noteId: string) => {
@@ -878,6 +891,13 @@ export const FileTree = memo(function FileTree() {
         ),
     );
   }, []);
+  createInFolderRef.current = (folderId: string) => {
+    const nid = useVaultStore.getState().createNote(folderId, "Untitled");
+    if (!nid) return;
+    armedEmptyRef.current = null;
+    parentRef.current?.removeAttribute("data-empty-armed");
+    openCreatedRename(nid);
+  };
 
   useEffect(() => {
     let fromPointer = false;

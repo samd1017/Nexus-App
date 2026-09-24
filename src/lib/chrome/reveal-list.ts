@@ -56,9 +56,41 @@ export function takePendingFolderReveal(): string | null {
   return id;
 }
 
+// The folder being revealed, and whether Enter was pressed before it landed.
+// On a large vault, or with the list collapsed, the reveal can take a moment;
+// an Enter in that gap belongs to the folder, not to whatever still has focus.
+type RevealInFlight = { id: string; until: number; enter: boolean };
+let inFlight: RevealInFlight | null = null;
+
+/** The folder a reveal is still landing on, if any. */
+export function revealInFlight(): string | null {
+  if (!inFlight) return null;
+  if (Date.now() > inFlight.until) {
+    inFlight = null;
+    return null;
+  }
+  return inFlight.id;
+}
+
+/** Hold an Enter for the folder being revealed. Returns false if none is. */
+export function queueRevealEnter(): boolean {
+  if (!revealInFlight() || !inFlight) return false;
+  inFlight.enter = true;
+  return true;
+}
+
+/** The reveal of `id` has landed. True when an Enter was held for it. */
+export function finishReveal(id: string): boolean {
+  if (!inFlight || inFlight.id !== id) return false;
+  const enter = inFlight.enter && Date.now() <= inFlight.until;
+  inFlight = null;
+  return enter;
+}
+
 /** Ask the tree to show a folder, expand its parents, and focus its row. */
 export function revealFolderInList(folderId: string): void {
   pendingFolder = folderId;
+  inFlight = { id: folderId, until: Date.now() + 3000, enter: false };
   revealFileList(() => {
     window.dispatchEvent(
       new CustomEvent("nexus-reveal-folder", { detail: folderId }),

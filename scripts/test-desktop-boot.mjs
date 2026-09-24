@@ -1163,6 +1163,25 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(visualSrc.includes("if (!nodesNow[id] && path) {"), true);
   assert.equal(visualSrc.includes("if (notePath && noteIdRef.current === noteId) notePathRef.current = notePath;"), true);
 }
+// Enter pressed while a searched folder is still landing is held for that folder
+// and applied once it is armed; the hold ends when the reveal lands or expires.
+{
+  const revealSrc2 = readFileSync(new URL("../src/lib/chrome/reveal-list.ts", import.meta.url), "utf8");
+  assert.equal(revealSrc2.includes("inFlight = { id: folderId, until: Date.now() + 3000, enter: false };"), true);
+  assert.equal(revealSrc2.includes("export function finishReveal(id: string): boolean"), true);
+  const holdAt = keysSrc.indexOf("revealInFlight() &&");
+  assert.ok(holdAt > 0);
+  const hold = keysSrc.slice(holdAt - 300, keysSrc.indexOf("return;", holdAt) + 10);
+  assert.equal(hold.includes('e.key === "Enter"'), true);
+  assert.equal(hold.includes("input, textarea, select, [data-testid='tree-rename']"), true);
+  assert.equal(hold.includes("queueRevealEnter()") && hold.includes("e.stopImmediatePropagation();"), true);
+  // It runs before the empty-vault Enter and the rest of the key handling.
+  assert.ok(holdAt < keysSrc.indexOf("vaultHasNoNotes() &&"));
+  // Both landings (row found, or armed off-screen) apply a held Enter.
+  assert.equal((treeSrc.match(/applyHeldEnter\(id\);/g) ?? []).length >= 2, true);
+  assert.equal(treeSrc.includes("if (finishReveal(id) && folderHasNothing(id)) createInFolderRef.current(id);"), true);
+  assert.equal(treeSrc.includes('const nid = useVaultStore.getState().createNote(folderId, "Untitled");'), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
