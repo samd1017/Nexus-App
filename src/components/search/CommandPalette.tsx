@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { revealFolderInList } from "@/lib/chrome/reveal-list";
+import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
   FileText,
   FolderOpen,
@@ -1829,12 +1830,8 @@ function CommandPaletteOpen() {
                   const id = createNote(null, title);
                   setCommandOpen(false);
                   // The query already named it. Start writing.
-                  if (id) {
-                    const write = () =>
-                      window.dispatchEvent(new CustomEvent("nexus-write-note", { detail: id }));
-                    requestAnimationFrame(write);
-                    window.setTimeout(write, 120);
-                  }
+                  const path = id ? useVaultStore.getState().nodes[id]?.path : null;
+                  if (path) requestWriteFocus(path);
                 }}
               >
                 Create “{(searchText || q).trim().slice(0, 48)}”

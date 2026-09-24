@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
+import { clearWriteFocus, writeFocusPending } from "@/lib/editor/write-intent";
 import StarterKit from "@tiptap/starter-kit";
 import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
 import { SafePlaceholder } from "@/lib/editor/safe-placeholder";
@@ -187,6 +188,20 @@ function placeCaretForWriting(ed: Editor): void {
     const { doc, selection } = ed.state;
     const inHeading = selection.$from.parent.type.name === "heading";
     if (ed.isFocused && !inHeading) return;
+    if (!ed.isFocused) {
+      // The reader already moved on (the list, a field, a dialog). Let them.
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        active !== document.body &&
+        active.closest?.(
+          "input, textarea, select, [data-file-tree], [role='dialog'], [data-nexus-confirm]",
+        )
+      ) {
+        clearWriteFocus();
+        return;
+      }
+    }
     if (doc.lastChild?.type.name === "heading") {
       ed.chain()
         .insertContentAt(doc.content.size, { type: "paragraph" })
@@ -908,7 +923,12 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       if (editor.isDestroyed) return;
       applying.current = true;
       editor.commands.setContent(html, { emitUpdate: false });
-      if (Date.now() < writeWantedUntil.current) placeCaretForWriting(editor);
+      if (
+        Date.now() < writeWantedUntil.current ||
+        writeFocusPending(useVaultStore.getState().nodes[noteAtSchedule]?.path)
+      ) {
+        placeCaretForWriting(editor);
+      }
       requestAnimationFrame(() => {
         if (applyGen !== contentApplyGen.current) return;
         paintEditorExtras(editor);
@@ -939,23 +959,32 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     return () => window.clearTimeout(t);
   }, [editor, noteId, content]);
 
-  // A note that was just named in the list hands the cursor to its body.
+  // A note that was just named in the list hands the cursor to its body. The
+  // request is kept by path, so an editor that mounts or refills a moment later
+  // for the same note (a desktop rename is also a file rename) still takes it.
   useEffect(() => {
     if (!editor) return;
-    const onWrite = (e: Event) => {
-      const target = (e as CustomEvent<string | undefined>).detail;
-      if (target && target !== noteId) return;
+    const pathNow = () => useVaultStore.getState().nodes[noteId]?.path ?? null;
+    const writeTimers: number[] = [];
+    const begin = () => {
+      if (!writeFocusPending(pathNow())) return;
       // The renamed title rewrites the body a moment later. The content apply
       // below places the caret again right after that rewrite.
-      writeWantedUntil.current = Date.now() + 900;
-      const place = () => placeCaretForWriting(editor);
+      writeWantedUntil.current = Date.now() + 2500;
+      const place = () => {
+        if (writeFocusPending(pathNow())) placeCaretForWriting(editor);
+      };
       place();
-      writeTimers.push(window.setTimeout(place, 180), window.setTimeout(place, 420));
+      writeTimers.push(
+        window.setTimeout(place, 180),
+        window.setTimeout(place, 420),
+        window.setTimeout(place, 900),
+      );
     };
-    const writeTimers: number[] = [];
-    window.addEventListener("nexus-write-note", onWrite);
+    begin();
+    window.addEventListener("nexus-write-note", begin);
     return () => {
-      window.removeEventListener("nexus-write-note", onWrite);
+      window.removeEventListener("nexus-write-note", begin);
       for (const t of writeTimers) window.clearTimeout(t);
     };
   }, [editor, noteId]);

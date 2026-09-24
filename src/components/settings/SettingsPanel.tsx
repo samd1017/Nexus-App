@@ -74,12 +74,19 @@ function MemoryBudgetStatus({
       <div className="text-[12px] font-medium text-[var(--text-secondary)]">
         Notes in memory
       </div>
-      <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+      <p
+        className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]"
+        data-testid="settings-memory-line"
+      >
         {!vaultId
           ? "Shown after you open a folder."
-          : !bodyStats || bodyStats.max === 0
-            ? "This vault keeps note text in memory."
-            : bodyStats.underPressure
+          : !bodyStats
+            ? "Counting the notes held in memory…"
+            : bodyStats.max === 0
+              ? bodyStats.loaded > 0 && totalNotes > bodyStats.loaded
+                ? `Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory right now.`
+                : "This vault keeps note text in memory."
+              : bodyStats.underPressure
               ? `Keeping the notes you are using. Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory, including ${bodyStats.protected.toLocaleString()} you are editing.`
               : `Note text loads when you open a note. Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory right now.`}
       </p>
@@ -685,20 +692,6 @@ export function SettingsPanel() {
             >
               Deleting a note asks first. The folder stays on this device.
             </p>
-            <ToggleRow
-              className="mt-4"
-              label="Confirm before delete"
-              description="Ask before removing notes or folders"
-              checked={prefs.confirmDelete}
-              onChange={(v) => updatePrefs({ confirmDelete: v })}
-            />
-            <ToggleRow
-              className="mt-3"
-              label="Open last vault on launch"
-              description="Restore your previous local folder when possible"
-              checked={prefs.openLastVault}
-              onChange={(v) => updatePrefs({ openLastVault: v })}
-            />
             <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/60 px-3 py-2.5">
               <div className="text-[13px] font-medium text-[var(--text-primary)]">
                 Vault scale
@@ -733,6 +726,20 @@ export function SettingsPanel() {
               </p>
               <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} totalNotes={noteCount} />
             </div>
+            <ToggleRow
+              className="mt-3"
+              label="Confirm before delete"
+              description="Ask before removing notes or folders"
+              checked={prefs.confirmDelete}
+              onChange={(v) => updatePrefs({ confirmDelete: v })}
+            />
+            <ToggleRow
+              className="mt-3"
+              label="Open last vault on launch"
+              description="Restore your previous local folder when possible"
+              checked={prefs.openLastVault}
+              onChange={(v) => updatePrefs({ openLastVault: v })}
+            />
             <div className="mt-4">
               <div className="text-[13px] font-medium text-[var(--text-primary)]">
                 Daily notes folder

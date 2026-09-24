@@ -2448,3 +2448,8 @@ button:focus-visible,
   font-size: 11.5px;
   padding: 3px 5px;
 }
+/* In a list row the empty-folder line has to fit beside the name and New note. */
+.tree-item [data-testid="tree-empty-folder-status"] {
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+}

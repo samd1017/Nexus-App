@@ -39,6 +39,7 @@ import { bufferRenameKey, claimEmptyFolderEnter, isIdleEnterTarget, isProgrammat
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { takePendingFolderReveal } from "@/lib/chrome/reveal-list";
 import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
+import { requestWriteFocus } from "@/lib/editor/write-intent";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -760,11 +761,9 @@ export const FileTree = memo(function FileTree() {
         Boolean(active.closest?.("[data-file-tree]"));
       if (!idle) return;
       if (fresh && committed) {
-        window.dispatchEvent(
-          new CustomEvent("nexus-write-note", {
-            detail: useVaultStore.getState().activeNoteId ?? undefined,
-          }),
-        );
+        const st = useVaultStore.getState();
+        const path = st.activeNoteId ? st.nodes[st.activeNoteId]?.path : null;
+        if (path) requestWriteFocus(path);
         return;
       }
       parentRef.current?.focus({ preventScroll: true });
