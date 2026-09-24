@@ -1094,7 +1094,7 @@ assert.equal(cssSrc.includes('.tree-item [data-testid="tree-empty-folder-status"
   assert.ok(at > 0);
   const block = paletteSrc.slice(paletteSrc.lastIndexOf("useEffect(() => {", at), paletteSrc.indexOf("}, [q, qLower", at));
   assert.equal(block.includes("if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB) return;"), true);
-  assert.equal(block.includes('rows.filter((r) => r.kind === "folder")'), true);
+  assert.equal(block.includes('(rows ?? []).filter((r) => r.kind === "folder")'), true);
   assert.equal(block.includes("mergeShellRows(st.nodes, st.rootIds, folders)"), true);
   assert.equal(block.includes("loadShellChildren(f.id)"), true);
   assert.equal(block.includes("window.setTimeout(() => {") && block.includes("}, 200);"), true);
@@ -1365,7 +1365,13 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(paletteSrc.includes("restoreFocusOrList(revealInFlight() ? null : prev)"), true);
   assert.equal(paletteSrc.includes("const folder = hits.length === 0 ? folderForEnter(folderHits, q) : null;"), true);
   assert.equal(paletteSrc.includes("if (folder && (!selected || folder.exact)) {"), true);
-  assert.equal(paletteSrc.includes("pendingFolderEnterRef.current = { q, until: Date.now() + 4000 };"), true);
+  // While the catalog is still being asked, Enter waits instead of running the
+  // selected "Create note" beside the folder. No folder: the selection runs.
+  assert.equal(paletteSrc.includes("if (!folder && hits.length === 0 && catalogFolderPending) {"), true);
+  assert.equal(paletteSrc.includes("pendingFolderEnterRef.current = { q, timer: window.setTimeout(runHeldEnter, 4000) };"), true);
+  assert.equal(paletteSrc.includes("if (pendingFolderEnterRef.current?.q === q) runHeldEnter();"), true);
+  assert.equal(paletteSrc.includes("selected?.click();"), true);
+  assert.equal((paletteSrc.match(/catalogAnsweredRef\.current = q;/g) ?? []).length >= 3, true);
   const { folderForEnter } = await import(new URL("../src/lib/search/folder-enter.ts", import.meta.url).href);
   const fs = [
     { id: "a", name: "EmptyFolder old", path: "Archive/EmptyFolder old" },

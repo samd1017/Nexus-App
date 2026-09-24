@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { revealFolderInList, revealInFlight } from "@/lib/chrome/reveal-list";
@@ -767,6 +767,22 @@ function CommandPaletteOpen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, nodes, shellLiveTick, catalogFolderTick]);
 
+  // Enter pressed while the catalog is still being asked for a folder by this
+  // name waits for the answer: a folder goes to the list; no folder runs what
+  // was selected, as the Enter would have.
+  const pendingFolderEnterRef = useRef<{ q: string; timer: number } | null>(null);
+  const catalogAnsweredRef = useRef<string | null>(null);
+  const runHeldEnter = useCallback(() => {
+    const pending = pendingFolderEnterRef.current;
+    if (!pending) return;
+    pendingFolderEnterRef.current = null;
+    window.clearTimeout(pending.timer);
+    const selected = inputRef.current
+      ?.closest("[cmdk-root]")
+      ?.querySelector<HTMLElement>("[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']");
+    selected?.click();
+  }, []);
+
   // A paged vault only holds the folders it has shown. When none of them is
   // named exactly what was typed, ask the catalog for that folder at the vault
   // root (or that exact path), load it, and list it. Nothing happens when it
@@ -782,31 +798,36 @@ function CommandPaletteOpen() {
     for (const id in live) {
       const n = live[id];
       if (n?.kind === "folder" && (n.path.toLowerCase() === wantedLower || n.name.toLowerCase() === wantedLower)) {
+        catalogAnsweredRef.current = q;
         return;
       }
     }
     let cancelled = false;
     const t = window.setTimeout(() => {
       void fetchShellByPaths(shellDbPath, [wanted]).then((rows) => {
-        if (cancelled || !rows) return;
-        const folders = rows.filter((r) => r.kind === "folder");
-        if (!folders.length) return;
+        if (cancelled) return;
+        const folders = (rows ?? []).filter((r) => r.kind === "folder");
         const st = useVaultStore.getState();
-        if (!st.shellCatalog || st.shellDbPath !== shellDbPath) return;
-        const merged = mergeShellRows(st.nodes, st.rootIds, folders);
-        useVaultStore.setState({ nodes: merged.nodes, rootIds: merged.rootIds });
-        // Learn what is inside, so a folder with notes is not taken for empty.
-        for (const f of folders) void useVaultStore.getState().loadShellChildren(f.id);
-        setCatalogFolderTick((n) => n + 1);
+        if (folders.length && st.shellCatalog && st.shellDbPath === shellDbPath) {
+          const merged = mergeShellRows(st.nodes, st.rootIds, folders);
+          useVaultStore.setState({ nodes: merged.nodes, rootIds: merged.rootIds });
+          // Learn what is inside, so a folder with notes is not taken for empty.
+          for (const f of folders) void useVaultStore.getState().loadShellChildren(f.id);
+          catalogAnsweredRef.current = q;
+          setCatalogFolderTick((n) => n + 1);
+          return;
+        }
+        catalogAnsweredRef.current = q;
+        if (pendingFolderEnterRef.current?.q === q) runHeldEnter();
       });
     }, 200);
     return () => {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, shellCatalog, shellDbPath]);
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, shellCatalog, shellDbPath, runHeldEnter]);
 
-  const catalogFolderLookup = Boolean(
+  const catalogFolderPending = Boolean(
     shellCatalog &&
       shellDbPath &&
       shellDbPath !== BROWSER_SHELL_DB &&
@@ -816,19 +837,19 @@ function CommandPaletteOpen() {
       !isTagBrowse &&
       !hasPathFolderOp &&
       !qLower.startsWith("is:"),
-  );
-  // Enter pressed before the catalog answered goes to the folder when it does.
-  const pendingFolderEnterRef = useRef<{ q: string; until: number } | null>(null);
+  ) && catalogAnsweredRef.current !== q;
   useEffect(() => {
     const pending = pendingFolderEnterRef.current;
     if (!pending) return;
-    if (pending.q !== q || Date.now() > pending.until) {
+    if (pending.q !== q) {
+      window.clearTimeout(pending.timer);
       pendingFolderEnterRef.current = null;
       return;
     }
     if (hits.length > 0) return;
     const folder = folderForEnter(folderHits, q);
     if (!folder) return;
+    window.clearTimeout(pending.timer);
     pendingFolderEnterRef.current = null;
     revealFolderInList(folder.id);
   }, [folderHits, hits.length, q]);
@@ -1600,15 +1621,28 @@ function CommandPaletteOpen() {
               );
               if (selected?.getAttribute("data-testid") === "search-folder-hit") return;
               if (!q || isAskMode || isCommandMode || isTagBrowse) return;
+              if (pendingFolderEnterRef.current?.q === q) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+              }
               const top = hits[0];
-              // A folder found after the list settled is never selected, so
+              // A folder found after the list settled may not be selected, so
               // Enter would do nothing and leave search holding the keyboard.
               const folder = hits.length === 0 ? folderForEnter(folderHits, q) : null;
               if (folder && (!selected || folder.exact)) {
                 e.preventDefault();
                 e.stopPropagation();
-                pendingFolderEnterRef.current = null;
                 revealFolderInList(folder.id);
+                return;
+              }
+              // The catalog has not answered yet. What is selected now is
+              // usually "Create note", which would make a note beside the
+              // folder instead of in it.
+              if (!folder && hits.length === 0 && catalogFolderPending) {
+                e.preventDefault();
+                e.stopPropagation();
+                pendingFolderEnterRef.current = { q, timer: window.setTimeout(runHeldEnter, 4000) };
                 return;
               }
               if (selected) return;
@@ -1617,13 +1651,6 @@ function CommandPaletteOpen() {
                 e.stopPropagation();
                 setActiveNote(top.noteId);
                 setCommandOpen(false);
-                return;
-              }
-              // The catalog is still being asked for a folder by this name.
-              if (catalogFolderLookup) {
-                e.preventDefault();
-                e.stopPropagation();
-                pendingFolderEnterRef.current = { q, until: Date.now() + 4000 };
               }
             }}
           />
