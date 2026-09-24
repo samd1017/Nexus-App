@@ -1182,6 +1182,86 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(treeSrc.includes("if (finishReveal(id) && folderHasNothing(id)) createInFolderRef.current(id);"), true);
   assert.equal(treeSrc.includes('const nid = useVaultStore.getState().createNote(folderId, "Untitled");'), true);
 }
+// Runtime: the held-Enter queue. The module imports the app store, so load a
+// copy with a stub store and a minimal document/window, then drive the real code.
+{
+  const { writeFileSync, mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const src = readFileSync(new URL("../src/lib/chrome/reveal-list.ts", import.meta.url), "utf8");
+  const stubbed =
+    `const useVaultStore = { getState: () => globalThis.__revealStore };\n` +
+    src.replace(/^import \{ useVaultStore \} from "@\/lib\/vault\/store";\n/m, "");
+  assert.notEqual(stubbed, src, "store import was replaced");
+  const dir = mkdtempSync(join(tmpdir(), "nexus-reveal-"));
+  const file = join(dir, "reveal-list.ts");
+  writeFileSync(file, stubbed);
+  const events = [];
+  const saved = {
+    document: globalThis.document,
+    window: globalThis.window,
+    CustomEvent: globalThis.CustomEvent,
+  };
+  globalThis.__revealStore = { settings: { leftOpen: true }, setLeftOpen() {} };
+  globalThis.document = { querySelector: () => ({ id: "tree" }) };
+  globalThis.window = {
+    dispatchEvent: (ev) => events.push(ev),
+    requestAnimationFrame: (cb) => setTimeout(cb, 0),
+    cancelAnimationFrame: () => {},
+    setTimeout,
+    clearTimeout,
+  };
+  globalThis.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = init?.detail; } };
+  try {
+    const m = await import(file);
+    // Nothing in flight: Enter is not held.
+    assert.equal(m.revealInFlight(), null);
+    assert.equal(m.queueRevealEnter(), false);
+    // A reveal starts: the tree is asked to show the folder, and Enter is held.
+    m.revealFolderInList("folder-1");
+    assert.equal(events.at(-1)?.type, "nexus-reveal-folder");
+    assert.equal(events.at(-1)?.detail, "folder-1");
+    assert.equal(m.revealInFlight(), "folder-1");
+    assert.equal(m.queueRevealEnter(), true);
+    // Another folder landing does not take this Enter.
+    assert.equal(m.finishReveal("folder-2"), false);
+    assert.equal(m.revealInFlight(), "folder-1");
+    // The right folder lands: the held Enter is applied once, then the hold is gone.
+    assert.equal(m.finishReveal("folder-1"), true);
+    assert.equal(m.revealInFlight(), null);
+    assert.equal(m.finishReveal("folder-1"), false);
+    assert.equal(m.queueRevealEnter(), false);
+    // Landing without an Enter ends the hold and applies nothing.
+    m.revealFolderInList("folder-3");
+    assert.equal(m.finishReveal("folder-3"), false);
+    assert.equal(m.revealInFlight(), null);
+    // The hold expires after three seconds and never takes a later Enter.
+    const realNow = Date.now;
+    try {
+      const t0 = realNow();
+      Date.now = () => t0;
+      m.revealFolderInList("folder-4");
+      Date.now = () => t0 + 2900;
+      assert.equal(m.revealInFlight(), "folder-4");
+      assert.equal(m.queueRevealEnter(), true);
+      Date.now = () => t0 + 3100;
+      assert.equal(m.revealInFlight(), null);
+      assert.equal(m.queueRevealEnter(), false);
+      assert.equal(m.finishReveal("folder-4"), false, "an expired hold applies nothing");
+    } finally {
+      Date.now = realNow;
+    }
+    // A folder asked for before the tree was listening is handed over once.
+    m.revealFolderInList("folder-5");
+    assert.equal(m.takePendingFolderReveal(), "folder-5");
+    assert.equal(m.takePendingFolderReveal(), null);
+  } finally {
+    globalThis.document = saved.document;
+    globalThis.window = saved.window;
+    globalThis.CustomEvent = saved.CustomEvent;
+    delete globalThis.__revealStore;
+  }
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
