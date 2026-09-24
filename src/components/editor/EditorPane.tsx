@@ -297,7 +297,7 @@ export function EditorPane({
           <NexusMark size={36} className="text-[var(--text-primary)]" />
         </div>
         <h2 className="text-[22px] font-semibold tracking-tight">
-          {emptyVault ? "Start your vault" : "Select a note"}
+          {emptyVault ? "Start your vault" : "No file is open"}
         </h2>
         <p
           role={emptyVault ? "status" : undefined}
@@ -311,7 +311,7 @@ export function EditorPane({
         >
           {emptyVault
             ? "Enter starts a note."
-            : "Click a note in the list to open it."}
+            : "Pick a note in the list, or go to one by name."}
         </p>
         {emptyVault ? (
           <p
@@ -344,9 +344,9 @@ export function EditorPane({
               New note
             </button>
           ) : (
-            <NewNoteMenu variant="primary" title="New note" align="left">
+            <NewNoteMenu variant="primary" title="Create new note" align="left">
               <FilePlus2 size={16} />
-              New note
+              Create new note <span className="opacity-75">{formatShortcut("N")}</span>
             </NewNoteMenu>
           )}
           <button
@@ -357,13 +357,24 @@ export function EditorPane({
             <CalendarDays size={16} />
             Today's note
           </button>
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={() => setCommandOpen(true)}
-          >
-            Search {formatShortcut("K")}
-          </button>
+          {emptyVault ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => setCommandOpen(true)}
+            >
+              Search {formatShortcut("K")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="ghost-btn"
+              data-testid="empty-go-to-file"
+              onClick={() => setCommandOpen(true)}
+            >
+              Go to file {formatShortcut("O")}
+            </button>
+          )}
         </div>
       </div>
     );

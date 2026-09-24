@@ -280,7 +280,21 @@ const paletteSrc = readFileSync(
   new URL("../src/components/search/CommandPalette.tsx", import.meta.url),
   "utf8",
 );
-assert.equal(paletteSrc.includes('placeholder="Search notes"'), true);
+// Enter on a finished miss makes the note, and Shift+Enter always does, as in
+// Obsidian's quick switcher. A folder, a note hit, or a held catalog Enter comes first.
+{
+  const at = paletteSrc.indexOf("onKeyDownCapture={(e) => {");
+  const body = paletteSrc.slice(at, paletteSrc.indexOf("}}\n          />", at));
+  assert.ok(body.indexOf("if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {") > 0);
+  const missAt = body.indexOf('if (emptyStatus === "miss" && showCreateNote) {');
+  assert.ok(missAt > body.indexOf("revealSearchedFolder(folder.id);"));
+  assert.ok(missAt > body.indexOf("pendingFolderEnterRef.current = { q, timer: window.setTimeout(runHeldEnter, 4000) };"));
+  assert.ok(missAt > body.indexOf("setActiveNote(top.noteId);"));
+  assert.equal(paletteSrc.includes("onClick={createFromQuery}"), true);
+}
+// Obsidian's quick switcher words, and the command mode's.
+assert.equal(paletteSrc.includes('placeholder={isCommandMode ? "Select a command…" : "Find or create a note…"}'), true);
+assert.equal(paletteSrc.includes('aria-label="Search notes"'), true);
 assert.equal(paletteSrc.includes('data-testid="search-field"'), true);
 assert.equal(paletteSrc.includes("nexus-search-field"), true);
 assert.equal(paletteSrc.includes("searchEmptyStatus"), true);
@@ -338,7 +352,11 @@ const editorSrc = readFileSync(
 );
 assert.equal(editorSrc.includes("data-editor-empty"), true);
 assert.equal(editorSrc.includes("Enter starts a note."), true);
-assert.equal(editorSrc.includes("Click a note in the list to open it."), true);
+// With notes but none open, the pane reads like Obsidian's: no file is open,
+// create one, or go to one by name.
+assert.equal(editorSrc.includes('"No file is open"'), true);
+assert.equal(editorSrc.includes('Go to file {formatShortcut("O")}'), true);
+assert.equal(editorSrc.includes('Create new note <span className="opacity-75">{formatShortcut("N")}</span>'), true);
 const panelSrc = readFileSync(
   new URL("../src/components/right/RightPanel.tsx", import.meta.url),
   "utf8",
@@ -1613,6 +1631,81 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.ok(at > 0);
   const block = treeSrc.slice(at, treeSrc.indexOf("input.scrollIntoView", at));
   assert.ok(block.indexOf("if (document.activeElement === input && input.value !== draft) return;") < block.indexOf("input.select();"));
+}
+// Obsidian's everyday chords: Ctrl/Cmd+O quick switcher, Ctrl/Cmd+P command
+// palette, Ctrl/Cmd+Shift+F search, Ctrl/Cmd+Alt+arrows for history, and the
+// vault picker moved to Ctrl/Cmd+Shift+O. Runtime, with the platform stubbed.
+{
+  const { writeFileSync, mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const src = readFileSync(new URL("../src/lib/prefs/hotkeys.ts", import.meta.url), "utf8");
+  const stubbed =
+    `const isAppleModPlatform = () => false;\nconst formatShortcut = (k) => k;\n` +
+    src.replace(/^import \{ formatShortcut, isAppleModPlatform \} from "@\/lib\/platform";\n/m, "");
+  assert.notEqual(stubbed, src, "platform import was replaced");
+  const dir = mkdtempSync(join(tmpdir(), "nexus-hotkeys-"));
+  const file = join(dir, "hotkeys.ts");
+  writeFileSync(file, stubbed);
+  const hk = await import(file);
+  const ev = (key, extra = {}) => ({
+    key,
+    code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+    ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, ...extra,
+  });
+  assert.equal(hk.matchHotkey(ev("o")), "quickSwitcher");
+  assert.equal(hk.matchHotkey(ev("O", { shiftKey: true })), "openVault");
+  assert.equal(hk.matchHotkey(ev("p")), "commandPalette");
+  assert.equal(hk.matchHotkey(ev("F", { shiftKey: true })), "searchVault");
+  assert.equal(hk.matchHotkey(ev("f")), "find");
+  assert.equal(hk.matchHotkey(ev("k")), "search");
+  assert.equal(hk.matchHotkey(ev("n")), "newNote");
+  assert.equal(hk.matchHotkey(ev("e")), "toggleEditor");
+  assert.equal(hk.matchHotkey(ev("g")), "graph");
+  assert.equal(hk.matchHotkey(ev(",", { code: "Comma" })), "settings");
+  assert.equal(hk.matchHotkey(ev("ArrowLeft", { altKey: true })), "back");
+  assert.equal(hk.matchHotkey(ev("ArrowRight", { altKey: true })), "forward");
+  assert.equal(hk.matchHotkey(ev("[", { code: "BracketLeft" })), "back");
+  // A remap of the action replaces its second chord.
+  assert.equal(hk.matchHotkey(ev("ArrowLeft", { altKey: true }), { back: { key: "j" } }), null);
+  assert.equal(hk.matchHotkey(ev("ArrowLeft", { altKey: false })), null);
+  // No two default chords collide.
+  const seen = new Map();
+  for (const id of hk.HOTKEY_IDS) {
+    const c = hk.DEFAULT_HOTKEYS[id];
+    const k = `${c.key}|${Boolean(c.shift)}|${Boolean(c.alt)}`;
+    assert.equal(seen.has(k), false, `${id} collides with ${seen.get(k)}`);
+    seen.set(k, id);
+    assert.ok(hk.HOTKEY_LABELS[id], `${id} has a label`);
+  }
+  // The desktop menu carries the same chords, and routes them to the same place.
+  const libSrc = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  assert.equal(libSrc.includes('"quick_switcher",\n                "Quick Switcher…",\n                true,\n                Some("CmdOrCtrl+O"),'), true);
+  assert.equal(libSrc.includes('"command_palette",\n                "Command Palette…",\n                true,\n                Some("CmdOrCtrl+P"),'), true);
+  assert.equal(libSrc.includes('Some("CmdOrCtrl+Shift+O"),'), true);
+  const bridgeSrc = readFileSync(new URL("../src/lib/desktop/menu-bridge.ts", import.meta.url), "utf8");
+  assert.equal(bridgeSrc.includes('case "quick_switcher":') && bridgeSrc.includes('case "command_palette":'), true);
+  assert.equal(shellSrc.includes('else openCommandPalette(">");'), true);
+  assert.equal(keysSrc.includes('(!e.shiftKey && isModLetter(e, "p")) ||'), true);
+  assert.equal(keysSrc.includes('case "quickSwitcher":') && keysSrc.includes('case "commandPalette":'), true);
+}
+// Large vaults: catalog and index commands run off the main thread, lookups
+// are indexed after Ready, and ad-hoc scans stop at a time budget.
+{
+  const idxSrc = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
+  for (const name of ["vault_shell_children", "vault_shell_suggest", "vault_shell_backlinks", "vault_shell_ego", "vault_shell_broken", "vault_shell_known_norms", "vault_shell_mount", "vault_index_search"]) {
+    assert.equal(idxSrc.includes(`#[tauri::command(async)]\npub fn ${name}(`), true, `${name} runs off the main thread`);
+  }
+  assert.equal(/#\[tauri::command\]\npub fn vault_shell_/.test(idxSrc), false, "no shell command left on the main thread");
+  assert.equal(idxSrc.includes("let _ = crate::shell_catalog::ensure_shell_indexes(&conn);"), true);
+  assert.equal(idxSrc.includes("ensure_shell_indexes_later(db_path.clone());"), true);
+  const catSrc = readFileSync(new URL("../src-tauri/src/shell_catalog.rs", import.meta.url), "utf8");
+  for (const idx of ["note_meta_title_norm", "note_meta_name_norm", "note_meta_path_norm", "link_target_id", "note_meta_live_recent"]) {
+    assert.equal(catSrc.includes(`CREATE INDEX IF NOT EXISTS ${idx}`), true, idx);
+  }
+  assert.equal(catSrc.includes("pub const SHELL_SCAN_BUDGET: Duration = Duration::from_millis(150);"), true);
+  assert.equal((catSrc.match(/with_time_budget\(conn, SHELL_SCAN_BUDGET/g) ?? []).length >= 3, true);
+  assert.equal(catSrc.includes("lower(COALESCE(title, '')) = ?1"), false, "known links use the indexes");
 }
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);

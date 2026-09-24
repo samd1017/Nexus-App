@@ -235,6 +235,8 @@ function revealSearchedFolder(id: string): void {
   revealFolderInList(id, { settle: useVaultStore.getState().settleFolderForEnter(id) });
 }
 
+let openedWith: { q: string; at: number } | null = null;
+
 // Where the cursor was before search opened. The field takes focus on mount,
 // so this is tracked all the time rather than read when search opens.
 let focusBeforeSearch: HTMLElement | null = null;
@@ -304,7 +306,11 @@ function CommandPaletteOpen() {
 
   useEffect(() => {
     if (open) {
-      const pending = takePendingCommandQuery();
+      // Held for a moment: a second run of this effect (React's dev check)
+      // would otherwise find it taken and clear the ">" or "ask:" it opened with.
+      const taken = takePendingCommandQuery();
+      if (taken != null) openedWith = { q: taken, at: Date.now() };
+      const pending = taken ?? (openedWith && Date.now() - openedWith.at < 100 ? openedWith.q : null);
       if (pending != null) {
         setQuery(pending);
       } else {
@@ -1558,6 +1564,14 @@ function CommandPaletteOpen() {
   };
 
   const searchEngine = describeSearchEngine();
+  // The query names the note, as in Obsidian's quick switcher. Start writing.
+  const createFromQuery = () => {
+    const title = (searchText || q).trim() || "Untitled";
+    const id = createNote(null, title);
+    setCommandOpen(false);
+    const path = id ? useVaultStore.getState().nodes[id]?.path : null;
+    if (path) requestWriteFocus(path);
+  };
   const emptyStatus = searchEmptyStatus({
     titleSearchLive,
     memorySearch: searchEngine.id !== "sqlite-fts5-bm25",
@@ -1624,7 +1638,8 @@ function CommandPaletteOpen() {
             ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="Search notes"
+            placeholder={isCommandMode ? "Select a command…" : "Find or create a note…"}
+            aria-label="Search notes"
             className="nexus-search-input h-12 w-full bg-transparent text-[15px] text-white outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
             onFocus={(e) => {
@@ -1634,6 +1649,15 @@ function CommandPaletteOpen() {
             }}
             onKeyDownCapture={(e) => {
               if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              // Shift+Enter makes a note with this name, even when notes match.
+              if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp) return;
+                if (qLower.startsWith("is:") || wantsOrphans || wantsBroken) return;
+                e.preventDefault();
+                e.stopPropagation();
+                createFromQuery();
+                return;
+              }
               const root = e.currentTarget.closest("[cmdk-root]");
               const selected = root?.querySelector(
                 "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
@@ -1675,6 +1699,13 @@ function CommandPaletteOpen() {
                 e.stopPropagation();
                 setActiveNote(top.noteId);
                 setCommandOpen(false);
+                return;
+              }
+              // Nothing matched and nothing is still looking: Enter makes it.
+              if (emptyStatus === "miss" && showCreateNote) {
+                e.preventDefault();
+                e.stopPropagation();
+                createFromQuery();
               }
             }}
           />
@@ -1967,16 +1998,10 @@ function CommandPaletteOpen() {
             >
               <button
                 type="button"
-                onClick={() => {
-                  const title = (searchText || q).trim() || "Untitled";
-                  const id = createNote(null, title);
-                  setCommandOpen(false);
-                  // The query already named it. Start writing.
-                  const path = id ? useVaultStore.getState().nodes[id]?.path : null;
-                  if (path) requestWriteFocus(path);
-                }}
+                onClick={createFromQuery}
               >
                 Create “{(searchText || q).trim().slice(0, 48)}”
+                <kbd className="ml-1.5 rounded border border-[var(--border)] px-1 font-mono text-[10px] opacity-80">Enter</kbd>
               </button>
               <button
                 type="button"
