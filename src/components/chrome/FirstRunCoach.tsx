@@ -35,13 +35,27 @@ export function FirstRunCoach() {
       setVisible(false);
       return;
     }
-    const t = window.setTimeout(() => setVisible(true), 700);
+    // A vault that opens empty is busy with its first note; the tour waits
+    // for a later open instead of covering the page being written.
+    const t = window.setTimeout(() => {
+      const s = useVaultStore.getState();
+      let empty = true;
+      if (s.shellCatalog) empty = s.catalogNoteCount <= 0 && s.rootIds.length === 0;
+      else for (const id in s.nodes) if (s.nodes[id]?.kind === "note") { empty = false; break; }
+      setVisible(!empty);
+    }, 700);
     return () => window.clearTimeout(t);
   }, [vaultId]);
 
+  // Seen empty once this session: that vault is busy with its first note.
+  const [emptyVaultId, setEmptyVaultId] = useState<string | null>(null);
+  useEffect(() => {
+    if (vaultEmpty && vaultId) setEmptyVaultId(vaultId);
+  }, [vaultEmpty, vaultId]);
+
   // Don't cover fullscreen graph or the command palette. An empty vault shows
   // its own first step (Enter starts a note); the tour waits for a first note.
-  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen || vaultEmpty) return null;
+  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen || vaultEmpty || emptyVaultId === vaultId) return null;
 
   const dismiss = () => {
     markFirstRunCoachDone();

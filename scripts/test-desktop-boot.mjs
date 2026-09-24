@@ -812,6 +812,26 @@ assert.equal(settingsSrc.includes('data-testid="settings-title"'), true);
   const kf = cssSrc.slice(cssSrc.indexOf("@keyframes nexusDialogIn"), cssSrc.indexOf(".nexus-dialog-in {"));
   assert.equal(kf.includes("opacity"), false);
 }
+// The quick tour is not a modal and stays away from a vault that opened empty.
+const coachSrc = readFileSync(new URL("../src/components/chrome/FirstRunCoach.tsx", import.meta.url), "utf8");
+assert.equal(coachSrc.includes('role="dialog"'), false);
+assert.equal(coachSrc.includes("emptyVaultId === vaultId"), true);
+assert.equal(keysSrc.includes("[role='dialog'][aria-modal='true']"), true);
+// A name typed before its field mounts is kept; the field sets its text once.
+assert.equal(enterSrc.includes("export function bufferRenameKey"), true);
+assert.equal(treeSrc.includes("renameInitFor.current === node.id"), true);
+assert.equal(storeSrc.includes("probeFirstRun"), true);
+{
+  const { startRenameBuffer, bufferRenameKey, takeRenameBuffer } = await import(
+    new URL("../src/lib/chrome/empty-folder-enter.ts", import.meta.url).href
+  );
+  startRenameBuffer("n1");
+  for (const key of ["S", "o", "a", "k", "Enter"]) {
+    assert.equal(bufferRenameKey({ key, ctrlKey: false, metaKey: false, altKey: false }), true);
+  }
+  assert.deepEqual(takeRenameBuffer("n1"), { text: "Soak", commit: true });
+  assert.equal(takeRenameBuffer("n1"), null);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

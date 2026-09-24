@@ -5916,6 +5916,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				createNote: (parentId?: string | null, title?: string) => string | null;
 				openRebuildConfirm: () => void;
 				openEmptyVault: () => void;
+				probeFirstRun: () => Record<string, unknown>;
 				setActiveNote: (id: string | null) => void;
 				setSecondaryNote: (id: string | null) => void;
 				setRightTab: (tab: string) => void;
@@ -5955,6 +5956,33 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				rootIds: [],
 				vaultName: "First Run",
 			});
+		},
+		// Read-only first-run state for the box harness: tells a missed create
+		// from a slow one, and shows a disk write that failed.
+		probeFirstRun: () => {
+			const s = useVaultStore.getState();
+			let notes = 0;
+			for (const id in s.nodes) if (s.nodes[id]?.kind === "note") notes += 1;
+			const tree = document.querySelector("[data-file-tree]");
+			const rename = document.querySelector<HTMLInputElement>("[data-testid='tree-rename']");
+			const active = s.activeNoteId ? s.nodes[s.activeNoteId] : null;
+			return {
+				mode: s.mode,
+				vaultPath: s.vaultPath,
+				connecting: s.connecting,
+				notes,
+				listOpen: Boolean(tree),
+				listFocused: Boolean(tree && document.activeElement === tree),
+				firstRunShown: Boolean(document.querySelector("[data-testid='vault-first-run']")),
+				renameOpen: Boolean(rename),
+				renameValue: rename?.value ?? null,
+				renameSelected: rename
+					? rename.selectionStart === 0 && rename.selectionEnd === rename.value.length
+					: null,
+				activePath: active?.path ?? null,
+				writingInNote: Boolean(document.activeElement?.closest?.(".ProseMirror")),
+				diskWriteError,
+			};
 		},
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),
