@@ -52,6 +52,11 @@ function OpenProgressBanner() {
   const [progress, setProgress] = useState<OpenProgress>(() => getOpenProgress());
   useEffect(() => subscribeOpenProgress(setProgress), []);
 
+  useEffect(() => {
+    if (progress.phase !== "ready" && progress.phase !== "error") return;
+    document.getElementById("nexus-boot-banner")?.remove();
+  }, [progress.phase]);
+
   // Auto-dismiss ready flash so the banner doesn't stick forever
   useEffect(() => {
     if (progress.phase !== "ready") return;

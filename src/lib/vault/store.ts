@@ -131,6 +131,10 @@ import {
 } from "./body-archive";
 import { yieldToUi } from "./yield-ui";
 import {
+  SAVED_PAGE_READY_MESSAGE,
+  takePrefetchedDesktopShell,
+} from "./desktop-boot";
+import {
   applyLargeVaultOverlay,
   clearLargeVaultOverlay,
   flushLargeVaultOverlay,
@@ -241,6 +245,7 @@ import {
   fetchShellNote,
   mergeShellRows,
   wakeShellCatalog,
+  adoptBootShell,
   mountShellCatalog,
   nodesFromShellRows,
   pageHidden,
@@ -1042,12 +1047,14 @@ async function runCompleteDiskSearchIndex(opts?: {
 		return { indexed: 0, errors: 0, skipped: true };
 	}
 	if (!canReadDiskSearchHeads()) {
-		setOpenProgress({
-			phase: "ready",
-			scanned: 0,
-			totalHint: null,
-			message: "Ready · title search only",
-		});
+		if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+			setOpenProgress({
+				phase: "ready",
+				scanned: 0,
+				totalHint: null,
+				message: "Ready · title search only",
+			});
+		}
 		return { indexed: 0, errors: 0, skipped: true };
 	}
 	let noteCount = st.shellCatalog ? st.catalogNoteCount : 0;
@@ -1163,6 +1170,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
 					}
+					if (getOpenProgress().message === SAVED_PAGE_READY_MESSAGE) return;
 					setOpenProgress({
 						phase: "indexing",
 						scanned: p.scanned,
@@ -1226,7 +1234,10 @@ async function runCompleteDiskSearchIndex(opts?: {
 					searchIndexState: getSearchIndexState(),
 				};
 			}
-			if (getSearchIndexState() === "ready-fts" || skipped >= (notes || noteCount)) {
+			if (
+				getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE &&
+				(getSearchIndexState() === "ready-fts" || skipped >= (notes || noteCount))
+			) {
 				setOpenProgress({
 					phase: "ready",
 					scanned: noteCount,
@@ -1250,12 +1261,14 @@ async function runCompleteDiskSearchIndex(opts?: {
 			if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
 				const message =
 					err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
-				setOpenProgress({
-					phase: "error",
-					scanned: 0,
-					totalHint: noteCount,
-					message,
-				});
+				if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+					setOpenProgress({
+						phase: "error",
+						scanned: 0,
+						totalHint: noteCount,
+						message,
+					});
+				}
 				throw err instanceof Error ? err : new Error(message);
 			}
 			const message =
@@ -1263,21 +1276,25 @@ async function runCompleteDiskSearchIndex(opts?: {
 					? `SQLite FTS fill failed: ${err.message}`
 					: "SQLite FTS fill failed";
 			console.error("[nexus] native FTS fill failed (no JS 100k fallback)", err);
-			setOpenProgress({
-				phase: "error",
-				scanned: 0,
-				totalHint: noteCount,
-				message,
-			});
+			if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+				setOpenProgress({
+					phase: "error",
+					scanned: 0,
+					totalHint: noteCount,
+					message,
+				});
+			}
 			throw err instanceof Error ? err : new Error(message);
 		}
 	}
-	setOpenProgress({
-		phase: "indexing",
-		scanned: 0,
-		totalHint: noteCount,
-		message: "Workspace ready — indexing search from files (not SQLite)…",
-	});
+	if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+		setOpenProgress({
+			phase: "indexing",
+			scanned: 0,
+			totalHint: noteCount,
+			message: "Workspace ready — indexing search from files (not SQLite)…",
+		});
+	}
 	let result: { indexed: number; errors: number };
 	try {
 		result = await fillDurableIndexFromReader(st.nodes, readDiskSearchHead, {
@@ -1285,6 +1302,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 			isCancelled: () => gen !== vaultGen,
 			onProgress: (done, total) => {
 				if (gen !== vaultGen) return;
+				if (getOpenProgress().message === SAVED_PAGE_READY_MESSAGE) return;
 				setOpenProgress({
 					phase: "indexing",
 					scanned: done,
@@ -1297,12 +1315,14 @@ async function runCompleteDiskSearchIndex(opts?: {
 		if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
 			const message =
 				err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
-			setOpenProgress({
-				phase: "error",
-				scanned: 0,
-				totalHint: noteCount,
-				message,
-			});
+			if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+				setOpenProgress({
+					phase: "error",
+					scanned: 0,
+					totalHint: noteCount,
+					message,
+				});
+			}
 			throw err instanceof Error ? err : new Error(message);
 		}
 		throw err;
@@ -1317,12 +1337,14 @@ async function runCompleteDiskSearchIndex(opts?: {
 	if (noteCount > 0 && result.indexed === 0 && result.errors > 0) {
 		const root = desktopRoot || st.vaultPath || "vault";
 		const message = desktopFsForbiddenMessage(root);
-		setOpenProgress({
-			phase: "error",
-			scanned: 0,
-			totalHint: noteCount,
-			message,
-		});
+		if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+			setOpenProgress({
+				phase: "error",
+				scanned: 0,
+				totalHint: noteCount,
+				message,
+			});
+		}
 		throw new DesktopFsForbiddenError(root);
 	}
 	diskSearchReady = true;
@@ -1342,12 +1364,14 @@ async function runCompleteDiskSearchIndex(opts?: {
 			searchReady: true,
 		};
 	}
-	setOpenProgress({
-		phase: "ready",
-		scanned: noteCount,
-		totalHint: noteCount,
-		message: "Ready",
-	});
+	if (getOpenProgress().message !== SAVED_PAGE_READY_MESSAGE) {
+		setOpenProgress({
+			phase: "ready",
+			scanned: noteCount,
+			totalHint: noteCount,
+			message: "Ready",
+		});
+	}
 	window.setTimeout(() => {
 		if (vaultGen !== gen) return;
 		const cur = getOpenProgress();
@@ -1369,6 +1393,22 @@ async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string |
 	shell: ShellMount | null;
 }> {
 	const metaOnly = shouldLazyBodies(mode) || mode === "desktop" || mode === "fsa";
+	if (mode === "desktop" && desktopRoot) {
+		const prefetched = adoptBootShell(takePrefetchedDesktopShell(desktopRoot));
+		if (prefetched) {
+			const built = nodesFromShellRows(prefetched.rows);
+			scopeGrantFollowsReady = true;
+			return {
+				scan: {
+					nodes: built.nodes,
+					rootIds: prefetched.rootIds.length ? prefetched.rootIds : built.rootIds,
+					signatures: {} as Record<string, string>,
+				},
+				metaOnly: true,
+				shell: prefetched,
+			};
+		}
+	}
 	setOpenProgress({
 		phase: "walking",
 		scanned: 0,
@@ -1769,6 +1809,36 @@ function filledPageIsSearchable(
 	return shell?.titlesLive === true && forceRebuild !== true;
 }
 
+/** Set when the saved page was painted before plugin-fs scope was granted. */
+let scopeGrantFollowsReady = false;
+
+/**
+ * Saved-page Ready is already on screen. Grant folder access, then open the
+ * index. A refused grant must not replace that Ready line.
+ */
+function continueFilledIndexAfterReady(
+	vaultId: string | null,
+	mode: VaultMode,
+	dbPath: string | null | undefined,
+	root: string,
+): void {
+	const deferScope = scopeGrantFollowsReady;
+	scopeGrantFollowsReady = false;
+	const start = () => openFilledIndexAfterReady(vaultId, mode, dbPath, root);
+	if (!deferScope) {
+		start();
+		return;
+	}
+	void (async () => {
+		try {
+			await ensureDesktopVaultFsScope(root);
+		} catch (err) {
+			console.warn("[nexus] vault scope after Ready", err);
+		}
+		start();
+	})();
+}
+
 /** The saved page is the announcement. The index file opens afterward. */
 function announceFilledPageReady(shell: ShellMount): void {
 	diskSearchReady = true;
@@ -1778,7 +1848,7 @@ function announceFilledPageReady(shell: ShellMount): void {
 		phase: "ready",
 		scanned: Math.max(1, Math.min(32, pageNotes || 1)),
 		totalHint: null,
-		message: "Ready · titles and open notes",
+		message: SAVED_PAGE_READY_MESSAGE,
 	});
 }
 
@@ -1956,7 +2026,7 @@ async function mountDesktopVaultAt(
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 		if (shellMount && filledPageIsSearchable(shellMount, opts?.forceRebuild)) {
 			announceFilledPageReady(shellMount);
-			openFilledIndexAfterReady(st.vaultId, st.mode, shellMount.dbPath, root);
+			continueFilledIndexAfterReady(st.vaultId, st.mode, shellMount.dbPath, root);
 		} else {
 			await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
 			maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
@@ -2126,7 +2196,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
 						if (shell && filledPageIsSearchable(shell)) {
 							announceFilledPageReady(shell);
-							openFilledIndexAfterReady(st.vaultId, st.mode, shell.dbPath, root);
+							continueFilledIndexAfterReady(st.vaultId, st.mode, shell.dbPath, root);
 						} else {
 							await prepareDurableIndex(st.vaultId, st.mode, shell?.dbPath);
 							maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);

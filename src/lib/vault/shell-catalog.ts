@@ -367,6 +367,16 @@ export function shellSessionFromMount(
   };
 }
 
+/** Saved page from the desktop boot script. Rejects anything that is not searchable yet. */
+export function adoptBootShell(raw: unknown): ShellMount | null {
+  if (!raw || typeof raw !== "object") return null;
+  const mount = normalizeMount(raw as Record<string, unknown>);
+  if (!mount.titlesLive || mount.pending || mount.rows.length === 0 || !mount.dbPath) {
+    return null;
+  }
+  return mount;
+}
+
 function normalizeMount(raw: Record<string, unknown>): ShellMount {
   const rows = Array.isArray(raw.rows) ? raw.rows.map((r) => asRow(r as Record<string, unknown>)) : [];
   const loadedRaw = Array.isArray(raw.loaded) ? raw.loaded : [];
