@@ -2221,13 +2221,13 @@ button:focus-visible,
 }
 
 /* Dialogs arrive, they do not pop. */
+/* Movement only: the dialog is fully opaque on its first frame, so an early
+   screenshot or a fast reader never sees it half-faded. */
 @keyframes nexusDialogIn {
   from {
-    opacity: 0;
     transform: translateY(6px) scale(0.985);
   }
   to {
-    opacity: 1;
     transform: none;
   }
 }
@@ -2319,11 +2319,9 @@ button:focus-visible,
 /* Status lines rise into place instead of appearing. */
 @keyframes nexusToastIn {
   from {
-    opacity: 0;
     transform: translateY(8px) scale(0.98);
   }
   to {
-    opacity: 1;
     transform: none;
   }
 }
@@ -2359,4 +2357,28 @@ button:focus-visible,
   height: 2px;
   border-radius: 2px;
   background: #5ad8ff;
+}
+
+/* Dialogs are one solid dark surface in both themes. Their copy is set for dark
+   (white leads, white search text), so a light or see-through card hid the
+   Settings title behind whatever sat underneath. */
+.nexus-dark-island {
+  --text-primary: #f2f2f7;
+  --text-secondary: #b4b4bf;
+  --text-muted: #a0a0ad;
+  --bg-elevated: #1c1c21;
+  --bg-deepest: #0b0b0e;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: #2a2a30;
+  --glass-bg: #16161a;
+  --fill-hover: rgba(255, 255, 255, 0.06);
+  background: #16161a;
+  color: #f2f2f7;
+  color-scheme: dark;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-theme="light"] .nexus-dark-island.glass-elevated,
+.nexus-dark-island.glass-elevated {
+  background: #16161a;
 }

@@ -1489,7 +1489,7 @@ function CommandPaletteOpen() {
         onClick={(e) => e.stopPropagation()}
       >
       <Command
-        className="glass-elevated max-h-[min(92dvh,720px)] w-full overflow-hidden rounded-t-[var(--radius-xl,16px)] shadow-[var(--shadow-elevated)] sm:max-h-none sm:rounded-[var(--radius-xl,16px)] sm:shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
+        className="nexus-dark-island glass-elevated max-h-[min(92dvh,720px)] w-full overflow-hidden rounded-t-[var(--radius-xl,16px)] shadow-[var(--shadow-elevated)] sm:max-h-none sm:rounded-[var(--radius-xl,16px)] sm:shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
         label="Command palette"
         shouldFilter={false}
       >
