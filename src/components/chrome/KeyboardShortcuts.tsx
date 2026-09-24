@@ -190,7 +190,7 @@ export function KeyboardShortcuts() {
         if (
           !inTree &&
           !field &&
-          !document.querySelector("[data-nexus-confirm], [role='dialog']")
+          !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
         ) {
           e.preventDefault();
           const id = store.activeNoteId;
@@ -261,7 +261,8 @@ export function KeyboardShortcuts() {
         const inList = (el: HTMLElement | null) =>
           Boolean(el && typeof el.closest === "function" && el.closest("[data-file-tree]"));
         if (inList(target) || inList(active)) return;
-        if (document.querySelector("[role='dialog']")) return;
+        // Only a modal owns Esc. The quick tour is not one.
+        if (document.querySelector("[role='dialog'][aria-modal='true']")) return;
         const inNote = (el: HTMLElement | null) =>
           Boolean(
             el &&

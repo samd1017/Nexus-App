@@ -238,7 +238,7 @@ export function EditorPane({
   useEffect(() => {
     if (isSecondary || noteCount !== 0) return;
     const idleNow = () => {
-      if (document.querySelector("[data-nexus-confirm], [role='dialog']")) return false;
+      if (document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")) return false;
       const active = document.activeElement as HTMLElement | null;
       return (
         !active ||

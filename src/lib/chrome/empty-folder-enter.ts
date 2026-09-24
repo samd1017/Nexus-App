@@ -99,3 +99,59 @@ export function isProgrammaticFocusSteal(
   if (el.closest("[data-folder-empty='1'], [data-file-tree]")) return false;
   return Boolean(el.closest(STEAL_SELECTOR));
 }
+
+/**
+ * Keys typed after a note is created but before its name field is on screen.
+ * The field takes them when it mounts, so a fast typist (or a script) does not
+ * lose the first letters of the name.
+ */
+type RenameBuffer = { id: string; text: string; commit: boolean; until: number };
+let renameBuffer: RenameBuffer | null = null;
+
+export function startRenameBuffer(id: string, ms = 1500): void {
+  renameBuffer = { id, text: "", commit: false, until: Date.now() + ms };
+}
+
+export function renameBufferActive(): RenameBuffer | null {
+  if (!renameBuffer) return null;
+  if (Date.now() > renameBuffer.until) {
+    renameBuffer = null;
+    return null;
+  }
+  return renameBuffer;
+}
+
+export function takeRenameBuffer(id: string): { text: string; commit: boolean } | null {
+  const buf = renameBuffer;
+  if (!buf || buf.id !== id) return null;
+  renameBuffer = null;
+  if (!buf.text && !buf.commit) return null;
+  return { text: buf.text, commit: buf.commit };
+}
+
+/** Feed one keydown into the buffer. Returns true when the key was taken. */
+export function bufferRenameKey(e: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+}): boolean {
+  const buf = renameBufferActive();
+  if (!buf || buf.commit) return false;
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  if (e.key === "Enter") {
+    // Enter with nothing typed keeps the default name, and never makes a
+    // second note behind the first.
+    buf.commit = true;
+    return true;
+  }
+  if (e.key === "Backspace") {
+    buf.text = buf.text.slice(0, -1);
+    return true;
+  }
+  if (e.key.length === 1) {
+    buf.text += e.key;
+    return true;
+  }
+  return false;
+}

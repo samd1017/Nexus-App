@@ -20,6 +20,11 @@ export function FirstRunCoach() {
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const setToast = useVaultStore((s) => s.setToast);
   const [visible, setVisible] = useState(false);
+  const vaultEmpty = useVaultStore((s) => {
+    if (s.shellCatalog) return s.catalogNoteCount <= 0 && s.rootIds.length === 0;
+    for (const id in s.nodes) if (s.nodes[id]?.kind === "note") return false;
+    return true;
+  });
 
   useEffect(() => {
     if (!vaultId) {
@@ -34,8 +39,9 @@ export function FirstRunCoach() {
     return () => window.clearTimeout(t);
   }, [vaultId]);
 
-  // Don't cover fullscreen graph or the command palette
-  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen) return null;
+  // Don't cover fullscreen graph or the command palette. An empty vault shows
+  // its own first step (Enter starts a note); the tour waits for a first note.
+  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen || vaultEmpty) return null;
 
   const dismiss = () => {
     markFirstRunCoachDone();
@@ -74,7 +80,7 @@ export function FirstRunCoach() {
   return (
     <div
       className="pointer-events-none fixed inset-x-0 bottom-0 z-[95] flex justify-center px-3 pb-[max(4.75rem,calc(3.25rem+env(safe-area-inset-bottom)))] sm:pb-5"
-      role="dialog"
+      role="region"
       aria-label="Quick tour"
     >
       <div className="pointer-events-auto first-run-coach glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] border border-[rgba(0,200,255,0.22)] shadow-[0_20px_60px_rgba(0,0,0,0.55),0_0_40px_rgba(0,200,255,0.08)]">

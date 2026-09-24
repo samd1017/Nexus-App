@@ -35,7 +35,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
-import { claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
+import { bufferRenameKey, claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename, startRenameBuffer, takeRenameBuffer } from "@/lib/chrome/empty-folder-enter";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { takePendingFolderReveal } from "@/lib/chrome/reveal-list";
 import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
@@ -195,14 +195,41 @@ const TreeRow = memo(function TreeRow({
     if (!renaming) setNameDraft(displayName(node));
   }, [node?.id, node?.name, node?.content, renaming, node]);
 
+  // Set the field once when rename opens. A save or index update changes the
+  // node object while the name is being typed; that must not reset the text.
+  const renameInitFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!renaming) renameInitFor.current = null;
+  }, [renaming]);
   useEffect(() => {
     if (!node || !renaming) return;
-    setNameDraft(displayName(node));
+    if (renameInitFor.current === node.id) return;
+    renameInitFor.current = node.id;
+    skipBlur.current = false;
+    const typed = takeRenameBuffer(node.id);
+    if (typed?.commit) {
+      // The name, and Enter, arrived before this field did.
+      const next = typed.text.trim();
+      skipBlur.current = true;
+      setRenamingId(null);
+      if (next && next !== displayName(node)) renameNode(node.id, next);
+      onRenameFinished?.(node.id, true);
+      return;
+    }
+    setNameDraft(typed?.text ? typed.text : displayName(node));
     requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-      inputRef.current?.scrollIntoView({ block: "nearest" });
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      if (typed?.text) {
+        const end = input.value.length;
+        input.setSelectionRange(end, end);
+      } else {
+        input.select();
+      }
+      input.scrollIntoView({ block: "nearest" });
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renaming, nodeId, node]);
 
   if (!node) return null;
@@ -677,7 +704,9 @@ export const FileTree = memo(function FileTree() {
     };
     const onCreated = (e: Event) => {
       const id = (e as CustomEvent<string>).detail;
-      if (id) justCreatedRef.current = id;
+      if (!id) return;
+      justCreatedRef.current = id;
+      startRenameBuffer(id);
     };
     window.addEventListener("nexus-rename-node", onRename);
     window.addEventListener("nexus-created-note", onCreated);
@@ -814,6 +843,7 @@ export const FileTree = memo(function FileTree() {
 
   const openCreatedRename = useCallback((noteId: string) => {
     justCreatedRef.current = noteId;
+    startRenameBuffer(noteId);
     const safe =
       typeof CSS !== "undefined" && typeof CSS.escape === "function"
         ? CSS.escape(noteId)
@@ -920,6 +950,16 @@ export const FileTree = memo(function FileTree() {
     };
     const onKey = (e: KeyboardEvent) => {
       if (dialogOpen()) return;
+      // A name typed before its field is on screen is kept for the field.
+      if (
+        !e.isComposing &&
+        !document.querySelector("[data-testid='tree-rename']") &&
+        bufferRenameKey(e)
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
       const target = e.target as HTMLElement | null;
       const tree = parentRef.current;
       const active = document.activeElement;
