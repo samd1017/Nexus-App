@@ -797,6 +797,12 @@ assert.equal(treeSrc.includes("const dialogOpen = () =>"), true);
 const savedPageSrc = readFileSync(new URL("../public/saved-page.js", import.meta.url), "utf8");
 assert.equal(savedPageSrc.includes('host.style.pointerEvents = "none"'), true);
 assert.equal(settingsSrc.includes("setCommandOpen(false)"), true);
+// A first note asked for while the vault is still opening is made once it opens.
+const whenReadySrc = readFileSync(new URL("../src/lib/vault/create-when-ready.ts", import.meta.url), "utf8");
+assert.equal(whenReadySrc.includes("if (s.connecting || done) return;"), true);
+assert.equal(editorSrc.includes("createNoteWhenReady("), true);
+assert.equal(treeSrc.includes("createNoteWhenReady("), true);
+assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : undefined}'), true);
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

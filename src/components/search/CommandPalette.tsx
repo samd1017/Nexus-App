@@ -1544,7 +1544,7 @@ function CommandPaletteOpen() {
             <X size={18} />
           </button>
           <kbd className="hidden shrink-0 rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] sm:inline">
-            esc
+            Esc
           </kbd>
         </div>
         {!query.trim() ? (
@@ -2179,7 +2179,7 @@ function CommandPaletteOpen() {
         <div className="flex items-center gap-3.5 border-t border-[var(--border)] px-3.5 py-2 text-[10.5px] text-[var(--text-muted)]">
           <Hint keys="↑↓" label="navigate" />
           <Hint keys="↵" label="open" />
-          <Hint keys="esc" label="close" />
+          <Hint keys="Esc" label="close" />
           <span className="ml-auto flex items-center gap-1.5">
             <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
               {formatShortcut("K")}
