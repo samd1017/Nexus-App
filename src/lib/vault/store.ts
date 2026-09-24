@@ -4430,18 +4430,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				}
 			}
 		}
-		const trashLabel = target.kind === "note" ? noteTitle(target) : target.name;
 		if (undoTrashPath) {
-			get().setToast(`Moved to trash: ${trashLabel}`, {
+			get().setToast("Moved to Trash. You can put it back.", {
 				label: "Restore",
 				kind: "restore-trash",
 				trashPath: undoTrashPath,
 			});
 		} else {
-			get().setToast(`Moved to trash: ${trashLabel}`, {
-				label: "Open trash",
-				kind: "open-pulse",
-			});
+			get().setToast("Moved to Trash. You can put it back.");
 		}
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;

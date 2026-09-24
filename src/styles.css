@@ -2065,3 +2065,39 @@ button:focus-visible,
   box-shadow: 0 0 0 4px rgba(90, 216, 255, 0.8);
 }
 
+/* Real Rebuild control: black on cyan so a click-hunt does not have to OCR for it. */
+.nexus-rebuild-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 44px;
+  border-radius: 10px;
+  border: 2px solid #5ad8ff;
+  background: #5ad8ff;
+  color: #000;
+  font-size: 16px;
+  font-weight: 700;
+}
+.nexus-rebuild-btn:focus,
+.nexus-rebuild-btn:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
+/* Search field uses the same cyan ring, inset so the palette cannot clip it. */
+.nexus-search-field:focus-within,
+.nexus-search-field[data-keyboard-focus="control"] {
+  outline: 3px solid #5ad8ff;
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 3px #5ad8ff;
+}
+
+[data-testid="trash-status"] {
+  color: #fff;
+  background: #000;
+  border: 2px solid #5ad8ff;
+  font-size: 16px;
+  font-weight: 700;
+}
+

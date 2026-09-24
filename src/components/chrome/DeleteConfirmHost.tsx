@@ -22,6 +22,8 @@ export function DeleteConfirmHost() {
   return (
     <ConfirmDialog
       open={Boolean(pending)}
+      testId="trash-confirm"
+      initialFocus="cancel"
       title="Move to Trash?"
       message={message}
       confirmLabel="Move to Trash"

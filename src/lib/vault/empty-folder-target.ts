@@ -12,7 +12,9 @@ export function emptyFolderIdFromTarget(target: EventTarget | null): string | nu
   const el = target as HTMLElement | null;
   if (!el || typeof el.closest !== "function") return null;
   const row = el.closest("[data-folder-empty='1']");
-  const id = row?.getAttribute("data-node-id")?.trim();
+  const id =
+    row?.getAttribute("data-empty-parent")?.trim() ||
+    row?.getAttribute("data-node-id")?.trim();
   return id || null;
 }
 

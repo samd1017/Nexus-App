@@ -283,7 +283,7 @@ export function SettingsPanel() {
         <div className="shrink-0 border-b border-[var(--border)] px-5 py-3">
           <button
             type="button"
-            className="ghost-btn !h-9 w-full justify-center px-3 text-[13px]"
+            className="nexus-rebuild-btn"
             data-testid="settings-rebuild"
             data-settings-rebuild
             aria-label="Rebuild search"

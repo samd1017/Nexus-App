@@ -1461,7 +1461,11 @@ function CommandPaletteOpen() {
           <div className="h-1 w-10 rounded-full bg-white/15" />
         </div>
         <div
-          className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]"
+          className="nexus-search-field flex items-center gap-2.5 border-b border-[var(--border)] px-4"
+          data-testid="search-field"
+          onFocusCapture={(e) => {
+            e.currentTarget.setAttribute("data-keyboard-focus", "control");
+          }}
           data-search-engine={searchEngine.id}
           data-search-engine-label={searchEngine.shortLabel}
           data-search-index-state={searchEngine.indexState}
@@ -1475,6 +1479,11 @@ function CommandPaletteOpen() {
             placeholder="Search notes"
             className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             autoFocus
+            onFocus={(e) => {
+              e.currentTarget
+                .closest("[data-testid='search-field']")
+                ?.setAttribute("data-keyboard-focus", "control");
+            }}
             onKeyDownCapture={(e) => {
               if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
               const root = e.currentTarget.closest("[cmdk-root]");

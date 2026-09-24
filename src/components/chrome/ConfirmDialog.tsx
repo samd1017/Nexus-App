@@ -165,7 +165,7 @@ export function ConfirmDialog({
           <div className="min-w-0 flex-1">
             <h2
               id="nexus-confirm-title"
-              className="text-[15px] font-semibold tracking-tight text-[var(--text-primary)]"
+              className="text-[22px] font-semibold tracking-tight text-white"
             >
               {title}
             </h2>
@@ -183,7 +183,7 @@ export function ConfirmDialog({
             type="button"
             data-confirm-cancel
             data-testid="confirm-cancel"
-            className="ghost-btn !h-9 px-3 text-[13px]"
+            className="ghost-btn !h-11 min-w-[96px] px-4 text-[16px] font-semibold text-white"
             onClick={onCancel}
           >
             {cancelLabel}

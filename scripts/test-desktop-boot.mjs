@@ -281,6 +281,8 @@ const paletteSrc = readFileSync(
   "utf8",
 );
 assert.equal(paletteSrc.includes('placeholder="Search notes"'), true);
+assert.equal(paletteSrc.includes('data-testid="search-field"'), true);
+assert.equal(paletteSrc.includes("nexus-search-field"), true);
 assert.equal(paletteSrc.includes("searchEmptyStatus"), true);
 assert.equal(paletteSrc.includes('data-testid={emptyStatus === "miss" ? "search-miss"'), true);
 assert.equal(paletteSrc.includes('emptyStatus !== "miss"'), true);
@@ -296,6 +298,7 @@ const settingsSrc = readFileSync(
 assert.equal(settingsSrc.includes('initialFocus="cancel"'), true);
 assert.equal(settingsSrc.includes("data-settings-rebuild"), true);
 assert.equal(settingsSrc.includes('data-testid="settings-rebuild"'), true);
+assert.equal(settingsSrc.includes("nexus-rebuild-btn"), true);
 assert.equal(settingsSrc.includes("nexus-open-rebuild"), true);
 assert.equal(settingsSrc.includes('e.key !== "Enter" && e.key !== " "'), true);
 assert.equal(settingsSrc.includes("Rebuild search"), true);
@@ -323,6 +326,11 @@ assert.equal(treeSrc.includes("data-focused-empty-folder"), true);
 assert.equal(treeSrc.includes("folderHasNothing"), true);
 assert.equal(treeSrc.includes("emptyFolderIdFromTarget"), true);
 assert.equal(treeSrc.includes("onEmptyEnter"), true);
+assert.equal(treeSrc.includes('data-folder-empty="1"'), true);
+assert.equal(
+  /data-testid="tree-empty-folder"[\s\S]{0,240}tabIndex=\{-1\}/.test(treeSrc),
+  true,
+);
 const editorSrc = readFileSync(
   new URL("../src/components/editor/EditorPane.tsx", import.meta.url),
   "utf8",
@@ -473,6 +481,20 @@ assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);
 assert.equal(cssSrc.includes('data-keyboard-focus="row"'), true);
 assert.equal(cssSrc.includes('data-keyboard-focus="control"'), true);
 assert.equal(cssSrc.includes("inset 0 0 0 3px #5ad8ff"), true);
+assert.equal(cssSrc.includes("nexus-rebuild-btn"), true);
+assert.equal(cssSrc.includes("nexus-search-field:focus-within"), true);
+assert.equal(storeSrc.includes("Moved to Trash. You can put it back."), true);
+const trashSrc = readFileSync(
+  new URL("../src/components/chrome/DeleteConfirmHost.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(trashSrc.includes('testId="trash-confirm"'), true);
+assert.equal(trashSrc.includes('initialFocus="cancel"'), true);
+const toastSrc = readFileSync(
+  new URL("../src/components/chrome/Toast.tsx", import.meta.url),
+  "utf8",
+);
+assert.equal(toastSrc.includes('data-testid={trashStatus ? "trash-status" : undefined}'), true);
 assert.equal(treeSrc.includes('data-keyboard-focus={isFocused ? "row" : undefined}'), true);
 assert.equal(treeSrc.includes('data-testid="tree-rename"'), true);
 assert.equal(treeSrc.includes("data-rename-original"), true);

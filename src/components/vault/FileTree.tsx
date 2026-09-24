@@ -285,6 +285,7 @@ const TreeRow = memo(function TreeRow({
         const t = e.target as HTMLElement;
         if (t.closest("input,button,[role='button'],a")) return;
         onFocusRow?.(node.id);
+        if (folderEmpty) e.currentTarget.focus();
         onPointerDragStart(node.id, e);
       }}
       onClick={(e) => {
@@ -368,7 +369,7 @@ const TreeRow = memo(function TreeRow({
               role="status"
               data-testid="tree-empty-folder-status"
               data-empty-parent={node.id}
-              className="shrink-0 text-[11px] text-[var(--text-secondary)]"
+              className="shrink-0 text-[13px] font-semibold text-white"
             >
               Enter starts a note.
             </span>
@@ -1123,7 +1124,23 @@ export const FileTree = memo(function FileTree() {
           role="treeitem"
           aria-label="This folder is empty. Enter starts a note."
           data-testid="tree-empty-folder"
+          data-folder-empty="1"
           data-empty-parent={parentId ?? ""}
+          tabIndex={-1}
+          onPointerDown={(e) => {
+            if ((e.target as HTMLElement).closest("button,a,input")) return;
+            const idx = flatRowsRef.current.findIndex((r) => r.id === row.id);
+            if (idx >= 0) setFocusedIndex(idx);
+            e.currentTarget.focus();
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
+            if (!parentId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const id = createNote(parentId, "Untitled");
+            if (id) requestAnimationFrame(() => setRenamingId(id));
+          }}
           className={cn(
             "tree-item flex w-full items-center gap-2 text-[12px] text-[var(--text-muted)]",
             treeHasFocus && focusedId === row.id && "is-focused",
@@ -1133,7 +1150,13 @@ export const FileTree = memo(function FileTree() {
           }
           style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
         >
-          <span className="min-w-0 flex-1 truncate">Nothing here yet</span>
+          <span
+            role="status"
+            data-testid="tree-empty-folder-status"
+            className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white"
+          >
+            Enter starts a note.
+          </span>
           <button
             type="button"
             className="mr-1 shrink-0 rounded-md px-2 text-[12px] text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
