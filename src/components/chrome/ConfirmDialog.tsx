@@ -264,9 +264,13 @@ export function ConfirmDialog({
           </div>
         </div>
         <div className="mt-5 flex items-center justify-end gap-2">
-          <span className="nexus-rename-hint mr-auto text-[11.5px] font-medium text-white/70" aria-hidden>
+          <span
+            className="nexus-rename-hint mr-auto items-center text-[13px] font-semibold text-white"
+            data-testid="confirm-esc-hint"
+            aria-hidden
+          >
             <kbd>Esc</kbd>
-            <span className="ml-1 self-center">cancels</span>
+            <span className="ml-1.5 self-center">cancels</span>
           </span>
           <button
             ref={cancelRef}

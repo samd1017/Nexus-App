@@ -2389,3 +2389,26 @@ button:focus-visible,
   color: #f2f2f7;
   border-color: rgba(255, 255, 255, 0.14);
 }
+
+/* Key pills read at a glance: white on near-black with a clear light edge. */
+.nexus-rename-hint kbd {
+  font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: #0b0b0e;
+  border: 1.5px solid rgba(255, 255, 255, 0.72);
+  border-radius: 6px;
+  padding: 4px 7px;
+}
+.nexus-dark-island .nexus-rename-hint kbd {
+  font-size: 13px;
+  padding: 5px 9px;
+}
+.nexus-keys-hint kbd {
+  font: 700 13px/1 ui-sans-serif, system-ui, sans-serif;
+  color: #fff;
+  background: #0b0b0e;
+  border: 1.5px solid rgba(255, 255, 255, 0.72);
+  border-radius: 6px;
+  padding: 5px 9px;
+}

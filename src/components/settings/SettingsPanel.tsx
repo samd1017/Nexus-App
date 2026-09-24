@@ -45,10 +45,13 @@ function MemoryBudgetStatus({
   open,
   vaultId,
   mode,
+  totalNotes,
 }: {
   open: boolean;
   vaultId: string | null;
   mode: VaultMode;
+  /** Whole-vault count, or -1 while a large vault is still being counted. */
+  totalNotes: number;
 }) {
   const dirtyCount = useVaultStore((s) => s.dirtyNoteIds.length);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
@@ -63,6 +66,9 @@ function MemoryBudgetStatus({
     return () => clearInterval(t);
   }, [open, vaultId, mode, dirtyCount, activeNoteId]);
 
+  // The loaded count is never shown alone; on a large vault it would read as
+  // the vault size.
+  const ofTotal = totalNotes > 0 ? ` of ${totalNotes.toLocaleString()}` : "";
   return (
     <div className="mt-2 border-t border-[var(--border)] pt-2">
       <div className="text-[12px] font-medium text-[var(--text-secondary)]">
@@ -74,8 +80,8 @@ function MemoryBudgetStatus({
           : !bodyStats || bodyStats.max === 0
             ? "This vault keeps note text in memory."
             : bodyStats.underPressure
-              ? `Keeping the notes you are using. ${bodyStats.loaded.toLocaleString()} in memory, including ${bodyStats.protected.toLocaleString()} you are editing.`
-              : `Note text loads when you open a note. ${bodyStats.loaded.toLocaleString()} in memory right now.`}
+              ? `Keeping the notes you are using. Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory, including ${bodyStats.protected.toLocaleString()} you are editing.`
+              : `Note text loads when you open a note. Text for ${bodyStats.loaded.toLocaleString()}${ofTotal} notes is in memory right now.`}
       </p>
     </div>
   );
@@ -365,8 +371,13 @@ export function SettingsPanel() {
               </p>
             )}
           </div>
-          <span className="nexus-rename-hint" aria-hidden>
+          <span
+            className="nexus-rename-hint items-center text-[13px] font-semibold text-white"
+            data-testid="settings-esc-hint"
+            aria-hidden
+          >
             <kbd>Esc</kbd>
+            <span className="ml-1.5 self-center">closes</span>
           </span>
           <button
             type="button"
@@ -720,7 +731,7 @@ export function SettingsPanel() {
                   <> This vault has no notes yet. Enter starts a note.</>
                 )}
               </p>
-              <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} />
+              <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} totalNotes={noteCount} />
             </div>
             <div className="mt-4">
               <div className="text-[13px] font-medium text-[var(--text-primary)]">

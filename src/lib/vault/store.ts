@@ -5917,6 +5917,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				openRebuildConfirm: () => void;
 				openEmptyVault: () => void;
 				probeFirstRun: () => Record<string, unknown>;
+				probeFirstRunText: () => string;
 				setActiveNote: (id: string | null) => void;
 				setSecondaryNote: (id: string | null) => void;
 				setRightTab: (tab: string) => void;
@@ -5983,6 +5984,14 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				writingInNote: Boolean(document.activeElement?.closest?.(".ProseMirror")),
 				diskWriteError,
 			};
+		},
+		// Same fields as a JSON string. A CDP Runtime.evaluate without
+		// returnByValue hands back an object reference, which prints as {}.
+		probeFirstRunText: () => {
+			const soak = (window as unknown as {
+				__NEXUS_SOAK__?: { probeFirstRun?: () => Record<string, unknown> };
+			}).__NEXUS_SOAK__;
+			return JSON.stringify(soak?.probeFirstRun?.() ?? {});
 		},
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),
