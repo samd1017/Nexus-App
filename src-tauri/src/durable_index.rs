@@ -1002,7 +1002,7 @@ fn fill_from_disk_job(
 
     let app_emit = app.clone();
     let db_cancel = db_path.to_string();
-    fill_from_disk_with_opts(
+    let result = fill_from_disk_with_opts(
         &mut conn,
         root_path,
         FillOpts {
@@ -1015,7 +1015,22 @@ fn fill_from_disk_job(
         },
         || fill_is_cancelled(&db_cancel),
         |p| emit_fill_progress(&app_emit, p),
-    )
+    );
+    if result.is_ok() && !fill_is_cancelled(db_path) {
+        let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
+    }
+    result
+}
+
+/// A vault whose titles were already searchable skips the fill, so its
+/// lookup indexes are built here, after Ready, on a short-lived writer.
+fn ensure_shell_indexes_later(db_path: String) {
+    std::thread::spawn(move || {
+        let Ok(conn) = open_conn(&db_path) else { return };
+        if !crate::shell_catalog::shell_search_indexes_ready(&conn) {
+            let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
+        }
+    });
 }
 
 /// Walk the vault on disk in phases. Title search for a fixed window is
@@ -1138,6 +1153,7 @@ pub async fn vault_index_fill_from_disk(
             // The page is already searchable. Do not open a writer. That
             // connection was setting WAL mode again and checkpointing the file.
             if !fill_is_inflight(&db_path) {
+                ensure_shell_indexes_later(db_path.clone());
                 return Ok(IndexFillResult {
                     indexed: 0,
                     skipped: notes,

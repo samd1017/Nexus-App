@@ -6,6 +6,6 @@ publish = false
 description = "GTK-free tests for phased / incremental SQLite FTS fill"
 
 [dependencies]
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

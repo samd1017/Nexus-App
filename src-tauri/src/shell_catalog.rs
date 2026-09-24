@@ -8,7 +8,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 /// Full note graph stays in the renderer only below the folder-map threshold.
 pub const SHELL_FULL_MAX_NOTES: i64 = 399;
@@ -273,15 +273,36 @@ pub fn read_page_snapshot(db_path: &str) -> Option<ShellMount> {
     Some(mount)
 }
 
+/// Lookup indexes for titles, names, paths, and link targets. Built after
+/// Ready on the fill's connection (about a second at 500k notes). Without them
+/// every link check and backlink read scans the whole catalog.
 pub fn ensure_shell_indexes(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS note_meta_parent ON note_meta(parent_id);
          CREATE INDEX IF NOT EXISTS note_meta_title_norm ON note_meta(lower(title));
+         CREATE INDEX IF NOT EXISTS note_meta_name_norm ON note_meta(lower(name));
          CREATE INDEX IF NOT EXISTS note_meta_path_norm ON note_meta(lower(path));
-         CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);",
+         CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);
+         CREATE INDEX IF NOT EXISTS link_target_id ON link_edge(target_id);
+         CREATE INDEX IF NOT EXISTS note_meta_live_recent ON note_meta(mtime DESC, path)
+           WHERE deleted=0 AND kind='note';",
     )
     .map_err(|e| e.to_string())
 }
+
+/// SQLite stops the statement once `budget` has passed and `f` sees an
+/// interrupt error. A scan over a large catalog then returns what it found by
+/// then instead of holding the connection every gesture waits on.
+pub fn with_time_budget<T>(conn: &Connection, budget: Duration, f: impl FnOnce() -> T) -> T {
+    let start = Instant::now();
+    conn.progress_handler(2_000, Some(move || start.elapsed() > budget));
+    let out = f();
+    conn.progress_handler(2_000, None::<fn() -> bool>);
+    out
+}
+
+/// Ad-hoc scans (a substring in any path, orphans, broken links) stop here.
+pub const SHELL_SCAN_BUDGET: Duration = Duration::from_millis(150);
 
 /// Indexes the first page needs. Title and path indexes are built after Ready
 /// so a large catalog is not indexed before the window is on screen.
@@ -295,12 +316,14 @@ pub fn ensure_page_indexes(conn: &Connection) -> Result<(), String> {
 
 pub fn shell_search_indexes_ready(conn: &Connection) -> bool {
     conn.query_row(
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'note_meta_title_norm'",
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN
+           ('note_meta_title_norm', 'note_meta_name_norm', 'note_meta_path_norm', 'link_target_id',
+            'note_meta_live_recent')",
         [],
         |r| r.get::<_, i64>(0),
     )
     .unwrap_or(0)
-        == 1
+        == 5
 }
 
 const COUNT_NOTES_KEY: &str = "shell_note_count";
@@ -1860,14 +1883,24 @@ pub fn query_path_page(
              WHERE deleted=0 AND kind='note'
                AND (?1 = '' OR instr(lower(path), ?1) > 0)
                AND (?2 = '' OR instr(lower(path), ?2) > 0)
-             ORDER BY mtime DESC, name COLLATE NOCASE
+             ORDER BY mtime DESC
              LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
-    let mapped = stmt
-        .query_map(params![path_q, folder_q, limit], map_row)
-        .map_err(|e| e.to_string())?;
-    Ok(mapped.filter_map(|r| r.ok()).collect())
+    // Newest first straight off the mtime index, so a common needle stops at
+    // the page. A rare one stops at the budget with what it found.
+    let mut out = Vec::new();
+    with_time_budget(conn, SHELL_SCAN_BUDGET, || {
+        if let Ok(mapped) = stmt.query_map(params![path_q, folder_q, limit], map_row) {
+            for row in mapped {
+                match row {
+                    Ok(r) => out.push(r),
+                    Err(_) => break,
+                }
+            }
+        }
+    });
+    Ok(out)
 }
 
 /// Notes with no stored link in or out. A page, not the vault.
@@ -1884,14 +1917,22 @@ pub fn query_orphans(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, Str
                  WHERE e.target_id = m.id
                     OR e.target_norm = lower(COALESCE(NULLIF(m.title, ''), m.name))
                )
-             ORDER BY m.mtime DESC, m.name COLLATE NOCASE
+             ORDER BY m.mtime DESC
              LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
-    let mapped = stmt
-        .query_map(params![limit], map_row)
-        .map_err(|e| e.to_string())?;
-    Ok(mapped.filter_map(|r| r.ok()).collect())
+    let mut out = Vec::new();
+    with_time_budget(conn, SHELL_SCAN_BUDGET, || {
+        if let Ok(mapped) = stmt.query_map(params![limit], map_row) {
+            for row in mapped {
+                match row {
+                    Ok(r) => out.push(r),
+                    Err(_) => break,
+                }
+            }
+        }
+    });
+    Ok(out)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1905,62 +1946,100 @@ pub struct ShellBrokenLink {
 
 /// Outgoing edges whose target is not a catalog title, name, or path.
 pub fn query_broken(conn: &Connection, limit: i64) -> Result<Vec<ShellBrokenLink>, String> {
-    let limit = limit.clamp(1, 40);
-    let mut stmt = conn
+    let limit = limit.clamp(1, 40) as usize;
+    // One indexed lookup per link, in Rust: SQLite cannot drive an expression
+    // index from a column of the outer query, and the old OR over lowered
+    // columns checked every note for every link (107 s at 500k notes). Until
+    // the lookup indexes exist the page is empty rather than a scan.
+    if !shell_search_indexes_ready(conn) {
+        return Ok(Vec::new());
+    }
+    let mut edges = conn
         .prepare(
-            "SELECT m.id, m.path, COALESCE(NULLIF(m.title, ''), m.name), e.target_raw
-             FROM link_edge e
-             JOIN note_meta m ON m.id = e.source_id
-             WHERE m.deleted=0 AND m.kind='note'
-               AND NOT EXISTS (
-                 SELECT 1 FROM note_meta t
-                 WHERE t.deleted=0 AND t.kind='note' AND (
-                   lower(COALESCE(t.title, '')) = e.target_norm
-                   OR lower(t.name) = e.target_norm
-                   OR lower(t.path) = e.target_norm
-                 )
-               )
-             LIMIT ?1",
+            "SELECT e.source_id, e.target_raw, e.target_norm FROM link_edge e
+             WHERE e.target_id IS NULL",
         )
         .map_err(|e| e.to_string())?;
-    let mapped = stmt
-        .query_map(params![limit], |row| {
-            Ok(ShellBrokenLink {
-                from_id: row.get(0)?,
-                from_path: row.get(1)?,
-                from_title: row.get(2)?,
-                target: row.get(3)?,
-            })
-        })
+    let mut known = conn
+        .prepare(
+            "SELECT EXISTS(SELECT 1 FROM note_meta WHERE lower(title) = ?1 AND deleted=0 AND kind='note')
+                 OR EXISTS(SELECT 1 FROM note_meta WHERE lower(name) = ?1 AND deleted=0 AND kind='note')
+                 OR EXISTS(SELECT 1 FROM note_meta WHERE lower(path) = ?1 AND deleted=0 AND kind='note')",
+        )
         .map_err(|e| e.to_string())?;
-    Ok(mapped.filter_map(|r| r.ok()).collect())
+    let mut source = conn
+        .prepare(
+            "SELECT id, path, COALESCE(NULLIF(title, ''), name) FROM note_meta
+             WHERE id = ?1 AND deleted=0 AND kind='note'",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    with_time_budget(conn, SHELL_SCAN_BUDGET, || {
+        let Ok(mut rows) = edges.query([]) else { return };
+        loop {
+            let row = match rows.next() {
+                Ok(Some(row)) => row,
+                _ => break,
+            };
+            let (Ok(src), Ok(raw), Ok(norm)) = (
+                row.get::<_, String>(0),
+                row.get::<_, String>(1),
+                row.get::<_, String>(2),
+            ) else {
+                continue;
+            };
+            match known.query_row(params![norm], |r| r.get::<_, i64>(0)) {
+                Ok(0) => {}
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+            match source.query_row(params![src], |r| {
+                Ok(ShellBrokenLink {
+                    from_id: r.get(0)?,
+                    from_path: r.get(1)?,
+                    from_title: r.get(2)?,
+                    target: raw.clone(),
+                })
+            }) {
+                Ok(link) => out.push(link),
+                Err(rusqlite::Error::QueryReturnedNoRows) => {}
+                Err(_) => break,
+            }
+            if out.len() >= limit {
+                break;
+            }
+        }
+    });
+    Ok(out)
 }
 
 /// Which of these link norms already name a note. Used so a paged shell does
 /// not call every outgoing link broken.
 pub fn query_known_norms(conn: &Connection, norms: &[String]) -> Result<Vec<String>, String> {
+    // Each term matches one expression index. `lower(COALESCE(title, ''))` or
+    // an OR across columns cannot use them and scanned every note per link.
     let mut stmt = conn
         .prepare(
-            "SELECT 1 FROM note_meta
-             WHERE deleted=0 AND kind='note' AND (
-               lower(COALESCE(title, '')) = ?1
-               OR lower(name) = ?1
-               OR lower(path) = ?1
-             )
-             LIMIT 1",
+            "SELECT EXISTS(SELECT 1 FROM note_meta WHERE lower(title) = ?1 AND deleted=0 AND kind='note')
+                 OR EXISTS(SELECT 1 FROM note_meta WHERE lower(name) = ?1 AND deleted=0 AND kind='note')
+                 OR EXISTS(SELECT 1 FROM note_meta WHERE lower(path) = ?1 AND deleted=0 AND kind='note')",
         )
         .map_err(|e| e.to_string())?;
+    let indexed = shell_search_indexes_ready(conn);
     let mut found = Vec::new();
-    for raw in norms.iter().take(64) {
-        let norm = raw.trim().trim_end_matches(".md").replace('\\', "/").to_ascii_lowercase();
-        if norm.is_empty() {
-            continue;
+    with_time_budget(conn, if indexed { Duration::from_secs(2) } else { SHELL_SCAN_BUDGET }, || {
+        for raw in norms.iter().take(64) {
+            let norm = raw.trim().trim_end_matches(".md").replace('\\', "/").to_ascii_lowercase();
+            if norm.is_empty() {
+                continue;
+            }
+            match stmt.query_row(params![norm], |r| r.get::<_, i64>(0)) {
+                Ok(hit) if hit > 0 => found.push(norm),
+                Ok(_) => {}
+                Err(_) => break,
+            }
         }
-        let hit: i64 = stmt.query_row(params![norm], |r| r.get(0)).unwrap_or(0);
-        if hit > 0 {
-            found.push(norm);
-        }
-    }
+    });
     Ok(found)
 }
 
@@ -2519,6 +2598,11 @@ mod tests {
         let orphans = query_orphans(&conn, 24).unwrap();
         assert!(orphans.len() <= 24);
         assert!(orphans.iter().all(|row| row.id != shell_node_id("Area/n0001.md")));
+        // Before the lookup indexes exist, broken links are an empty page, not a scan.
+        assert!(!shell_search_indexes_ready(&conn));
+        assert!(query_broken(&conn, 40).unwrap().is_empty());
+        ensure_shell_indexes(&conn).unwrap();
+        assert!(shell_search_indexes_ready(&conn));
         let broken = query_broken(&conn, 40).unwrap();
         assert_eq!(broken.len(), 1);
         assert_eq!(broken[0].target, "Missing");

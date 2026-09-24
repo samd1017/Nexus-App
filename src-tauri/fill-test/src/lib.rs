@@ -9,3 +9,6 @@ mod shell_catalog;
 
 pub use fill_join::*;
 pub use index_fill::*;
+
+#[cfg(test)]
+mod bench_500k;
