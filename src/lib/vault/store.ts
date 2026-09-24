@@ -517,6 +517,26 @@ let mockDiskBodies: Map<string, string> | null = null;
 let diskSearchReady = false;
 /** In-flight body hydrates — dedupe concurrent ensureNoteBody */
 let bodyHydrateInflight = new Map<string, Promise<string | null>>();
+const missingBodyIds = new Set<string>();
+
+function isMissingFileError(e: unknown): boolean {
+	const msg = (e instanceof Error ? `${e.name} ${e.message}` : String(e ?? "")).toLowerCase();
+	return (
+		msg.includes("notfounderror") ||
+		msg.includes("not found") ||
+		msg.includes("no such file") ||
+		msg.includes("os error 2") ||
+		msg.includes("enoent") ||
+		msg.includes("could not be found") ||
+		msg.includes("cannot find the file") ||
+		msg.includes("note not loaded")
+	);
+}
+
+/** The last read of this note failed because its file is gone, not a transient error. */
+export function noteFileIsMissing(id: string): boolean {
+	return missingBodyIds.has(id);
+}
 /** Conflict pair cache — invalidated by structureGeneration / nodes ref */
 let _conflictPairsCache: ConflictPair[] | null = null;
 let _conflictPairsStructGen = -1;
@@ -5213,6 +5233,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const inflight = bodyHydrateInflight.get(id);
 		if (inflight) return inflight;
+		missingBodyIds.delete(id);
 		const run = (async () => {
 			const mode = get().mode;
 			// Module vaultGen — bumped by cancelVaultModuleState on vault switch
@@ -5305,6 +5326,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				return content;
 			} catch (e) {
 				console.warn("[nexus] ensureNoteBody failed", id, e);
+				if (isMissingFileError(e)) missingBodyIds.add(id);
 				return null;
 			} finally {
 				bodyHydrateInflight.delete(id);

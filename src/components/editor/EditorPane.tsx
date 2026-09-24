@@ -18,7 +18,7 @@ import {
   ArrowLeftRight,
   Pin,
 } from "lucide-react";
-import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
+import { useVaultStore, getBreadcrumbTrail, noteFileIsMissing } from "@/lib/vault/store";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
 import { VisualEditor } from "./VisualEditor";
@@ -175,7 +175,12 @@ export function EditorPane({
         void ensureNoteBody(id).then((again: string | null) => {
           if (cancelled || again !== null) return;
           const st = useVaultStore.getState();
-          if (isSecondary || st.activeNoteId !== id || st.dirtyNoteIds.includes(id)) {
+          if (
+            isSecondary ||
+            st.activeNoteId !== id ||
+            st.dirtyNoteIds.includes(id) ||
+            !noteFileIsMissing(id)
+          ) {
             setHydrateError(true);
             return;
           }
