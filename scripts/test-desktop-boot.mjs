@@ -290,5 +290,11 @@ const scriptSrc = tauriConf.app.security.csp
   .map((part) => part.trim())
   .find((part) => part.startsWith("script-src"));
 assert.equal(scriptSrc, "script-src 'self'");
+assert.equal(tauriConf.app.windows[0].visible, false);
+assert.equal(rustSrc.includes('ready_clock_line("shown"'), true);
+assert.equal(rustSrc.includes('phase=early '), true);
+const savedAt = distHtml.indexOf('src="./saved-page.js"');
+const moduleAt = distHtml.indexOf('type="module"');
+assert.ok(savedAt > 0 && moduleAt > savedAt, "classic script precedes the app module");
 
 console.log("desktop-boot: PASS");

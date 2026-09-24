@@ -48,6 +48,22 @@ fn ready_clock_line(phase: &str, t: u64, window_ms: u64) -> String {
 static READY_WINDOW_MS: AtomicU64 = AtomicU64::new(0);
 static READY_FOCUS_LOGGED: AtomicBool = AtomicBool::new(false);
 static READY_DOC_LOGGED: AtomicBool = AtomicBool::new(false);
+static READY_SHOWN: AtomicBool = AtomicBool::new(false);
+
+fn reveal_main_window<R: tauri::Runtime>(manager: &impl Manager<R>) {
+    if READY_SHOWN.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(window) = manager.get_webview_window("main") else {
+        READY_SHOWN.store(false, Ordering::Relaxed);
+        return;
+    };
+    let _ = window.show();
+    let _ = window.set_focus();
+    let t = ready_clock_ms();
+    let window_ms = READY_WINDOW_MS.load(Ordering::Relaxed);
+    eprintln!("{}", ready_clock_line("shown", t, window_ms));
+}
 
 fn log_ready_focus(window_ms: u64) {
     if READY_FOCUS_LOGGED.swap(true, Ordering::Relaxed) {
@@ -58,11 +74,19 @@ fn log_ready_focus(window_ms: u64) {
 }
 
 /// Echo a page clock line onto the process log the soak already tails.
+/// The window stays hidden until the early page has decided, so the first
+/// visible frame is that line rather than a blank webview.
 #[tauri::command]
-fn ready_clock_log(line: String) {
+fn ready_clock_log(app: tauri::AppHandle, line: String) {
     let one = line.replace(['\n', '\r'], " ");
     if one.starts_with("NEXUS_READY_CLOCK ") && one.len() <= 400 {
         eprintln!("{one}");
+        if one.contains("phase=early ")
+            || one.contains("phase=module ")
+            || one.contains("phase=shell ")
+        {
+            reveal_main_window(&app);
+        }
     }
 }
 
@@ -248,6 +272,13 @@ pub fn run() {
             vault_shell_mentions,
         ])
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let url = payload.url().as_str();
+                if !url.starts_with("about:") {
+                    reveal_main_window(webview);
+                }
+                return;
+            }
             if payload.event() != PageLoadEvent::Started {
                 return;
             }
@@ -285,8 +316,21 @@ pub fn run() {
                 });
             }
 
-            let handle = app.handle();
+            let handle = app.handle().clone();
+            // Menus used to run before the event loop could serve the document.
+            handle.run_on_main_thread(move || {
+                if let Err(err) = install_menus(&handle) {
+                    eprintln!("nexus menu: {err}");
+                }
+            })?;
 
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running Nexus");
+}
+
+fn install_menus(handle: &tauri::AppHandle) -> tauri::Result<()> {
             let open_vault =
                 MenuItem::with_id(handle, "open_vault", "Open Vault…", true, Some("CmdOrCtrl+O"))?;
             let open_demo = MenuItem::with_id(
@@ -394,15 +438,12 @@ pub fn run() {
                     &window_submenu,
                 ],
             )?;
-            app.set_menu(menu)?;
+            handle.set_menu(menu)?;
 
-            app.on_menu_event(move |app, event| {
+            handle.on_menu_event(move |app, event| {
                 let id = event.id().as_ref().to_string();
                 let _ = app.emit("nexus-menu", id);
             });
 
             Ok(())
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running Nexus");
 }
