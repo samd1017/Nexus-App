@@ -115,7 +115,10 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     case "newNote":
       if (!hasVault || overlayOpen) return false;
-      store.createNote(focusedEmptyFolderId(), "Untitled");
+      // The first note of a vault is made the same way as Enter makes it:
+      // off the map, into the list, with its name ready.
+      if (vaultHasNoNotes()) startFirstNote();
+      else store.createNote(focusedEmptyFolderId(), "Untitled");
       return true;
     case "daily":
       if (!hasVault || overlayOpen) return false;

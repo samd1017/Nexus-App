@@ -1535,6 +1535,17 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
     delete globalThis.__revealStore;
   }
 }
+// An empty vault: a map the reader opens stays open, however soon after the
+// vault opened, and Ctrl+N (key or menu) makes the first note the Enter way.
+{
+  const viewportSrc = readFileSync(new URL("../src/lib/layout/viewport.ts", import.meta.url), "utf8");
+  const at = viewportSrc.indexOf("export function enterGraphFullscreen(): void {");
+  assert.ok(at > 0 && viewportSrc.indexOf("mapChosenAt = Date.now();", at) > at);
+  assert.equal(shellSrc.includes("if (mapChosenSince(openedAt)) return;"), true);
+  assert.ok(shellSrc.indexOf("if (mapChosenSince(openedAt)) return;") < shellSrc.indexOf("exitGraphForViewport();", shellSrc.indexOf("const openedAt = Date.now();")));
+  assert.equal(shellSrc.includes("if (vaultHasNoNotes()) startFirstNote();"), true);
+  assert.equal(keysSrc.includes("if (vaultHasNoNotes()) startFirstNote();"), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

@@ -39,7 +39,15 @@ export function closeDrawersIfNarrow(): void {
  * A second press must not bounce the demo back to the editor — leave via
  * Esc or Exit graph only (`exitGraphForViewport`).
  */
+let mapChosenAt = 0;
+
+/** True when the reader opened the fullscreen map at or after `since`. */
+export function mapChosenSince(since: number): boolean {
+  return mapChosenAt >= since;
+}
+
 export function enterGraphFullscreen(): void {
+  mapChosenAt = Date.now();
   const s = useVaultStore.getState();
   if (isPhoneViewport()) {
     if (s.settings.leftOpen) s.setLeftOpen(false);

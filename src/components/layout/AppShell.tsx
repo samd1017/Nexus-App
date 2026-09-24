@@ -36,9 +36,9 @@ import {
 } from "@/lib/vault/native-index";
 import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
 import { bindWindowState } from "@/lib/desktop/window-state";
-import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
+import { exitGraphForViewport, mapChosenSince, toggleGraphForViewport } from "@/lib/layout/viewport";
 import { revealFileList } from "@/lib/chrome/reveal-list";
-import { vaultHasNoNotes } from "@/lib/vault/first-note";
+import { startFirstNote, vaultHasNoNotes } from "@/lib/vault/first-note";
 import { cn } from "@/lib/utils";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
@@ -308,7 +308,8 @@ export function AppShell() {
         void useVaultStore.getState().flushDirty();
       },
       newNote: () => {
-        useVaultStore.getState().createNote(focusedEmptyFolderId(), "Untitled");
+        if (vaultHasNoNotes()) startFirstNote();
+        else useVaultStore.getState().createNote(focusedEmptyFolderId(), "Untitled");
       },
       toggleGraph: () => toggleGraphForViewport(),
       toggleSource: () => useVaultStore.getState().toggleEditorMode(),
@@ -343,13 +344,15 @@ export function AppShell() {
 
   // A vault that opens empty lands on the list, where Enter starts the first
   // note. An open that puts it straight into the fullscreen map (a saved graph
-  // preference, or a scripted open) is undone in the first moments only, so a
-  // reader who opens the map later on purpose stays there.
+  // preference, or a scripted open) is undone in the first moments only; a
+  // reader who opens the map on purpose stays there, however soon.
   useEffect(() => {
     if (!vaultId) return;
     const openedAt = Date.now();
     const land = () => {
       if (Date.now() - openedAt > 5000) return;
+      // Ctrl+G, the menu, or a button put it there: the reader wants the map.
+      if (mapChosenSince(openedAt)) return;
       const st = useVaultStore.getState();
       if (st.settings.graphMode !== "fullscreen" || !vaultHasNoNotes()) return;
       exitGraphForViewport();
