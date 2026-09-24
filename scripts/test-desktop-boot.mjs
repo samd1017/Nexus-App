@@ -922,6 +922,39 @@ assert.equal(cssSrc.includes('[data-theme="light"] .nexus-keys-hint kbd'), true)
 assert.equal(confirmSrc.includes('data-testid="confirm-esc-hint"'), true);
 assert.equal(settingsSrc.includes('data-testid="settings-esc-hint"'), true);
 assert.equal(editorSrc.includes("<kbd>Arrows</kbd>"), true);
+// Light panels: every white helper line has a dark-ink override, and dialogs keep white.
+{
+  const start = cssSrc.indexOf('[data-theme="light"] .editor-status,');
+  assert.ok(start > 0);
+  const block = cssSrc.slice(start, cssSrc.indexOf("}", start));
+  for (const sel of [
+    '[data-theme="light"] [data-panel-empty]',
+    '[data-theme="light"] [data-testid="tree-empty-folder-banner"]',
+    '[data-theme="light"] [data-testid="tree-empty-folder-status"]',
+    '[data-theme="light"] [data-editor-empty] h2',
+    '[data-theme="light"] [data-editor-empty] p',
+    '[data-theme="light"] [data-testid="vault-first-run-list"] p',
+    '[data-theme="light"] [data-testid="vault-first-run"]',
+    '[data-theme="light"] [data-testid="vault-first-run-invite"]',
+    '[data-theme="light"] [data-testid="note-keys-hint"]',
+    '[data-theme="light"] .tree-item.is-active',
+  ]) {
+    assert.equal(block.includes(sel), true, `light ink missing ${sel}`);
+  }
+  assert.equal(block.includes("color: #12141a;"), true);
+  // No dialog surface is in that list.
+  assert.equal(/nexus-dark-island|data-nexus-confirm|settings-lead/.test(block), false);
+  // Pills flip to dark-on-white on light panels, but stay white-on-black on dialog cards.
+  const light = cssSrc.indexOf('[data-theme="light"] .nexus-keys-hint kbd,');
+  const island = cssSrc.indexOf('[data-theme="light"] .nexus-dark-island .nexus-rename-hint kbd {');
+  assert.ok(light > 0 && island > light);
+  assert.equal(cssSrc.slice(island, cssSrc.indexOf("}", island)).includes("color: #fff;"), true);
+}
+// Esc pills carry their word, and the Trash action never wraps beside them.
+assert.match(confirmSrc, /<kbd>Esc<\/kbd>\s*<span className="ml-1\.5 self-center">cancels<\/span>/);
+assert.match(settingsSrc, /<kbd>Esc<\/kbd>\s*<span className="ml-1\.5 self-center">closes<\/span>/);
+assert.equal((confirmSrc.match(/whitespace-nowrap/g) ?? []).length >= 2, true);
+assert.equal(treeSrc.includes("<kbd>Enter</kbd>") && treeSrc.includes("<kbd>Esc</kbd>"), true);
 // The memory line never shows the loaded count without the vault total.
 assert.equal(settingsSrc.includes("totalNotes={noteCount}"), true);
 assert.equal(settingsSrc.includes("${ofTotal} notes is in memory right now."), true);
