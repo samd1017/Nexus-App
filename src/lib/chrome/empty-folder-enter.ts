@@ -70,8 +70,8 @@ export function scheduleEmptyNoteRename(
   frames = 24,
 ): void {
   settledRenames.delete(noteId);
-  // A name that was set or cancelled is never reopened. A field that vanished
-  // before that (a busy list recycling the row) is opened again.
+  // Asks until the field is on screen, then stops. A name that was set or
+  // cancelled is never reopened, however long the retry has left.
   const isOpen = () => settledRenames.has(noteId) || isOpenNow();
   const later =
     typeof requestAnimationFrame === "function"

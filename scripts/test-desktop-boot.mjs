@@ -900,10 +900,38 @@ assert.equal(cssSrc.includes('.tree-item [data-testid="tree-empty-folder-status"
   await new Promise((r) => setTimeout(r, 700));
   assert.ok(before > 0);
   assert.equal(opens, before, "a settled name must not reopen");
+  // The retry keeps asking until the field first opens, then stops for good.
+  let reopen = 0;
+  let open = false;
+  scheduleEmptyNoteRename("first-open", () => { reopen += 1; }, () => open, 1);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok(reopen >= 2, "the retry asks again while the field is not on screen");
+  open = true;
+  await new Promise((r) => setTimeout(r, 200));
+  const seenAt = reopen;
+  open = false;
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(reopen, seenAt, "once the field was on screen the retry is done");
+  // Commit, cancel, and a typed-ahead commit all report the rename as finished.
+  assert.equal((treeSrc.match(/onRenameFinished\?\.\(node\.id, (true|false)\)/g) ?? []).length >= 3, true);
   assert.equal(enterSrc.includes("waits >= 18"), true);
   assert.equal(enterSrc.includes("export function startRenameBuffer(id: string, ms = 2600)"), true);
   assert.equal(treeSrc.includes("if (id) settleRename(id);"), true);
   assert.equal(treeSrc.includes("if (folderHasNothing(id)) armEmptyFolder(id);"), true);
+}
+// Paged vaults: an exact folder name not yet loaded is looked up in the catalog,
+// merged, its children fetched, and listed. Desktop catalog only; never the browser shell.
+{
+  const at = paletteSrc.indexOf("void fetchShellByPaths(shellDbPath, [wanted])");
+  assert.ok(at > 0);
+  const block = paletteSrc.slice(paletteSrc.lastIndexOf("useEffect(() => {", at), paletteSrc.indexOf("}, [q, qLower", at));
+  assert.equal(block.includes("if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB) return;"), true);
+  assert.equal(block.includes('rows.filter((r) => r.kind === "folder")'), true);
+  assert.equal(block.includes("mergeShellRows(st.nodes, st.rootIds, folders)"), true);
+  assert.equal(block.includes("loadShellChildren(f.id)"), true);
+  assert.equal(block.includes("window.setTimeout(() => {") && block.includes("}, 200);"), true);
+  // It stays quiet when a loaded folder already matches.
+  assert.equal(block.includes("n.name.toLowerCase() === wantedLower"), true);
 }
 // Dialogs are one opaque dark card in both themes and never start transparent.
 assert.equal(settingsSrc.includes("nexus-dark-island"), true);

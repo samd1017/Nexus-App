@@ -50,6 +50,8 @@ import { getBacklinks } from "@/lib/vault/backlinks";
 import {
   BROWSER_SHELL_DB,
   fetchShellBacklinks,
+  fetchShellByPaths,
+  mergeShellRows,
   fetchShellBroken,
   fetchShellOrphans,
   fetchShellPathPage,
@@ -744,6 +746,7 @@ function CommandPaletteOpen() {
     searchIndexState,
   ]);
   const hits = asyncHits ?? syncHits;
+  const [catalogFolderTick, setCatalogFolderTick] = useState(0);
 
   // Folders are not notes, so note search never lists them. Enter on one
   // shows it in the list with the cursor on it.
@@ -760,7 +763,46 @@ function CommandPaletteOpen() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, nodes, shellLiveTick]);
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, nodes, shellLiveTick, catalogFolderTick]);
+
+  // A paged vault only holds the folders it has shown. When none of them is
+  // named exactly what was typed, ask the catalog for that folder at the vault
+  // root (or that exact path), load it, and list it. Nothing happens when it
+  // does not exist.
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB) return;
+    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp) return;
+    if (qLower.startsWith("is:")) return;
+    const wanted = q.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    if (!wanted) return;
+    const wantedLower = wanted.toLowerCase();
+    const live = useVaultStore.getState().nodes;
+    for (const id in live) {
+      const n = live[id];
+      if (n?.kind === "folder" && (n.path.toLowerCase() === wantedLower || n.name.toLowerCase() === wantedLower)) {
+        return;
+      }
+    }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void fetchShellByPaths(shellDbPath, [wanted]).then((rows) => {
+        if (cancelled || !rows) return;
+        const folders = rows.filter((r) => r.kind === "folder");
+        if (!folders.length) return;
+        const st = useVaultStore.getState();
+        if (!st.shellCatalog || st.shellDbPath !== shellDbPath) return;
+        const merged = mergeShellRows(st.nodes, st.rootIds, folders);
+        useVaultStore.setState({ nodes: merged.nodes, rootIds: merged.rootIds });
+        // Learn what is inside, so a folder with notes is not taken for empty.
+        for (const f of folders) void useVaultStore.getState().loadShellChildren(f.id);
+        setCatalogFolderTick((n) => n + 1);
+      });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, shellCatalog, shellDbPath]);
 
   const askAnswer = useMemo(() => {
     if (!isAskMode) return null;
