@@ -224,6 +224,8 @@ fn vault_index_ping() -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let process_ms = ready_clock_ms();
+    eprintln!("{}", ready_clock_line("process", process_ms, 0));
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_persisted_scope::init())
@@ -271,41 +273,33 @@ pub fn run() {
             vault_shell_known_norms,
             vault_shell_mentions,
         ])
-        .on_page_load(|webview, payload| {
-            if payload.event() == PageLoadEvent::Finished {
-                let url = payload.url().as_str();
-                if !url.starts_with("about:") {
-                    reveal_main_window(webview);
-                }
-                return;
-            }
-            if payload.event() != PageLoadEvent::Started {
-                return;
-            }
+        .on_page_load(|_webview, payload| {
             let url = payload.url().as_str();
             if url.starts_with("about:") {
                 return;
             }
-            if READY_DOC_LOGGED.swap(true, Ordering::Relaxed) {
+            // Finished must not show the window. On the happy path the early
+            // script reveals only after it has laid the page out. Showing here
+            // would put a blank shell on screen first.
+            let phase = if payload.event() == PageLoadEvent::Finished {
+                "document-finished"
+            } else if payload.event() == PageLoadEvent::Started {
+                "document-native"
+            } else {
+                return;
+            };
+            if phase == "document-native" && READY_DOC_LOGGED.swap(true, Ordering::Relaxed) {
                 return;
             }
             let t = ready_clock_ms();
             let window_ms = READY_WINDOW_MS.load(Ordering::Relaxed);
-            eprintln!("{}", ready_clock_line("document-native", t, window_ms));
-            let js = format!(
-                "window.__NEXUS_READY_CLOCK__=Object.assign(window.__NEXUS_READY_CLOCK__||{{}},{{window:{window_ms},documentNative:{t}}});"
-            );
-            let _ = webview.eval(js);
+            eprintln!("{}", ready_clock_line(phase, t, window_ms));
         })
         .setup(|app| {
             let window_ms = ready_clock_ms();
             READY_WINDOW_MS.store(window_ms, Ordering::Relaxed);
             eprintln!("{}", ready_clock_line("window", window_ms, window_ms));
             if let Some(window) = app.get_webview_window("main") {
-                let js = format!(
-                    "window.__NEXUS_READY_CLOCK__=Object.assign(window.__NEXUS_READY_CLOCK__||{{}},{{window:{window_ms}}});"
-                );
-                let _ = window.eval(js);
                 if window.is_focused().unwrap_or(false) {
                     log_ready_focus(window_ms);
                 }

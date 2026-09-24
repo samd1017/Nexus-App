@@ -186,6 +186,20 @@
   } catch (ignorePage) {
     if (!hit) reason = "throw";
   } finally {
+    if (hit) {
+      var paintedHost = document.getElementById("nexus-boot-banner");
+      if (paintedHost) void paintedHost.offsetHeight;
+    }
     clockLine("early");
+    var boots = document.querySelectorAll('meta[name="nexus-boot-src"]');
+    var b;
+    for (b = 0; b < boots.length; b++) {
+      var src = boots[b].getAttribute("content");
+      if (!src) continue;
+      var mod = document.createElement("script");
+      mod.type = "module";
+      mod.src = src;
+      document.body.appendChild(mod);
+    }
   }
 })();

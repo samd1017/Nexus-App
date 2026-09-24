@@ -210,6 +210,8 @@ for (const token of [
   assert.equal(pageJs.includes(token), true, token);
 }
 assert.equal(pageJs.includes('host.style.top = "44px"'), true);
+assert.equal(pageJs.includes("offsetHeight"), true);
+assert.equal(pageJs.includes('meta[name="nexus-boot-src"]'), true);
 const clockOrder = ["window=", "document=", "early=", "hit=", "reason=", "shell="];
 let cursor = 0;
 for (const field of clockOrder) {
@@ -224,9 +226,11 @@ assert.equal(storeSrc.includes('publishReadyClock("shell")'), true);
 const clockSrc = readFileSync(new URL("../src/lib/vault/ready-clock.ts", import.meta.url), "utf8");
 assert.equal(clockSrc.includes("NEXUS_READY_CLOCK"), true);
 const rustSrc = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+assert.equal(rustSrc.includes('ready_clock_line("process"'), true);
 assert.equal(rustSrc.includes('ready_clock_line("window"'), true);
 assert.equal(rustSrc.includes('ready_clock_line("focus"'), true);
-assert.equal(rustSrc.includes('ready_clock_line("document-native"'), true);
+assert.equal(rustSrc.includes('"document-native"'), true);
+assert.equal(rustSrc.includes('"document-finished"'), true);
 assert.equal(rustSrc.includes("fn ready_clock_log"), true);
 const { publishReadyClock } = await import("../src/lib/vault/ready-clock.ts");
 const clockLogs = [];
@@ -293,8 +297,14 @@ assert.equal(scriptSrc, "script-src 'self'");
 assert.equal(tauriConf.app.windows[0].visible, false);
 assert.equal(rustSrc.includes('ready_clock_line("shown"'), true);
 assert.equal(rustSrc.includes('phase=early '), true);
+const finishedAt = rustSrc.indexOf('document-finished');
+const startedAt = rustSrc.indexOf("PageLoadEvent::Started");
+assert.ok(finishedAt > 0 && startedAt > finishedAt);
+const finished = rustSrc.slice(finishedAt, startedAt);
+assert.equal(finished.includes("reveal_main_window"), false);
 const savedAt = distHtml.indexOf('src="./saved-page.js"');
-const moduleAt = distHtml.indexOf('type="module"');
-assert.ok(savedAt > 0 && moduleAt > savedAt, "classic script precedes the app module");
+assert.ok(savedAt > 0);
+assert.equal(distHtml.includes('type="module"'), false);
+assert.match(distHtml, /<meta name="nexus-boot-src" content="\.\/assets\/index-/);
 
 console.log("desktop-boot: PASS");

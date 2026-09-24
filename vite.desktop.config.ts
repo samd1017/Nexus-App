@@ -12,24 +12,30 @@ const host = process.env.TAURI_DEV_HOST;
  * Dev: tauri.conf beforeDevCommand → npm run dev:desktop
  * Prod: dist-desktop/ as frontendDist
  */
-/** Keep every module after the classic saved-page script so it can paint first. */
+/**
+ * The classic saved-page script paints first. Module tags are held as metas
+ * until that script has laid the page out, so the app graph is not fetched
+ * in front of it.
+ */
 function bootAfterSavedPage() {
   return {
     name: "boot-after-saved-page",
     transformIndexHtml: {
       order: "post" as const,
       handler(html: string) {
-        const scriptRe = /<script\b[^>]*\btype="module"[^>]*>\s*<\/script>/g;
-        const modules = html.match(scriptRe) ?? [];
-        if (!modules.length) return html;
-        let next = html;
-        for (const tag of modules) next = next.replace(tag, "");
-        const marker = ['<script src="/saved-page.js"></script>', '<script src="./saved-page.js"></script>'].find(
-          (item) => next.includes(item),
-        );
-        if (!marker) return html;
-        const at = next.indexOf(marker) + marker.length;
-        return next.slice(0, at) + modules.join("") + next.slice(at);
+        const scriptRe = /<script\b([^>]*)>\s*<\/script>/gi;
+        const metas: string[] = [];
+        const next = html.replace(scriptRe, (full, attrs: string) => {
+          if (!/\btype="module"/.test(attrs)) return full;
+          const src = /\bsrc="([^"]+)"/.exec(attrs);
+          if (!src) return full;
+          metas.push(`<meta name="nexus-boot-src" content="${src[1]}">`);
+          return "";
+        });
+        if (!metas.length) return html;
+        const head = next.indexOf("</head>");
+        if (head < 0) return html;
+        return next.slice(0, head) + metas.join("") + next.slice(head);
       },
     },
   };
