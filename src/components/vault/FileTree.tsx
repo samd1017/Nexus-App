@@ -38,6 +38,7 @@ import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
 import { claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
+import { takePendingFolderReveal } from "@/lib/chrome/reveal-list";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -666,6 +667,56 @@ export const FileTree = memo(function FileTree() {
     parentRef.current?.focus({ preventScroll: true });
   }, []);
 
+  const pendingFolderFocusRef = useRef<string | null>(null);
+  const [folderFocusTick, setFolderFocusTick] = useState(0);
+
+  useEffect(() => {
+    const reveal = (id: string | null) => {
+      if (!id) return;
+      takePendingFolderReveal();
+      const st = useVaultStore.getState();
+      const open = new Set(st.expandedFolders);
+      let cur = st.nodes[id]?.parentId ?? null;
+      let guard = 0;
+      while (cur && guard++ < 64) {
+        open.add(cur);
+        cur = st.nodes[cur]?.parentId ?? null;
+      }
+      if (folderHasNothing(id)) open.add(id);
+      if (open.size !== st.expandedFolders.length) {
+        st.setExpandedFolders(Array.from(open));
+      }
+      pendingFolderFocusRef.current = id;
+      setFolderFocusTick((n) => n + 1);
+    };
+    const onReveal = (e: Event) => reveal((e as CustomEvent<string>).detail);
+    window.addEventListener("nexus-reveal-folder", onReveal);
+    reveal(takePendingFolderReveal());
+    return () => window.removeEventListener("nexus-reveal-folder", onReveal);
+  }, []);
+
+  useEffect(() => {
+    const id = pendingFolderFocusRef.current;
+    if (!id) return;
+    const idx = flatRows.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    setFocusedIndex(idx);
+    virtualizer.scrollToIndex(idx, { align: "center" });
+    let frames = 0;
+    let raf = 0;
+    const land = () => {
+      if (document.getElementById(`tree-row-${id}`) || frames++ > 30) {
+        if (pendingFolderFocusRef.current !== id) return;
+        pendingFolderFocusRef.current = null;
+        onFocusRow(id);
+        return;
+      }
+      raf = requestAnimationFrame(land);
+    };
+    raf = requestAnimationFrame(land);
+    return () => cancelAnimationFrame(raf);
+  }, [flatRows, folderFocusTick, virtualizer, onFocusRow]);
+
   const openCreatedRename = useCallback((noteId: string) => {
     const safe =
       typeof CSS !== "undefined" && typeof CSS.escape === "function"
@@ -855,7 +906,7 @@ export const FileTree = memo(function FileTree() {
         if (e.key === "Enter") {
           e.preventDefault();
           const id = createNote(null, "Untitled");
-          if (id) requestAnimationFrame(() => setRenamingId(id));
+          if (id) openCreatedRename(id);
         }
         return;
       }
@@ -910,7 +961,7 @@ export const FileTree = memo(function FileTree() {
         if (e.key === "Enter" && row.emptyParentId) {
           e.preventDefault();
           const id = createNote(row.emptyParentId, "Untitled");
-          requestAnimationFrame(() => setRenamingId(id));
+          if (id) openCreatedRename(id);
         }
         return;
       }
@@ -954,7 +1005,7 @@ export const FileTree = memo(function FileTree() {
         if (node.kind === "folder") {
           if (folderHasNothing(node.id)) {
             const id = createNote(node.id, "Untitled");
-            if (id) requestAnimationFrame(() => setRenamingId(id));
+            if (id) openCreatedRename(id);
             return;
           }
           toggleFolderReveal(node.id);
@@ -1312,7 +1363,7 @@ export const FileTree = memo(function FileTree() {
             e.preventDefault();
             e.stopPropagation();
             const id = createNote(parentId, "Untitled");
-            if (id) requestAnimationFrame(() => setRenamingId(id));
+            if (id) openCreatedRename(id);
           }}
           className={cn(
             "tree-item flex w-full items-center gap-2 text-[12px] text-[var(--text-muted)]",
@@ -1364,7 +1415,7 @@ export const FileTree = memo(function FileTree() {
         folderEmpty={row.kind === "folder" && folderHasNothing(row.id)}
         onEmptyEnter={(folderId) => {
           const id = createNote(folderId, "Untitled");
-          if (id) requestAnimationFrame(() => setRenamingId(id));
+          if (id) openCreatedRename(id);
         }}
       />
     );
@@ -1457,7 +1508,7 @@ export const FileTree = memo(function FileTree() {
               className="primary-btn min-h-8 px-3 text-[12px]"
               onClick={() => {
                 const id = createNote(null, "Untitled");
-                if (id) requestAnimationFrame(() => setRenamingId(id));
+                if (id) openCreatedRename(id);
               }}
             >
               New note

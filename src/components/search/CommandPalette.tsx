@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import { holdOpenFocus } from "@/lib/chrome/focus-ring";
+import { revealFolderInList } from "@/lib/chrome/reveal-list";
 import {
   FileText,
   FolderOpen,
@@ -723,6 +724,23 @@ function CommandPaletteOpen() {
     searchIndexState,
   ]);
   const hits = asyncHits ?? syncHits;
+
+  // Folders are not notes, so note search never lists them. Enter on one
+  // shows it in the list with the cursor on it.
+  const folderHits = useMemo(() => {
+    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp) return [];
+    if (qLower.startsWith("is:")) return [];
+    const out: { id: string; name: string; path: string }[] = [];
+    for (const id in nodes) {
+      const n = nodes[id];
+      if (n?.kind !== "folder") continue;
+      if (!n.name.toLowerCase().includes(qLower)) continue;
+      out.push({ id, name: n.name, path: n.path });
+      if (out.length >= 5) break;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, nodes, shellLiveTick]);
 
   const askAnswer = useMemo(() => {
     if (!isAskMode) return null;
@@ -1815,6 +1833,37 @@ function CommandPaletteOpen() {
                   <span className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)] bg-[color-mix(in_srgb,var(--text-muted)_12%,transparent)]">
                     {MATCH_TYPE_LABEL[String(h.matchType)] ??
                       String(h.matchType)}
+                  </span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {folderHits.length > 0 ? (
+            <Command.Group heading="Folders" className={cn(GROUP_HEADING, "mt-1")}>
+              {folderHits.map((f) => (
+                <Command.Item
+                  key={`folder-${f.id}`}
+                  value={`folder-${f.id}-${f.name}`}
+                  data-testid="search-folder-hit"
+                  data-folder-id={f.id}
+                  onSelect={() => {
+                    setCommandOpen(false);
+                    revealFolderInList(f.id);
+                  }}
+                  className={ITEM_CLASS}
+                >
+                  <FolderOpen size={15} className="shrink-0 text-[var(--accent)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-[var(--text-primary)]">
+                      <HighlightedText text={f.name} query={query} />
+                    </div>
+                    <div className="truncate text-[11px] text-[var(--text-muted)]">
+                      {f.path}
+                    </div>
+                  </div>
+                  <span className="ml-auto shrink-0 text-[11px] text-[var(--text-muted)]">
+                    Show in list
                   </span>
                 </Command.Item>
               ))}

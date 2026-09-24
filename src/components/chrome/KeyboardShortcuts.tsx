@@ -15,6 +15,8 @@ import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
+import { revealFileList } from "@/lib/chrome/reveal-list";
+import { scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import {
   matchHotkey,
   type HotkeyId,
@@ -170,6 +172,54 @@ export function KeyboardShortcuts() {
         return;
       }
 
+      // F2 from the note renames it in the list. The list owns F2 on its own rows.
+      if (
+        e.key === "F2" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        store.activeNoteId &&
+        !prefs.settingsOpen &&
+        !store.commandOpen
+      ) {
+        const t = e.target as HTMLElement | null;
+        const tag = t?.tagName?.toLowerCase();
+        const inTree = Boolean(t?.closest?.("[data-file-tree]"));
+        const field = tag === "input" || tag === "textarea" || tag === "select";
+        if (
+          !inTree &&
+          !field &&
+          !document.querySelector("[data-nexus-confirm], [role='dialog']")
+        ) {
+          e.preventDefault();
+          const id = store.activeNoteId;
+          const active = document.activeElement as HTMLElement | null;
+          if (active?.isContentEditable || active?.closest?.(".ProseMirror")) active.blur();
+          revealFileList(() => {
+            const safe =
+              typeof CSS !== "undefined" && typeof CSS.escape === "function"
+                ? CSS.escape(id)
+                : id.replace(/["\\]/g, "\\$&");
+            scheduleEmptyNoteRename(
+              id,
+              (noteId) => {
+                window.dispatchEvent(
+                  new CustomEvent("nexus-rename-node", { detail: noteId }),
+                );
+              },
+              () =>
+                Boolean(
+                  document.querySelector(
+                    `[data-testid="tree-rename"][data-rename-for="${safe}"]`,
+                  ),
+                ),
+            );
+          });
+          return;
+        }
+      }
+
       // Escape closes overlays / exits focus
       if (e.key === "Escape") {
         if (document.querySelector("[data-nexus-confirm]")) return;
@@ -222,21 +272,29 @@ export function KeyboardShortcuts() {
                 el.isContentEditable === true),
           );
         if (!inNote(target) && !inNote(active)) return;
-        const tree = document.querySelector<HTMLElement>("[data-file-tree]");
-        if (!tree) return;
         e.preventDefault();
-        const home = () => {
-          if (!tree.isConnected) return;
-          tree.focus({ preventScroll: true });
-          tree.setAttribute("data-tree-focused", "1");
-        };
-        home();
-        // The note can take the cursor back in the same turn. Land on the list after that.
-        reclaimAfterFocus(() => {
-          const now = document.activeElement as HTMLElement | null;
-          if (inList(now) || !inNote(now)) return;
+        // A collapsed list has no tree to land on. Let go of the note first so
+        // keys typed while the list opens do not edit it.
+        if (!document.querySelector("[data-file-tree]") && active && inNote(active)) {
+          active.blur();
+        }
+        revealFileList((tree) => {
+          const home = () => {
+            if (!tree.isConnected) return;
+            tree.focus({ preventScroll: true });
+            tree.setAttribute("data-tree-focused", "1");
+          };
           home();
+          // The note can take the cursor back in the same turn. Land on the list after that.
+          const back = () => {
+            const now = document.activeElement as HTMLElement | null;
+            if (inList(now) || !inNote(now)) return;
+            home();
+          };
+          reclaimAfterFocus(back);
+          window.setTimeout(back, 48);
         });
+        return;
       }
 
       // Delete active note (not while typing)

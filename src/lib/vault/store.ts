@@ -1783,6 +1783,20 @@ function applyLaunchNotePreference() {
 			if (st.nodes[id]?.kind === "note") noteCount += 1;
 		}
 		if (shouldSkipLaunchNote(noteCount)) return;
+		// A paged catalog only holds part of the vault in memory. Creating
+		// today's note on launch there can shadow the file on disk or leave a
+		// note behind that the next launch cannot read.
+		if (st.shellCatalog) {
+			const todayPath = dailyNotePath(new Date());
+			let loaded = false;
+			for (const id in st.nodes) {
+				if (st.nodes[id]?.path === todayPath) {
+					loaded = true;
+					break;
+				}
+			}
+			if (!loaded) return;
+		}
 		if (mode === "smart") {
 			const activeId = st.activeNoteId;
 			const active = activeId ? st.nodes[activeId] : null;
@@ -3757,13 +3771,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			};
 			leftOpen = false;
 			rightOpen = false;
-		} else if (
-			prev === "fullscreen" &&
-			mode !== "fullscreen" &&
-			fullscreenPanelSnapshot
-		) {
-			leftOpen = fullscreenPanelSnapshot.leftOpen;
-			rightOpen = mode === "panel" ? true : fullscreenPanelSnapshot.rightOpen;
+		} else if (prev === "fullscreen" && mode !== "fullscreen") {
+			// The snapshot lives only in memory. After a relaunch in fullscreen
+			// the saved leftOpen is the forced false, so the list comes back.
+			leftOpen = fullscreenPanelSnapshot?.leftOpen ?? true;
+			rightOpen =
+				mode === "panel" ? true : (fullscreenPanelSnapshot?.rightOpen ?? cur.rightOpen);
 			fullscreenPanelSnapshot = null;
 		}
 		set({

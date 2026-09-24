@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Code2,
   Columns2,
@@ -40,6 +40,8 @@ import { FindInNoteBar } from "./FindInNoteBar";
 import { FrontmatterEditor } from "./FrontmatterEditor";
 import { setFindEditorMode, setFindFocusPane, getFindFocusPane } from "@/lib/editor/find-target";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
+import { revealFileList } from "@/lib/chrome/reveal-list";
+import { scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import {
   formatDateLong,
   isTodayDailyPath,
@@ -161,14 +163,39 @@ export function EditorPane({
     let cancelled = false;
     // Read the file now. Fill keeps the catalog lock; this path does not
     // upsert into it, so the open note must not wait for the walk to finish.
-    void ensureNoteBody(note.id).then((body: string | null) => {
-      if (cancelled) return;
-      if (body === null) setHydrateError(true);
+    const id = note.id;
+    const path = note.path;
+    let retry = 0;
+    void ensureNoteBody(id).then((body: string | null) => {
+      if (cancelled || body !== null) return;
+      // A remembered note whose file is gone (an old daily note, a file
+      // removed outside Nexus) used to strand the pane on an error page.
+      // Try once more, then let it go and hand the cursor to the list.
+      retry = window.setTimeout(() => {
+        void ensureNoteBody(id).then((again: string | null) => {
+          if (cancelled || again !== null) return;
+          const st = useVaultStore.getState();
+          if (isSecondary || st.activeNoteId !== id || st.dirtyNoteIds.includes(id)) {
+            setHydrateError(true);
+            return;
+          }
+          useVaultStore.setState({
+            activeNoteId: null,
+            settings: { ...st.settings, lastNotePath: null },
+            toast: `${path} is not on disk anymore. Pick a note in the list.`,
+          });
+          revealFileList((tree) => {
+            const active = document.activeElement as HTMLElement | null;
+            if (!active || active === document.body) tree.focus({ preventScroll: true });
+          });
+        });
+      }, 400);
     });
     return () => {
       cancelled = true;
+      window.clearTimeout(retry);
     };
-  }, [note?.id, note?.content, ensureNoteBody]);
+  }, [note?.id, note?.path, note?.content, ensureNoteBody, isSecondary]);
 
   // While a note is open this stays -1, so catalog page reloads do not
   // re-render the editor. The empty state is the only reader of the count.
@@ -182,22 +209,62 @@ export function EditorPane({
     }
     return n;
   });
-  const createNote = useVaultStore((s) => s.createNote);
+  const startFirstNote = useCallback(() => {
+    const id = useVaultStore.getState().createNote(null, "Untitled");
+    if (!id) return;
+    const safe =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(id)
+        : id.replace(/["\\]/g, "\\$&");
+    scheduleEmptyNoteRename(
+      id,
+      (noteId) => {
+        window.dispatchEvent(new CustomEvent("nexus-rename-node", { detail: noteId }));
+      },
+      () =>
+        Boolean(
+          document.querySelector(`[data-testid="tree-rename"][data-rename-for="${safe}"]`),
+        ),
+    );
+  }, []);
 
   useEffect(() => {
     if (isSecondary || noteCount !== 0) return;
-    if (document.querySelector("[data-nexus-confirm], [role='dialog']")) return;
-    const tree = document.querySelector<HTMLElement>("[data-file-tree]");
-    if (!tree) return;
-    const active = document.activeElement as HTMLElement | null;
-    const idle =
-      !active ||
-      active === document.body ||
-      active === document.documentElement ||
-      Boolean(active.closest?.("[data-editor-empty='vault']"));
-    if (!idle) return;
-    tree.focus({ preventScroll: true });
-  }, [isSecondary, noteCount]);
+    const idleNow = () => {
+      if (document.querySelector("[data-nexus-confirm], [role='dialog']")) return false;
+      const active = document.activeElement as HTMLElement | null;
+      return (
+        !active ||
+        active === document.body ||
+        active === document.documentElement ||
+        Boolean(active.closest?.("[data-editor-empty='vault']"))
+      );
+    };
+    // A brand-new vault lands on the list, opening it if it was collapsed.
+    const land = () => {
+      if (!idleNow()) return;
+      revealFileList((tree) => {
+        if (idleNow()) tree.focus({ preventScroll: true });
+      });
+    };
+    land();
+    const later = window.setTimeout(land, 160);
+    // Enter with nothing focused starts the first note too.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.defaultPrevented || e.repeat || e.isComposing) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("[data-file-tree], button, a, input, textarea, select, [contenteditable='true']")) return;
+      if (!idleNow() && !(t === document.body || t === document.documentElement)) return;
+      e.preventDefault();
+      startFirstNote();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(later);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [isSecondary, noteCount, startFirstNote]);
 
   if (!note || note.kind !== "note") {
     if (isSecondary) {
@@ -256,7 +323,7 @@ export function EditorPane({
             <button
               type="button"
               className="primary-btn"
-              onClick={() => createNote(null)}
+              onClick={() => startFirstNote()}
             >
               <FilePlus2 size={16} />
               New note

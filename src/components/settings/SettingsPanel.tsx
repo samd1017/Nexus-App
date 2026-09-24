@@ -107,17 +107,38 @@ export function SettingsPanel() {
   const nodes = useVaultStore((s) => s.nodes);
   // Index during render, not inside getSnapshot. A snapshot that calls
   // ensureVaultIndex can change between React's two reads and loop.
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
+  // A paged catalog keeps only part of the vault in memory. The catalog count
+  // is the whole folder, the same number Ready reports.
   const noteCount = useMemo(() => {
     if (!vaultId) return 0;
+    if (shellCatalog && catalogNoteCount > 0) return catalogNoteCount;
     ensureVaultIndex(nodes);
     return vaultIndex.noteCount;
-  }, [nodes, vaultId]);
+  }, [nodes, vaultId, shellCatalog, catalogNoteCount]);
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
   const [recordingHotkey, setRecordingHotkey] = useState<HotkeyId | null>(null);
   const [confirmKind, setConfirmKind] = useState<null | "reset" | "rebuild">(null);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [stayHint, setStayHint] = useState(false);
+  const stayTimerRef = useRef(0);
+
+  useEffect(() => () => window.clearTimeout(stayTimerRef.current), []);
+
+  const holdAfterBackdrop = () => {
+    const root = dialogRef.current;
+    if (root && !root.contains(document.activeElement)) {
+      root
+        .querySelector<HTMLElement>('[data-settings-nav="appearance"]')
+        ?.focus({ preventScroll: true });
+    }
+    setStayHint(true);
+    window.clearTimeout(stayTimerRef.current);
+    stayTimerRef.current = window.setTimeout(() => setStayHint(false), 2800);
+  };
 
   useEffect(() => {
     if (open) setCustomDraft(prefs.accentCustom);
@@ -259,11 +280,15 @@ export function SettingsPanel() {
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6">
-      <button
-        type="button"
+      <div
+        aria-hidden
+        data-settings-backdrop
         className="absolute inset-0 bg-[var(--overlay)] backdrop-blur-[2px]"
-        aria-label="Close settings"
-        onClick={() => setOpen(false)}
+        onMouseDown={(e) => {
+          // A click behind Settings is not a dismiss. Keep the cursor inside.
+          e.preventDefault();
+          holdAfterBackdrop();
+        }}
       />
       <div
         ref={dialogRef}
@@ -281,9 +306,19 @@ export function SettingsPanel() {
             <h2 id={titleId} className="text-[15px] font-semibold tracking-tight">
               Settings
             </h2>
-            <p className="text-[12px] text-[var(--text-muted)]">
-              Preferences for this device
-            </p>
+            {stayHint ? (
+              <p
+                role="status"
+                data-testid="settings-stay-hint"
+                className="text-[12px] font-semibold text-white"
+              >
+                Settings stay open. Esc or Close leaves.
+              </p>
+            ) : (
+              <p className="text-[12px] text-[var(--text-muted)]">
+                Preferences for this device
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -954,7 +989,7 @@ export function SettingsPanel() {
                 </div>
                 <div>
                   <span className="text-[var(--text-muted)]">Notes · </span>
-                  {noteCount}
+                  {noteCount.toLocaleString()}
                 </div>
               </div>
             ) : (

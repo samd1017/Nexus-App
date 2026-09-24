@@ -39,7 +39,9 @@ import { bindWindowState } from "@/lib/desktop/window-state";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
-import { canOpenLocalVaultFolder } from "@/lib/platform";
+import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
+
+const LIST_REOPENED_KEY = "nexus.desktop.list-reopened.v1";
 import {
   CHROME_FSA_WATCH_MAX,
   chromeFsaRefuseBanner,
@@ -240,9 +242,25 @@ export function AppShell() {
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const mq = window.matchMedia("(prefers-color-scheme: light)");
-    const onChange = () => applyPrefsToDom(getPrefs());
+    // Some desktops report the system scheme flipping back and forth for a
+    // moment (portal restarts, focus changes). Only repaint once it settles
+    // on a different theme than the one showing.
+    let settle = 0;
+    const onChange = () => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => {
+        const prefs = getPrefs();
+        if (prefs.theme !== "system") return;
+        const want = mq.matches ? "light" : "dark";
+        if (document.documentElement.dataset.theme === want) return;
+        applyPrefsToDom(prefs);
+      }, 400);
+    };
     mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    return () => {
+      window.clearTimeout(settle);
+      mq.removeEventListener("change", onChange);
+    };
   }, []);
 
   // Wave A: warn before tab close when unsaved disk notes exist
@@ -321,6 +339,20 @@ export function AppShell() {
   // Responsive panels: auto-close on narrow vault open + when crossing below tablet width
   useEffect(() => {
     if (!vaultId) return;
+    // The desktop window cannot be narrower than 900. While it is still hidden
+    // before Ready the webview can report a smaller width, and closing the list
+    // then is saved and sticks on every later open.
+    if (isDesktopShell()) {
+      try {
+        if (localStorage.getItem(LIST_REOPENED_KEY) !== "1") {
+          localStorage.setItem(LIST_REOPENED_KEY, "1");
+          if (!useVaultStore.getState().settings.leftOpen) setLeftOpen(true);
+        }
+      } catch {
+        /* storage blocked */
+      }
+      return;
+    }
     let wasNarrow = window.innerWidth < 900;
     if (wasNarrow) {
       setLeftOpen(false);

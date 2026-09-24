@@ -197,7 +197,13 @@ export function ConfirmDialog({
       data-confirm-focus={preferCancel ? "cancel" : "confirm"}
       data-testid={testId}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onCancel();
+        if (e.target !== e.currentTarget) return;
+        // A click behind the ask is not an answer. Esc or Cancel is.
+        e.preventDefault();
+        const panel = panelRef.current;
+        if (panel && panel.contains(document.activeElement)) return;
+        const landing = preferCancel ? cancelRef.current : confirmRef.current;
+        (landing ?? cancelRef.current)?.focus({ preventScroll: true });
       }}
     >
       <div
