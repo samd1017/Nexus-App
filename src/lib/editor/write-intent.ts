@@ -126,6 +126,9 @@ function onKey(e: KeyboardEvent): void {
     // The paste itself runs after keydown, into whatever has focus by then.
     if (!e.altKey && e.key.toLowerCase() === "v") {
       window.dispatchEvent(new CustomEvent("nexus-write-note", { detail: path }));
+    } else if (!["Control", "Meta", "Shift", "Alt"].includes(e.key)) {
+      // Another shortcut (search, settings, a new note) goes where it goes.
+      clearWriteFocus();
     }
     return;
   }

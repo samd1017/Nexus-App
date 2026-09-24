@@ -896,8 +896,23 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
   // A click under a note that ends in its title starts a line below the title.
   assert.equal(visualSrc.includes("return ed ? clickBelowTitle(ed, event) : false;"), true);
   assert.equal(visualSrc.includes("if (e.clientY <= lastDom.getBoundingClientRect().bottom + 2) return false;"), true);
+  // Nothing but the reader takes the cursor off the body while the request lasts:
+  // drifting to the list or the page is taken back, a few times at most.
+  assert.equal(visualSrc.includes('window.addEventListener("focusin", onFocusMove, true);'), true);
+  assert.equal(visualSrc.includes('window.addEventListener("focusout", onFocusMove, true);'), true);
+  assert.equal(visualSrc.includes("if (!writeFocusPending(pathNow()) || reclaims >= 8) return;"), true);
+  assert.equal(visualSrc.includes(`!active.closest?.("[data-testid='tree-rename']:not([data-rename-closing])")`), true);
+  // A committed name field is marked and never pulled back into.
+  assert.equal(treeSrc.includes('inputRef.current?.setAttribute("data-rename-closing", "1");'), true);
+  assert.equal(treeSrc.includes(`document.querySelector<HTMLElement>("[data-testid='tree-rename']:not([data-rename-closing])")`), true);
+  assert.equal(treeSrc.includes('if (rename.isConnected && !rename.hasAttribute("data-rename-closing") && document.activeElement !== rename) {'), true);
+  const commitAt = treeSrc.indexOf("const commitRename = () => {");
+  const commitBody = treeSrc.slice(commitAt, treeSrc.indexOf("\n  };\n", commitAt));
+  assert.ok(commitBody.indexOf("markRenameClosing();") < commitBody.indexOf("onRenameFinished?.(node.id, true);"));
+  // A note with nothing under its title goes on to writing when named.
+  assert.equal(treeSrc.includes('named.content.replace(/^#\\s+.*$/m, "").trim() === "";'), true);
   // "Just created" lives outside the list, which may mount after the note is made.
-  assert.equal(treeSrc.includes("const fresh = takeJustCreated(id) || Boolean(id && justCreatedRef.current === id);"), true);
+  assert.equal(treeSrc.includes("const fresh = takeJustCreated(id) || Boolean(id && justCreatedRef.current === id) || blank;"), true);
   assert.equal(treeSrc.includes("if (st.activeNoteId !== node.id) st.setActiveNote(node.id);"), true);
   const firstSrc = readFileSync(new URL("../src/lib/vault/first-note.ts", import.meta.url), "utf8");
   assert.ok(firstSrc.indexOf("markJustCreated(id);") > 0 && firstSrc.indexOf("markJustCreated(id);") < firstSrc.indexOf('"nexus-created-note"'));
@@ -958,6 +973,13 @@ assert.equal(settingsSrc.includes('data-current={currentSection === id ? "1" : u
     assert.equal(wi.takeHeldWrite("FirstRun Note.md"), null);
     // Nothing held: the editor types for itself.
     assert.equal(key("z", inEditor).defaultPrevented, false);
+    // Another shortcut outside a field ends it: search or settings take over.
+    wi.requestWriteFocus("FirstRun Note.md");
+    assert.equal(key("Control", inList, { ctrlKey: true }).defaultPrevented, false);
+    assert.equal(wi.writeFocusPending("FirstRun Note.md"), true, "the modifier alone does not end it");
+    key("k", inList, { ctrlKey: true });
+    assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);
+    wi.requestWriteFocus("FirstRun Note.md");
     // Moving in the list ends the request; later typing stays in the list.
     key("ArrowDown");
     assert.equal(wi.writeFocusPending("FirstRun Note.md"), false);

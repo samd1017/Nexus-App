@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import { clearWriteFocus, takeHeldWrite, writeFocusPending } from "@/lib/editor/write-intent";
+import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import StarterKit from "@tiptap/starter-kit";
 import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
 import { SafePlaceholder } from "@/lib/editor/safe-placeholder";
@@ -1054,9 +1055,11 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     if (!editor) return;
     const pathNow = () => useVaultStore.getState().nodes[noteId]?.path ?? null;
     const writeTimers: number[] = [];
+    let reclaims = 0;
     const begin = () => {
       writeHeldText(editor, pathNow(), refillPending);
       if (!writeFocusPending(pathNow())) return;
+      reclaims = 0;
       // The renamed title rewrites the body a moment later, and a folder rescan
       // can refill it after that. The content apply above places the caret
       // again after each refill; these cover a refill that changes nothing.
@@ -1072,10 +1075,33 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         window.setTimeout(place, 3200),
       );
     };
+    // Nothing but the reader moves the cursor off the body while the request
+    // lasts. A click or a navigation key ends the request first (write-intent),
+    // so what is left is the list or the page taking it on its own.
+    const takeBack = () => {
+      if (!writeFocusPending(pathNow()) || reclaims >= 8) return;
+      const active = document.activeElement as HTMLElement | null;
+      const drifted =
+        !active ||
+        active === document.body ||
+        active === document.documentElement ||
+        Boolean(
+          active.closest?.("[data-file-tree]") &&
+            !active.closest?.("[data-testid='tree-rename']:not([data-rename-closing])"),
+        );
+      if (!drifted) return;
+      reclaims += 1;
+      placeCaretForWriting(editor);
+    };
+    const onFocusMove = () => reclaimAfterFocus(takeBack);
     begin();
     window.addEventListener("nexus-write-note", begin);
+    window.addEventListener("focusin", onFocusMove, true);
+    window.addEventListener("focusout", onFocusMove, true);
     return () => {
       window.removeEventListener("nexus-write-note", begin);
+      window.removeEventListener("focusin", onFocusMove, true);
+      window.removeEventListener("focusout", onFocusMove, true);
       for (const t of writeTimers) window.clearTimeout(t);
     };
   }, [editor, noteId]);

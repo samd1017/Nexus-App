@@ -249,6 +249,7 @@ const TreeRow = memo(function TreeRow({
     }
     const next = nameDraft.trim();
     const current = displayName(node);
+    markRenameClosing();
     setRenamingId(null);
     if (!next || next === current) {
       setNameDraft(current);
@@ -259,7 +260,14 @@ const TreeRow = memo(function TreeRow({
     onRenameFinished?.(node.id, true);
   };
 
+  // The field stays in the page until the next render. Marked, nothing pulls
+  // the cursor back into a name that is already set.
+  const markRenameClosing = () => {
+    inputRef.current?.setAttribute("data-rename-closing", "1");
+  };
+
   const cancelRename = () => {
+    markRenameClosing();
     skipBlur.current = true;
     setRenamingId(null);
     setNameDraft(displayName(node));
@@ -756,7 +764,13 @@ export const FileTree = memo(function FileTree() {
   // that already moved the cursor elsewhere wins.
   const returnTreeFocus = useCallback((id?: string, committed?: boolean) => {
     if (id) settleRename(id);
-    const fresh = takeJustCreated(id) || Boolean(id && justCreatedRef.current === id);
+    const named = id ? useVaultStore.getState().nodes[id] : null;
+    // A note with nothing under its title is new however it was made.
+    const blank =
+      named?.kind === "note" &&
+      typeof named.content === "string" &&
+      named.content.replace(/^#\s+.*$/m, "").trim() === "";
+    const fresh = takeJustCreated(id) || Boolean(id && justCreatedRef.current === id) || blank;
     if (id && justCreatedRef.current === id) justCreatedRef.current = null;
     const land = () => {
       const active = document.activeElement as HTMLElement | null;
@@ -946,9 +960,11 @@ export const FileTree = memo(function FileTree() {
           "[data-nexus-confirm], [role='dialog'][aria-modal='true'], [data-nexus-ctx-menu]",
         ),
       );
+    const openRename = () =>
+      document.querySelector<HTMLElement>("[data-testid='tree-rename']:not([data-rename-closing])");
     const reclaimHolding = (folderId: string) => {
       if (dialogOpen()) return;
-      const rename = document.querySelector<HTMLElement>("[data-testid='tree-rename']");
+      const rename = openRename();
       if (rename) {
         if (document.activeElement !== rename) rename.focus({ preventScroll: true });
         return;
@@ -961,10 +977,10 @@ export const FileTree = memo(function FileTree() {
     const onFocusIn = (e: FocusEvent) => {
       if (dialogOpen()) return;
       const next = e.target as Element | null;
-      const rename = document.querySelector<HTMLElement>("[data-testid='tree-rename']");
+      const rename = openRename();
       if (rename && isProgrammaticFocusSteal(next, true, fromPointer)) {
         reclaimAfterFocus(() => {
-          if (rename.isConnected && document.activeElement !== rename) {
+          if (rename.isConnected && !rename.hasAttribute("data-rename-closing") && document.activeElement !== rename) {
             rename.focus({ preventScroll: true });
           }
         });
