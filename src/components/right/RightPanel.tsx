@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
-import { useVaultStore, type RightTab } from "@/lib/vault/store";
+import { noteBodyFailed, useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
 import { fetchShellBacklinks, fetchShellKnownNorms, fetchShellMentions } from "@/lib/vault/shell-catalog";
 import type { Backlink } from "@/lib/vault/types";
@@ -121,6 +121,7 @@ export function RightPanel() {
   // Lazy hydrate writes into the same nodes object. This tick is the re-render.
   const bodyGen = useSyncExternalStore(subscribeBodyGen, getBodyGen, getBodyGen);
   const bodyReady = !note || note.kind !== "note" || isContentLoaded(note);
+  const bodyFailed = Boolean(note && !bodyReady && noteBodyFailed(note.id));
 
   useEffect(() => {
     if (!shellCatalog || !shellDbPath || tab !== "backlinks" || !note || note.kind !== "note") {
@@ -583,7 +584,11 @@ export function RightPanel() {
                   <Hash size={11} className="opacity-70" />
                   Tags
                 </div>
-                {!bodyReady ? (
+                {bodyFailed ? (
+                  <PanelStatus kind="unread">
+                    This note could not be read, so its tags are not shown.
+                  </PanelStatus>
+                ) : !bodyReady ? (
                   <p className="flex items-center gap-2 px-1 text-[11.5px] text-[var(--text-muted)]">
                     <Loader2 size={12} className="animate-spin text-[var(--accent)]" />
                     Loading note…
@@ -622,7 +627,11 @@ export function RightPanel() {
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Outline
               </div>
-              {!bodyReady ? (
+              {bodyFailed ? (
+                <PanelStatus kind="unread">
+                  This note could not be read, so its headings are not shown.
+                </PanelStatus>
+              ) : !bodyReady ? (
                 <p className="flex items-center gap-2 px-1 text-[11.5px] text-[var(--text-muted)]">
                   <Loader2 size={12} className="animate-spin text-[var(--accent)]" />
                   Loading note…

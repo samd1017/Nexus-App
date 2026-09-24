@@ -246,13 +246,17 @@ export function ConfirmDialog({
             </p>
           </div>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <span className="nexus-rename-hint mr-auto text-[11.5px] font-medium text-white/70" aria-hidden>
+            <kbd>esc</kbd>
+            <span className="ml-1 self-center">cancels</span>
+          </span>
           <button
             ref={cancelRef}
             type="button"
             data-confirm-cancel
             data-testid="confirm-cancel"
-            className="ghost-btn !h-11 min-w-[96px] px-4 text-[16px] font-semibold text-white"
+            className="ghost-btn !h-10 min-w-[96px] px-4 text-[14px] font-semibold text-white"
             onClick={onCancel}
           >
             {cancelLabel}
@@ -262,7 +266,7 @@ export function ConfirmDialog({
             type="button"
             data-confirm-action
             className={cn(
-              "primary-btn !h-9 px-3 text-[13px]",
+              "primary-btn !h-10 min-w-[96px] px-4 text-[14px] font-semibold",
               danger &&
                 "!border-[rgba(255,69,58,0.45)] !bg-[rgba(255,69,58,0.9)] !text-white hover:!bg-[var(--danger)]",
             )}

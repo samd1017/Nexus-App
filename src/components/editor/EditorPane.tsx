@@ -391,18 +391,30 @@ export function EditorPane({
                 : "Couldn't restore this note"}
           </p>
           <p className="mt-1 text-[12px] text-[var(--text-muted)]">{note.path}</p>
-          <button
-            type="button"
-            className="ghost-btn mt-4"
-            onClick={() => {
-              setHydrateError(false);
-              void ensureNoteBody(note.id).then((body: string | null) => {
-                if (body === null) setHydrateError(true);
-              });
-            }}
-          >
-            Retry
-          </button>
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => {
+                setHydrateError(false);
+                void ensureNoteBody(note.id).then((body: string | null) => {
+                  if (body === null) setHydrateError(true);
+                });
+              }}
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                useVaultStore.setState({ activeNoteId: null });
+                revealFileList((tree) => tree.focus({ preventScroll: true }));
+              }}
+            >
+              Back to the list
+            </button>
+          </div>
         </div>
       );
     }

@@ -518,6 +518,7 @@ let diskSearchReady = false;
 /** In-flight body hydrates — dedupe concurrent ensureNoteBody */
 let bodyHydrateInflight = new Map<string, Promise<string | null>>();
 const missingBodyIds = new Set<string>();
+const failedBodyIds = new Set<string>();
 
 function isMissingFileError(e: unknown): boolean {
 	const msg = (e instanceof Error ? `${e.name} ${e.message}` : String(e ?? "")).toLowerCase();
@@ -536,6 +537,11 @@ function isMissingFileError(e: unknown): boolean {
 /** The last read of this note failed because its file is gone, not a transient error. */
 export function noteFileIsMissing(id: string): boolean {
 	return missingBodyIds.has(id);
+}
+
+/** The last read of this note came back empty-handed, so panels stop waiting on it. */
+export function noteBodyFailed(id: string): boolean {
+	return failedBodyIds.has(id);
 }
 /** Conflict pair cache — invalidated by structureGeneration / nodes ref */
 let _conflictPairsCache: ConflictPair[] | null = null;
@@ -5234,6 +5240,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const inflight = bodyHydrateInflight.get(id);
 		if (inflight) return inflight;
 		missingBodyIds.delete(id);
+		if (failedBodyIds.delete(id)) bumpBodyGen();
 		const run = (async () => {
 			const mode = get().mode;
 			// Module vaultGen — bumped by cancelVaultModuleState on vault switch
@@ -5244,14 +5251,22 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				rootIds: get().rootIds,
 				signatures: {}
 			}));
-			if (!backend?.readNote && !mockDiskBodies?.has(path)) return null;
+			if (!backend?.readNote && !mockDiskBodies?.has(path)) {
+				failedBodyIds.add(id);
+				bumpBodyGen();
+				return null;
+			}
 			try {
 				const content = mockDiskBodies?.has(path)
 					? mockDiskBodies.get(path)!
 					: backend?.readNote
 						? await backend.readNote(path)
 						: null;
-				if (content == null) return null;
+				if (content == null) {
+					failedBodyIds.add(id);
+					bumpBodyGen();
+					return null;
+				}
 				if (genAtStart !== vaultGen) return null;
 				const cur = get().nodes[id];
 				if (!cur || cur.kind !== "note") return null;
@@ -5327,6 +5342,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			} catch (e) {
 				console.warn("[nexus] ensureNoteBody failed", id, e);
 				if (isMissingFileError(e)) missingBodyIds.add(id);
+				failedBodyIds.add(id);
+				bumpBodyGen();
 				return null;
 			} finally {
 				bodyHydrateInflight.delete(id);

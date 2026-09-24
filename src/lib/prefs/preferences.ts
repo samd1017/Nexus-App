@@ -129,9 +129,7 @@ export function getShortcuts(): { keys: string; action: string }[] {
   }));
 }
 
-export function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
-  if (theme === "light") return "light";
-  if (theme === "dark") return "dark";
+function readSystemTheme(): "dark" | "light" {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return "dark";
   }
@@ -142,6 +140,23 @@ export function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
   } catch {
     return "dark";
   }
+}
+
+// System is read once, then only moved by a settled change. Every prefs write
+// repaints the theme, and a desktop that briefly reports the other scheme would
+// otherwise flash the whole window mid-session.
+let settledSystemTheme: "dark" | "light" | null = null;
+
+export function settleSystemTheme(): "dark" | "light" {
+  settledSystemTheme = readSystemTheme();
+  return settledSystemTheme;
+}
+
+export function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
+  if (theme === "light") return "light";
+  if (theme === "dark") return "dark";
+  if (settledSystemTheme === null) settledSystemTheme = readSystemTheme();
+  return settledSystemTheme;
 }
 
 /** @deprecated Prefer getShortcuts() so labels match current platform. */
@@ -336,6 +351,7 @@ export const usePrefsStore = create<PrefsStore>()(
               ? cleaned.slice(0, 64)
               : DEFAULT_PREFS.dailyFolder;
         }
+        if (patch.theme === "system") settleSystemTheme();
         set(nextPatch);
         const next = { ...get(), ...nextPatch };
         applyPrefsToDom(next);

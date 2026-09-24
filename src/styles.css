@@ -2281,3 +2281,36 @@ button:focus-visible,
     display: none;
   }
 }
+
+/* Tree: the open note reads first, its folders stay findable, depth is felt. */
+.tree-item.is-active {
+  color: #fff;
+  font-weight: 600;
+}
+.tree-item.is-active-path > .nexus-tree-chevron,
+.tree-item.is-active-path .lucide-folder,
+.tree-item.is-active-path .lucide-folder-open {
+  color: #5ad8ff;
+}
+.tree-item.is-active-path {
+  color: var(--text-primary);
+}
+.tree-item[data-depth]:not([data-depth="0"])::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tree-guide-x, 0);
+  width: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  pointer-events: none;
+}
+[data-theme="light"] .tree-item[data-depth]:not([data-depth="0"])::before {
+  background: rgba(16, 18, 28, 0.08);
+}
+.tree-item {
+  transition:
+    background 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}

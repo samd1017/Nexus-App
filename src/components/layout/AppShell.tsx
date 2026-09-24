@@ -27,7 +27,7 @@ import {
 import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
 import { startDesktopWatch } from "@/lib/vault/tauri-adapter";
 import { shouldLazyBodies } from "@/lib/vault/scale-flags";
-import { applyPrefsToDom, getPrefs, usePrefsStore } from "@/lib/prefs/preferences";
+import { applyPrefsToDom, getPrefs, settleSystemTheme, usePrefsStore } from "@/lib/prefs/preferences";
 import {
   getOpenProgress,
   setOpenProgress,
@@ -249,9 +249,9 @@ export function AppShell() {
     const onChange = () => {
       window.clearTimeout(settle);
       settle = window.setTimeout(() => {
+        const want = settleSystemTheme();
         const prefs = getPrefs();
         if (prefs.theme !== "system") return;
-        const want = mq.matches ? "light" : "dark";
         if (document.documentElement.dataset.theme === want) return;
         applyPrefsToDom(prefs);
       }, 400);

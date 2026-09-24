@@ -111,12 +111,22 @@ export function SettingsPanel() {
   const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
   // A paged catalog keeps only part of the vault in memory. The catalog count
   // is the whole folder, the same number Ready reports.
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  // -1 means a large vault whose total has not been reported yet. The loaded
+  // page is not the vault, so it is never shown as the count.
   const noteCount = useMemo(() => {
     if (!vaultId) return 0;
-    if (shellCatalog && catalogNoteCount > 0) return catalogNoteCount;
+    if (shellCatalog) return catalogNoteCount > 0 ? catalogNoteCount : -1;
     ensureVaultIndex(nodes);
     return vaultIndex.noteCount;
   }, [nodes, vaultId, shellCatalog, catalogNoteCount]);
+  const countStillGrowing = shellCatalog && indexFillBusy && noteCount > 0;
+  const noteCountLabel =
+    noteCount < 0
+      ? "Counting notes…"
+      : countStillGrowing
+        ? `${noteCount.toLocaleString()} notes so far`
+        : `${noteCount.toLocaleString()} notes`;
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
   const [recordingHotkey, setRecordingHotkey] = useState<HotkeyId | null>(null);
@@ -320,6 +330,9 @@ export function SettingsPanel() {
               </p>
             )}
           </div>
+          <span className="nexus-rename-hint" aria-hidden>
+            <kbd>esc</kbd>
+          </span>
           <button
             type="button"
             className="icon-btn !h-9 !w-9"
@@ -645,12 +658,20 @@ export function SettingsPanel() {
               <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
                 A large folder opens the same way as a small one. Search is ready
                 for the notes on screen first.
-                {noteCount > 0 ? (
+                {noteCount < 0 ? (
+                  <>
+                    {" "}
+                    <span className="text-[var(--text-primary)]" data-testid="settings-note-count">
+                      {noteCountLabel}
+                    </span>{" "}
+                    The total appears once the folder has been listed.
+                  </>
+                ) : noteCount > 0 ? (
                   <>
                     {" "}
                     This vault has{" "}
-                    <span className="text-[var(--text-primary)]">
-                      {noteCount.toLocaleString()} notes
+                    <span className="text-[var(--text-primary)]" data-testid="settings-note-count">
+                      {noteCountLabel}
                     </span>
                     {mode === "demo"
                       ? ". These are sample notes, not saved to a folder."
@@ -989,7 +1010,7 @@ export function SettingsPanel() {
                 </div>
                 <div>
                   <span className="text-[var(--text-muted)]">Notes · </span>
-                  {noteCount.toLocaleString()}
+                  {noteCount < 0 ? "counting…" : noteCountLabel.replace(/ notes/, "")}
                 </div>
               </div>
             ) : (

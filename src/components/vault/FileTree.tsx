@@ -168,6 +168,19 @@ const TreeRow = memo(function TreeRow({
     (s) => s.activeNoteId === nodeId && s.nodes[nodeId]?.kind === "note",
   );
   const expanded = useVaultStore((s) => s.expandedFolders.includes(nodeId));
+  // Folders on the way to the open note carry a quiet accent, so the open
+  // note can be found again from a collapsed branch.
+  const onActivePath = useVaultStore((s) => {
+    const active = s.activeNoteId;
+    if (!active || s.nodes[nodeId]?.kind !== "folder") return false;
+    let cur = s.nodes[active]?.parentId ?? null;
+    let guard = 0;
+    while (cur && guard++ < 64) {
+      if (cur === nodeId) return true;
+      cur = s.nodes[cur]?.parentId ?? null;
+    }
+    return false;
+  });
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const renameNode = useVaultStore((s) => s.renameNode);
 
@@ -251,13 +264,21 @@ const TreeRow = memo(function TreeRow({
       className={cn(
         "tree-item group relative flex w-full items-center gap-1.5 text-left select-none",
         isActive && "is-active",
+        onActivePath && "is-active-path",
         isFocused && "is-focused",
         renaming && "is-renaming",
         isDragging && "opacity-40",
         isDropHover &&
           "ring-1 ring-[var(--accent)] bg-[rgba(0,200,255,0.1)]",
       )}
-      style={{ paddingLeft: 8 + depth * 14, height: ROW_H }}
+      style={
+        {
+          paddingLeft: 8 + depth * 14,
+          height: ROW_H,
+          "--tree-guide-x": depth > 0 ? `${8 + (depth - 1) * 14 + 7}px` : undefined,
+        } as React.CSSProperties
+      }
+      data-depth={depth}
       role="treeitem"
       aria-selected={isActive}
       aria-expanded={node.kind === "folder" ? expanded : undefined}
