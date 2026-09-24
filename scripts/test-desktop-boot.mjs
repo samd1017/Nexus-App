@@ -475,6 +475,80 @@ folderLabel.parent = folderRow;
 assert.equal(emptyFolderIdFromTarget(folderLabel), "folder-9");
 assert.equal(emptyFolderIdFromTarget(rebuildButton), null);
 assert.equal(emptyFolderIdFromTarget(null), null);
+const { claimEmptyFolderEnter, isProgrammaticFocusSteal } = await import(
+  "../src/lib/chrome/empty-folder-enter.ts"
+);
+assert.equal(
+  claimEmptyFolderEnter({
+    key: "Enter",
+    fromTarget: "folder-9",
+    fromActive: null,
+    treeHasKey: false,
+    treeFolder: null,
+    armedFolder: null,
+    targetStole: false,
+  }),
+  "folder-9",
+);
+assert.equal(
+  claimEmptyFolderEnter({
+    key: "Enter",
+    fromTarget: null,
+    fromActive: null,
+    treeHasKey: true,
+    treeFolder: "folder-9",
+    armedFolder: null,
+    targetStole: false,
+  }),
+  "folder-9",
+);
+assert.equal(
+  claimEmptyFolderEnter({
+    key: "Enter",
+    renameField: true,
+    fromTarget: "folder-9",
+    fromActive: null,
+    treeHasKey: false,
+    treeFolder: null,
+    armedFolder: "folder-9",
+    targetStole: false,
+  }),
+  null,
+);
+assert.equal(
+  claimEmptyFolderEnter({
+    key: "Enter",
+    fromTarget: null,
+    fromActive: null,
+    treeHasKey: false,
+    treeFolder: null,
+    armedFolder: "folder-9",
+    targetStole: true,
+  }),
+  "folder-9",
+);
+assert.equal(
+  claimEmptyFolderEnter({
+    key: "Enter",
+    ctrl: true,
+    fromTarget: "folder-9",
+    fromActive: null,
+    treeHasKey: false,
+    treeFolder: null,
+    armedFolder: null,
+    targetStole: false,
+  }),
+  null,
+);
+const graphHost = miniDoc.createElement("div");
+graphHost.setAttribute("data-graph-host", "");
+assert.equal(isProgrammaticFocusSteal(graphHost, true, false), false);
+graphHost.closest = (selector) =>
+  selector.includes("data-graph-host") ? graphHost : null;
+assert.equal(isProgrammaticFocusSteal(graphHost, true, false), true);
+assert.equal(isProgrammaticFocusSteal(graphHost, true, true), false);
+assert.equal(treeSrc.includes("claimEmptyFolderEnter"), true);
+assert.equal(treeSrc.includes("stopImmediatePropagation"), true);
 const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 assert.equal(cssSrc.includes("outline: 2px solid #5ad8ff"), true);
 assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);

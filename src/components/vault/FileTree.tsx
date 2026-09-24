@@ -36,6 +36,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
+import { claimEmptyFolderEnter, isProgrammaticFocusSteal } from "@/lib/chrome/empty-folder-enter";
 
 function folderHasNothing(id: string): boolean {
   const extra = useVaultStore.getState().shellUnloaded?.[id] ?? 0;
@@ -271,6 +272,7 @@ const TreeRow = memo(function TreeRow({
           setRenamingId(node.id);
           return;
         }
+        if (e.defaultPrevented) return;
         if (!folderEmpty || renaming) return;
         if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
         const target = e.target as HTMLElement | null;
@@ -632,20 +634,114 @@ export const FileTree = memo(function FileTree() {
 
   const focusedId = flatRows[focusedIndex]?.id ?? null;
 
+  const armedEmptyRef = useRef<string | null>(null);
+
+  const armEmptyFolder = useCallback((folderId: string | null) => {
+    armedEmptyRef.current = folderId;
+    const tree = parentRef.current;
+    if (!tree || !folderId) return;
+    tree.setAttribute("data-tree-focused", "1");
+    tree.setAttribute("data-focused-empty-folder", folderId);
+  }, []);
+
   const onFocusRow = useCallback((id: string) => {
     const idx = flatRowsRef.current.findIndex((r) => r.id === id);
     if (idx >= 0) setFocusedIndex(idx);
+    if (folderHasNothing(id)) {
+      armEmptyFolder(id);
+      document.getElementById(`tree-row-${id}`)?.focus({ preventScroll: true });
+      return;
+    }
+    armedEmptyRef.current = null;
     parentRef.current?.focus({ preventScroll: true });
-  }, []);
+  }, [armEmptyFolder]);
 
   const returnTreeFocus = useCallback(() => {
     parentRef.current?.focus({ preventScroll: true });
   }, []);
 
+  useEffect(() => {
+    let fromPointer = false;
+    const cssId = (id: string) => {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(id);
+      return id.replace(/["\\]/g, "\\$&");
+    };
+    const focusEmptyRow = (folderId: string) => {
+      const tree = parentRef.current;
+      if (!tree) return;
+      const row =
+        tree.querySelector<HTMLElement>(
+          `[data-folder-empty="1"][data-empty-parent="${cssId(folderId)}"]`,
+        ) ??
+        tree.querySelector<HTMLElement>(
+          `[data-node-id="${cssId(folderId)}"][data-folder-empty="1"]`,
+        );
+      row?.focus({ preventScroll: true });
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      fromPointer = true;
+      const t = e.target as Element | null;
+      if (t?.closest?.("[data-folder-empty='1']")) return;
+      if (isProgrammaticFocusSteal(t, true, false)) armedEmptyRef.current = null;
+    };
+    const onPointerUp = () => {
+      fromPointer = false;
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      const next = e.target as Element | null;
+      const onEmpty = Boolean(next?.closest?.("[data-folder-empty='1']"));
+      if (onEmpty) {
+        const id = emptyFolderIdFromTarget(next);
+        if (id) armEmptyFolder(id);
+        return;
+      }
+      const holding = armedEmptyRef.current;
+      if (!isProgrammaticFocusSteal(next, Boolean(holding), fromPointer)) return;
+      if (!holding) return;
+      focusEmptyRow(holding);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tree = parentRef.current;
+      const active = document.activeElement;
+      const treeFolder = tree?.getAttribute("data-focused-empty-folder")?.trim() || null;
+      const folderId = claimEmptyFolderEnter({
+        key: e.key,
+        meta: e.metaKey,
+        ctrl: e.ctrlKey,
+        alt: e.altKey,
+        repeat: e.repeat,
+        composing: e.isComposing,
+        renameField: Boolean(target?.closest?.("[data-testid='tree-rename']")),
+        fromTarget: emptyFolderIdFromTarget(target),
+        fromActive: emptyFolderIdFromTarget(active),
+        treeHasKey: Boolean(tree) && (target === tree || active === tree),
+        treeFolder,
+        armedFolder: armedEmptyRef.current,
+        targetStole: isProgrammaticFocusSteal(target, true, false),
+      });
+      if (!folderId) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const id = useVaultStore.getState().createNote(folderId, "Untitled");
+      if (id) requestAnimationFrame(() => setRenamingId(id));
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("focusin", onFocusIn, true);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
+      window.removeEventListener("focusin", onFocusIn, true);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [armEmptyFolder]);
+
   const handleTreeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const rows = flatRowsRef.current;
-      if (renamingId) return;
+      if (renamingId || e.defaultPrevented) return;
       if (e.key === "F2") {
         e.preventDefault();
         const fromRow =
@@ -1131,9 +1227,11 @@ export const FileTree = memo(function FileTree() {
             if ((e.target as HTMLElement).closest("button,a,input")) return;
             const idx = flatRowsRef.current.findIndex((r) => r.id === row.id);
             if (idx >= 0) setFocusedIndex(idx);
+            if (parentId) armEmptyFolder(parentId);
             e.currentTarget.focus();
           }}
           onKeyDown={(e) => {
+            if (e.defaultPrevented) return;
             if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
             if (!parentId) return;
             e.preventDefault();
@@ -1251,6 +1349,18 @@ export const FileTree = memo(function FileTree() {
           data-testid="tree-empty-folder-banner"
           data-empty-parent={focusedEmptyFolder}
           className="sticky top-0 z-[1] mx-1 mb-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12px] leading-snug text-[var(--text-secondary)]"
+          onPointerDown={() => {
+            armEmptyFolder(focusedEmptyFolder);
+            const tree = parentRef.current;
+            const row =
+              tree?.querySelector<HTMLElement>(
+                `[data-folder-empty="1"][data-empty-parent="${focusedEmptyFolder}"]`,
+              ) ??
+              tree?.querySelector<HTMLElement>(
+                `[data-node-id="${focusedEmptyFolder}"][data-folder-empty="1"]`,
+              );
+            row?.focus({ preventScroll: true });
+          }}
         >
           This folder is empty. Enter starts a note.
         </p>
