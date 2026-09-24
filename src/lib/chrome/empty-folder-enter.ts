@@ -55,12 +55,24 @@ const STEAL_SELECTOR =
   "[data-graph-host], [aria-label='Folder map'], [aria-label='Folder map path'], [data-testid='nexus-editor'], .ProseMirror, .note-title-input, .daily-chip, [aria-label='Daily note'], [aria-label='Week days']";
 
 /** Keep asking until the new note's rename field is actually on screen. */
+// Notes whose name was set or cancelled. The retry below never reopens them.
+const settledRenames = new Set<string>();
+
+/** The name field for this note closed on purpose; stop any pending reopen. */
+export function settleRename(noteId: string): void {
+  settledRenames.add(noteId);
+}
+
 export function scheduleEmptyNoteRename(
   noteId: string,
   open: (id: string) => void,
-  isOpen: () => boolean,
+  isOpenNow: () => boolean,
   frames = 24,
 ): void {
+  settledRenames.delete(noteId);
+  // A name that was set or cancelled is never reopened. A field that vanished
+  // before that (a busy list recycling the row) is opened again.
+  const isOpen = () => settledRenames.has(noteId) || isOpenNow();
   const later =
     typeof requestAnimationFrame === "function"
       ? requestAnimationFrame
@@ -74,14 +86,15 @@ export function scheduleEmptyNoteRename(
     later(() => tick(left - 1));
   };
   tick(frames);
-  // A long vault can spend the animation frames before the new row exists.
+  // A long vault can spend the animation frames before the new row exists,
+  // and a 100k list can take a second or two more to show it.
   if (typeof setTimeout === "function") {
     let waits = 0;
     const slow = () => {
-      if (isOpen() || waits >= 8) return;
+      if (isOpen() || waits >= 18) return;
       waits += 1;
       open(noteId);
-      setTimeout(slow, 60);
+      setTimeout(slow, waits < 8 ? 60 : 150);
     };
     setTimeout(slow, 60);
   }
@@ -108,7 +121,7 @@ export function isProgrammaticFocusSteal(
 type RenameBuffer = { id: string; text: string; commit: boolean; until: number };
 let renameBuffer: RenameBuffer | null = null;
 
-export function startRenameBuffer(id: string, ms = 1500): void {
+export function startRenameBuffer(id: string, ms = 2600): void {
   renameBuffer = { id, text: "", commit: false, until: Date.now() + ms };
 }
 

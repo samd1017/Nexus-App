@@ -35,7 +35,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
-import { bufferRenameKey, claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename, startRenameBuffer, takeRenameBuffer } from "@/lib/chrome/empty-folder-enter";
+import { bufferRenameKey, claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename, settleRename, startRenameBuffer, takeRenameBuffer } from "@/lib/chrome/empty-folder-enter";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { takePendingFolderReveal } from "@/lib/chrome/reveal-list";
 import { createNoteWhenReady } from "@/lib/vault/create-when-ready";
@@ -755,6 +755,7 @@ export const FileTree = memo(function FileTree() {
   // named goes straight to writing; anything else returns to the list. A click
   // that already moved the cursor elsewhere wins.
   const returnTreeFocus = useCallback((id?: string, committed?: boolean) => {
+    if (id) settleRename(id);
     const fresh = Boolean(id && justCreatedRef.current === id);
     if (fresh) justCreatedRef.current = null;
     const land = () => {
@@ -827,7 +828,18 @@ export const FileTree = memo(function FileTree() {
     const id = pendingFolderFocusRef.current;
     if (!id) return;
     const idx = flatRows.findIndex((r) => r.id === id);
-    if (idx < 0) return;
+    if (idx < 0) {
+      // A large vault can keep the row out of the list for a while. The folder
+      // still takes Enter: arm it and give the list the cursor.
+      const fallback = window.setTimeout(() => {
+        if (pendingFolderFocusRef.current !== id) return;
+        pendingFolderFocusRef.current = null;
+        if (!useVaultStore.getState().nodes[id]) return;
+        if (folderHasNothing(id)) armEmptyFolder(id);
+        parentRef.current?.focus({ preventScroll: true });
+      }, 400);
+      return () => window.clearTimeout(fallback);
+    }
     setFocusedIndex(idx);
     virtualizer.scrollToIndex(idx, { align: "center" });
     let frames = 0;
@@ -843,7 +855,7 @@ export const FileTree = memo(function FileTree() {
     };
     raf = requestAnimationFrame(land);
     return () => cancelAnimationFrame(raf);
-  }, [flatRows, folderFocusTick, virtualizer, onFocusRow]);
+  }, [flatRows, folderFocusTick, virtualizer, onFocusRow, armEmptyFolder]);
 
   const openCreatedRename = useCallback((noteId: string) => {
     justCreatedRef.current = noteId;
