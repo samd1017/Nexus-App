@@ -89,6 +89,17 @@ assert.equal(
   }),
   false,
 );
+assert.equal(
+  isEmptyNativeFillFailure({
+    noteCount: 100000,
+    indexed: 0,
+    notes: 0,
+    skipped: 0,
+    scanned: 32,
+  }),
+  false,
+  "a warm index that already showed the first page is not a scope failure",
+);
 
 assert.equal(
   sqliteFillReadyMessage(100000, 100000),

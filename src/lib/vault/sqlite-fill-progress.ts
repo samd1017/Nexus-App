@@ -197,8 +197,11 @@ export function isEmptyNativeFillFailure(args: {
   indexed: number;
   notes: number;
   skipped?: number;
+  scanned?: number;
 }): boolean {
   if (args.noteCount <= 0) return false;
+  // The first page landed. A warm index often reports no new rows yet.
+  if ((args.scanned ?? 0) > 0) return false;
   const skipped = args.skipped ?? 0;
   return args.indexed === 0 && args.notes === 0 && skipped === 0;
 }

@@ -106,17 +106,37 @@ function basename(p: string): string {
  * (same grant dialog `open({ directory: true, recursive: true })` performs),
  * then probe `readDir` so Wave E fails loudly instead of scanning 0 forever.
  */
+async function grantDesktopVaultRoot(root: string): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("vault_register_root", { root });
+}
+
 export async function ensureDesktopVaultFsScope(root: string): Promise<void> {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("vault_register_root", { root });
+    await grantDesktopVaultRoot(root);
   } catch (err) {
     if (isForbiddenFsError(err)) {
       throw new DesktopFsForbiddenError(root, err);
     }
     console.warn("[nexus] vault_register_root failed", root, err);
   }
-  await assertDesktopRootReadable(root);
+  try {
+    await assertDesktopRootReadable(root);
+  } catch (err) {
+    if (!(err instanceof DesktopFsForbiddenError) && !isForbiddenFsError(err)) {
+      throw err;
+    }
+    // Relaunch: grant the same folder again, then re-read. A vault under
+    // Documents, Desktop, or Downloads is already allowed by the app.
+    try {
+      await grantDesktopVaultRoot(root);
+    } catch (grantErr) {
+      if (isForbiddenFsError(grantErr)) {
+        throw new DesktopFsForbiddenError(root, grantErr);
+      }
+    }
+    await assertDesktopRootReadable(root);
+  }
 }
 
 export async function assertDesktopRootReadable(root: string): Promise<void> {

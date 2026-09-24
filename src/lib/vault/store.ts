@@ -1182,6 +1182,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 					indexed,
 					notes,
 					skipped,
+					scanned: Number(native?.scanned ?? 0),
 				})
 			) {
 				const root = desktopRoot || st.vaultPath || "vault";

@@ -721,10 +721,23 @@ fn keep_smallest(set: &mut BTreeSet<RankedFile>, file: RankedFile, k: usize) {
     }
 }
 
+fn is_md_name(name: &str) -> bool {
+    let b = name.as_bytes();
+    b.len() >= 3 && b[b.len() - 3..].eq_ignore_ascii_case(b".md")
+}
+
+fn child_rel(rel: &str, name: &str) -> String {
+    if rel.is_empty() {
+        name.to_string()
+    } else {
+        format!("{rel}/{name}")
+    }
+}
+
 /// Names in one directory. At most `file_limit` notes are kept: hub names
-/// first, smallest name first, so a fat folder is not copied into memory
-/// before the first page is searchable. `truncated` means the tail must
-/// read this directory again for the names that did not fit.
+/// first, smallest name first. A `.md` name is a note, so this pass does not
+/// stat every file before Ready. `truncated` means the tail reads the names
+/// that did not fit. Subdirectories are all collected.
 fn list_dir_window(
     dir: &Path,
     rel: &str,
@@ -744,36 +757,34 @@ fn list_dir_window(
         if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
             continue;
         }
+        let child = child_rel(rel, &name);
+        // Extension decides a note. file_type() stats when the filesystem
+        // has no type in the directory entry, which made the first page
+        // wait on every file in a fat folder.
+        if is_md_name(&name) {
+            if skip.contains(&child) {
+                continue;
+            }
+            total += 1;
+            let ranked = RankedFile {
+                name,
+                rel: child,
+                abs: entry.path(),
+            };
+            if is_title_seed_hot_name(&ranked.name) {
+                keep_smallest(&mut hot, ranked, file_limit);
+            } else if hot.len() < file_limit {
+                keep_smallest(&mut cold, ranked, file_limit);
+            }
+            continue;
+        }
         let Ok(ft) = entry.file_type() else { continue };
-        let child_rel = if rel.is_empty() {
-            name.clone()
-        } else {
-            format!("{rel}/{name}")
-        };
         if ft.is_dir() {
             dirs.push(LiteEntry {
                 abs: entry.path(),
-                rel: child_rel,
+                rel: child,
                 name,
             });
-            continue;
-        }
-        if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
-            continue;
-        }
-        if skip.contains(&child_rel) {
-            continue;
-        }
-        total += 1;
-        let ranked = RankedFile {
-            name,
-            rel: child_rel,
-            abs: entry.path(),
-        };
-        if is_title_seed_hot_name(&ranked.name) {
-            keep_smallest(&mut hot, ranked, file_limit);
-        } else if hot.len() < file_limit {
-            keep_smallest(&mut cold, ranked, file_limit);
         }
     }
     let mut chosen = Vec::with_capacity(file_limit.min(total));
@@ -874,19 +885,18 @@ fn stream_dir_tail<'p, 'c>(
         if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
             continue;
         }
-        let Ok(ft) = entry.file_type() else { continue };
         let child_rel = if rel.is_empty() {
             name.clone()
         } else {
             format!("{rel}/{name}")
         };
-        if ft.is_dir() {
-            if push_dirs {
+        if is_md_name(&name) {
+            // fall through to the note path
+        } else {
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_dir() && push_dirs {
                 child_dirs.push((entry.path(), child_rel));
             }
-            continue;
-        }
-        if !ft.is_file() || !name.to_ascii_lowercase().ends_with(".md") {
             continue;
         }
         if skip.contains(&child_rel) {
@@ -1043,6 +1053,10 @@ fn collect_md_notes_publishing<'a>(
             if ready_due {
                 if let Some(sink) = publish.as_mut() {
                     on_ready(sink, &out);
+                    // After the Ready event is queued. Merging a large index
+                    // stays off the path that paints the first page.
+                    merge_fts_segments(sink.conn);
+                    backfill_note_fts_row_if_needed(sink.conn);
                 }
                 announced = true;
             }
@@ -1280,8 +1294,15 @@ fn tune_fill_connection(conn: &Connection) {
         "PRAGMA cache_size=-524288;
          PRAGMA temp_store=MEMORY;
          PRAGMA mmap_size=1073741824;
-         PRAGMA wal_autocheckpoint=100000;
-         INSERT INTO note_fts(note_fts, rank) VALUES('automerge', 64);
+         PRAGMA wal_autocheckpoint=100000;",
+    );
+}
+
+/// FTS segment merge. Runs after Ready so a filled vault does not merge
+/// every segment before the first page.
+fn merge_fts_segments(conn: &Connection) {
+    let _ = conn.execute_batch(
+        "INSERT INTO note_fts(note_fts, rank) VALUES('automerge', 64);
          INSERT INTO note_fts(note_fts, rank) VALUES('crisismerge', 64);",
     );
 }
@@ -1624,12 +1645,32 @@ pub fn ensure_note_fts_row(conn: &Connection) {
         .query_row("SELECT 1 FROM note_fts_row LIMIT 1", [], |r| r.get(0))
         .unwrap_or(0);
     if fts_any == 1 && side_any == 0 {
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO note_fts_row(note_id, fts_rowid)
-             SELECT note_id, rowid FROM note_fts WHERE note_id IS NOT NULL",
-            [],
-        );
+        // Copying every row waits until after Ready.
+        return;
     }
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES ('fts_row_mapped', '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [],
+    );
+}
+
+fn backfill_note_fts_row_if_needed(conn: &Connection) {
+    let mapped: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'fts_row_mapped'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    if mapped.as_deref() == Some("1") {
+        return;
+    }
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO note_fts_row(note_id, fts_rowid)
+         SELECT note_id, rowid FROM note_fts WHERE note_id IS NOT NULL",
+        [],
+    );
     let _ = conn.execute(
         "INSERT INTO meta_kv(key, value) VALUES ('fts_row_mapped', '1')
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -2243,6 +2284,9 @@ pub fn fill_from_disk_with_opts<'a>(
         });
     }
     let mut is_cancelled = is_cancelled.into_inner();
+    // A vault smaller than the first page never took the post-Ready merge.
+    merge_fts_segments(conn);
+    backfill_note_fts_row_if_needed(conn);
     let existing = if deep {
         prior
     } else {

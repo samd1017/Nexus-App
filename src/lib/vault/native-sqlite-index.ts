@@ -22,6 +22,7 @@ type FillResult = {
   errors: number;
   notes: number;
   edges: number;
+  scanned?: number;
   searchState?: string;
 };
 
@@ -247,6 +248,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
             errors: p.errors,
             notes: p.total || p.indexed,
             edges: 0,
+            scanned: p.scanned,
             searchState: p.searchState ?? undefined,
           });
         }
