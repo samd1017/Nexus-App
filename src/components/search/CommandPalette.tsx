@@ -224,8 +224,21 @@ function topNotesByVisitMtime(
   return out;
 }
 
+// Where the cursor was before search opened. The field takes focus on mount,
+// so this is tracked all the time rather than read when search opens.
+let focusBeforeSearch: HTMLElement | null = null;
+
 export function CommandPalette() {
   const open = useVaultStore((s) => s.commandOpen);
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || t.closest?.("[aria-label='Command palette']")) return;
+      focusBeforeSearch = t;
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => document.removeEventListener("focusin", onFocusIn, true);
+  }, []);
   if (!open) return null;
   return <CommandPaletteOpen />;
 }
@@ -286,7 +299,7 @@ function CommandPaletteOpen() {
       } else {
         setQuery("");
       }
-      const prev = document.activeElement as HTMLElement | null;
+      const prev = focusBeforeSearch;
       // Keystrokes land in the field even if the note takes the cursor after paint.
       const root = inputRef.current?.closest("[role='dialog']") as HTMLElement | null;
       if (!root) return;

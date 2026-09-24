@@ -180,6 +180,26 @@ function hasEmptyFocusBullet(markdown: string): boolean {
 }
 
 /** Place caret in first empty paragraph under ## Focus, else focus end of first list item. */
+/** A new note is often only its title heading. Writing starts on the line below it. */
+function placeCaretForWriting(ed: Editor): void {
+  if (ed.isDestroyed) return;
+  try {
+    const { doc, selection } = ed.state;
+    const inHeading = selection.$from.parent.type.name === "heading";
+    if (ed.isFocused && !inHeading) return;
+    if (doc.lastChild?.type.name === "heading") {
+      ed.chain()
+        .insertContentAt(doc.content.size, { type: "paragraph" })
+        .focus("end")
+        .run();
+    } else {
+      ed.commands.focus("end");
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function morningAutofocusEditor(ed: Editor): void {
   let afterFocus = false;
   let targetPos: number | null = null;
@@ -232,6 +252,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const contentRef = useRef(content);
   // Bumps so a note switch does not apply a stale setContent.
   const contentApplyGen = useRef(0);
+  const writeWantedUntil = useRef(0);
   /** Morning autofocus: once per note id open */
   const morningFocusedFor = useRef<string | null>(null);
   contentRef.current = content;
@@ -887,6 +908,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       if (editor.isDestroyed) return;
       applying.current = true;
       editor.commands.setContent(html, { emitUpdate: false });
+      if (Date.now() < writeWantedUntil.current) placeCaretForWriting(editor);
       requestAnimationFrame(() => {
         if (applyGen !== contentApplyGen.current) return;
         paintEditorExtras(editor);
@@ -923,15 +945,19 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     const onWrite = (e: Event) => {
       const target = (e as CustomEvent<string | undefined>).detail;
       if (target && target !== noteId) return;
-      if (editor.isDestroyed) return;
-      try {
-        editor.commands.focus("end");
-      } catch {
-        /* ignore */
-      }
+      // The renamed title rewrites the body a moment later. The content apply
+      // below places the caret again right after that rewrite.
+      writeWantedUntil.current = Date.now() + 900;
+      const place = () => placeCaretForWriting(editor);
+      place();
+      writeTimers.push(window.setTimeout(place, 180), window.setTimeout(place, 420));
     };
+    const writeTimers: number[] = [];
     window.addEventListener("nexus-write-note", onWrite);
-    return () => window.removeEventListener("nexus-write-note", onWrite);
+    return () => {
+      window.removeEventListener("nexus-write-note", onWrite);
+      for (const t of writeTimers) window.clearTimeout(t);
+    };
   }, [editor, noteId]);
 
   useEffect(() => {

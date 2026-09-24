@@ -781,5 +781,15 @@ assert.equal(settingsSrc.includes("if (shellCatalog) return catalogNoteCount > 0
 const prefsSrc = readFileSync(new URL("../src/lib/prefs/preferences.ts", import.meta.url), "utf8");
 assert.equal(prefsSrc.includes("settledSystemTheme"), true);
 assert.equal(storeSrc.includes("export function noteBodyFailed"), true);
+// A readable new vault is never reported as a scope failure.
+assert.equal(storeSrc.includes("await assertDesktopRootReadable(root);"), true);
+// Naming a new note hands the cursor to its body; every close has a home.
+const visualSrc = readFileSync(new URL("../src/components/editor/VisualEditor.tsx", import.meta.url), "utf8");
+assert.equal(visualSrc.includes("nexus-write-note"), true);
+assert.equal(treeSrc.includes("justCreatedRef"), true);
+assert.equal(confirmSrc.includes("restoreFocusOrList"), true);
+assert.equal(paletteSrc.includes("focusBeforeSearch"), true);
+// The saved-page Ready shows no page count beside it.
+assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
 console.log("desktop-boot: PASS");
