@@ -219,6 +219,7 @@ fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) ->
              DROP TABLE IF EXISTS note_fts;
              DROP TABLE IF EXISTS note_fts_row;",
         );
+        crate::shell_catalog::clear_catalog_counts(conn);
         conn.execute_batch(DDL)
             .map_err(|e| format!("schema migrate: {e}"))?;
     }
@@ -404,6 +405,7 @@ fn wipe_tx(conn: &Connection) -> Result<(), String> {
          DELETE FROM note_fts_row;",
     )
     .map_err(|e| e.to_string())?;
+    crate::shell_catalog::clear_catalog_counts(conn);
     Ok(())
 }
 
@@ -1152,13 +1154,14 @@ pub fn vault_shell_mount(
             let _ = conn.busy_timeout(Duration::from_millis(
                 crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS,
             ));
-            let counts = crate::shell_catalog::catalog_counts(conn);
+            let counts = crate::shell_catalog::catalog_counts_fast(conn);
             let _ = conn.busy_timeout(Duration::from_millis(15_000));
             counts
         };
         if let Ok((notes, folders)) = counts {
             if notes == 0 {
                 let mut writer = open_conn(&db_path)?;
+                crate::shell_catalog::clear_catalog_counts(&writer);
                 crate::shell_catalog::seed_first_page(
                     &mut writer,
                     Path::new(&vault_root),
@@ -1166,6 +1169,7 @@ pub fn vault_shell_mount(
                 )?;
             } else if folders == 0 {
                 let mut writer = open_conn(&db_path)?;
+                crate::shell_catalog::clear_catalog_counts(&writer);
                 crate::shell_catalog::seed_folder_pages(
                     &mut writer,
                     Path::new(&vault_root),

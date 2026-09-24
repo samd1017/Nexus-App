@@ -1605,19 +1605,36 @@ pub fn ensure_note_fts_row(conn: &Connection) {
             fts_rowid INTEGER NOT NULL
          );",
     );
-    let side: i64 = conn
-        .query_row("SELECT COUNT(*) FROM note_fts_row", [], |r| r.get(0))
+    let mapped: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key = 'fts_row_mapped'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    if mapped.as_deref() == Some("1") {
+        return;
+    }
+    // One existence check, not a count of every title. Later writes keep
+    // the side table in step, so Ready does not scan the index again.
+    let fts_any: i64 = conn
+        .query_row("SELECT 1 FROM note_fts LIMIT 1", [], |r| r.get(0))
         .unwrap_or(0);
-    let fts: i64 = conn
-        .query_row("SELECT COUNT(*) FROM note_fts", [], |r| r.get(0))
+    let side_any: i64 = conn
+        .query_row("SELECT 1 FROM note_fts_row LIMIT 1", [], |r| r.get(0))
         .unwrap_or(0);
-    if side < fts {
+    if fts_any == 1 && side_any == 0 {
         let _ = conn.execute(
             "INSERT OR IGNORE INTO note_fts_row(note_id, fts_rowid)
              SELECT note_id, rowid FROM note_fts WHERE note_id IS NOT NULL",
             [],
         );
     }
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES ('fts_row_mapped', '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [],
+    );
 }
 
 pub fn delete_note_fts(conn: &Connection, id: &str) -> Result<(), String> {
@@ -2024,8 +2041,9 @@ pub fn fill_from_disk_with_opts<'a>(
     };
     on_progress(&progress);
     // Heads for notes already on the open page (mount seeded them) before
-    // this walk reaches the rest of the vault.
-    if allow_early {
+    // this walk reaches the rest of the vault. Deep fill announces Ready
+    // first; counting every row here would make that wait on the catalog.
+    if allow_early && opts.until != FillUntil::Deep {
         let n = commit_early_heads(
             conn,
             vault_root,
@@ -2688,7 +2706,8 @@ pub fn fill_from_disk_with_opts<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
+    use std::cell::Cell;
     use std::fs;
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -3463,6 +3482,163 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         );
         let _ = fs::remove_dir_all(small_vault.parent().unwrap());
         let _ = fs::remove_dir_all(large_vault.parent().unwrap());
+    }
+
+    fn ready_ms_then_stop(vault: &Path, db: &Path) -> u128 {
+        let mut conn = open_test_conn(db);
+        let started = Instant::now();
+        let ready_ms = Cell::new(0u128);
+        let stop = Cell::new(false);
+        let _ = fill_from_disk_with_opts(
+            &mut conn,
+            vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || stop.get(),
+            |p| {
+                if p.phase == "ready-meta" && ready_ms.get() == 0 {
+                    ready_ms.set(started.elapsed().as_millis().max(1));
+                    assert!(p.scanned > 0 && p.scanned <= TITLE_READY_FLUSH as i64);
+                    assert!(fts_path_at(db, "00-Inbox/00/Hub 0.md"));
+                    stop.set(true);
+                }
+            },
+        );
+        ready_ms.get()
+    }
+
+    fn insert_catalog_rows(conn: &mut Connection, n: usize) {
+        let tx = conn.transaction().unwrap();
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, title, deleted, fill_depth)
+                     VALUES (?1, ?2, ?3, 'note', NULL, 1, 8, ?3, 0, 1)",
+                )
+                .unwrap();
+            for i in 0..n {
+                let name = format!("Bulk {i}.md");
+                stmt.execute(params![
+                    format!("bulk-{i}"),
+                    format!("bulk/{i}.md"),
+                    name,
+                ])
+                .unwrap();
+            }
+        }
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn ready_stays_flat_when_the_catalog_already_has_many_rows() {
+        let (vault, db) = temp_pair("catflat");
+        write_official_shaped(&vault, 900);
+        let bare = ready_ms_then_stop(&vault, &db);
+        {
+            let mut conn = open_test_conn(&db);
+            insert_catalog_rows(&mut conn, 80_000);
+        }
+        let crowded = ready_ms_then_stop(&vault, &db);
+        assert!(bare > 0 && crowded > 0);
+        assert!(
+            crowded < bare.saturating_mul(3) + 800,
+            "80k extra catalog rows made Ready {crowded}ms vs {bare}ms"
+        );
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    /// Stand-in for a half-million-note catalog. Rows live in SQLite, not as
+    /// files, so this measures Ready against index size. Run with
+    /// `--ignored` when recording a number. Not part of the normal suite.
+    #[test]
+    #[ignore = "500k-row Ready probe, not CI"]
+    fn ready_bench_half_million_catalog_not_ci() {
+        let (vault, db) = temp_pair("cat500");
+        write_official_shaped(&vault, 700);
+        let bare = ready_ms_then_stop(&vault, &db);
+        {
+            let mut conn = open_test_conn(&db);
+            insert_catalog_rows(&mut conn, 500_000);
+        }
+        let crowded = ready_ms_then_stop(&vault, &db);
+        eprintln!("ready bare={bare}ms catalog_500k={crowded}ms");
+        assert!(crowded < bare.saturating_mul(3) + 1_500, "{crowded} vs {bare}");
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    /// Names in one directory are scanned before Ready so Hub 0 leads that
+    /// folder. Page size stays 32. Run with `--ignored` to time a fat folder.
+    #[test]
+    #[ignore = "fat-directory Ready probe, not CI"]
+    fn ready_bench_fat_directory_not_ci() {
+        let (small, small_db) = temp_pair("fat-small");
+        let (large, large_db) = temp_pair("fat-large");
+        for i in 0..2_000 {
+            let name = if i == 0 { "Hub 0.md".into() } else { format!("Topic {i}.md") };
+            write_note(&small, &format!("00-Inbox/{name}"), "x\n");
+        }
+        for i in 0..40_000 {
+            let name = if i == 0 { "Hub 0.md".into() } else { format!("Topic {i}.md") };
+            write_note(&large, &format!("00-Inbox/{name}"), "x\n");
+        }
+        let time_hub = |vault: &Path, db: &Path| -> u128 {
+            let mut conn = open_test_conn(db);
+            let started = Instant::now();
+            let ready_ms = Cell::new(0u128);
+            let stop = Cell::new(false);
+            let _ = fill_from_disk_with_opts(
+                &mut conn,
+                vault,
+                FillOpts {
+                    deep_head_chars: 8000,
+                    short_head_chars: 768,
+                    force_rebuild: false,
+                    db_path: "test.sqlite",
+                    priority_rels: &[],
+                    until: FillUntil::Deep,
+                },
+                || stop.get(),
+                |p| {
+                    if p.phase == "ready-meta" && ready_ms.get() == 0 {
+                        ready_ms.set(started.elapsed().as_millis().max(1));
+                        assert!(p.scanned <= TITLE_READY_FLUSH as i64);
+                        assert!(fts_path_at(db, "00-Inbox/Hub 0.md"));
+                        stop.set(true);
+                    }
+                },
+            );
+            ready_ms.get()
+        };
+        let small_ms = time_hub(&small, &small_db);
+        let large_ms = time_hub(&large, &large_db);
+        eprintln!("ready fat2k={small_ms}ms fat40k={large_ms}ms");
+        assert!(small_ms > 0 && large_ms > 0);
+        assert!(large_ms < small_ms.saturating_mul(8) + 2_000, "{large_ms} vs {small_ms}");
+        let _ = fs::remove_dir_all(small.parent().unwrap());
+        let _ = fs::remove_dir_all(large.parent().unwrap());
+    }
+
+    /// Official shape: 7 roots × 20 buckets. Ready only reads the first bucket,
+    /// so vault size grows that bucket, not the whole walk. `--ignored`.
+    #[test]
+    #[ignore = "official-shaped file Ready probe, not CI"]
+    fn ready_bench_official_files_not_ci() {
+        let (small, small_db) = temp_pair("off-small");
+        let (large, large_db) = temp_pair("off-large");
+        write_official_shaped(&small, 8_000);
+        write_official_shaped(&large, 80_000);
+        let small_ms = ready_ms_then_stop(&small, &small_db);
+        let large_ms = ready_ms_then_stop(&large, &large_db);
+        eprintln!("ready official 8k={small_ms}ms 80k={large_ms}ms");
+        assert!(large_ms < small_ms.saturating_mul(4) + 1_000, "{large_ms} vs {small_ms}");
+        let _ = fs::remove_dir_all(small.parent().unwrap());
+        let _ = fs::remove_dir_all(large.parent().unwrap());
     }
 
     #[test]

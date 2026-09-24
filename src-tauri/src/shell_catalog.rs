@@ -196,6 +196,9 @@ pub fn ensure_shell_indexes(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+const COUNT_NOTES_KEY: &str = "shell_note_count";
+const COUNT_FOLDERS_KEY: &str = "shell_folder_count";
+
 pub fn catalog_counts(conn: &Connection) -> Result<(i64, i64), String> {
     let notes: i64 = conn
         .query_row(
@@ -211,6 +214,85 @@ pub fn catalog_counts(conn: &Connection) -> Result<(i64, i64), String> {
             |r| r.get(0),
         )
         .unwrap_or(0);
+    Ok((notes, folders))
+}
+
+pub fn store_catalog_counts(conn: &Connection, notes: i64, folders: i64) {
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![COUNT_NOTES_KEY, notes.to_string()],
+    );
+    let _ = conn.execute(
+        "INSERT INTO meta_kv(key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![COUNT_FOLDERS_KEY, folders.to_string()],
+    );
+}
+
+pub fn clear_catalog_counts(conn: &Connection) {
+    let _ = conn.execute(
+        "DELETE FROM meta_kv WHERE key = ?1 OR key = ?2",
+        params![COUNT_NOTES_KEY, COUNT_FOLDERS_KEY],
+    );
+}
+
+/// One past the full-shell cap. A small vault still gets an exact total.
+/// A larger catalog stops there, so open does not scan the table.
+const COUNT_PROBE_LIMIT: i64 = SHELL_FULL_MAX_NOTES + 1;
+
+fn read_stored_count(conn: &Connection, key: &str) -> Option<i64> {
+    conn.query_row(
+        "SELECT value FROM meta_kv WHERE key = ?1",
+        params![key],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.parse().ok())
+}
+
+fn count_kind_capped(conn: &Connection, kind: &str, limit: i64) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM (
+            SELECT 1 FROM note_meta
+            WHERE kind = ?1 AND deleted = 0
+            LIMIT ?2
+         )",
+        params![kind, limit],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Stored total when a listing has already finished. Otherwise a short probe:
+/// small vaults are exact and remembered; a large catalog stops at the probe
+/// so the next open is not a walk of every row. The real total is stored
+/// when that listing finishes.
+pub fn catalog_counts_fast(conn: &Connection) -> Result<(i64, i64), String> {
+    if let (Some(notes), Some(folders)) = (
+        read_stored_count(conn, COUNT_NOTES_KEY),
+        read_stored_count(conn, COUNT_FOLDERS_KEY),
+    ) {
+        return Ok((notes, folders));
+    }
+    let notes = count_kind_capped(conn, "note", COUNT_PROBE_LIMIT)?;
+    let folders = if notes >= COUNT_PROBE_LIMIT {
+        // Already a large catalog. One folder row is enough to skip a reseed.
+        // Counting every folder would read the rest of the table.
+        let any: i64 = conn
+            .query_row(
+                "SELECT 1 FROM note_meta WHERE kind = 'folder' AND deleted = 0 LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if any == 1 { 1 } else { 0 }
+    } else {
+        count_kind_capped(conn, "folder", COUNT_PROBE_LIMIT)?
+    };
+    if notes < COUNT_PROBE_LIMIT && folders < COUNT_PROBE_LIMIT {
+        store_catalog_counts(conn, notes, folders);
+    }
     Ok((notes, folders))
 }
 
@@ -837,6 +919,10 @@ pub fn seed_first_page(
 
 pub fn mark_catalog_walk_done(conn: &Connection) {
     mark_catalog_walk(conn, "done");
+    // After the listing, not before Ready. The next open reads this total.
+    if let Ok((notes, folders)) = catalog_counts(conn) {
+        store_catalog_counts(conn, notes, folders);
+    }
 }
 
 /// Path rows discovered while a fill is still walking. Does not write FTS
@@ -947,17 +1033,21 @@ pub fn mount_catalog(
     allow_walk: bool,
 ) -> Result<ShellMount, String> {
     ensure_shell_indexes(conn)?;
-    let (mut notes, mut folders) = catalog_counts(conn)?;
+    let (mut notes, mut folders) = catalog_counts_fast(conn)?;
     if notes == 0 && folders == 0 {
         if !allow_walk {
             return Ok(pending_mount());
         }
+        clear_catalog_counts(conn);
         write_catalog(conn, root)?;
         (notes, folders) = catalog_counts(conn)?;
+        store_catalog_counts(conn, notes, folders);
     } else if folders == 0 && allow_walk {
         // One directory listing, not every note path.
+        clear_catalog_counts(conn);
         seed_folder_pages(conn, root, prefer_path)?;
         (notes, folders) = catalog_counts(conn)?;
+        store_catalog_counts(conn, notes, folders);
     }
     // A cold open commits the root page before the rest of the vault exists.
     // That partial catalog must stay a window even when the page is small.
@@ -1726,6 +1816,10 @@ mod tests {
                target_raw TEXT NOT NULL,
                target_norm TEXT NOT NULL,
                target_id TEXT
+             );
+             CREATE TABLE meta_kv (
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
              );",
         )
         .unwrap();
@@ -1791,9 +1885,39 @@ mod tests {
         let mounted = mount_catalog(&mut large, Path::new("."), None, false).unwrap();
         assert!(!mounted.materialize);
         assert!(mounted.rows.len() <= SHELL_CHILD_PAGE as usize);
+        // No stored total yet: the open stops at the probe instead of counting 450.
+        assert_eq!(mounted.notes, COUNT_PROBE_LIMIT);
+        assert!(mounted.rows.len() < 450);
+        mark_catalog_walk_done(&large);
+        let mounted = mount_catalog(&mut large, Path::new("."), None, false).unwrap();
+        assert!(!mounted.materialize);
         assert_eq!(mounted.notes, 450);
         assert!(mounted.omitted_notes >= 450 - SHELL_CHILD_PAGE);
         assert!(mounted.rows.len() < mounted.notes as usize);
+    }
+
+    #[test]
+    fn reopen_uses_the_stored_total_instead_of_counting_every_row() {
+        let mut conn = open_mem();
+        for i in 0..2_000 {
+            insert_note(&conn, &format!("n{i:04}.md"), None);
+        }
+        let probed = catalog_counts_fast(&conn).unwrap();
+        assert_eq!(probed.0, COUNT_PROBE_LIMIT);
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key = ?1",
+                params![COUNT_NOTES_KEY],
+                |r| r.get(0),
+            )
+            .ok();
+        assert!(stored.is_none(), "a capped probe must not be saved as the vault size");
+        store_catalog_counts(&conn, 2_000, 0);
+        assert_eq!(catalog_counts_fast(&conn).unwrap(), (2_000, 0));
+        let mounted = mount_catalog(&mut conn, Path::new("."), None, false).unwrap();
+        assert!(!mounted.materialize);
+        assert_eq!(mounted.notes, 2_000);
+        assert!(mounted.rows.len() <= SHELL_CHILD_PAGE as usize);
     }
 
     #[test]
