@@ -22,6 +22,7 @@ import {
   savedPageTitlesLive,
   shouldPrefetchSavedPage,
 } from "@/lib/vault/desktop-boot";
+import { publishReadyClock } from "@/lib/vault/ready-clock";
 
 type TauriCore = {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -69,6 +70,11 @@ function paintSavedPage(mount: { rows?: Array<{ name?: string; kind?: string; pa
   label.textContent = SAVED_PAGE_READY_MESSAGE;
   bar.append(dot, label);
   host.append(bar);
+  host.style.position = "fixed";
+  host.style.top = "44px";
+  host.style.left = "0";
+  host.style.right = "0";
+  host.style.zIndex = "80";
   if (names.length) {
     const list = document.createElement("div");
     list.style.cssText = [
@@ -129,6 +135,8 @@ function afterPaint(): Promise<void> {
 
 async function bootDesktop(): Promise<void> {
   const boot = ((window as unknown as { __NEXUS_BOOT__?: Record<string, unknown> }).__NEXUS_BOOT__ ??= {});
+  const clock = (window as unknown as { __NEXUS_READY_CLOCK__?: { document?: number } }).__NEXUS_READY_CLOCK__;
+  if (typeof clock?.document !== "number") publishReadyClock("module");
   if (typeof boot.t0 !== "number") boot.t0 = performance.now();
   // Commit the page script's Ready line before vault_shell_mount.
   // That command runs on this thread and used to finish before any pixels.

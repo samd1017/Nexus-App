@@ -24,10 +24,47 @@ use vault_watch::{
     vault_watch_ack, vault_watch_start, vault_watch_stop, WatchState,
 };
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    Emitter,
+    webview::PageLoadEvent,
+    Emitter, Manager,
 };
+
+fn ready_clock_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn ready_clock_line(phase: &str, t: u64, window_ms: u64) -> String {
+    format!(
+        "NEXUS_READY_CLOCK phase={phase} t={t} window={window_ms} document=0 early=0 hit=0 reason=- shell=0"
+    )
+}
+
+static READY_WINDOW_MS: AtomicU64 = AtomicU64::new(0);
+static READY_FOCUS_LOGGED: AtomicBool = AtomicBool::new(false);
+static READY_DOC_LOGGED: AtomicBool = AtomicBool::new(false);
+
+fn log_ready_focus(window_ms: u64) {
+    if READY_FOCUS_LOGGED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let t = ready_clock_ms();
+    eprintln!("{}", ready_clock_line("focus", t, window_ms));
+}
+
+/// Echo a page clock line onto the process log the soak already tails.
+#[tauri::command]
+fn ready_clock_log(line: String) {
+    let one = line.replace(['\n', '\r'], " ");
+    if one.starts_with("NEXUS_READY_CLOCK ") && one.len() <= 400 {
+        eprintln!("{one}");
+    }
+}
 
 /// Native meta walk DTO — mirrors TS `NodeMeta` (no bodies).
 #[derive(Clone, serde::Serialize)]
@@ -173,6 +210,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             vault_meta_walk,
             vault_index_ping,
+            ready_clock_log,
             vault_register_root,
             vault_clear_roots,
             vault_index_path,
@@ -209,7 +247,44 @@ pub fn run() {
             vault_shell_known_norms,
             vault_shell_mentions,
         ])
+        .on_page_load(|webview, payload| {
+            if payload.event() != PageLoadEvent::Started {
+                return;
+            }
+            let url = payload.url().as_str();
+            if url.starts_with("about:") {
+                return;
+            }
+            if READY_DOC_LOGGED.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            let t = ready_clock_ms();
+            let window_ms = READY_WINDOW_MS.load(Ordering::Relaxed);
+            eprintln!("{}", ready_clock_line("document-native", t, window_ms));
+            let js = format!(
+                "window.__NEXUS_READY_CLOCK__=Object.assign(window.__NEXUS_READY_CLOCK__||{{}},{{window:{window_ms},documentNative:{t}}});"
+            );
+            let _ = webview.eval(js);
+        })
         .setup(|app| {
+            let window_ms = ready_clock_ms();
+            READY_WINDOW_MS.store(window_ms, Ordering::Relaxed);
+            eprintln!("{}", ready_clock_line("window", window_ms, window_ms));
+            if let Some(window) = app.get_webview_window("main") {
+                let js = format!(
+                    "window.__NEXUS_READY_CLOCK__=Object.assign(window.__NEXUS_READY_CLOCK__||{{}},{{window:{window_ms}}});"
+                );
+                let _ = window.eval(js);
+                if window.is_focused().unwrap_or(false) {
+                    log_ready_focus(window_ms);
+                }
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(true) = event {
+                        log_ready_focus(window_ms);
+                    }
+                });
+            }
+
             let handle = app.handle();
 
             let open_vault =

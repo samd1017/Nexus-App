@@ -138,6 +138,7 @@ import {
   savedPageTitlesLive,
   takePrefetchedDesktopShell,
 } from "./desktop-boot";
+import { publishReadyClock } from "./ready-clock";
 import {
   applyLargeVaultOverlay,
   clearLargeVaultOverlay,
@@ -1890,6 +1891,7 @@ function announceFilledPageReady(shell: ShellMount, root: string): void {
 			toast: "This page is ready, but it could not be saved for the next open.",
 		});
 	}
+	publishReadyClock("shell");
 }
 
 /**

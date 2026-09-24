@@ -195,6 +195,56 @@ assert.equal(pageJs.includes(DESKTOP_SAVED_PAGE_KEY), true);
 assert.equal(pageJs.includes("nexus-desktop-vault-root"), true);
 assert.equal(pageJs.includes('data-open-progress", "ready"'), true);
 assert.equal(pageJs.includes("document.cookie"), true);
+assert.equal(pageJs.includes("NEXUS_READY_CLOCK"), true);
+assert.equal(pageJs.includes('phase=" + phase'), true);
+for (const token of [
+  "no-root",
+  "open-last-off",
+  "no-page",
+  "root-mismatch",
+  "no-names",
+  "no-host",
+  "painted",
+  "throw",
+]) {
+  assert.equal(pageJs.includes(token), true, token);
+}
+assert.equal(pageJs.includes('host.style.top = "44px"'), true);
+const clockOrder = ["window=", "document=", "early=", "hit=", "reason=", "shell="];
+let cursor = 0;
+for (const field of clockOrder) {
+  const at = pageJs.indexOf(field, cursor);
+  assert.ok(at > cursor, field);
+  cursor = at;
+}
+assert.equal(bootSrc.includes('host.style.top = "44px"'), true);
+assert.equal(bootSrc.includes('publishReadyClock("module")'), true);
+const storeSrc = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
+assert.equal(storeSrc.includes('publishReadyClock("shell")'), true);
+const clockSrc = readFileSync(new URL("../src/lib/vault/ready-clock.ts", import.meta.url), "utf8");
+assert.equal(clockSrc.includes("NEXUS_READY_CLOCK"), true);
+const rustSrc = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+assert.equal(rustSrc.includes('ready_clock_line("window"'), true);
+assert.equal(rustSrc.includes('ready_clock_line("focus"'), true);
+assert.equal(rustSrc.includes('ready_clock_line("document-native"'), true);
+assert.equal(rustSrc.includes("fn ready_clock_log"), true);
+const { publishReadyClock } = await import("../src/lib/vault/ready-clock.ts");
+const clockLogs = [];
+const log = console.log;
+console.log = (...args) => {
+  clockLogs.push(args.join(" "));
+};
+globalThis.window = { __NEXUS_BOOT__: {} };
+publishReadyClock("early", { hit: 0, reason: "no-page" });
+publishReadyClock("shell");
+console.log = log;
+assert.match(clockLogs[0], /^NEXUS_READY_CLOCK phase=early /);
+assert.match(clockLogs[0], /hit=0/);
+assert.match(clockLogs[0], /reason=no-page/);
+assert.match(clockLogs[1], /^NEXUS_READY_CLOCK phase=shell /);
+assert.equal(globalThis.window.__NEXUS_READY_CLOCK__.earlyHit, 0);
+assert.equal(globalThis.window.__NEXUS_SOAK_LAST__.readyClock.earlyReason, "no-page");
+assert.equal(typeof globalThis.window.__NEXUS_SOAK_LAST__.readyClock.shell, "number");
 const bootFn = bootSrc.slice(bootSrc.indexOf("async function bootDesktop"));
 const yieldAt = bootFn.indexOf("await afterPaint()");
 const prefetchAt = bootFn.indexOf("await prefetchSavedPage()");
