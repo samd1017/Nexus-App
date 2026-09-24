@@ -440,8 +440,8 @@ export function EditorPane({
       data-testid="nexus-editor"
       onPointerDownCapture={() => setFindFocusPane(pane)}
     >
-      <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
-        <div className="min-w-0 flex-1">
+      <div className="nexus-editor-head flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
+        <div className="nexus-editor-title min-w-0 flex-1">
           {/* Parent path only — note title lives in NoteTitleInput (avoids Untitled / Untitled) */}
           {crumbs.length > 0 ? (
             <div
@@ -534,7 +534,7 @@ export function EditorPane({
               <div className="mr-1.5">
                 <EditorSaveChip />
               </div>
-              <span className="mr-2 hidden text-[11px] text-[var(--text-muted)] lg:inline">
+              <span className="nexus-editor-when mr-2 hidden text-[11px] text-[var(--text-muted)] lg:inline">
                 {mode === "fsa" || mode === "desktop" || (mode as string) === "sandbox"
                   ? "on disk · "
                   : ""}

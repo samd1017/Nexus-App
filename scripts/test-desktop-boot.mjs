@@ -770,5 +770,10 @@ assert.equal(settingsSrc.includes('aria-label="Close settings"'), false);
 assert.equal(settingsSrc.includes("settings-stay-hint"), true);
 assert.equal(confirmSrc.includes("if (e.target === e.currentTarget) onCancel()"), false);
 assert.equal(cssSrc.includes(".nexus-search-input:focus-visible"), true);
+// Rename is one clear field; the editor head folds labels before clipping the title.
+assert.equal(treeSrc.includes("nexus-rename-input"), true);
+assert.equal(cssSrc.includes("container-type: inline-size"), true);
+assert.equal(paletteSrc.includes('data-testid="search-miss-actions"'), true);
+assert.equal(keysSrc.includes("[data-right-panel]"), true);
 
 console.log("desktop-boot: PASS");

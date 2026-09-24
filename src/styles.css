@@ -2261,3 +2261,23 @@ button:focus-visible,
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.06);
 }
+
+/* The editor head answers to its own width, not the window's. With both side
+   panels open the pane is narrow, so tool labels fold to icons before the
+   note title is clipped. */
+.nexus-editor-head {
+  container-type: inline-size;
+}
+.nexus-editor-title {
+  min-width: 8.5rem;
+}
+@container (max-width: 760px) {
+  .nexus-editor-head .editor-mode-cluster .chip-btn > span {
+    display: none;
+  }
+}
+@container (max-width: 620px) {
+  .nexus-editor-head .nexus-editor-when {
+    display: none;
+  }
+}
