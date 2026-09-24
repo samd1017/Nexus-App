@@ -94,12 +94,16 @@ export function ConfirmDialog({
       if (active && panel.contains(active)) return;
       focusLanding();
     };
+    let lateReclaim = 0;
     const onFocusIn = (e: FocusEvent) => {
       const panel = panelRef.current;
       if (!panel) return;
       const next = e.target as Node | null;
       if (next && panel.contains(next)) return;
       reclaimAfterFocus(reclaim);
+      window.clearTimeout(lateReclaim);
+      // A busy vault can move the cursor again after the next frame.
+      lateReclaim = window.setTimeout(reclaim, 160);
     };
     document.addEventListener("focusin", onFocusIn, true);
 
@@ -158,6 +162,7 @@ export function ConfirmDialog({
       window.cancelAnimationFrame(raf);
       window.clearTimeout(soon);
       window.clearTimeout(later);
+      window.clearTimeout(lateReclaim);
       document.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKey, true);
       const restore = () => {

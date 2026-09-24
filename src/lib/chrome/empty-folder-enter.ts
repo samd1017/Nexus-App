@@ -20,6 +20,11 @@ export function claimEmptyFolderEnter(input: {
   armedFolder: string | null;
   /** Key target is Folder map, a daily control, or the open note. */
   targetStole: boolean;
+  /**
+   * The key landed on the page itself. The note had the cursor, then the
+   * empty folder was focused, and focus fell through before Enter.
+   */
+  targetIdle?: boolean;
 }): string | null {
   if (input.key !== "Enter" || input.meta || input.ctrl || input.alt || input.repeat || input.composing) {
     return null;
@@ -28,8 +33,22 @@ export function claimEmptyFolderEnter(input: {
   if (input.fromTarget) return input.fromTarget;
   if (input.fromActive) return input.fromActive;
   if (input.treeHasKey && input.treeFolder) return input.treeFolder;
-  if (input.armedFolder && input.targetStole) return input.armedFolder;
+  if (input.armedFolder && (input.targetStole || input.targetIdle)) return input.armedFolder;
   return null;
+}
+
+/** Enter is not in a text field or a button. The empty-folder hold still owns it. */
+export function isIdleEnterTarget(target: EventTarget | null): boolean {
+  if (!target) return true;
+  const el = target as HTMLElement;
+  if (typeof document !== "undefined" && (el === document.body || el === document.documentElement)) {
+    return true;
+  }
+  if (typeof el.closest !== "function") return false;
+  if (el.closest("input, textarea, select, [contenteditable='true'], button, a, [role='dialog']")) {
+    return false;
+  }
+  return true;
 }
 
 const STEAL_SELECTOR =
@@ -40,7 +59,7 @@ export function scheduleEmptyNoteRename(
   noteId: string,
   open: (id: string) => void,
   isOpen: () => boolean,
-  frames = 8,
+  frames = 24,
 ): void {
   const later =
     typeof requestAnimationFrame === "function"
@@ -55,6 +74,17 @@ export function scheduleEmptyNoteRename(
     later(() => tick(left - 1));
   };
   tick(frames);
+  // A long vault can spend the animation frames before the new row exists.
+  if (typeof setTimeout === "function") {
+    let waits = 0;
+    const slow = () => {
+      if (isOpen() || waits >= 8) return;
+      waits += 1;
+      open(noteId);
+      setTimeout(slow, 60);
+    };
+    setTimeout(slow, 60);
+  }
 }
 
 /** True when a control took focus without a click while an empty folder was armed. */

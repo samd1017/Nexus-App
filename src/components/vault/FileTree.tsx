@@ -36,7 +36,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
-import { claimEmptyFolderEnter, isProgrammaticFocusSteal, scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
+import { claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 
 function folderHasNothing(id: string): boolean {
@@ -643,7 +643,12 @@ export const FileTree = memo(function FileTree() {
     if (!tree || !folderId) return;
     tree.setAttribute("data-tree-focused", "1");
     tree.setAttribute("data-focused-empty-folder", folderId);
-  }, []);
+    tree.setAttribute("data-empty-armed", folderId);
+    const idx = flatRowsRef.current.findIndex(
+      (r) => r.id === folderId || r.emptyParentId === folderId,
+    );
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "auto" });
+  }, [virtualizer]);
 
   const onFocusRow = useCallback((id: string) => {
     const idx = flatRowsRef.current.findIndex((r) => r.id === id);
@@ -703,10 +708,19 @@ export const FileTree = memo(function FileTree() {
       fromPointer = true;
       const t = e.target as Element | null;
       if (t?.closest?.("[data-folder-empty='1']")) return;
-      if (isProgrammaticFocusSteal(t, true, false)) armedEmptyRef.current = null;
+      if (isProgrammaticFocusSteal(t, true, false)) {
+        armedEmptyRef.current = null;
+        parentRef.current?.removeAttribute("data-empty-armed");
+        clearReclaim();
+      }
     };
     const onPointerUp = () => {
       fromPointer = false;
+    };
+    const reclaimTimers: number[] = [];
+    const clearReclaim = () => {
+      for (const id of reclaimTimers) window.clearTimeout(id);
+      reclaimTimers.length = 0;
     };
     const reclaimHolding = (folderId: string) => {
       const rename = document.querySelector<HTMLElement>("[data-testid='tree-rename']");
@@ -714,12 +728,22 @@ export const FileTree = memo(function FileTree() {
         if (document.activeElement !== rename) rename.focus({ preventScroll: true });
         return;
       }
+      if (armedEmptyRef.current !== folderId) return;
       const active = document.activeElement as HTMLElement | null;
       if (active?.closest?.("[data-folder-empty='1']")) return;
       focusEmptyRow(folderId);
     };
     const onFocusIn = (e: FocusEvent) => {
       const next = e.target as Element | null;
+      const rename = document.querySelector<HTMLElement>("[data-testid='tree-rename']");
+      if (rename && isProgrammaticFocusSteal(next, true, fromPointer)) {
+        reclaimAfterFocus(() => {
+          if (rename.isConnected && document.activeElement !== rename) {
+            rename.focus({ preventScroll: true });
+          }
+        });
+        return;
+      }
       const onEmpty = Boolean(next?.closest?.("[data-folder-empty='1']"));
       if (onEmpty) {
         const id = emptyFolderIdFromTarget(next);
@@ -729,8 +753,14 @@ export const FileTree = memo(function FileTree() {
       const holding = armedEmptyRef.current;
       if (!isProgrammaticFocusSteal(next, Boolean(holding), fromPointer)) return;
       if (!holding) return;
-      // Same turn as the stealer's focus() — wait until that call returns.
-      reclaimAfterFocus(() => reclaimHolding(holding));
+      // The note often still has the cursor when the folder is focused.
+      // Take the row back after that focus() returns, and once more if a
+      // long vault moves it again.
+      const run = () => reclaimHolding(holding);
+      clearReclaim();
+      reclaimAfterFocus(run);
+      reclaimTimers.push(window.setTimeout(run, 48));
+      reclaimTimers.push(window.setTimeout(run, 160));
     };
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -750,7 +780,10 @@ export const FileTree = memo(function FileTree() {
         treeHasKey: Boolean(tree) && (target === tree || active === tree),
         treeFolder,
         armedFolder: armedEmptyRef.current,
-        targetStole: isProgrammaticFocusSteal(target, true, false),
+        targetStole:
+          isProgrammaticFocusSteal(target, true, false) ||
+          isProgrammaticFocusSteal(active, true, false),
+        targetIdle: isIdleEnterTarget(target) || isIdleEnterTarget(active),
       });
       if (!folderId) return;
       e.preventDefault();
@@ -758,6 +791,8 @@ export const FileTree = memo(function FileTree() {
       const id = useVaultStore.getState().createNote(folderId, "Untitled");
       if (!id) return;
       armedEmptyRef.current = null;
+      parentRef.current?.removeAttribute("data-empty-armed");
+      clearReclaim();
       openCreatedRename(id);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
@@ -769,6 +804,7 @@ export const FileTree = memo(function FileTree() {
       window.removeEventListener("pointerup", onPointerUp, true);
       window.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKey, true);
+      clearReclaim();
     };
   }, [armEmptyFolder, openCreatedRename]);
 
@@ -809,6 +845,7 @@ export const FileTree = memo(function FileTree() {
           const id = createNote(folderId, "Untitled");
           if (id) {
             armedEmptyRef.current = null;
+            parentRef.current?.removeAttribute("data-empty-armed");
             openCreatedRename(id);
           }
           return;

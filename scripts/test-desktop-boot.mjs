@@ -531,6 +531,32 @@ assert.equal(
 assert.equal(
   claimEmptyFolderEnter({
     key: "Enter",
+    fromTarget: null,
+    fromActive: null,
+    treeHasKey: false,
+    treeFolder: null,
+    armedFolder: "folder-9",
+    targetStole: false,
+    targetIdle: true,
+  }),
+  "folder-9",
+);
+assert.equal(
+  claimEmptyFolderEnter({
+    key: "Enter",
+    fromTarget: null,
+    fromActive: null,
+    treeHasKey: false,
+    treeFolder: "folder-9",
+    armedFolder: null,
+    targetStole: true,
+    targetIdle: false,
+  }),
+  null,
+);
+assert.equal(
+  claimEmptyFolderEnter({
+    key: "Enter",
     ctrl: true,
     fromTarget: "folder-9",
     fromActive: null,
@@ -549,6 +575,8 @@ graphHost.closest = (selector) =>
 assert.equal(isProgrammaticFocusSteal(graphHost, true, false), true);
 assert.equal(isProgrammaticFocusSteal(graphHost, true, true), false);
 assert.equal(treeSrc.includes("claimEmptyFolderEnter"), true);
+assert.equal(treeSrc.includes("isIdleEnterTarget"), true);
+assert.equal(treeSrc.includes("data-empty-armed"), true);
 assert.equal(treeSrc.includes("stopImmediatePropagation"), true);
 const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 assert.equal(cssSrc.includes("outline: 2px solid #5ad8ff"), true);
@@ -631,6 +659,8 @@ const focusSrc = readFileSync(
 assert.equal(focusSrc.includes("export function holdOpenFocus"), true);
 assert.equal(focusSrc.includes("data-settings-landed"), true);
 assert.equal(focusSrc.includes("data-search-caret"), true);
+assert.equal(focusSrc.includes("data-settings-rebuild"), true);
+assert.equal(confirmSrc.includes("lateReclaim"), true);
 const toastSrc = readFileSync(
   new URL("../src/components/chrome/Toast.tsx", import.meta.url),
   "utf8",

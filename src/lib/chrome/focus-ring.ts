@@ -66,7 +66,12 @@ export function holdOpenFocus(
   const onFocusIn = (e: FocusEvent) => {
     if (!root.isConnected || pause()) return;
     const next = e.target as HTMLElement | null;
-    if (next?.getAttribute?.("data-settings-nav")) remembered = next;
+    if (
+      next?.getAttribute?.("data-settings-nav") ||
+      next?.hasAttribute?.("data-settings-rebuild")
+    ) {
+      remembered = next;
+    }
     if (next && root.contains(next) && next !== root) {
       mark(next);
       return;
