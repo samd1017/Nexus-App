@@ -806,19 +806,25 @@ pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>
         if name.starts_with('.') || SKIP_DIRS.iter().any(|s| *s == name.as_ref()) {
             continue;
         }
-        let Ok(ft) = entry.file_type() else { continue };
-        let folder = ft.is_dir();
-        if !folder && !is_note_name(&name) {
-            continue;
-        }
+        let name = name.into_owned();
+        // A `.md` name is a note. file_type() stats when the directory entry
+        // has no type, which made a cold open wait on every file in the
+        // open folder. Modification time is read only for the page that stays.
+        let folder = if is_note_name(&name) {
+            false
+        } else {
+            let Ok(ft) = entry.file_type() else { continue };
+            if !ft.is_dir() {
+                continue;
+            }
+            true
+        };
         if entries.len() >= limit {
             let last = entries.last().unwrap();
             if page_slot_cmp(last, folder, &name) != std::cmp::Ordering::Greater {
                 continue;
             }
         }
-        let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
-        let name = name.into_owned();
         let child_rel = if rel.is_empty() {
             name.clone()
         } else {
@@ -831,9 +837,13 @@ pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>
                 rel: child_rel,
                 name,
                 folder,
-                mtime,
+                mtime: 0,
             },
         );
+    }
+    for slot in &mut entries {
+        let abs = root.join(&slot.rel);
+        slot.mtime = std::fs::metadata(&abs).map(|m| mtime_of(&m)).unwrap_or(0);
     }
     let mut rows = Vec::with_capacity(entries.len());
     for slot in entries {

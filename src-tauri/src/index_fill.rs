@@ -591,6 +591,9 @@ thread_local! {
     static EXISTING_CATALOG_ROWS_LOADED: Cell<i64> = Cell::new(0);
     static TAIL_WAL_CHECKPOINTS: Cell<u32> = Cell::new(0);
     static MAX_LISTING_RETAINED: Cell<usize> = Cell::new(0);
+    /// Directory entries pulled before Ready. A fat folder must not add one
+    /// entry per file.
+    static DIR_ENTRIES_BEFORE_READY: Cell<usize> = Cell::new(0);
 }
 
 #[cfg(test)]
@@ -604,6 +607,14 @@ fn note_listing_retained(n: usize) {
 
 #[cfg(not(test))]
 fn note_listing_retained(_: usize) {}
+
+#[cfg(test)]
+fn note_dir_entry_before_ready() {
+    DIR_ENTRIES_BEFORE_READY.with(|c| c.set(c.get() + 1));
+}
+
+#[cfg(not(test))]
+fn note_dir_entry_before_ready() {}
 
 fn ensure_walk_gen_column(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN walk_gen INTEGER", []);
@@ -815,6 +826,90 @@ fn list_dir_window(
     (chosen, dirs, truncated)
 }
 
+/// The first page of one directory. Stops once `file_limit` notes are in
+/// hand, so a folder of thousands of files is not read before Ready.
+/// `Hub 0.md` is opened by name when it exists, so that title does not
+/// depend on directory order. `truncated` means the tail still has names.
+fn list_dir_ready_page(
+    dir: &Path,
+    rel: &str,
+    file_limit: usize,
+    skip: &HashSet<String>,
+) -> (Vec<LiteEntry>, Vec<LiteEntry>, bool) {
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+    let mut taken: HashSet<String> = HashSet::new();
+    if file_limit > 0 {
+        for name in ["Hub 0.md", "Hub.md"] {
+            if files.len() >= file_limit {
+                break;
+            }
+            let child = child_rel(rel, name);
+            if skip.contains(&child) || !taken.insert(child.clone()) {
+                continue;
+            }
+            let abs = dir.join(name);
+            if abs.is_file() {
+                files.push(LiteEntry {
+                    abs,
+                    rel: child,
+                    name: name.to_string(),
+                });
+            } else {
+                taken.remove(&child);
+            }
+        }
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => {
+            note_listing_retained(files.len());
+            return (files, dirs, false);
+        }
+    };
+    let mut truncated = false;
+    for entry in entries.flatten() {
+        note_dir_entry_before_ready();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || FILL_SKIP_DIRS.iter().any(|s| *s == name) {
+            continue;
+        }
+        let child = child_rel(rel, &name);
+        if is_md_name(&name) {
+            if skip.contains(&child) || !taken.insert(child.clone()) {
+                continue;
+            }
+            if files.len() >= file_limit {
+                truncated = true;
+                break;
+            }
+            files.push(LiteEntry {
+                abs: entry.path(),
+                rel: child,
+                name,
+            });
+            continue;
+        }
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            dirs.push(LiteEntry {
+                abs: entry.path(),
+                rel: child,
+                name,
+            });
+        }
+    }
+    // `pop` takes the tail. The probed hub is processed before the rest.
+    if let Some(pos) = files.iter().position(|f| {
+        f.name.eq_ignore_ascii_case("Hub 0.md") || f.name.eq_ignore_ascii_case("Hub.md")
+    }) {
+        let hub = files.remove(pos);
+        files.push(hub);
+    }
+    note_listing_retained(files.len());
+    (files, dirs, truncated)
+}
+
 fn disk_note_from_lite(lite: LiteEntry) -> DiskNote {
     use std::time::SystemTime;
     let meta = std::fs::metadata(&lite.abs).ok();
@@ -857,6 +952,7 @@ fn stream_dir_tail<'p, 'c>(
     is_cancelled: &RefCell<Box<dyn FnMut() -> bool + 'c>>,
     stack: &mut Vec<(PathBuf, String)>,
     push_dirs: bool,
+    queued_dirs: &mut HashSet<String>,
 ) -> bool {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -915,6 +1011,7 @@ fn stream_dir_tail<'p, 'c>(
         return true;
     }
     if push_dirs {
+        child_dirs.retain(|(_, child_rel)| queued_dirs.insert(child_rel.clone()));
         child_dirs.sort_by(|a, b| b.1.cmp(&a.1));
         stack.append(&mut child_dirs);
     }
@@ -969,6 +1066,7 @@ fn collect_md_notes_publishing<'a>(
     let mut pending_files: Vec<LiteEntry> = Vec::new();
     let mut pending_dirs: Vec<LiteEntry> = Vec::new();
     let mut rescan: Vec<(PathBuf, String)> = Vec::new();
+    let mut queued_dirs: HashSet<String> = HashSet::new();
 
     loop {
         if tail {
@@ -992,7 +1090,8 @@ fn collect_md_notes_publishing<'a>(
                         &mut listed,
                         is_cancelled,
                         &mut stack,
-                        false,
+                        true,
+                        &mut queued_dirs,
                     ) {
                         flush_unpublished(&mut publish, &out, &mut published);
                         return (out, listed, false);
@@ -1000,7 +1099,18 @@ fn collect_md_notes_publishing<'a>(
                     continue;
                 }
             }
-            let Some((dir, rel)) = stack.pop() else {
+            // The ready page leaves the rest of that folder on `rescan`.
+            // Finish it up to the open-window cap before sibling folders, so
+            // one fat folder still supplies the window. After the cap, the
+            // tail above already drained `rescan`.
+            let next = if tail {
+                stack.pop()
+            } else if let Some(item) = rescan.pop() {
+                Some(item)
+            } else {
+                stack.pop()
+            };
+            let Some((dir, rel)) = next else {
                 break;
             };
             if tail {
@@ -1013,14 +1123,20 @@ fn collect_md_notes_publishing<'a>(
                     is_cancelled,
                     &mut stack,
                     true,
+                    &mut queued_dirs,
                 ) {
                     flush_unpublished(&mut publish, &out, &mut published);
                     return (out, listed, false);
                 }
                 continue;
             }
-            let room = cap.saturating_sub(out.len());
-            let (files, mut dirs, truncated) = list_dir_window(&dir, &rel, room, &seen_rel);
+            let (files, mut dirs, truncated) = if !announced && ready_at != usize::MAX {
+                let need = ready_at.saturating_sub(out.len()).max(1);
+                list_dir_ready_page(&dir, &rel, need, &seen_rel)
+            } else {
+                let room = cap.saturating_sub(out.len()).max(1);
+                list_dir_window(&dir, &rel, room, &seen_rel)
+            };
             if truncated {
                 rescan.push((dir.clone(), rel.clone()));
             }
@@ -1074,7 +1190,9 @@ fn collect_md_notes_publishing<'a>(
         // Non-priority directories were sorted first, so they go under
         // the priority directories on the stack.
         for dir in pending_dirs.drain(..) {
-            stack.push((dir.abs, dir.rel));
+            if queued_dirs.insert(dir.rel.clone()) {
+                stack.push((dir.abs, dir.rel));
+            }
         }
     }
     flush_unpublished(&mut publish, &out, &mut published);
@@ -3409,6 +3527,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
 
     #[test]
     fn hub_0_leads_a_fat_inbox_folder() {
+        reset_fill_probes();
         let (vault, db) = temp_pair("hubfat");
         for i in 0..80 {
             write_note(&vault, &format!("00-Inbox/00/Hub {i}.md"), "hub\n");
@@ -3445,10 +3564,61 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         );
         assert!(hub_at_ready, "Hub 0 is the first title in a fat inbox folder");
         assert!(
-            !late_hub_at_ready,
-            "a later hub in the same folder is not required before Ready"
+            !late_hub_at_ready || ready_scanned <= TITLE_READY_FLUSH as i64,
+            "Ready stays a page even when a later hub is in that page"
+        );
+        let looked = DIR_ENTRIES_BEFORE_READY.with(|c| c.get());
+        assert!(
+            looked <= 80,
+            "Ready read {looked} directory entries in an 80-file folder"
         );
         assert!(fts_path_at(&db, "00-Inbox/00/Hub 79.md"));
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn ready_stops_reading_a_fat_directory() {
+        reset_fill_probes();
+        let (vault, db) = temp_pair("fat-stop");
+        for i in 0..2_000 {
+            write_note(&vault, &format!("Topic {i}.md"), "x\n");
+        }
+        write_note(&vault, "Hub 0.md", "hub\n");
+        let mut conn = open_test_conn(&db);
+        let mut ready_scanned = -1i64;
+        let mut hub_at_ready = false;
+        let mut looked = usize::MAX;
+        fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && ready_scanned < 0 {
+                    ready_scanned = p.scanned;
+                    hub_at_ready = fts_path_at(&db, "Hub 0.md");
+                    looked = DIR_ENTRIES_BEFORE_READY.with(|c| c.get());
+                }
+            },
+        )
+        .unwrap();
+        assert!(
+            ready_scanned > 0 && ready_scanned <= TITLE_READY_FLUSH as i64,
+            "ready-meta scanned {ready_scanned} must be the first page"
+        );
+        assert!(hub_at_ready, "Hub 0 is opened without reading the whole folder");
+        assert!(
+            looked <= TITLE_READY_FLUSH + 16,
+            "Ready read {looked} entries of a 2001-file folder"
+        );
+        assert!(fts_path_at(&db, "Topic 1999.md"));
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
@@ -3456,6 +3626,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         EXISTING_CATALOG_ROWS_LOADED.with(|c| c.set(-1));
         TAIL_WAL_CHECKPOINTS.with(|c| c.set(0));
         MAX_LISTING_RETAINED.with(|c| c.set(0));
+        DIR_ENTRIES_BEFORE_READY.with(|c| c.set(0));
     }
 
     fn ready_page_ms(vault: &Path, db: &Path) -> u128 {
@@ -3488,6 +3659,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                     );
                     assert!(fts_path_at(db, "00-Inbox/00/Hub 0.md"));
                     assert!(!fts_path_at(db, "60-Systems/00/Topic 6.md"));
+                    let looked = DIR_ENTRIES_BEFORE_READY.with(|c| c.get());
+                    assert!(
+                        looked <= 200,
+                        "Ready read {looked} directory entries to reach the first page"
+                    );
                 }
             },
         )
