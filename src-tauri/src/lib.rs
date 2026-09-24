@@ -348,8 +348,28 @@ pub fn run() {
 }
 
 fn install_menus(handle: &tauri::AppHandle) -> tauri::Result<()> {
-            let open_vault =
-                MenuItem::with_id(handle, "open_vault", "Open Vault…", true, Some("CmdOrCtrl+O"))?;
+            // Obsidian's chords: Ctrl/Cmd+O finds a note, Ctrl/Cmd+P runs a command.
+            let open_vault = MenuItem::with_id(
+                handle,
+                "open_vault",
+                "Open Vault…",
+                true,
+                Some("CmdOrCtrl+Shift+O"),
+            )?;
+            let quick_switcher = MenuItem::with_id(
+                handle,
+                "quick_switcher",
+                "Quick Switcher…",
+                true,
+                Some("CmdOrCtrl+O"),
+            )?;
+            let command_palette = MenuItem::with_id(
+                handle,
+                "command_palette",
+                "Command Palette…",
+                true,
+                Some("CmdOrCtrl+P"),
+            )?;
             let open_demo = MenuItem::with_id(
                 handle,
                 "open_demo",
@@ -431,7 +451,7 @@ fn install_menus(handle: &tauri::AppHandle) -> tauri::Result<()> {
                 handle,
                 "View",
                 true,
-                &[&search, &toggle_graph, &toggle_source],
+                &[&quick_switcher, &command_palette, &search, &toggle_graph, &toggle_source],
             )?;
 
             let window_submenu = Submenu::with_items(

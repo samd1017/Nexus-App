@@ -10,7 +10,7 @@ import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
-import { CommandPalette } from "@/components/search/CommandPalette";
+import { CommandPalette, openCommandPalette } from "@/components/search/CommandPalette";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
 import { installKeyboardFocusRings } from "@/lib/chrome/focus-ring";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
@@ -304,6 +304,16 @@ export function AppShell() {
       closeVault: () => useVaultStore.getState().closeVault(),
       settings: () => usePrefsStore.getState().setSettingsOpen(true),
       search: () => useVaultStore.getState().setCommandOpen(true),
+      quickSwitcher: () => {
+        const st = useVaultStore.getState();
+        if (st.commandOpen) st.setCommandOpen(false);
+        else openCommandPalette();
+      },
+      commandPalette: () => {
+        const st = useVaultStore.getState();
+        if (st.commandOpen) st.setCommandOpen(false);
+        else openCommandPalette(">");
+      },
       save: () => {
         void useVaultStore.getState().flushDirty();
       },

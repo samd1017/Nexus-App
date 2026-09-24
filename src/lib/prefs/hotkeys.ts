@@ -7,6 +7,9 @@ import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
 
 export type HotkeyId =
   | "search"
+  | "quickSwitcher"
+  | "commandPalette"
+  | "searchVault"
   | "openVault"
   | "settings"
   | "focusMode"
@@ -37,6 +40,9 @@ export type HotkeyOverrides = Partial<Record<HotkeyId, HotkeyChord>>;
 
 export const HOTKEY_IDS: HotkeyId[] = [
   "search",
+  "quickSwitcher",
+  "commandPalette",
+  "searchVault",
   "openVault",
   "settings",
   "focusMode",
@@ -58,9 +64,14 @@ export const HOTKEY_IDS: HotkeyId[] = [
   "insertWikilink",
 ];
 
+// Obsidian's everyday chords where they exist: Ctrl/Cmd+O finds a note,
+// Ctrl/Cmd+P runs a command, Ctrl/Cmd+Shift+F searches the vault.
 export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   search: { key: "k" },
-  openVault: { key: "o" },
+  quickSwitcher: { key: "o" },
+  commandPalette: { key: "p" },
+  searchVault: { key: "f", shift: true },
+  openVault: { key: "o", shift: true },
   settings: { key: "," },
   focusMode: { key: "." },
   toggleEditor: { key: "e" },
@@ -81,8 +92,17 @@ export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   insertWikilink: { key: "l", shift: true },
 };
 
+/** Second default chords, as in Obsidian. A remap of the action replaces them. */
+export const HOTKEY_ALIASES: Partial<Record<HotkeyId, HotkeyChord[]>> = {
+  back: [{ key: "arrowleft", alt: true }],
+  forward: [{ key: "arrowright", alt: true }],
+};
+
 export const HOTKEY_LABELS: Record<HotkeyId, string> = {
-  search: "Search / command palette",
+  search: "Search notes",
+  quickSwitcher: "Quick switcher (go to note)",
+  commandPalette: "Command palette",
+  searchVault: "Search in all notes",
   openVault: "Open vault folder",
   settings: "Open Settings",
   focusMode: "Focus / zen mode",
@@ -187,6 +207,12 @@ export function matchHotkey(
   for (const id of HOTKEY_IDS) {
     if (chordMatches(e, resolveChord(id, overrides))) return id;
   }
+  for (const id of HOTKEY_IDS) {
+    if (overrides?.[id]) continue;
+    for (const chord of HOTKEY_ALIASES[id] ?? []) {
+      if (chordMatches(e, chord)) return id;
+    }
+  }
   return null;
 }
 
@@ -217,6 +243,8 @@ function normalizeKey(key: string): string {
 function displayKey(key: string): string {
   const k = normalizeKey(key);
   if (k === "backspace") return "⌫";
+  if (k === "arrowleft") return "←";
+  if (k === "arrowright") return "→";
   if (k.length === 1) return k.toUpperCase();
   return k;
 }
@@ -231,6 +259,7 @@ function keyFromEvent(e: KeyboardEvent): string | null {
   if (e.code === "BracketLeft" || e.key === "[") return "[";
   if (e.code === "BracketRight" || e.key === "]") return "]";
   if (e.key === "Backspace") return "backspace";
+  if (e.key.startsWith("Arrow")) return e.key.toLowerCase();
   if (e.key.length === 1) return e.key.toLowerCase();
   return null;
 }

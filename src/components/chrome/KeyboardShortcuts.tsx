@@ -37,6 +37,7 @@ function isFactoryDesktopChord(e: KeyboardEvent): boolean {
   return (
     isModLetter(e, "o") ||
     isModLetter(e, "k") ||
+    (!e.shiftKey && isModLetter(e, "p")) ||
     isModLetter(e, "n") ||
     isModLetter(e, "g") ||
     isModLetter(e, "e") ||
@@ -64,6 +65,15 @@ function runHotkey(id: HotkeyId): boolean {
     }
     case "search":
       store.setCommandOpen(!store.commandOpen);
+      return true;
+    case "quickSwitcher":
+    case "searchVault":
+      if (store.commandOpen) store.setCommandOpen(false);
+      else openCommandPalette();
+      return true;
+    case "commandPalette":
+      if (store.commandOpen) store.setCommandOpen(false);
+      else openCommandPalette(">");
       return true;
     case "find": {
       if (!hasVault || !store.activeNoteId || overlayOpen) return false;
