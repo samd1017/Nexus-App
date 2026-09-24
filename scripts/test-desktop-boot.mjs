@@ -915,6 +915,20 @@ assert.equal(storeSrc.includes("probeFirstRun"), true);
   const bootSrc = readFileSync(new URL("../desktop/boot.ts", import.meta.url), "utf8");
   assert.equal(bootSrc.includes('host.style.pointerEvents = "none"'), true);
 }
+// Key pills are readable in both themes; light panels keep dark ink.
+assert.equal(cssSrc.includes('[data-theme="light"] [data-testid="note-keys-hint"]'), true);
+assert.equal(cssSrc.includes('[data-theme="light"] .editor-status'), true);
+assert.equal(cssSrc.includes('[data-theme="light"] .nexus-keys-hint kbd'), true);
+assert.equal(confirmSrc.includes('data-testid="confirm-esc-hint"'), true);
+assert.equal(settingsSrc.includes('data-testid="settings-esc-hint"'), true);
+assert.equal(editorSrc.includes("<kbd>Arrows</kbd>"), true);
+// The memory line never shows the loaded count without the vault total.
+assert.equal(settingsSrc.includes("totalNotes={noteCount}"), true);
+assert.equal(settingsSrc.includes("${ofTotal} notes is in memory right now."), true);
+assert.equal(/\$\{bodyStats\.loaded\.toLocaleString\(\)\} in memory right now/.test(settingsSrc), false);
+// The first-run probe has a string form that survives CDP without returnByValue.
+assert.equal(storeSrc.includes("probeFirstRunText: () => {"), true);
+assert.equal(storeSrc.includes("return JSON.stringify(soak?.probeFirstRun?.() ?? {});"), true);
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
