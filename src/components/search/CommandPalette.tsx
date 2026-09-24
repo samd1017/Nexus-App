@@ -451,8 +451,12 @@ function CommandPaletteOpen() {
   ]);
 
   const [asyncHits, setAsyncHits] = useState<SearchHit[] | null>(null);
+  const [noteSearchPending, setNoteSearchPending] = useState(false);
+  const [noteSearchFailed, setNoteSearchFailed] = useState(false);
   useEffect(() => {
     setAsyncHits(null);
+    setNoteSearchPending(false);
+    setNoteSearchFailed(false);
     if (shellCatalog && shellDbPath) {
       let cancelled = false;
       const db = shellDbPath;
@@ -530,8 +534,15 @@ function CommandPaletteOpen() {
       const needle = debouncedSearch.trim() || searchText || raw;
       if (!needle.trim()) return;
       if (db === BROWSER_SHELL_DB) {
+        setNoteSearchPending(true);
         void fetchShellSearch(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
-          if (cancelled || !hits) return;
+          if (cancelled) return;
+          setNoteSearchPending(false);
+          if (!hits) {
+            setNoteSearchFailed(true);
+            return;
+          }
+          setNoteSearchFailed(false);
           setAsyncHits(
             hits
               .filter((hit) => hit.kind === "note")
@@ -540,6 +551,7 @@ function CommandPaletteOpen() {
         });
         return () => {
           cancelled = true;
+          setNoteSearchPending(false);
         };
       }
       const idx = getDurableIndex();
@@ -553,12 +565,21 @@ function CommandPaletteOpen() {
       let catalogHits: SearchHit[] = [];
       let ftsHits: SearchHit[] = [];
       let catalogReady = false;
+      const ftsStarted = Boolean(idx?.ready && idx.searchFtsAsync);
+      let catalogSettled = false;
+      let ftsSettled = !ftsStarted;
+      setNoteSearchPending(true);
+      const settleIfDone = () => {
+        if (cancelled || !catalogSettled || !ftsSettled) return;
+        setNoteSearchPending(false);
+      };
       const publish = () => {
         if (cancelled) return;
         if (!catalogReady && ftsHits.length === 0) return;
         const merged = mergeCatalogAndFtsHits(catalogHits, ftsHits, PALETTE_RESULT_LIMIT);
         // An empty index reply must not hide titles already on the open page.
         if (merged.length === 0) return;
+        setNoteSearchFailed(false);
         if (!titleLive || ftsHits.length === 0) {
           setAsyncHits(merged);
           return;
@@ -579,30 +600,58 @@ function CommandPaletteOpen() {
         if (cancelled || !hits) return;
         catalogHits = mapSuggest(hits);
         catalogReady = true;
+        setNoteSearchFailed(false);
         publish();
+      };
+      const markCatalogMissed = () => {
+        catalogSettled = true;
+        setNoteSearchFailed(true);
+        settleIfDone();
       };
       void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
         if (cancelled) return;
         if (!hits) {
+          markCatalogMissed();
           const stop = onShellCatalogWake(() => {
             stop();
             if (cancelled) return;
-            void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then(applyCatalog);
+            catalogSettled = false;
+            setNoteSearchPending(true);
+            void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((rows) => {
+              if (cancelled) return;
+              if (!rows) {
+                markCatalogMissed();
+                return;
+              }
+              applyCatalog(rows);
+              catalogSettled = true;
+              settleIfDone();
+            });
           });
           return;
         }
         applyCatalog(hits);
+        catalogSettled = true;
+        settleIfDone();
       });
-      if (idx?.ready && idx.searchFtsAsync) {
+      if (ftsStarted) {
         void (async () => {
-          const rows = await searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT);
-          if (cancelled) return;
-          ftsHits = rows;
-          publish();
+          try {
+            const rows = await searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT);
+            if (cancelled) return;
+            ftsHits = rows;
+            publish();
+          } catch {
+            if (!cancelled) setNoteSearchFailed(true);
+          } finally {
+            ftsSettled = true;
+            settleIfDone();
+          }
         })();
       }
       return () => {
         cancelled = true;
+        setNoteSearchPending(false);
       };
     }
     if (
@@ -633,15 +682,24 @@ function CommandPaletteOpen() {
       neighborIds,
       queryText: needle,
     };
+    const useAsyncLookup = !hasPathFolderOp;
+    if (useAsyncLookup) setNoteSearchPending(true);
     void (hasPathFolderOp
       ? Promise.resolve(searchWithOps(nodes, needle, PALETTE_RESULT_LIMIT))
       : searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT)
     ).then((rows) => {
       if (cancelled) return;
+      if (useAsyncLookup) setNoteSearchPending(false);
+      setNoteSearchFailed(false);
       setAsyncHits(fuseSearchHits(rows, signals));
+    }).catch(() => {
+      if (cancelled) return;
+      setNoteSearchPending(false);
+      setNoteSearchFailed(true);
     });
     return () => {
       cancelled = true;
+      if (useAsyncLookup) setNoteSearchPending(false);
     };
   }, [
     nodes,
@@ -1685,6 +1743,15 @@ function CommandPaletteOpen() {
             <div
               role="status"
               aria-live="polite"
+              data-search-status={
+                searchIndexState === "error" || noteSearchFailed
+                  ? "failed"
+                  : noteSearchPending
+                    ? "pending"
+                    : titleSearchLive
+                      ? "miss"
+                      : "reading"
+              }
               className="flex items-center gap-2 px-3 py-3 text-[13px] leading-snug text-[var(--text-secondary)]"
             >
               <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
@@ -1698,6 +1765,8 @@ function CommandPaletteOpen() {
                   catalogSearch: Boolean(
                     shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
                   ),
+                  failed: searchIndexState === "error" || noteSearchFailed,
+                  pending: noteSearchPending,
                 })}
               </span>
             </div>

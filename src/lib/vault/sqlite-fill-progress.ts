@@ -308,12 +308,18 @@ export function searchEmptyStateMessage(args: {
   headsReady: boolean;
   /** Desktop shell catalog can answer titles before FTS is claimable. */
   catalogSearch?: boolean;
+  /** The lookup failed. Distinct from a miss and from still reading. */
+  failed?: boolean;
+  /** A lookup is in flight and nothing has matched yet. */
+  pending?: boolean;
 }): string {
+  if (args.failed) return "Search did not finish. Try again.";
   if (!args.titleSearchLive) {
     if (args.catalogSearch) return "No title matches in the catalog yet.";
     return "Search is still reading files — try again when Ready.";
   }
-  // Title search is already live. An empty query is a miss, not a lock
-  // while note text is still being read.
+  // Titles are live. Say we are still looking, then a plain miss.
+  // Do not tell the user to wait until Ready.
+  if (args.pending) return "Looking through notes…";
   return "No notes match.";
 }

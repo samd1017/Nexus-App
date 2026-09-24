@@ -103,6 +103,26 @@ function folder(id, parentId, name) {
   assert.ok(more && more.hiddenCount > 0);
 }
 
+// An expanded folder with nothing in it offers a place to start.
+// A collapsed one does not, and a remainder still wins over the empty row.
+{
+  const nodes = {};
+  nodes.empty = folder("empty", null, "Empty");
+  nodes.later = folder("later", null, "Later");
+  const collapsed = flattenVisibleTree(["empty", "later"], nodes, []);
+  assert.equal(collapsed.some((r) => r.kind === "empty"), false);
+  const rows = flattenVisibleTree(["empty", "later"], nodes, ["empty"]);
+  const empty = rows.find((r) => r.kind === "empty");
+  assert.ok(empty, "expanded empty folder needs an empty row");
+  assert.equal(empty.emptyParentId, "empty");
+  assert.equal(empty.depth, 1);
+  assert.ok(rows.some((r) => r.id === "later"));
+  const withRemainder = flattenVisibleTree(["empty"], nodes, ["empty"], TREE_FLAT_CAP, undefined, { empty: 3 });
+  assert.equal(withRemainder.some((r) => r.kind === "empty"), false);
+  const more = withRemainder.find((r) => r.kind === "more");
+  assert.equal(more && more.hiddenCount, 3);
+}
+
 console.log("file-tree-flat: PASS cap=" + TREE_FLAT_CAP + " window=" + TREE_FOLDER_NOTE_WINDOW);
 `,
   ],

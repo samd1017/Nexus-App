@@ -373,6 +373,48 @@ assert.match(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: true }),
   /No notes match/,
 );
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: false,
+    failed: true,
+  }),
+  "Search did not finish. Try again.",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: true,
+    pending: true,
+  }),
+  "Looking through notes…",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: false,
+    pending: true,
+  }).includes("No notes match."),
+  false,
+  "a lookup in flight must not say the search already missed",
+);
+assert.match(
+  searchEmptyStateMessage({
+    titleSearchLive: false,
+    headsReady: false,
+    pending: true,
+  }),
+  /still reading files/,
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: false,
+    pending: false,
+    failed: false,
+  }),
+  "No notes match.",
+);
 
 {
   const { NativeSqliteDurableIndex } = await import(

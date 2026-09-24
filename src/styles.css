@@ -969,6 +969,11 @@
     border-color: rgba(0, 200, 255, 0.22);
   }
 
+  .tree-item.is-focused {
+    outline: 2px solid rgba(0, 200, 255, 0.85);
+    outline-offset: -2px;
+  }
+
   /* Icon button */
   .icon-btn {
     display: inline-flex;

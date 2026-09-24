@@ -617,6 +617,23 @@ export const FileTree = memo(function FileTree() {
         }
         return;
       }
+      if (row.kind === "empty") {
+        if (e.key === "ArrowLeft" && row.emptyParentId) {
+          e.preventDefault();
+          const parentIdx = rows.findIndex((r) => r.id === row.emptyParentId);
+          if (parentIdx >= 0) {
+            setFocusedIndex(parentIdx);
+            virtualizer.scrollToIndex(parentIdx, { align: "auto" });
+          }
+          return;
+        }
+        if (e.key === "Enter" && row.emptyParentId) {
+          e.preventDefault();
+          const id = createNote(row.emptyParentId, "Untitled");
+          requestAnimationFrame(() => setRenamingId(id));
+        }
+        return;
+      }
       const node = nodes[row.id];
       if (!node) return;
 
@@ -682,6 +699,7 @@ export const FileTree = memo(function FileTree() {
       showMore,
       virtualizer,
       setCtx,
+      createNote,
     ],
   );
 
@@ -966,6 +984,38 @@ export const FileTree = memo(function FileTree() {
         >
           {hidden.toLocaleString()} more
         </button>
+      );
+    }
+    if (row.kind === "empty") {
+      const parentId = row.emptyParentId ?? null;
+      return (
+        <div
+          key={row.id}
+          id={`tree-row-${row.id}`}
+          role="treeitem"
+          aria-label="Nothing here yet"
+          data-testid="tree-empty-folder"
+          data-empty-parent={parentId ?? ""}
+          className={cn(
+            "tree-item flex w-full items-center gap-2 text-[12px] text-[var(--text-muted)]",
+            focusedId === row.id && "is-focused",
+          )}
+          style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
+        >
+          <span className="min-w-0 flex-1 truncate">Nothing here yet</span>
+          <button
+            type="button"
+            className="mr-1 shrink-0 rounded-md px-2 text-[12px] text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
+            style={{ height: 24 }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (parentId) createAndRename("note", parentId);
+            }}
+          >
+            New note
+          </button>
+        </div>
       );
     }
     return (

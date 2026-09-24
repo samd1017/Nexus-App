@@ -27,11 +27,13 @@ export const TREE_FOLDER_NOTE_WINDOW = 2_000;
 export type FlatTreeRow = {
   id: string;
   depth: number;
-  kind: "folder" | "note" | "more";
+  kind: "folder" | "note" | "more" | "empty";
   /** Set when kind is "more": direct children not listed. */
   hiddenCount?: number;
   /** Set when kind is "more": folder those children belong to. */
   moreParentId?: string;
+  /** Set when kind is "empty": expanded folder with nothing in it. */
+  emptyParentId?: string;
 };
 
 export function flattenVisibleTree(
@@ -121,6 +123,14 @@ export function flattenVisibleTree(
       const extra = unloaded?.[id] ?? 0;
       if (children.length === 0) {
         if (extra > 0) pushMore(id, depth + 1, extra);
+        else if (rows.length < cap) {
+          rows.push({
+            id: `empty:${id}`,
+            depth: depth + 1,
+            kind: "empty",
+            emptyParentId: id,
+          });
+        }
         continue;
       }
       const limit = Math.max(0, folderWindows?.[id] ?? TREE_FOLDER_NOTE_WINDOW);

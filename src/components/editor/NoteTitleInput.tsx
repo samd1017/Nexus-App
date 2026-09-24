@@ -42,7 +42,8 @@ export function NoteTitleInput({ noteId }: { noteId: string }) {
           (e.target as HTMLInputElement).blur();
         }
       }}
-      aria-label="Note title"
+      aria-label="Note title. This name is the file."
+      title="This name is the file. Enter keeps it. Escape puts the old name back."
       placeholder="Untitled"
     />
   );
