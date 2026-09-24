@@ -365,7 +365,12 @@ const TreeRow = memo(function TreeRow({
         />
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="min-w-0 cursor-grab truncate active:cursor-grabbing">
+          <span
+            className={cn(
+              "min-w-0 cursor-grab truncate active:cursor-grabbing",
+              folderEmpty && "shrink-0 max-w-[62%]",
+            )}
+          >
             {displayName(node)}
           </span>
           {folderEmpty ? (
@@ -373,7 +378,7 @@ const TreeRow = memo(function TreeRow({
               role="status"
               data-testid="tree-empty-folder-status"
               data-empty-parent={node.id}
-              className="shrink-0 text-[13px] font-semibold text-white"
+              className="min-w-0 truncate text-[12px] font-semibold text-white"
             >
               Enter starts a note.
             </span>
@@ -690,10 +695,25 @@ export const FileTree = memo(function FileTree() {
       setFolderFocusTick((n) => n + 1);
     };
     const onReveal = (e: Event) => reveal((e as CustomEvent<string>).detail);
+    // Esc from a note lands on that note's row, not wherever the cursor was.
+    const onHome = () => {
+      const active = useVaultStore.getState().activeNoteId;
+      if (!active) return;
+      const idx = flatRowsRef.current.findIndex((r) => r.id === active);
+      if (idx < 0) return;
+      armedEmptyRef.current = null;
+      parentRef.current?.removeAttribute("data-empty-armed");
+      setFocusedIndex(idx);
+      virtualizer.scrollToIndex(idx, { align: "auto" });
+    };
     window.addEventListener("nexus-reveal-folder", onReveal);
+    window.addEventListener("nexus-list-home", onHome);
     reveal(takePendingFolderReveal());
-    return () => window.removeEventListener("nexus-reveal-folder", onReveal);
-  }, []);
+    return () => {
+      window.removeEventListener("nexus-reveal-folder", onReveal);
+      window.removeEventListener("nexus-list-home", onHome);
+    };
+  }, [virtualizer]);
 
   useEffect(() => {
     const id = pendingFolderFocusRef.current;

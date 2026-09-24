@@ -279,6 +279,7 @@ export function KeyboardShortcuts() {
           active.blur();
         }
         revealFileList((tree) => {
+          window.dispatchEvent(new CustomEvent("nexus-list-home"));
           const home = () => {
             if (!tree.isConnected) return;
             tree.focus({ preventScroll: true });

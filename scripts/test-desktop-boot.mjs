@@ -751,4 +751,24 @@ assert.ok(savedAt > 0);
 assert.equal(distHtml.includes('type="module"'), false);
 assert.match(distHtml, /<meta name="nexus-boot-src" content="\.\/assets\/index-/);
 
+// A collapsed list must not strand Esc, F2, first-run, or folder jumps.
+const revealSrc = readFileSync(new URL("../src/lib/chrome/reveal-list.ts", import.meta.url), "utf8");
+assert.equal(revealSrc.includes("setLeftOpen(true)"), true);
+assert.equal(keysSrc.includes("revealFileList("), true);
+assert.equal(keysSrc.includes('e.key === "F2"'), true);
+assert.equal(keysSrc.includes("nexus-list-home"), true);
+assert.equal(editorSrc.includes("revealFileList("), true);
+assert.equal(editorSrc.includes("startFirstNote"), true);
+assert.equal(paletteSrc.includes("revealFolderInList("), true);
+assert.equal(paletteSrc.includes('data-testid="search-folder-hit"'), true);
+assert.equal(treeSrc.includes("nexus-reveal-folder"), true);
+// Hidden-before-Ready width must not collapse the desktop list.
+assert.ok(shellSrc.indexOf("if (isDesktopShell())") < shellSrc.indexOf("let wasNarrow"));
+assert.equal(storeSrc.includes("fullscreenPanelSnapshot?.leftOpen ?? true"), true);
+// A click behind Settings or an ask is not a dismiss.
+assert.equal(settingsSrc.includes('aria-label="Close settings"'), false);
+assert.equal(settingsSrc.includes("settings-stay-hint"), true);
+assert.equal(confirmSrc.includes("if (e.target === e.currentTarget) onCancel()"), false);
+assert.equal(cssSrc.includes(".nexus-search-input:focus-visible"), true);
+
 console.log("desktop-boot: PASS");
