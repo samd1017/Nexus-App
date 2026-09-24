@@ -831,6 +831,89 @@ assert.equal(storeSrc.includes("probeFirstRun"), true);
   }
   assert.deepEqual(takeRenameBuffer("n1"), { text: "Soak", commit: true });
   assert.equal(takeRenameBuffer("n1"), null);
+  const plain = { ctrlKey: false, metaKey: false, altKey: false };
+  // Nothing is buffered without a pending create.
+  assert.equal(bufferRenameKey({ key: "a", ...plain }), false);
+  // Chords, arrows, and Escape are never swallowed.
+  startRenameBuffer("n2");
+  assert.equal(bufferRenameKey({ key: "k", ...plain, ctrlKey: true }), false);
+  assert.equal(bufferRenameKey({ key: "n", ...plain, metaKey: true }), false);
+  assert.equal(bufferRenameKey({ key: "ArrowDown", ...plain }), false);
+  assert.equal(bufferRenameKey({ key: "Escape", ...plain }), false);
+  // Backspace edits the held name; another note's field does not take it.
+  for (const key of ["P", "l", "x", "Backspace", "a", "n"]) bufferRenameKey({ key, ...plain });
+  assert.equal(takeRenameBuffer("other"), null);
+  assert.deepEqual(takeRenameBuffer("n2"), { text: "Plan", commit: false });
+  // Enter alone keeps the default name, and nothing after it is taken.
+  startRenameBuffer("n3");
+  assert.equal(bufferRenameKey({ key: "Enter", ...plain }), true);
+  assert.equal(bufferRenameKey({ key: "z", ...plain }), false);
+  assert.deepEqual(takeRenameBuffer("n3"), { text: "", commit: true });
+  // The hold expires.
+  startRenameBuffer("n4", -1);
+  assert.equal(bufferRenameKey({ key: "a", ...plain }), false);
+  // Keys are only held while no name field is on screen, never under a dialog.
+  const holdAt = treeSrc.indexOf("bufferRenameKey(e)");
+  assert.ok(holdAt > 0);
+  const holdGate = treeSrc.slice(Math.max(0, holdAt - 400), holdAt);
+  assert.equal(holdGate.includes("[data-testid='tree-rename']"), true);
+  assert.ok(treeSrc.indexOf("if (dialogOpen()) return;", holdAt - 600) < holdAt);
+}
+// probeFirstRun reports the fields the box harness reads.
+{
+  const at = storeSrc.indexOf("probeFirstRun: () => {");
+  assert.ok(at > 0);
+  const body = storeSrc.slice(at, storeSrc.indexOf("\n\t\t},", at));
+  for (const key of [
+    "mode:",
+    "vaultPath:",
+    "connecting:",
+    "notes,",
+    "listOpen:",
+    "listFocused:",
+    "firstRunShown:",
+    "renameOpen:",
+    "renameValue:",
+    "renameSelected:",
+    "activePath:",
+    "writingInNote:",
+    "diskWriteError,",
+  ]) {
+    assert.equal(body.includes(key), true, `probeFirstRun missing ${key}`);
+  }
+  // Read-only: it never creates, opens, or writes.
+  assert.equal(/createNote|setState|set\(|openLocalVault|persist/.test(body), false);
+}
+// A first note waits for the vault to open instead of being dropped.
+{
+  assert.equal(whenReadySrc.includes("if (!st.connecting)"), true);
+  assert.equal(whenReadySrc.includes("useVaultStore.subscribe"), true);
+  assert.equal(whenReadySrc.includes("window.setTimeout(finish, budgetMs)"), true);
+  // It never calls createNote while connecting, which would toast and drop it.
+  const subAt = whenReadySrc.indexOf("useVaultStore.subscribe");
+  assert.ok(whenReadySrc.indexOf("createNote(", subAt) > whenReadySrc.indexOf("if (s.connecting || done) return;"));
+  assert.equal(editorSrc.includes('createNoteWhenReady(null, "Untitled"'), true);
+  assert.equal(treeSrc.includes('createNoteWhenReady(null, "Untitled", openCreatedRename)'), true);
+}
+// The quick tour is a region, never a modal, and key homes only yield to modals.
+{
+  assert.equal(coachSrc.includes('role="region"'), true);
+  assert.equal(coachSrc.includes("aria-modal"), false);
+  assert.equal(editorSrc.includes("[role='dialog'][aria-modal='true']"), true);
+  assert.equal(/querySelector\("\[role='dialog'\]"\)/.test(keysSrc), false);
+  assert.equal(/"\[data-nexus-confirm\], \[role='dialog'\]"\)/.test(editorSrc), false);
+}
+// Dialog cards are opaque and the two moving pieces never fade.
+{
+  const island = cssSrc.slice(cssSrc.indexOf(".nexus-dark-island {"), cssSrc.indexOf("}", cssSrc.indexOf(".nexus-dark-island {")));
+  assert.equal(island.includes("background: #16161a;"), true);
+  assert.equal(island.includes("backdrop-filter: none;"), true);
+  assert.equal(/rgba\([^)]*,\s*0?\.\d+\)\s*;\s*$/m.test(island.split("background:")[1]?.split(";")[0] + ";"), false);
+  const toast = cssSrc.slice(cssSrc.indexOf("@keyframes nexusToastIn"), cssSrc.indexOf(".nexus-toast-in {"));
+  assert.equal(toast.includes("opacity"), false);
+  // The early band never takes clicks, in either painter.
+  const bootSrc = readFileSync(new URL("../desktop/boot.ts", import.meta.url), "utf8");
+  assert.equal(bootSrc.includes('host.style.pointerEvents = "none"'), true);
 }
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
