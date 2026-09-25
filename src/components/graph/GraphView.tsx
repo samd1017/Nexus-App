@@ -1227,6 +1227,10 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     () => clampToDrawBudget(filteredData, activeNoteId),
     [filteredData, activeNoteId],
   );
+  // The engine starts a frame after its effect. Data that landed in between
+  // skipped the push (no engine yet), so the engine seeds from the latest.
+  const displayDataRef = useRef(displayData);
+  displayDataRef.current = displayData;
 
   /** G1: 2x export with footer */
   const exportPng = useCallback(() => {
@@ -1920,10 +1924,11 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     ro.observe(el);
     const { width, height } = el.getBoundingClientRect();
     graph.width(width).height(height);
+    const seed = displayDataRef.current;
     try {
       layoutFitPendingRef.current = true;
-      graph.graphData(displayData);
-      recordDrawn(displayData.nodes.length, displayData.links.length);
+      graph.graphData(seed);
+      recordDrawn(seed.nodes.length, seed.links.length);
       if (graphModeRef.current === "folder") {
         const sim = graph as ForceGraph3DInstance & {
           d3Alpha?: (a: number) => ForceGraph3DInstance;
@@ -1934,11 +1939,8 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     } catch (err) {
       console.warn("[nexus] graph data", err);
     }
-    lastGraphTopoKeyRef.current = graphTopologyKey(
-      displayData.nodes,
-      displayData.links,
-    );
-    lastGraphDataRef.current = displayData;
+    lastGraphTopoKeyRef.current = graphTopologyKey(seed.nodes, seed.links);
+    lastGraphDataRef.current = seed;
 
     const fitMs = usePrefsStore.getState().reducedMotion ? 0 : 650;
     const zoomTimer = window.setTimeout(() => {

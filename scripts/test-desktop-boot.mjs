@@ -2016,6 +2016,9 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(graphSrc.includes("const total = useVaultStore((s) => (s.shellCatalog ? s.catalogNoteCount : fallback));"), true);
   assert.equal(graphSrc.includes("{vaultNoteCount.toLocaleString()} in vault"), false);
   assert.equal((graphSrc.match(/<VaultTotal fallback=\{vaultNoteCount\}/g) ?? []).length, 2);
+  // A level that lands before the engine starts is what the engine starts with.
+  assert.equal(graphSrc.includes("const seed = displayDataRef.current;\n    try {\n      layoutFitPendingRef.current = true;\n      graph.graphData(seed);"), true);
+  assert.equal(graphSrc.includes("lastGraphTopoKeyRef.current = graphTopologyKey(seed.nodes, seed.links);"), true);
 }
 // Light theme: the wordmark is graphite metal on the pale title bar; dark
 // islands (Settings) keep the silver one.
