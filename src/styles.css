@@ -2045,6 +2045,13 @@
   outline-offset: 2px;
 }
 
+/* Where you write, the caret is the focus mark; a ring there boxes in the page. */
+.ProseMirror.note-editor:focus-visible,
+.source-editor:focus-visible,
+.note-title-input:focus-visible {
+  outline: none;
+}
+
 .icon-btn:focus-visible,
 .chip-btn:focus-visible,
 .primary-btn:focus-visible,

@@ -1918,6 +1918,15 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(cssSrc.includes(".nexus-tree-label {\n  container-type: inline-size;\n}"), true);
   assert.equal(cssSrc.includes("@container (max-width: 6.5rem) {\n  .nexus-empty-tag {\n    display: none;"), true);
 }
+// Writing surfaces draw no focus box: the global cyan ring stays for controls,
+// and this override comes after it so it wins without !important.
+{
+  const cssSrc2 = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  const ringAt = cssSrc2.indexOf(":focus-visible {\n  outline: 2px solid #5ad8ff;\n  outline-offset: 2px;\n}\n\n/* Where you write");
+  const writeAt = cssSrc2.indexOf(".ProseMirror.note-editor:focus-visible,\n.source-editor:focus-visible,\n.note-title-input:focus-visible {\n  outline: none;\n}");
+  assert.equal(ringAt > 0 && writeAt > ringAt, true, "writing-surface override follows the global ring");
+  assert.equal(cssSrc2.includes(".chip-btn:focus-visible,"), true, "controls keep their ring");
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
