@@ -1,11 +1,7 @@
 /**
- * Restyle graph links in place.
- *
- * Setting linkColor or linkWidth on ForceGraph3D recreates every link mesh,
- * rebuilds node drag picking, and restarts the layout engine (which ends in
- * another zoom-to-fit). Hover and active-note changes instead point each
- * existing link mesh at a cached material and cylinder that match what
- * three-forcegraph builds for the same color and width.
+ * Link tube cylinders and materials, built exactly as three-forcegraph
+ * builds them for a color and width, and shared by every link that uses
+ * the same style.
  */
 
 import * as THREE from "three";
@@ -14,8 +10,6 @@ import * as THREE from "three";
 const LINK_RESOLUTION = 6;
 
 export type LinkStyle = { color: string; width: number };
-
-type LinkDatum = { __lineObj?: THREE.Object3D };
 
 class SharedCylinderGeometry extends THREE.CylinderGeometry {
   // Link teardown disposes geometry; cached cylinders stay live.
@@ -80,26 +74,4 @@ export function linkMaterial(color: string, linkOpacity: number): THREE.MeshLamb
   mat.dispose = () => {};
   materials.set(key, { material: mat, release });
   return mat;
-}
-
-/** Point every live link tube at the material and width its style asks for. */
-export function restyleLinksInPlace<L extends LinkDatum>(
-  links: readonly L[],
-  style: (link: L) => LinkStyle,
-  linkOpacity: number,
-): number {
-  let touched = 0;
-  for (const link of links) {
-    const obj = link.__lineObj as THREE.Mesh | undefined;
-    if (!obj || !(obj as THREE.Mesh).isMesh) continue;
-    const s = style(link);
-    if (!(s.width > 0)) continue;
-    const mat = linkMaterial(s.color, linkOpacity);
-    if (!mat) continue;
-    const geo = linkCylinder(s.width);
-    if (obj.material !== mat) obj.material = mat;
-    if (obj.geometry !== geo) obj.geometry = geo;
-    touched += 1;
-  }
-  return touched;
 }

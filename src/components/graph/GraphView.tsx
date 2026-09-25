@@ -52,7 +52,8 @@ import { graphEmptyCopy } from "@/lib/graph/graph-empty";
 import { startFirstNote } from "@/lib/vault/first-note";
 import { clampToDrawBudget, drawnStats, recordDrawn } from "@/lib/graph/draw-budget";
 import { clearLabelTextures, releaseSharedSpheres, updateGraphLod } from "@/lib/graph/planet-lod";
-import { releaseLinkStyles, restyleLinksInPlace } from "@/lib/graph/link-style";
+import { releaseLinkStyles } from "@/lib/graph/link-style";
+import { LinkBatch } from "@/lib/graph/link-batch";
 import { createRenderGovernor, type RenderGovernor } from "@/lib/graph/render-governor";
 
 /** Stable empty map so a null store snapshot cannot throw during graph render. */
@@ -855,6 +856,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
   const lastInteractAtRef = useRef(0);
   const restyleEdgesRef = useRef<() => void>(() => {});
   const governorRef = useRef<RenderGovernor | null>(null);
+  const linkBatchRef = useRef<LinkBatch<GLink> | null>(null);
   /** Zoom-to-fit when a new layout settles, not after every restyle. */
   const layoutFitPendingRef = useRef(false);
   const lastGraphTopoKeyRef = useRef<string | null>(null);
@@ -1413,11 +1415,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     restyleEdgesRef.current = () => {
       const g = graphRef.current;
       if (!g) return;
-      restyleLinksInPlace(
-        (g.graphData()?.links ?? []) as GLink[],
-        (link) => edgeStyle(link),
-        LINK_OPACITY,
-      );
+      linkBatchRef.current?.restyle((g.graphData()?.links ?? []) as GLink[]);
       governorRef.current?.kick();
     };
 
@@ -1584,6 +1582,12 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
         hoverThrottleRef.current = window.setTimeout(flushHover, 50);
       })
       .onBackgroundClick(() => setHintVisible(false));
+
+    const linkBatch = new LinkBatch<GLink>(graph.scene(), LINK_OPACITY, (link) => edgeStyle(link));
+    linkBatchRef.current = linkBatch;
+    graph
+      .linkThreeObject(linkBatch.placeholder)
+      .linkPositionUpdate((_obj, { start, end }, link) => linkBatch.place(link as GLink, start, end));
 
     guardOrbitPointer(graph);
     applyEdgeStyles(graph);
@@ -1841,6 +1845,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     graph.onEngineTick(() => governor.kick());
     const sceneForLod = graph.scene();
     sceneForLod.onBeforeRender = (renderer, _scene, camera) => {
+      linkBatch.sync((graph.graphData()?.links ?? []) as GLink[]);
       const lod = updateGraphLod(
         (graph.graphData()?.nodes ?? []) as GNode[],
         camera,
@@ -1867,6 +1872,8 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
             textures: r.info.memory.textures,
             programs: r.info.programs?.length ?? 0,
             pixelRatio: r.getPixelRatio(),
+            frame: r.info.render.frame,
+            paused: governor.paused,
             drawn: drawnStats(),
           };
         },
@@ -1959,6 +1966,8 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       el.removeEventListener("wheel", onWheelZoom, true);
       for (const type of wakeEvents) el.removeEventListener(type, wake, true);
       governor.dispose();
+      linkBatch.dispose();
+      if (linkBatchRef.current === linkBatch) linkBatchRef.current = null;
       if (governorRef.current === governor) governorRef.current = null;
       sceneForLod.onBeforeRender = () => {};
       interactCleanup?.();
@@ -2262,13 +2271,10 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     restyleEdgesRef.current = () => {
       const g = graphRef.current;
       if (!g) return;
-      restyleLinksInPlace(
-        (g.graphData()?.links ?? []) as GLink[],
-        (link) => edgeStyle(link),
-        LINK_OPACITY,
-      );
+      linkBatchRef.current?.restyle((g.graphData()?.links ?? []) as GLink[]);
       governorRef.current?.kick();
     };
+    if (linkBatchRef.current) linkBatchRef.current.style = (link) => edgeStyle(link);
     graphRef.current
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
       .linkColor((link) => edgeStyle(link as GLink).color)
