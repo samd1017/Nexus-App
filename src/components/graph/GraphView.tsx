@@ -52,6 +52,7 @@ import { graphEmptyCopy } from "@/lib/graph/graph-empty";
 import { startFirstNote } from "@/lib/vault/first-note";
 import { clearLabelTextures, releaseSharedSpheres, updateGraphLod } from "@/lib/graph/planet-lod";
 import { releaseLinkStyles, restyleLinksInPlace } from "@/lib/graph/link-style";
+import { createRenderGovernor, type RenderGovernor } from "@/lib/graph/render-governor";
 
 /** Stable empty map so a null store snapshot cannot throw during graph render. */
 const EMPTY_GRAPH_NODES: Record<string, VaultNode> = {};
@@ -852,6 +853,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
   const userInteractingRef = useRef(false);
   const lastInteractAtRef = useRef(0);
   const restyleEdgesRef = useRef<() => void>(() => {});
+  const governorRef = useRef<RenderGovernor | null>(null);
   /** Zoom-to-fit when a new layout settles, not after every restyle. */
   const layoutFitPendingRef = useRef(false);
   const lastGraphTopoKeyRef = useRef<string | null>(null);
@@ -1405,6 +1407,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
         (link) => edgeStyle(link),
         LINK_OPACITY,
       );
+      governorRef.current?.kick();
     };
 
     const graph = new ForceGraph3D(el, {
@@ -1704,6 +1707,8 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       for (const layer of parallaxLayers) {
         layer.obj.rotation.y = t * layer.speed;
       }
+      // The sky and the idle orbit move every frame here.
+      governorRef.current?.kick();
       try {
         const controls = graph.controls() as {
           autoRotate?: boolean;
@@ -1800,13 +1805,37 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     };
     el.addEventListener("wheel", onWheelZoom, { passive: false, capture: true });
 
+    const governor = createRenderGovernor({
+      pause: () => graph.pauseAnimation(),
+      resume: () => graph.resumeAnimation(),
+    });
+    governorRef.current = governor;
+    const wake = () => governor.kick();
+    const wakeEvents = ["pointerdown", "pointermove", "pointerup", "wheel", "touchstart", "touchmove"];
+    for (const type of wakeEvents) {
+      el.addEventListener(type, wake, { passive: true, capture: true });
+    }
+    // Camera moves, data swaps and rebuilds run inside the render loop, so
+    // they restart it. Getters (no arguments) are read every frame and do not.
+    const callable = graph as unknown as Record<string, (...args: unknown[]) => unknown>;
+    for (const name of ["zoomToFit", "cameraPosition", "graphData", "refresh", "d3ReheatSimulation"]) {
+      const original = callable[name];
+      if (typeof original !== "function") continue;
+      const always = name === "refresh" || name === "d3ReheatSimulation";
+      callable[name] = function (this: unknown, ...args: unknown[]) {
+        if (always || args.length > 0) governor.kick();
+        return original.apply(this, args);
+      };
+    }
+    graph.onEngineTick(() => governor.kick());
     const sceneForLod = graph.scene();
     sceneForLod.onBeforeRender = (renderer, _scene, camera) => {
-      updateGraphLod(
+      const lod = updateGraphLod(
         (graph.graphData()?.nodes ?? []) as GNode[],
         camera,
         renderer.domElement.height,
       );
+      governor.frame(camera.matrixWorld.elements, lod.labelsPending > 0);
     };
 
     graphRef.current = graph;
@@ -1816,6 +1845,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       if (!hostRef.current || !graphRef.current) return;
       const { width, height } = hostRef.current.getBoundingClientRect();
       graphRef.current.width(width).height(height);
+      governor.kick();
     });
     ro.observe(el);
     const { width, height } = el.getBoundingClientRect();
@@ -1887,6 +1917,9 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       el.removeEventListener("pointerdown", hideHint);
       el.removeEventListener("pointercancel", clearPointerHover);
       el.removeEventListener("wheel", onWheelZoom, true);
+      for (const type of wakeEvents) el.removeEventListener(type, wake, true);
+      governor.dispose();
+      if (governorRef.current === governor) governorRef.current = null;
       sceneForLod.onBeforeRender = () => {};
       interactCleanup?.();
       flyGenRef.current += 1;
@@ -2193,6 +2226,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
         (link) => edgeStyle(link),
         LINK_OPACITY,
       );
+      governorRef.current?.kick();
     };
     graphRef.current
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
