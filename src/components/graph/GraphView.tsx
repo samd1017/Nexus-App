@@ -51,6 +51,7 @@ import {
 import { graphEmptyCopy } from "@/lib/graph/graph-empty";
 import { startFirstNote } from "@/lib/vault/first-note";
 import { clearLabelTextures, releaseSharedSpheres, updateGraphLod } from "@/lib/graph/planet-lod";
+import { releaseLinkStyles, restyleLinksInPlace } from "@/lib/graph/link-style";
 
 /** Stable empty map so a null store snapshot cannot throw during graph render. */
 const EMPTY_GRAPH_NODES: Record<string, VaultNode> = {};
@@ -122,6 +123,7 @@ function hopKeepSet(
 
 const LOD_SEGMENT_THRESHOLD = 250;
 const LOD_CAP = 400;
+const LINK_OPACITY = 0.95;
 /** Idle orbit waits out the opening zoom-to-fit, then a short quiet. */
 const IDLE_ORBIT_START_S = 3.2;
 const IDLE_ORBIT_QUIET_MS = 1600;
@@ -130,6 +132,7 @@ const IDLE_ORBIT_SPEED = 0.55;
 type GLink = {
   source: string | GNode;
   target: string | GNode;
+  __lineObj?: THREE.Object3D;
 };
 
 function accentRgb(): { r: number; g: number; b: number } {
@@ -704,10 +707,11 @@ function applyLodCap(
   return { nodes, links, lowDetail: true };
 }
 
-/** GPU copies of shared planet and plate resources belong to one renderer. */
+/** GPU copies of shared planet, plate and link resources belong to one renderer. */
 function releaseSharedGraphResources() {
   clearLabelTextures();
   releaseSharedSpheres();
+  releaseLinkStyles();
 }
 
 function cancelCameraFly(graph: ForceGraph3DInstance | null) {
@@ -848,6 +852,8 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
   const userInteractingRef = useRef(false);
   const lastInteractAtRef = useRef(0);
   const restyleEdgesRef = useRef<() => void>(() => {});
+  /** Zoom-to-fit when a new layout settles, not after every restyle. */
+  const layoutFitPendingRef = useRef(false);
   const lastGraphTopoKeyRef = useRef<string | null>(null);
   const lastGraphDataRef = useRef<{ nodes: GNode[]; links: GLink[] } | null>(
     null,
@@ -1393,7 +1399,12 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     };
     restyleEdgesRef.current = () => {
       const g = graphRef.current;
-      if (g) applyEdgeStyles(g);
+      if (!g) return;
+      restyleLinksInPlace(
+        (g.graphData()?.links ?? []) as GLink[],
+        (link) => edgeStyle(link),
+        LINK_OPACITY,
+      );
     };
 
     const graph = new ForceGraph3D(el, {
@@ -1419,7 +1430,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       .nodeOpacity(1)
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
       .nodeThreeObjectExtend(false)
-      .linkOpacity(0.95)
+      .linkOpacity(LINK_OPACITY)
       .onNodeClick((n: object) => {
         const node = n as GNode;
         if (!node?.id) return;
@@ -1550,7 +1561,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
             }
           }
           // Link colors only — do NOT reassign nodeThreeObject / full refresh
-          applyEdgeStyles(g);
+          restyleEdgesRef.current();
         };
 
         if (hoverThrottleRef.current != null) {
@@ -1729,8 +1740,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       setHoverTip(null);
       el.style.cursor = "grab";
       try {
-        const g = graphRef.current;
-        if (g) applyEdgeStyles(g);
+        restyleEdgesRef.current();
       } catch {
         /* ok */
       }
@@ -1811,6 +1821,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     const { width, height } = el.getBoundingClientRect();
     graph.width(width).height(height);
     try {
+      layoutFitPendingRef.current = true;
       graph.graphData(displayData);
       if (graphModeRef.current === "folder") {
         const sim = graph as ForceGraph3DInstance & {
@@ -1837,22 +1848,33 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       }
     }, usePrefsStore.getState().reducedMotion ? 80 : 900);
 
+    let engineFitTimer = 0;
     graph.onEngineStop(() => {
-      if (cancelled || userInteractingRef.current) return;
-      if (recentlyInteracted(lastInteractAtRef.current, performance.now())) return;
-      try {
-        graph.zoomToFit(
-          usePrefsStore.getState().reducedMotion ? 0 : 800,
-          mode === "fullscreen" ? 140 : 88,
-        );
-      } catch {
-        /* ok */
-      }
+      // Every prop change briefly resumes the engine; only a new layout fits.
+      if (!layoutFitPendingRef.current) return;
+      layoutFitPendingRef.current = false;
+      // This runs inside the layout tick, before new orbs have been placed.
+      // Measure the fit once this frame has positioned them.
+      window.clearTimeout(engineFitTimer);
+      engineFitTimer = window.setTimeout(() => {
+        if (cancelled || userInteractingRef.current) return;
+        if (recentlyInteracted(lastInteractAtRef.current, performance.now())) return;
+        try {
+          graph.scene().updateMatrixWorld();
+          graph.zoomToFit(
+            usePrefsStore.getState().reducedMotion ? 0 : 800,
+            mode === "fullscreen" ? 140 : 88,
+          );
+        } catch {
+          /* ok */
+        }
+      }, 0);
     });
 
     teardown = () => {
       cancelled = true;
       window.clearTimeout(zoomTimer);
+      window.clearTimeout(engineFitTimer);
       cancelAnimationFrame(raf);
 
 
@@ -1947,6 +1969,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       if (!liveIds.has(id)) nodeObjMapRef.current.delete(id);
     }
     try {
+      layoutFitPendingRef.current = true;
       graphRef.current.graphData(merged);
     } catch (err) {
       console.warn("[nexus] graph data", err);
@@ -2165,9 +2188,11 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     restyleEdgesRef.current = () => {
       const g = graphRef.current;
       if (!g) return;
-      g.linkColor((link) => edgeStyle(link as GLink).color)
-        .linkWidth((link) => edgeStyle(link as GLink).width)
-        .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles);
+      restyleLinksInPlace(
+        (g.graphData()?.links ?? []) as GLink[],
+        (link) => edgeStyle(link),
+        LINK_OPACITY,
+      );
     };
     graphRef.current
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
