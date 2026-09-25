@@ -2061,6 +2061,20 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
 }
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
+// A folder level counts its own children. The vault total stays on the root map.
+{
+  const { folderLevelCounts, folderLevelShowsVaultTotal } = await import(
+    "../src/lib/graph/level-counts.ts"
+  );
+  assert.deepEqual(folderLevelCounts(2, 4, 2, 4), { folders: 2, notes: 4 });
+  assert.deepEqual(folderLevelCounts(0, 0, 0, 0), { folders: 0, notes: 0 });
+  assert.equal(folderLevelShowsVaultTotal(""), true);
+  assert.equal(folderLevelShowsVaultTotal("EmptyFolder"), false);
+  assert.equal(folderLevelShowsVaultTotal("10-Projects/Tiny"), false);
+  const graphLevel = readFileSync(new URL("../src/components/graph/GraphView.tsx", import.meta.url), "utf8");
+  assert.equal(graphLevel.includes("folderLevelShowsVaultTotal(stats.levelPath)"), true);
+  assert.equal(graphLevel.includes('data-testid="graph-level-notes"'), true);
+}
 // A note made in an empty folder is the file on disk, not an Unsaved Untitled.
 {
   const storeCreate = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");

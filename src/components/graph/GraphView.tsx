@@ -5,6 +5,7 @@ import { createInstrumentNode } from "@/lib/graph/instrument-node";
 import { useVaultStore } from "@/lib/vault/store";
 import { resolveGraphData, type GraphViewMode, type ResolvedGraphData } from "@/lib/graph/build-graph";
 import { emptyShellGraph, graphFromShellEgo, graphFromShellLevel, pinFolderLayout } from "@/lib/graph/shell-graph";
+import { folderLevelCounts, folderLevelShowsVaultTotal } from "@/lib/graph/level-counts";
 import { fetchShellBacklinks, fetchShellEgo, fetchShellLevel } from "@/lib/vault/shell-catalog";
 import { folderIdFromBrowsePath } from "@/lib/graph/folder-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
@@ -1147,10 +1148,15 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     return !data.nodes.some((n) => n.id === activeNoteId);
   }, [graphModeResolved, activeNoteId, data.nodes]);
 
-  // Honest folder badge totals: prefer true level children over drawn subset
-  const badgeFolderCount =
-    stats.childFolderCount || stats.shownFolderCount || 0;
-  const badgeNoteCount = stats.childNoteCount || stats.shownNoteCount || 0;
+  // This level’s own children. An empty folder stays 0, not the vault total.
+  const levelCounts = folderLevelCounts(
+    stats.childFolderCount,
+    stats.childNoteCount,
+    stats.shownFolderCount,
+    stats.shownNoteCount,
+  );
+  const badgeFolderCount = levelCounts.folders;
+  const badgeNoteCount = levelCounts.notes;
 
   // Folder hues live on the orbs only — no multi-chip legend (clutters large vaults).
 
@@ -2447,9 +2453,11 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
         <>
           <span className="text-[var(--accent)] opacity-90">Folder map</span>
           <span className="mx-1.5 opacity-40">·</span>
-          {badgeFolderCount} folder{badgeFolderCount === 1 ? "" : "s"}
+          <span data-testid="graph-level-folders">{badgeFolderCount} folder{badgeFolderCount === 1 ? "" : "s"}</span>
           <span className="mx-1.5 opacity-40">·</span>
-          {badgeNoteCount} note{badgeNoteCount === 1 ? "" : "s"}
+          <span data-testid="graph-level-notes" data-level-notes={badgeNoteCount}>
+            {badgeNoteCount} note{badgeNoteCount === 1 ? "" : "s"}
+          </span>
           {stats.levelPath ? (
             <>
               <span className="mx-1.5 opacity-40">·</span>
@@ -2461,7 +2469,9 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
               this level
             </>
           )}
-          <VaultTotal fallback={vaultNoteCount} shown={badgeNoteCount} kind="in" />
+          {folderLevelShowsVaultTotal(stats.levelPath) ? (
+            <VaultTotal fallback={vaultNoteCount} shown={badgeNoteCount} kind="in" />
+          ) : null}
         </>
       ) : graphModeResolved === "ego" || isPartialVaultGraph ? (
         <>
