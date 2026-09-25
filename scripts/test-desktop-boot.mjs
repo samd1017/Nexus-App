@@ -2011,7 +2011,7 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(store4.includes("// before either, so no mount misses the recount.\nlistenForCatalogReconcile();"), true, "every mount path hears the recount");
   assert.equal(store4.includes("catalogNoteCount: ev.notes,\n\t\t\tcatalogFolderCount: ev.folders,"), true, "the reconciled total replaces, lower included");
   assert.equal(store4.includes("if (!live.shellCatalog || !ev.dbPath || ev.dbPath !== live.shellDbPath) return;"), true, "another vault's total is ignored");
-  assert.equal(store4.includes("const admitted = await fetchShellAdmit(db, root, paths);"), true);
+  assert.equal(store4.includes("let admitted = await fetchShellAdmit(db, root, paths);\n\t\t\t\tfor (let attempt = 0; admitted === null && attempt < 3; attempt++) {"), true, "a busy add is tried again");
   const graphSrc = readFileSync(new URL("../src/components/graph/GraphView.tsx", import.meta.url), "utf8");
   assert.equal(graphSrc.includes("const total = useVaultStore((s) => (s.shellCatalog ? s.catalogNoteCount : fallback));"), true);
   assert.equal(graphSrc.includes("{vaultNoteCount.toLocaleString()} in vault"), false);

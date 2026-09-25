@@ -3811,6 +3811,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		set({ nodes: merged.nodes, rootIds: merged.rootIds });
 	},
 	refreshShellPaths: (paths) => {
+		try { (window as unknown as { __TAURI_INTERNALS__?: { invoke: (c: string, a: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__?.invoke("ready_clock_log", { line: "NEXUS_READY_CLOCK SDBG refresh " + JSON.stringify(paths).slice(0, 200) + " shell=" + get().shellCatalog + " root=" + Boolean(desktopRoot) }); } catch { /* dbg */ }
 		if (!get().shellCatalog || !paths?.length) return;
 		const db = get().shellDbPath;
 		const root = desktopRoot;
@@ -3824,7 +3825,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 			if (db && root && db !== BROWSER_SHELL_DB) {
 				// A note dropped into the folder after Ready joins title search now.
-				const admitted = await fetchShellAdmit(db, root, paths);
+				// A write elsewhere can hold the catalog for a moment; try again.
+				let admitted = await fetchShellAdmit(db, root, paths);
+				for (let attempt = 0; admitted === null && attempt < 3; attempt++) {
+					await new Promise((r) => setTimeout(r, 1500 * 2 ** attempt));
+					if (get().shellDbPath !== db) break;
+					admitted = await fetchShellAdmit(db, root, paths);
+				}
+				try { (window as unknown as { __TAURI_INTERNALS__?: { invoke: (c: string, a: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__?.invoke("ready_clock_log", { line: "NEXUS_READY_CLOCK SDBG admitted " + JSON.stringify(admitted?.map((r) => r.path) ?? null).slice(0, 200) }); } catch { /* dbg */ }
 				if (admitted?.length && get().shellDbPath === db) {
 					const notes = admitted.filter((r) => r.kind === "note").length;
 					get().ingestShellRows(admitted);
