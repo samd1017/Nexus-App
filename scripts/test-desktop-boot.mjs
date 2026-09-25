@@ -1918,6 +1918,16 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(cssSrc.includes(".nexus-tree-label {\n  container-type: inline-size;\n}"), true);
   assert.equal(cssSrc.includes("@container (max-width: 6.5rem) {\n  .nexus-empty-tag {\n    display: none;"), true);
 }
+// Light theme: the wordmark is graphite metal on the pale title bar; dark
+// islands (Settings) keep the silver one.
+{
+  const cssSrc4 = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  const light = cssSrc4.indexOf('[data-theme="light"] .nexus-wordmark {');
+  const island = cssSrc4.indexOf('[data-theme="light"] .nexus-dark-island .nexus-wordmark {');
+  assert.equal(light > cssSrc4.indexOf(".nexus-wordmark::after {") && island > light, true);
+  assert.equal(cssSrc4.slice(light, island).includes("#0c1017 62%"), true);
+  assert.equal(cssSrc4.slice(island, island + 400).includes("#ffffff 0%"), true);
+}
 // Rebuild search stays under the Settings title, as a secondary action beside
 // its label rather than a full-width cyan block.
 {
