@@ -50,6 +50,7 @@ import {
 } from "@/lib/graph/graph-filters";
 import { graphEmptyCopy } from "@/lib/graph/graph-empty";
 import { startFirstNote } from "@/lib/vault/first-note";
+import { clampToDrawBudget, drawnStats, recordDrawn } from "@/lib/graph/draw-budget";
 import { clearLabelTextures, releaseSharedSpheres, updateGraphLod } from "@/lib/graph/planet-lod";
 import { releaseLinkStyles, restyleLinksInPlace } from "@/lib/graph/link-style";
 import { createRenderGovernor, type RenderGovernor } from "@/lib/graph/render-governor";
@@ -911,7 +912,12 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
   activeRef.current = activeNoteId;
   neighborhoodRef.current = neighborhood;
   colorByRef.current = colorBy;
-  const desktopBoost = isDesktopShell();
+  // Dev probes can ask for the desktop shell's render settings in a browser.
+  const desktopBoost =
+    isDesktopShell() ||
+    (import.meta.env.DEV &&
+      typeof window !== "undefined" &&
+      (window as unknown as { __NEXUS_GRAPH_DESKTOP__?: boolean }).__NEXUS_GRAPH_DESKTOP__ === true);
 
   const vaultNoteCount = useMemo(() => {
     if (shellCatalog) return catalogNoteCount;
@@ -1147,7 +1153,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       ? null
       : activeNoteId;
 
-  const displayData = useMemo(() => {
+  const filteredData = useMemo(() => {
     let base: { nodes: GNode[]; links: GLink[] } = data;
     if (graphModeResolved === "folder") {
       hopKeepRef.current = null;
@@ -1190,6 +1196,11 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     graphFilter,
     activeNoteId,
   ]);
+
+  const displayData = useMemo(
+    () => clampToDrawBudget(filteredData, activeNoteId),
+    [filteredData, activeNoteId],
+  );
 
   /** G1: 2x export with footer */
   const exportPng = useCallback(() => {
@@ -1841,6 +1852,34 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     graphRef.current = graph;
     setEngineReady(true);
 
+    if (import.meta.env.DEV) {
+      (window as unknown as { __NEXUS_GRAPH__?: unknown }).__NEXUS_GRAPH__ = {
+        stats: () => {
+          const r = graph.renderer() as THREE.WebGLRenderer;
+          const d = graph.graphData();
+          return {
+            mode: graphModeRef.current,
+            nodes: d.nodes.length,
+            links: d.links.length,
+            calls: r.info.render.calls,
+            triangles: r.info.render.triangles,
+            geometries: r.info.memory.geometries,
+            textures: r.info.memory.textures,
+            programs: r.info.programs?.length ?? 0,
+            pixelRatio: r.getPixelRatio(),
+            drawn: drawnStats(),
+          };
+        },
+        instance: graph,
+        browse: (path: string) => useVaultStore.getState().enterGraphFolder?.(path),
+        ego: (id: string) => {
+          const st = useVaultStore.getState();
+          st.setActiveNote(id);
+          st.enterGraphEgo?.({ returnPath: st.graphBrowsePath || "" });
+        },
+      };
+    }
+
     const ro = new ResizeObserver(() => {
       if (!hostRef.current || !graphRef.current) return;
       const { width, height } = hostRef.current.getBoundingClientRect();
@@ -1853,6 +1892,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     try {
       layoutFitPendingRef.current = true;
       graph.graphData(displayData);
+      recordDrawn(displayData.nodes.length, displayData.links.length);
       if (graphModeRef.current === "folder") {
         const sim = graph as ForceGraph3DInstance & {
           d3Alpha?: (a: number) => ForceGraph3DInstance;
@@ -2004,6 +2044,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     try {
       layoutFitPendingRef.current = true;
       graphRef.current.graphData(merged);
+      recordDrawn(merged.nodes.length, merged.links.length);
     } catch (err) {
       console.warn("[nexus] graph data", err);
     }
