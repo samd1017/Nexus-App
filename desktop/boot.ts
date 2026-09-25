@@ -18,7 +18,6 @@ import {
   readLastNotePath,
   readOpenLastVault,
   rememberSavedPage,
-  SAVED_PAGE_READY_MESSAGE,
   savedPageTitlesLive,
   shouldPrefetchSavedPage,
 } from "@/lib/vault/desktop-boot";
@@ -49,28 +48,8 @@ function paintSavedPage(mount: { rows?: Array<{ name?: string; kind?: string; pa
     .filter(Boolean)
     .slice(0, 12);
   const boot = (window as unknown as { __NEXUS_BOOT__?: { paintedFromPage?: boolean } }).__NEXUS_BOOT__;
-  if (boot?.paintedFromPage === true && names.length === 0) return;
+  if ((boot?.paintedFromPage === true && names.length === 0) || names.length === 0) return;
   host.replaceChildren();
-  const bar = document.createElement("div");
-  bar.setAttribute("role", "status");
-  bar.setAttribute("aria-live", "polite");
-  bar.setAttribute("aria-label", SAVED_PAGE_READY_MESSAGE);
-  bar.setAttribute("data-open-progress", "ready");
-  bar.style.cssText = [
-    "display:flex",
-    "align-items:center",
-    "min-height:64px",
-    "padding:16px 20px",
-    "font:700 32px/1.15 ui-sans-serif,system-ui,sans-serif",
-    "color:#ffffff",
-    "background:#000000",
-    "border-bottom:3px solid #30d158",
-  ].join(";");
-  const label = document.createElement("span");
-  label.textContent = SAVED_PAGE_READY_MESSAGE;
-  label.style.cssText = "color:#ffffff;font-weight:700;font-size:32px;line-height:1.15";
-  bar.append(label);
-  host.append(bar);
   host.style.position = "fixed";
   host.style.top = "0";
   host.style.left = "0";

@@ -4,7 +4,6 @@
  * No imports and no awaits — a module crawl cannot sit in front of this.
  */
 (function () {
-  var READY = "Ready · titles and open notes";
   var ROOT_KEY = "nexus-desktop-vault-root";
   var PREFS_KEY = "nexus-prefs-v1";
   var PAGE_KEY = "nexus-desktop-saved-page";
@@ -138,28 +137,6 @@
       return;
     }
     host.replaceChildren();
-    var bar = document.createElement("div");
-    bar.setAttribute("role", "status");
-    bar.setAttribute("aria-live", "polite");
-    bar.setAttribute("aria-label", READY);
-    bar.setAttribute("data-open-progress", "ready");
-    // White on black at 32px. A faint green line is in the DOM but a screenshot
-    // of the first frame does not read it. No extra dot — it OCRs as a letter.
-    bar.style.cssText = [
-      "display:flex",
-      "align-items:center",
-      "min-height:64px",
-      "padding:16px 20px",
-      "font:700 32px/1.15 ui-sans-serif,system-ui,sans-serif",
-      "color:#ffffff",
-      "background:#000000",
-      "border-bottom:3px solid #30d158",
-    ].join(";");
-    var label = document.createElement("span");
-    label.textContent = READY;
-    label.style.cssText = "color:#ffffff;font-weight:700;font-size:32px;line-height:1.15";
-    bar.append(label);
-    host.append(bar);
     var list = document.createElement("div");
     list.style.cssText = [
       "padding:8px 12px",
@@ -173,8 +150,7 @@
       list.append(row);
     }
     host.append(list);
-    // Same slot as the in-app Ready line: directly under the 44px title bar.
-    // The strip above it is solid title color so the top of the window is not blank.
+    // Names only, under the title bar. No Ready billboard.
     host.style.position = "fixed";
     host.style.top = "0";
     host.style.left = "0";
@@ -186,9 +162,6 @@
     host.style.background = "#08080a";
     host.hidden = false;
     host.removeAttribute("hidden");
-    try {
-      document.title = READY;
-    } catch (ignoreTitle) {}
     var boot = (window.__NEXUS_BOOT__ = window.__NEXUS_BOOT__ || {});
     boot.paintedFromPage = true;
     boot.t0 = performance.now();

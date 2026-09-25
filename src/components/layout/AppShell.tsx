@@ -59,18 +59,16 @@ function OpenProgressBanner() {
   useEffect(() => subscribeOpenProgress(setProgress), []);
 
   useEffect(() => {
-    // Hand off only once the shell is showing the same saved page.
-    // An error leaves the early line up; it must not flash a scope failure.
+    // Ready is a state, not a banner. Take the early overlay down on any
+    // Ready. An error leaves that overlay; it must not flash a scope failure.
     if (progress.phase !== "ready") return;
-    if (!progress.message.includes("titles and open notes")) return;
     document.getElementById("nexus-boot-banner")?.remove();
-  }, [progress.phase, progress.message]);
+  }, [progress.phase]);
 
-  // Auto-dismiss ready flash so the banner doesn't stick forever
+  // Full-index Ready is a short state. The saved-page message stays so
+  // search honesty can tell titles-and-open-notes from a finished FTS.
   useEffect(() => {
     if (progress.phase !== "ready") return;
-    // This Ready is the open page. Leave it up while the rest of the
-    // folder is still being listed, so it is not mistaken for a flash.
     if (progress.message.includes("titles and open notes")) return;
     const t = window.setTimeout(() => {
       const cur = getOpenProgress();
@@ -86,21 +84,21 @@ function OpenProgressBanner() {
     return () => window.clearTimeout(t);
   }, [progress.phase, progress.scanned, progress.message]);
 
+  // Users do not see Ready. Walking and indexing stay a quiet line; errors stay.
+  if (progress.phase === "ready") return null;
+
   if (
     progress.phase !== "walking" &&
     progress.phase !== "indexing" &&
-    progress.phase !== "error" &&
-    progress.phase !== "ready"
+    progress.phase !== "error"
   ) {
     return null;
   }
 
-  const isReady = progress.phase === "ready";
   const isError = progress.phase === "error";
-  const ratio =
-    isError || isReady
-      ? null
-      : fillProgressRatio(progress.scanned, progress.totalHint);
+  const ratio = isError
+    ? null
+    : fillProgressRatio(progress.scanned, progress.totalHint);
   const valueNow =
     ratio != null ? Math.round(ratio * 100) : undefined;
 
@@ -119,30 +117,24 @@ function OpenProgressBanner() {
         "flex shrink-0 flex-col border-b px-3",
         isError
           ? "border-[rgba(255,69,58,0.3)] bg-[rgba(255,69,58,0.08)] py-1.5 text-[12px] text-[var(--danger)]"
-          : isReady
-            ? "min-h-16 border-b-[3px] border-[#30d158] bg-black py-4 text-[32px] font-bold leading-tight text-white"
-            : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] py-1.5 text-[12px] text-[var(--text-secondary)]",
+          : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] py-1.5 text-[12px] text-[var(--text-secondary)]",
       )}
       data-open-progress={progress.phase}
       role={valueNow != null ? "progressbar" : "status"}
       aria-valuenow={valueNow}
       aria-valuemin={valueNow != null ? 0 : undefined}
       aria-valuemax={valueNow != null ? 100 : undefined}
-      aria-busy={!isError && !isReady ? true : undefined}
+      aria-busy={!isError ? true : undefined}
     >
       <div className="flex items-center gap-2">
-        {!isError && !isReady ? (
+        {!isError ? (
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
         ) : null}
         <span className="min-w-0 flex-1">
-          {progress.message ||
-            (isError ? "Open failed" : isReady ? "Ready" : "Opening vault…")}
+          {progress.message || (isError ? "Open failed" : "Opening vault…")}
         </span>
-        {progress.scanned > 0 &&
-        // The saved-page Ready is a window of the vault; its row count is not
-        // the vault size, so it shows no number beside it.
-        !(isReady && progress.message.includes("titles and open notes")) ? (
-          <span className={isReady ? "text-[var(--success)]/80" : "text-[var(--text-muted)]"}>
+        {progress.scanned > 0 ? (
+          <span className="text-[var(--text-muted)]">
             {openProgressTail(progress.phase, progress.scanned, progress.totalHint)}
           </span>
         ) : null}
@@ -156,7 +148,7 @@ function OpenProgressBanner() {
           </button>
         ) : null}
       </div>
-      {ratio != null && !isError && progress.phase !== "ready" ? (
+      {ratio != null && !isError ? (
         <div className="mt-1 h-0.5 overflow-hidden rounded-full bg-white/10">
           <div
             className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-200"

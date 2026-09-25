@@ -190,10 +190,10 @@ const bootTag = html.indexOf('src="./boot.ts"');
 assert.ok(pageTag > 0 && bootTag > pageTag, "saved page script runs before the module");
 assert.equal(pageJs.includes("import "), false);
 assert.equal(pageJs.includes("await "), false);
-assert.equal(pageJs.includes(SAVED_PAGE_READY_MESSAGE), true);
+assert.equal(pageJs.includes(SAVED_PAGE_READY_MESSAGE), false);
 assert.equal(pageJs.includes(DESKTOP_SAVED_PAGE_KEY), true);
 assert.equal(pageJs.includes("nexus-desktop-vault-root"), true);
-assert.equal(pageJs.includes('data-open-progress", "ready"'), true);
+assert.equal(pageJs.includes('data-open-progress", "ready"'), false);
 assert.equal(pageJs.includes("document.cookie"), true);
 assert.equal(pageJs.includes("NEXUS_READY_CLOCK"), true);
 assert.equal(pageJs.includes('phase=" + phase'), true);
@@ -211,10 +211,10 @@ for (const token of [
 }
 assert.equal(pageJs.includes('host.style.top = "0"'), true);
 assert.equal(pageJs.includes('host.style.paddingTop = "44px"'), true);
-assert.equal(pageJs.includes("background:#000000"), true);
-assert.equal(pageJs.includes("color:#ffffff"), true);
-assert.equal(pageJs.includes("font-size:32px"), true);
-assert.equal(pageJs.includes("document.title = READY"), true);
+assert.equal(pageJs.includes("background:#000000"), false);
+assert.equal(pageJs.includes("font-size:32px"), false);
+assert.equal(pageJs.includes("document.title = READY"), false);
+assert.equal(pageJs.includes("Ready ·"), false);
 assert.equal(pageJs.includes("requestAnimationFrame"), true);
 assert.equal(pageJs.includes("offsetHeight"), true);
 assert.equal(pageJs.includes('meta[name="nexus-boot-src"]'), true);
@@ -227,8 +227,9 @@ for (const field of clockOrder) {
 }
 assert.equal(bootSrc.includes('host.style.top = "0"'), true);
 assert.equal(bootSrc.includes('host.style.paddingTop = "44px"'), true);
-assert.equal(bootSrc.includes("background:#000000"), true);
-assert.equal(bootSrc.includes("font-size:32px"), true);
+assert.equal(bootSrc.includes("background:#000000"), false);
+assert.equal(bootSrc.includes("font-size:32px"), false);
+assert.equal(bootSrc.includes("Ready ·"), false);
 assert.equal(bootSrc.includes('publishReadyClock("module")'), true);
 const storeSrc = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
 assert.equal(storeSrc.includes('publishReadyClock("shell")'), true);
@@ -717,14 +718,14 @@ assert.equal(treeRowIdFromTarget(noteRow), "note-1");
 assert.equal(treeRowIdFromTarget(null), null);
 assert.equal(shellSrc.includes("focusedEmptyFolderId()"), true);
 assert.equal(shellSrc.includes("paintedFromPage"), true);
-assert.equal(shellSrc.includes("bg-black"), true);
-assert.equal(shellSrc.includes("text-[32px]"), true);
-assert.equal(shellSrc.includes("text-white"), true);
+assert.equal(shellSrc.includes('if (progress.phase === "ready") return null;'), true);
+assert.equal(shellSrc.includes("text-[32px]"), false);
+assert.equal(shellSrc.includes("bg-black py-4"), false);
 const removeAt = shellSrc.indexOf('getElementById("nexus-boot-banner")?.remove()');
 assert.ok(removeAt > 0);
 const handoff = shellSrc.slice(Math.max(0, removeAt - 500), removeAt);
 assert.equal(handoff.includes('progress.phase !== "ready"'), true);
-assert.equal(handoff.includes("titles and open notes"), true);
+assert.equal(handoff.includes("titles and open notes"), false);
 assert.equal(handoff.includes('progress.phase !== "error"'), false);
 
 const { spawnSync } = await import("node:child_process");
@@ -747,7 +748,7 @@ const distHtml = readFileSync(new URL("../dist-desktop/index.html", import.meta.
 const distPage = readFileSync(new URL("../dist-desktop/saved-page.js", import.meta.url), "utf8");
 assert.match(distHtml, /<script src="\.\/saved-page\.js"><\/script>/);
 assert.equal(distHtml.includes('type="module" src="./saved-page.js"'), false);
-assert.equal(distPage.includes(SAVED_PAGE_READY_MESSAGE), true);
+assert.equal(distPage.includes(SAVED_PAGE_READY_MESSAGE), false);
 const tauriConf = JSON.parse(
   readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
 );
@@ -2059,8 +2060,9 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(ringAt > 0 && writeAt > ringAt, true, "writing-surface override follows the global ring");
   assert.equal(cssSrc2.includes(".chip-btn:focus-visible,"), true, "controls keep their ring");
 }
-// The saved-page Ready shows no page count beside it.
-assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
+// Ready is not painted. The phase returns no banner, giant or thin.
+assert.equal(shellSrc.includes('if (progress.phase === "ready") return null;'), true);
+assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), false);
 // A folder level counts its own children. The vault total stays on the root map.
 {
   const { folderLevelCounts, folderLevelShowsVaultTotal } = await import(

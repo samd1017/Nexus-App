@@ -27,16 +27,18 @@ try {
   const opened = await page.evaluate(async (n) => {
     return window.__NEXUS_SOAK__.openPagedFsa(n);
   }, NOTES);
-  const banner = await page.locator("[data-open-progress='ready']").textContent();
+  const bannerCount = await page.locator("[data-open-progress='ready']").count();
+  const readyText = await page.getByText("titles and open notes").count();
   const saved = await page.evaluate(async () => {
     return window.__NEXUS_SOAK__.saveActiveMarker("nexus-page-roundtrip");
   });
-  const report = { opened, banner, saved, pageErrors };
+  const report = { opened, bannerCount, readyText, saved, pageErrors };
   console.log(JSON.stringify(report, null, 2));
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   assert.equal(opened.phase, "ready");
-  assert.match(opened.message, /Ready/);
-  assert.match(banner ?? "", /Ready/);
+  assert.match(opened.message, /titles and open notes/);
+  assert.equal(bannerCount, 0);
+  assert.equal(readyText, 0);
   assert.equal(opened.shellCatalog, true);
   assert.equal(opened.catalogNoteCount, NOTES);
   assert.ok(opened.windowNotes > 0);
@@ -166,8 +168,8 @@ try {
 
   const craftDir = "/tmp/nexus-craft";
   mkdirSync(craftDir, { recursive: true });
-  const readyCopy = await page.locator("[data-open-progress='ready']").innerText();
-  assert.match(readyCopy, /Ready · titles and open notes/);
+  assert.equal(await page.locator("[data-open-progress='ready']").count(), 0);
+  assert.equal(await page.getByText(/Ready/).count(), 0);
   await page.screenshot({ path: `${craftDir}/ready-dark.png` });
 
   await page.locator("[aria-label='Open settings']").focus();
