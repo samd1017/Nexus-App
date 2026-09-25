@@ -250,8 +250,8 @@ fn bench_large_queries() {
         // A warm catalog against its folder: a hub dropped at the root after
         // the fill, then the same hub removed again.
         let root = PathBuf::from(&vault);
-        let hub = root.join("Tip25e5EmbedHub.md");
-        std::fs::write(&hub, "# Tip25e5EmbedHub\n\n![[Topic 499999]]\n").unwrap();
+        let hub = root.join("RootHub.md");
+        std::fs::write(&hub, "# RootHub\n\n![[Topic 499999]]\n").unwrap();
         let done = Arc::new(AtomicBool::new(false));
         let flag = done.clone();
         let db2 = PathBuf::from(&db);
@@ -276,12 +276,12 @@ fn bench_large_queries() {
         let (el, out) = pass.join().unwrap();
         println!("bench reconcile (hub added)              {:>9.1} ms  {out:?}", ms(el));
         suggest.line("suggest topic 15 during reconcile");
-        let found: Vec<String> = sc::query_suggest(&r, "Tip25e5EmbedHub", 5)
+        let found: Vec<String> = sc::query_suggest(&r, "RootHub", 5)
             .unwrap_or_default()
             .into_iter()
             .map(|h| h.path)
             .collect();
-        println!("bench   switcher Tip25e5EmbedHub -> {found:?}");
+        println!("bench   switcher RootHub -> {found:?}");
         std::fs::remove_file(&hub).unwrap();
         let mut w = writer(Path::new(&db));
         let t = Instant::now();

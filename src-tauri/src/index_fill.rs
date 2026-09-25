@@ -3755,7 +3755,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let before = live_note_count(&conn);
         // Outside Nexus, after that fill: a root hub, a note in a new folder,
         // one note removed, and a total left over from a bigger vault.
-        write_note(&vault, "Tip25e5EmbedHub.md", "# Tip25e5EmbedHub\n\n![[Hub 0]] #soak\n");
+        write_note(&vault, "RootHub.md", "# RootHub\n\n![[Hub 0]] #new\n");
         write_note(&vault, "Fresh/Deep/Note Z.md", "# Note Z\n\nbody\n");
         let gone: String = conn
             .query_row(
@@ -3773,7 +3773,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         .unwrap();
         // A warm reopen answers from the catalog and does not list the folder.
         let _ = fill_until(&mut conn, &vault, false, FillUntil::Deep, &[]);
-        assert!(!fts_path_at(&db, "Tip25e5EmbedHub.md"), "warm Ready does not see new files");
+        assert!(!fts_path_at(&db, "RootHub.md"), "warm Ready does not see new files");
         let mut listed = Vec::new();
         let out = reconcile_catalog_with_disk(&mut conn, &vault, || false, |l| listed.push(l.notes));
         assert_eq!(listed, vec![before + 1], "the folder's count is said before rows change");
@@ -3783,15 +3783,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert_eq!(out.notes, before + 1);
         assert_eq!(live_note_count(&conn), before + 1);
         assert_eq!(stored_note_count(&conn), before + 1, "the stale total is replaced, lower included");
-        assert!(fts_path_at(&db, "Tip25e5EmbedHub.md"));
+        assert!(fts_path_at(&db, "RootHub.md"));
         assert!(fts_path_at(&db, "Fresh/Deep/Note Z.md"));
         assert!(!fts_path_at(&db, &gone));
-        let hits: Vec<String> = crate::shell_catalog::query_suggest(&conn, "tip25e5", 10)
+        let hits: Vec<String> = crate::shell_catalog::query_suggest(&conn, "roothub", 10)
             .unwrap()
             .into_iter()
             .map(|h| h.path)
             .collect();
-        assert_eq!(hits, vec!["Tip25e5EmbedHub.md".to_string()]);
+        assert_eq!(hits, vec!["RootHub.md".to_string()]);
         for dir in ["Fresh", "Fresh/Deep"] {
             let parent: Option<String> = conn
                 .query_row(
@@ -3804,8 +3804,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         }
         let tags: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM tag_map WHERE note_id=?1 AND tag='soak'",
-                params![desk_node_id("Tip25e5EmbedHub.md")],
+                "SELECT COUNT(*) FROM tag_map WHERE note_id=?1 AND tag='new'",
+                params![desk_node_id("RootHub.md")],
                 |r| r.get(0),
             )
             .unwrap();
@@ -3820,7 +3820,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert_eq!(blank.removed, 0);
         assert_eq!(live_note_count(&conn), before + 1);
         // Cancelled: nothing is removed.
-        fs::remove_file(vault.join("Tip25e5EmbedHub.md")).unwrap();
+        fs::remove_file(vault.join("RootHub.md")).unwrap();
         let stopped = reconcile_catalog_with_disk(&mut conn, &vault, || true, |_| {});
         assert!(!stopped.complete);
         assert_eq!(stopped.removed, 0);
