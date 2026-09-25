@@ -933,8 +933,9 @@ function browserCatalogOwnsSearch(): boolean {
 function announceBrowserCatalogReady(): void {
 	diskSearchReady = true;
 	if (getSearchIndexState() === "idle") setSearchIndexState("ready-meta");
-	if (getOpenProgress().phase === "ready") return;
 	const live = useVaultStore.getState();
+	if (live.catalogNoteCount > 0) setBodyCacheNoteCount(live.catalogNoteCount);
+	if (getOpenProgress().phase === "ready") return;
 	let pageNotes = 0;
 	for (const id in live.nodes) {
 		if (live.nodes[id]?.kind === "note") pageNotes += 1;
@@ -6100,6 +6101,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				openPagedFsa: (n: number) => Promise<Record<string, unknown>>;
 				plantPagedNote: (name: string, text: string) => Promise<void>;
 				openCatalogNote: (path: string) => Promise<Record<string, unknown>>;
+				pageShellRoot: () => Promise<Record<string, unknown>>;
 				saveActiveMarker: (marker: string) => Promise<Record<string, unknown>>;
 				search: (query: string, limit?: number) => Promise<unknown>;
 				openNotes: (limit?: number) => Promise<number>;
@@ -6357,6 +6359,26 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				bodies,
 				shellCatalog: live.shellCatalog,
 				catalogNoteCount: live.catalogNoteCount,
+			};
+		},
+		pageShellRoot: async () => {
+			await useVaultStore.getState().loadShellChildren(SHELL_ROOT_KEY);
+			const live = useVaultStore.getState();
+			let windowNotes = 0;
+			let bodies = 0;
+			for (const nid in live.nodes) {
+				const node = live.nodes[nid];
+				if (node?.kind !== "note") continue;
+				windowNotes += 1;
+				if (node.content !== undefined) bodies += 1;
+			}
+			const hidden = Object.values(live.shellUnloaded).reduce((sum, n) => sum + n, 0);
+			return {
+				windowNotes,
+				bodies,
+				hidden,
+				catalogNoteCount: live.catalogNoteCount,
+				shellCatalog: live.shellCatalog,
 			};
 		},
 		saveActiveMarker: async (marker: string) => {
