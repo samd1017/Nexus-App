@@ -1723,26 +1723,24 @@ fn note_fts_has_row(conn: &Connection) -> bool {
         == 1
 }
 
-/// Prefix match on the search index. This does not scan `note_meta`.
+/// Every word as a prefix of a title or path, unranked, so it stops at the
+/// page. This does not scan `note_meta`.
 fn suggest_from_fts(
     conn: &Connection,
     query: &str,
     limit: i64,
 ) -> Result<Vec<ShellSuggestHit>, String> {
-    let token: String = query
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
-        .take(64)
-        .collect();
-    if token.len() < 2 {
+    let terms = fts_prefix_terms(query);
+    if terms.is_empty() {
         return Ok(Vec::new());
     }
-    let match_q = format!("\"{token}\"*");
+    let match_q = format!("{{title path}} : ({terms})");
     let mut stmt = conn
         .prepare("SELECT note_id, path, title FROM note_fts WHERE note_fts MATCH ?1 LIMIT ?2")
         .map_err(|e| e.to_string())?;
-    let mapped = stmt
-        .query_map(params![match_q, limit], |r| {
+    let mut out = Vec::new();
+    with_time_budget(conn, SHELL_SCAN_BUDGET, || {
+        let Ok(mapped) = stmt.query_map(params![match_q, limit], |r| {
             let path: String = r.get(1)?;
             let title: String = r.get(2)?;
             let name = path
@@ -1764,27 +1762,113 @@ fn suggest_from_fts(
                 parent_id: None,
                 mtime: 0,
             })
-        })
-        .map_err(|e| e.to_string())?;
-    Ok(mapped.filter_map(|r| r.ok()).collect())
+        }) else {
+            return;
+        };
+        for row in mapped {
+            match row {
+                Ok(r) => out.push(r),
+                Err(_) => break,
+            }
+        }
+    });
+    Ok(out)
 }
 
-/// Title and path prefix. A leading-wildcard scan of every title is not a keystroke.
 pub fn query_suggest(conn: &Connection, query: &str, limit: i64) -> Result<Vec<ShellSuggestHit>, String> {
     let limit = limit.clamp(1, SHELL_SUGGEST_LIMIT);
     let q = query.trim().to_ascii_lowercase();
     if q.is_empty() {
         return query_recent_hits(conn, limit);
     }
-    // A filled vault answers from FTS. Scanning every title holds the
-    // database and freezes a keystroke. The open page is already searchable
-    // in memory when this returns nothing.
-    if note_fts_has_row(conn) {
-        return suggest_from_fts(conn, &q, limit);
+    let has_fts = note_fts_has_row(conn);
+    let indexed = shell_search_indexes_ready(conn);
+    if !has_fts && !indexed {
+        let prefix = like_prefix(&q);
+        return suggest_like_query(conn, &prefix, limit);
     }
-    let prefix = like_prefix(&q);
-    suggest_like_query(conn, &prefix, limit)
+    // Titles that start with the query come first, straight off the title
+    // index (the quick switcher's "Topic 15", then "Topic 150"…). Then every
+    // word as a prefix of a title or path. Neither ranks the whole vault: at
+    // 500k notes a common word matches tens of thousands of rows, and scanning
+    // every title holds the database and freezes a keystroke.
+    let mut out: Vec<ShellSuggestHit> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if indexed {
+        for hit in suggest_title_prefix(conn, &q, limit)? {
+            if seen.insert(hit.id.clone()) {
+                out.push(hit);
+            }
+        }
+    }
+    if (out.len() as i64) < limit && has_fts {
+        for hit in suggest_from_fts(conn, &q, limit)? {
+            if (out.len() as i64) >= limit {
+                break;
+            }
+            if seen.insert(hit.id.clone()) {
+                out.push(hit);
+            }
+        }
+    }
+    Ok(out)
 }
+
+fn suggest_title_prefix(conn: &Connection, q: &str, limit: i64) -> Result<Vec<ShellSuggestHit>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path, name, kind, parent_id, mtime, COALESCE(NULLIF(title, ''), name)
+             FROM note_meta
+             WHERE lower(title) >= ?1 AND lower(title) < ?1 || char(1114111)
+               AND deleted=0 AND kind='note'
+             ORDER BY lower(title)
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    with_time_budget(conn, SHELL_SCAN_BUDGET, || {
+        if let Ok(mapped) = stmt.query_map(params![q, limit], map_suggest) {
+            for row in mapped {
+                match row {
+                    Ok(r) => out.push(r),
+                    Err(_) => break,
+                }
+            }
+        }
+    });
+    Ok(out)
+}
+
+/// Every word of `query` as a prefix, all required, for an FTS5 MATCH.
+/// Empty when no word is at least two characters.
+pub fn fts_prefix_terms(query: &str) -> String {
+    let words: Vec<&str> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .take(8)
+        .collect();
+    if !words.iter().any(|w| w.chars().count() >= 2) {
+        return String::new();
+    }
+    words
+        .iter()
+        .map(|w| format!("\"{w}\"*"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Ranked full-text search. At 500k notes a common word matches tens of
+/// thousands of rows and ranking them takes seconds, so callers run it under
+/// `SHELL_SEARCH_RANK_BUDGET` and keep the unranked hits when it runs out.
+pub const SEARCH_RANKED_SQL: &str = "SELECT f.note_id, f.path, f.title, snippet(note_fts, 3, '', '', '…', 12),
+        bm25(note_fts)
+ FROM note_fts f
+ JOIN note_meta m ON m.id = f.note_id
+ WHERE note_fts MATCH ?1 AND m.deleted = 0 AND m.kind = 'note'
+ ORDER BY bm25(note_fts)
+ LIMIT ?2";
+
+pub const SHELL_SEARCH_RANK_BUDGET: Duration = Duration::from_millis(120);
 
 fn suggest_like_query(
     conn: &Connection,
@@ -2398,6 +2482,63 @@ mod tests {
             assert_eq!(page.note_total, size);
             assert!(page.rows.len() < size as usize || size <= SHELL_CHILD_PAGE);
         }
+    }
+
+    #[test]
+    fn switcher_matches_every_word_and_puts_title_prefixes_first() {
+        let conn = open_mem();
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE note_fts USING fts5(
+               note_id UNINDEXED, title, path, body, tokenize = 'unicode61 remove_diacritics 2'
+             );",
+        )
+        .unwrap();
+        for i in [15, 150, 1500, 2150, 1541, 9] {
+            let path = format!("10-Projects/00/Topic {i}.md");
+            insert_note(&conn, &path, None);
+            conn.execute(
+                "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1, ?2, ?3, '')",
+                params![shell_node_id(&path), format!("Topic {i}"), path],
+            )
+            .unwrap();
+        }
+        assert_eq!(fts_prefix_terms("topic 15"), "\"topic\"* \"15\"*");
+        assert_eq!(fts_prefix_terms("a"), "");
+        // Search index only: every word is a prefix, so "topic 15" is not "topic15".
+        let fts_only: Vec<String> = query_suggest(&conn, "topic 15", 40)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.title)
+            .collect();
+        assert!(fts_only.contains(&"Topic 15".to_string()), "{fts_only:?}");
+        assert!(fts_only.contains(&"Topic 1541".to_string()));
+        assert!(!fts_only.contains(&"Topic 2150".to_string()), "15 must start a word");
+        assert!(!fts_only.contains(&"Topic 9".to_string()));
+        // With the lookup indexes, titles that start with the query lead, in order.
+        ensure_shell_indexes(&conn).unwrap();
+        let titles: Vec<String> = query_suggest(&conn, "Topic 15", 40)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.title)
+            .collect();
+        assert_eq!(&titles[..4], &["Topic 15", "Topic 150", "Topic 1500", "Topic 1541"]);
+        assert!(!titles.contains(&"Topic 2150".to_string()));
+        assert!(query_suggest(&conn, "zzqx", 40).unwrap().is_empty());
+        // The ranked search runs under its budget and stops cleanly.
+        let ranked: Result<i64, String> = with_time_budget(&conn, SHELL_SEARCH_RANK_BUDGET, || {
+            let mut stmt = conn.prepare(SEARCH_RANKED_SQL).map_err(|e| e.to_string())?;
+            let n = stmt
+                .query_map(params![fts_prefix_terms("topic 15"), 40], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .count() as i64;
+            Ok(n)
+        });
+        assert_eq!(ranked.unwrap(), 4);
+        let stopped = with_time_budget(&conn, Duration::from_millis(0), || {
+            conn.query_row("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 10000000) SELECT count(*) FROM n", [], |r| r.get::<_, i64>(0))
+        });
+        assert!(stopped.is_err(), "a spent budget interrupts the statement");
+        assert!(query_suggest(&conn, "topic", 40).is_ok(), "the connection works after an interrupt");
     }
 
     #[test]

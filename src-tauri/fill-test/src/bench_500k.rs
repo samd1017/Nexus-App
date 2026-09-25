@@ -121,6 +121,33 @@ fn query_passes(db: &Path, root: &Path) {
         time("children root", || sc::query_children(&r, "", sc::SHELL_CHILD_PAGE, 0));
         time("children big folder p0", || sc::query_children(&r, &big, sc::SHELL_CHILD_PAGE, 0));
         time("children big folder p15", || sc::query_children(&r, &big, sc::SHELL_CHILD_PAGE, 3_000));
+        for q in ["topic 15", "Topic 1541", "hub 0", "topic", "index local", "zzqx"] {
+            let t = Instant::now();
+            let hits = sc::query_suggest(&r, q, sc::SHELL_SUGGEST_LIMIT).unwrap_or_default();
+            let el = ms(t.elapsed());
+            let first: Vec<String> = hits.iter().take(3).map(|h| h.title.clone()).collect();
+            println!("bench switcher suggest {q:<14} {el:>9.1} ms  hits={:<3} first={first:?}", hits.len());
+            let terms = sc::fts_prefix_terms(q);
+            if !terms.is_empty() {
+                let t = Instant::now();
+                let ranked: Result<Vec<String>, String> = sc::with_time_budget(&r, sc::SHELL_SEARCH_RANK_BUDGET, || {
+                    let mut stmt = r.prepare(sc::SEARCH_RANKED_SQL).map_err(|e| e.to_string())?;
+                    let rows = stmt
+                        .query_map(rusqlite::params![terms, 40], |row| row.get::<_, String>(0))
+                        .map_err(|e| e.to_string())?;
+                    let mut kept = Vec::new();
+                    for row in rows {
+                        kept.push(row.map_err(|e| e.to_string())?);
+                    }
+                    Ok(kept)
+                });
+                println!(
+                    "bench switcher ranked  {q:<14} {:>9.1} ms  {}",
+                    ms(t.elapsed()),
+                    match &ranked { Ok(v) => format!("rows={}", v.len()), Err(e) => format!("stopped ({e})") }
+                );
+            }
+        }
         time("suggest 'topic 15'", || sc::query_suggest(&r, "topic 15", sc::SHELL_SUGGEST_LIMIT));
         time("suggest 'hub'", || sc::query_suggest(&r, "hub", sc::SHELL_SUGGEST_LIMIT));
         time("suggest 'retrieval index'", || sc::query_suggest(&r, "retrieval index", sc::SHELL_SUGGEST_LIMIT));

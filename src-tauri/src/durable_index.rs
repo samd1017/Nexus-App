@@ -527,17 +527,11 @@ fn search_tx(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchHit
         return Ok(out);
     }
 
-    let fts_rows = (|| -> Result<Vec<SearchHitDto>, String> {
+    // Ranking every match of a common word at 500k notes takes seconds. The
+    // title hits above are already the answer then; the rank stops at its budget.
+    let fts_rows = crate::shell_catalog::with_time_budget(conn, crate::shell_catalog::SHELL_SEARCH_RANK_BUDGET, || -> Result<Vec<SearchHitDto>, String> {
         let mut stmt = conn
-            .prepare(
-                "SELECT f.note_id, f.path, f.title, snippet(note_fts, 3, '', '', '…', 12),
-                        bm25(note_fts)
-                 FROM note_fts f
-                 JOIN note_meta m ON m.id = f.note_id
-                 WHERE note_fts MATCH ?1 AND m.deleted = 0 AND m.kind = 'note'
-                 ORDER BY bm25(note_fts)
-                 LIMIT ?2",
-            )
+            .prepare(crate::shell_catalog::SEARCH_RANKED_SQL)
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![fts_q, limit], |r| {
@@ -568,8 +562,15 @@ fn search_tx(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchHit
                 })
             })
             .map_err(|e| e.to_string())?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
-    })();
+        let mut kept = Vec::new();
+        for row in rows {
+            match row {
+                Ok(r) => kept.push(r),
+                Err(e) => return if kept.is_empty() { Err(e.to_string()) } else { Ok(kept) },
+            }
+        }
+        Ok(kept)
+    });
     match fts_rows {
         Ok(rows) => {
             for row in rows {
@@ -578,7 +579,53 @@ fn search_tx(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchHit
                 }
             }
         }
-        Err(err) if out.is_empty() => return Err(err),
+        Err(err) if out.is_empty() => {
+            // The rank ran out of time: the same words unranked, which stop at the page.
+            let quick = crate::shell_catalog::with_time_budget(
+                conn,
+                crate::shell_catalog::SHELL_SEARCH_RANK_BUDGET,
+                || -> Result<Vec<SearchHitDto>, String> {
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT f.note_id, f.path, f.title FROM note_fts f
+                             JOIN note_meta m ON m.id = f.note_id
+                             WHERE note_fts MATCH ?1 AND m.deleted = 0 AND m.kind = 'note'
+                             LIMIT ?2",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let rows = stmt
+                        .query_map(params![fts_q, limit], |r| {
+                            Ok(SearchHitDto {
+                                note_id: r.get(0)?,
+                                path: r.get(1)?,
+                                title: r.get(2)?,
+                                snippet: String::new(),
+                                score: 40.0,
+                                match_type: "content".into(),
+                            })
+                        })
+                        .map_err(|e| e.to_string())?;
+                    let mut kept = Vec::new();
+                    for row in rows {
+                        match row {
+                            Ok(r) => kept.push(r),
+                            Err(_) => break,
+                        }
+                    }
+                    Ok(kept)
+                },
+            );
+            match quick {
+                Ok(rows) if !rows.is_empty() => {
+                    for row in rows {
+                        if seen.insert(row.note_id.clone()) {
+                            out.push(row);
+                        }
+                    }
+                }
+                _ => return Err(err),
+            }
+        }
         Err(_) => {}
     }
     out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));

@@ -1707,6 +1707,19 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal((catSrc.match(/with_time_budget\(conn, SHELL_SCAN_BUDGET/g) ?? []).length >= 3, true);
   assert.equal(catSrc.includes("lower(COALESCE(title, '')) = ?1"), false, "known links use the indexes");
 }
+// Large vaults: the quick switcher answers from the title index and a
+// per-word prefix match, and the ranked search stops at its budget.
+{
+  const catSrc = readFileSync(new URL("../src-tauri/src/shell_catalog.rs", import.meta.url), "utf8");
+  const idxSrc = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
+  assert.equal(catSrc.includes("WHERE lower(title) >= ?1 AND lower(title) < ?1 || char(1114111)"), true);
+  assert.equal(catSrc.includes('let match_q = format!("{{title path}} : ({terms})");'), true);
+  assert.equal(catSrc.includes("pub const SHELL_SEARCH_RANK_BUDGET: Duration = Duration::from_millis(120);"), true);
+  assert.equal(idxSrc.includes("crate::shell_catalog::with_time_budget(conn, crate::shell_catalog::SHELL_SEARCH_RANK_BUDGET"), true);
+  assert.equal(idxSrc.includes(".prepare(crate::shell_catalog::SEARCH_RANKED_SQL)"), true);
+  // One word of the query no longer glues the rest together ("topic 15" was "topic15").
+  assert.equal(catSrc.includes('let match_q = format!("\\"{token}\\"*");'), false);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 
