@@ -2061,6 +2061,20 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
 }
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
+// A note made in an empty folder is the file on disk, not an Unsaved Untitled.
+{
+  const storeCreate = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
+  const createAt = storeCreate.indexOf('createNote: (parentId, title = "Untitled", opts) => {');
+  const folderAt = storeCreate.indexOf("createFolder: (parentId, name = \"New Folder\", opts) => {", createAt);
+  const created = storeCreate.slice(createAt, folderAt);
+  assert.equal(created.includes("The new file is written below. It is not an unsaved edit."), true);
+  assert.equal(created.includes("stage.dirtyNoteIds = [...stage.dirtyNoteIds, id]"), false);
+  assert.equal(created.includes("enqueueDiskOp(async () => {"), true);
+  assert.equal(created.includes("markNoteDirty(noteId);"), true);
+  const renameAt = storeCreate.indexOf("renameNode: (id, newName) => {");
+  const renamed = storeCreate.slice(renameAt, createAt);
+  assert.equal(renamed.includes("clearDirtyIfUnchanged(id, newPath, written);"), true);
+}
 // Indexing stays in the background: the vault menu stays usable, and a Ready
 // banner is not paired with an Indexing line on the vault card.
 {

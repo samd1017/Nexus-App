@@ -1855,6 +1855,29 @@ async function persistNoteIfFsa(
 	await writeNoteFile(fsaRoot, path, content);
 	if (ack && watcherAck) await watcherAck(fsaRoot);
 }
+
+/** The file on disk matches this note. Unsaved is for edits that have not landed. */
+function clearDirtyIfUnchanged(
+	noteId: string,
+	path: string,
+	content: string | undefined,
+): void {
+	if (content === undefined) return;
+	const st = useVaultStore.getState();
+	const cur = st.nodes[noteId];
+	if (!cur || cur.kind !== "note" || cur.path !== path || cur.content !== content) return;
+	if (!st.dirtyNoteIds.includes(noteId)) return;
+	useVaultStore.setState({
+		dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
+		lastSavedAt: Date.now(),
+	});
+}
+
+function markNoteDirty(noteId: string): void {
+	const st = useVaultStore.getState();
+	if (!st.nodes[noteId] || st.dirtyNoteIds.includes(noteId)) return;
+	useVaultStore.setState({ dirtyNoteIds: [...st.dirtyNoteIds, noteId] });
+}
 function pushRecent(entry: RecentVault) {
 	const list = (loadRecents() as RecentVault[]).filter((r) => r.id !== entry.id);
 	list.unshift(entry);
@@ -4138,15 +4161,29 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
+			const written = node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined;
 			queueDiskWrite(async () => {
-				await renameDesktopPath(root, oldPath, newPath, node.kind, node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined);
-				desktopWatchAck?.();
+				try {
+					await renameDesktopPath(root, oldPath, newPath, node.kind, written);
+					desktopWatchAck?.();
+					if (node.kind === "note") clearDirtyIfUnchanged(id, newPath, written);
+				} catch (err) {
+					if (node.kind === "note") markNoteDirty(id);
+					throw err;
+				}
 			});
 		} else if (get().mode === "fsa" && fsaRoot) {
 			const root = fsaRoot;
+			const written = node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined;
 			queueDiskWrite(async () => {
-				await renamePathOnDisk(root, oldPath, newPath, node.kind, node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined);
-				if (watcherAck) await watcherAck(root);
+				try {
+					await renamePathOnDisk(root, oldPath, newPath, node.kind, written);
+					if (watcherAck) await watcherAck(root);
+					if (node.kind === "note") clearDirtyIfUnchanged(id, newPath, written);
+				} catch (err) {
+					if (node.kind === "note") markNoteDirty(id);
+					throw err;
+				}
 			});
 		}
 	},
@@ -4206,15 +4243,26 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			// A new note is for writing: reading view would leave nowhere to type.
 			if (get().readingView) set({ readingView: false });
 		}
-		if (!stage.dirtyNoteIds.includes(id)) stage.dirtyNoteIds = [...stage.dirtyNoteIds, id];
+		// The new file is written below. It is not an unsaved edit.
 		patchVaultIndex(stage.nodes, [id]);
 		scheduleStageFlush(set);
 		if (isDiskVault(get().mode)) {
+			const noteId = id;
 			const pth = path;
 			const body = content;
 			enqueueDiskOp(async () => {
-				await persistNoteIfFsa(pth, body, { ack: false });
-			});
+				const live = useVaultStore.getState().nodes[noteId];
+				// A rename already moved this file. That write owns the bytes.
+				if (!live || live.kind !== "note" || live.path !== pth) return;
+				const writeBody = typeof live.content === "string" ? live.content : body;
+				try {
+					await persistNoteIfFsa(pth, writeBody, { ack: false });
+					clearDirtyIfUnchanged(noteId, pth, writeBody);
+				} catch (err) {
+					markNoteDirty(noteId);
+					throw err;
+				}
+			}, true);
 		}
 		// Always materialize so activate:false callers (wikilink create) see nodes[id]
 		flushStageNow(set);
