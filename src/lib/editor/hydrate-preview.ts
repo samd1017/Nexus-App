@@ -91,7 +91,14 @@ async function renderMath(
 /** The whole catalog's answer for an embed the loaded window does not have. */
 export type FindOutsideEmbed = (
   noteTarget: string,
-) => Promise<{ kind: "note"; node: VaultNode; body: string } | { kind: "miss" } | { kind: "unsure" }>;
+) => Promise<
+  | { kind: "note"; node: VaultNode; body: string }
+  | { kind: "unread"; node: VaultNode }
+  | { kind: "miss" }
+  | { kind: "unsure" }
+>;
+
+const STILL_READING = '<p class="text-[var(--text-muted)]">Still reading the vault. This fills in when it can.</p>';
 
 /** At most this many embeds per render are looked up and read from disk. */
 export const OUTSIDE_EMBED_CAP = 12;
@@ -103,7 +110,7 @@ function missingEmbedHtml(target: string): string {
 function fillEmbed(
   el: HTMLElement,
   note: VaultNode,
-  body: string,
+  body: string | null,
   target: string,
   activeNoteId: string | null,
 ): void {
@@ -116,7 +123,9 @@ function fillEmbed(
   const selfFull =
     note.id === activeNoteId && !parts.heading && !parts.blockId;
   let bodyHtml = "";
-  if (selfFull) {
+  if (body === null) {
+    bodyHtml = STILL_READING;
+  } else if (selfFull) {
     bodyHtml =
       '<p class="nexus-embed-missing">This note — add #Heading or #^block to embed a slice.</p>';
   } else {
@@ -172,9 +181,10 @@ async function renderEmbeds(
     const found = await findOutside!(item.noteTarget).catch(() => ({ kind: "unsure" as const }));
     if (cancelled()) return;
     if (found.kind === "note") fillEmbed(item.el, found.node, found.body, item.target, activeNoteId);
+    else if (found.kind === "unread") fillEmbed(item.el, found.node, null, item.target, activeNoteId);
     else if (found.kind === "miss") item.el.innerHTML = missingEmbedHtml(item.target);
     else {
-      item.el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">Finding ![[${escapeHtml(item.target)}]]…</span></div><div class="nexus-embed-body"><p class="text-[var(--text-muted)]">Still reading the vault. This fills in when it can.</p></div>`;
+      item.el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">Finding ![[${escapeHtml(item.target)}]]…</span></div><div class="nexus-embed-body">${STILL_READING}</div>`;
     }
   }
 }

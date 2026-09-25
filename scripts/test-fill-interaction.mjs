@@ -39,7 +39,7 @@ assert.equal(
 assert.equal(
   shouldSkipBackgroundBodyHydrate({ fillBusy: true }),
   true,
-  "hover/embed must not pile onto fill I/O",
+  "hover must not pile onto fill I/O (embeds defer to idle)",
 );
 assert.equal(shouldSkipBackgroundBodyHydrate({ fillBusy: false }), false);
 

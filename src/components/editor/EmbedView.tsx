@@ -5,11 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle } from "@/lib/vault/types";
 import { resolveWikilink } from "@/lib/graph/build-graph";
-import { catalogLinkTarget } from "@/lib/editor/open-wikilink";
+import { catalogLinkTarget, readEmbedBody } from "@/lib/editor/open-wikilink";
 import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { markdownToHtml, previewSnippet } from "@/lib/markdown/serialize";
-import { shouldSkipBackgroundBodyHydrate } from "@/lib/vault/fill-interaction";
+import { scheduleFillSafeHydrate, shouldSkipBackgroundBodyHydrate } from "@/lib/vault/fill-interaction";
 
 export function EmbedView({ node, editor }: NodeViewProps) {
   const target = String(node.attrs.target || "").trim();
@@ -17,7 +17,6 @@ export function EmbedView({ node, editor }: NodeViewProps) {
   const nodes = useVaultStore((s) => s.nodes);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
-  const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [body, setBody] = useState("");
   let hostNoteId = activeNoteId;
@@ -80,28 +79,38 @@ export function EmbedView({ node, editor }: NodeViewProps) {
   const finding = !note && askCatalog && (!outside || outside.state === "looking");
   const unsure = !note && askCatalog && outside?.state === "unsure";
 
+  const noteId = note?.id ?? null;
+  const noteContent = noteId ? nodes[noteId]?.content : undefined;
+  const [bodyState, setBodyState] = useState<"reading" | "ready" | "unread">("reading");
   useEffect(() => {
-    if (!note) {
+    if (!noteId) {
       setBody("");
+      setBodyState("ready");
       return;
     }
-    const live = nodes[note.id]?.content;
-    if (live != null) {
-      setBody(live);
-      return;
-    }
-    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
-      setBody("");
+    if (noteContent != null) {
+      setBody(noteContent);
+      setBodyState("ready");
       return;
     }
     let cancelled = false;
-    void ensureNoteBody(note.id).then((md: string | null) => {
-      if (!cancelled) setBody(md ?? "");
-    });
+    setBodyState("reading");
+    const read = () => {
+      void readEmbedBody(noteId).then((md) => {
+        if (cancelled) return;
+        setBody(md ?? "");
+        setBodyState(md == null ? "unread" : "ready");
+      });
+    };
+    // A big fill still gets the read, at an idle moment rather than on the paint.
+    const cancelIdle = shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })
+      ? scheduleFillSafeHydrate(read)
+      : (read(), () => {});
     return () => {
       cancelled = true;
+      cancelIdle();
     };
-  }, [note, nodes, ensureNoteBody, indexFillBusy]);
+  }, [noteId, noteContent, indexFillBusy]);
 
   const sliced = useMemo(
     () => sliceEmbedBody(body, parts.heading, parts.blockId),
@@ -166,6 +175,12 @@ export function EmbedView({ node, editor }: NodeViewProps) {
             <p className="nexus-embed-missing">
               This note — add #Heading or #^block to embed a slice.
             </p>
+          ) : bodyState === "reading" ? (
+            <p className="text-[var(--text-muted)]" data-embed-body="reading">Reading the note…</p>
+          ) : bodyState === "unread" ? (
+            <p className="text-[var(--text-muted)]" data-embed-body="unread">
+              Still reading the vault. This fills in when it can.
+            </p>
           ) : html ? (
             <div
               className="note-editor prose-note"
@@ -181,7 +196,7 @@ export function EmbedView({ node, editor }: NodeViewProps) {
         ) : finding ? null : (
           <p className="nexus-embed-missing">Create the note or fix the wikilink target.</p>
         )}
-        {note && (parts.heading || parts.blockId) && !sliced.sliced && body ? (
+        {note && bodyState === "ready" && (parts.heading || parts.blockId) && !sliced.sliced && body ? (
           <p className="nexus-embed-missing px-1 pt-1">
             Section not found — showing the full note.
           </p>

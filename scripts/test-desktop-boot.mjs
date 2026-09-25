@@ -1893,12 +1893,43 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal((await findEmbedTarget("No Such Note")).kind, "miss");
   globalThis.__linkCatalog = async () => ({ row: null, settled: false });
   assert.equal((await findEmbedTarget("Maybe")).kind, "unsure");
+  store = globalThis.__linkStore = withBodies();
+  store.nodes.gone = { id: "gone", kind: "note", title: "gone" };
+  emb = await findEmbedTarget("gone");
+  assert.equal(emb.kind, "unread", "the note exists, its file is not readable yet");
+  assert.equal(emb.node.id, "gone");
+  // During a big fill a note full of embeds still reads them, three at a time.
+  const { readEmbedBody, EMBED_READS_AT_ONCE } = await import(file);
+  assert.equal(EMBED_READS_AT_ONCE, 3);
+  store = globalThis.__linkStore = makeStore();
+  let inFlight = 0;
+  let peak = 0;
+  const releases = [];
+  store.ensureNoteBody = (id) => new Promise((resolve) => {
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    releases.push(() => { inFlight -= 1; resolve(`# ${id}\n`); });
+  });
+  const pending = ["a", "b", "c", "d", "e"].map((id) => readEmbedBody(id));
+  await Promise.resolve();
+  assert.equal(inFlight, 3, "only three reads start");
+  while (releases.length) {
+    releases.shift()();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  assert.deepEqual(await Promise.all(pending), ["# a\n", "# b\n", "# c\n", "# d\n", "# e\n"]);
+  assert.equal(peak, 3);
+  store.nodes.here.content = "# loaded\n";
+  assert.equal(await readEmbedBody("here"), "# loaded\n", "a loaded body is used as is");
   delete globalThis.__linkStore;
   delete globalThis.__linkCatalog;
 
   const embedViewSrc = readFileSync(new URL("../src/components/editor/EmbedView.tsx", import.meta.url), "utf8");
   assert.equal(embedViewSrc.includes("void catalogLinkTarget(noteTarget).then((found) => {"), true);
   assert.equal(embedViewSrc.includes("const hit = localHit ?? outsideNote;"), true);
+  assert.equal(embedViewSrc.includes("? scheduleFillSafeHydrate(read)\n      : (read(), () => {});"), true, "fill defers the embed read, it does not skip it");
+  assert.equal(embedViewSrc.includes('data-embed-body="reading">Reading the note…'), true);
+  assert.equal(embedViewSrc.includes("setBody(\"\");\n      return;\n    }\n    let cancelled"), false, "no silent empty body during fill");
   const hydrateSrc = readFileSync(new URL("../src/lib/editor/hydrate-preview.ts", import.meta.url), "utf8");
   assert.equal(hydrateSrc.includes("const needsCatalog = findOutside && parts.noteTarget && (!note || note.content === undefined);"), true);
   assert.equal(hydrateSrc.includes("export const OUTSIDE_EMBED_CAP = 12;"), true);

@@ -13,8 +13,8 @@
  * The note the user just opened reads from disk immediately.
  * Fill may still be writing the catalog. The SQLite upsert stays
  * skipped (`shouldSkipDurableUpsertOnHydrate`) so this read does not
- * start a second writer. Hover and embeds stay on
- * `shouldSkipBackgroundBodyHydrate`.
+ * start a second writer. Hover stays on `shouldSkipBackgroundBodyHydrate`;
+ * embeds read during fill too, at idle and a few at a time.
  */
 export function shouldDeferNoteBodyHydrate(_args: {
   fillBusy: boolean;
@@ -48,7 +48,7 @@ export function shouldIndexOpenedDesktopNote(args: {
   return args.fillBusy !== true && args.indexKind === "sqlite";
 }
 
-/** Hover / embed / mention extras — never pile onto fill I/O. */
+/** Hover / mention extras never pile onto fill I/O; embeds defer to idle instead. */
 export function shouldSkipBackgroundBodyHydrate(args: {
   fillBusy: boolean;
 }): boolean {

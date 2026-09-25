@@ -40,8 +40,37 @@ export async function catalogLinkTarget(noteTarget: string): Promise<LinkTarget>
 
 export type EmbedTarget =
   | { kind: "note"; node: VaultNode; body: string }
+  /** The note exists; its file could not be read yet. */
+  | { kind: "unread"; node: VaultNode }
   | { kind: "miss" }
   | { kind: "unsure" };
+
+/** Embed body reads in flight at once, so a note full of embeds leaves a fill its disk. */
+export const EMBED_READS_AT_ONCE = 3;
+let embedReadsInFlight = 0;
+const embedReadQueue: (() => void)[] = [];
+
+/** One embed's note body: loaded content, or a read from disk (no catalog write). */
+export function readEmbedBody(id: string): Promise<string | null> {
+  const loaded = useVaultStore.getState().nodes[id]?.content;
+  if (loaded !== undefined) return Promise.resolve(loaded);
+  return new Promise((resolve) => {
+    const run = () => {
+      embedReadsInFlight += 1;
+      useVaultStore
+        .getState()
+        .ensureNoteBody(id)
+        .catch(() => null)
+        .then((body) => {
+          embedReadsInFlight -= 1;
+          embedReadQueue.shift()?.();
+          resolve(body);
+        });
+    };
+    if (embedReadsInFlight < EMBED_READS_AT_ONCE) run();
+    else embedReadQueue.push(run);
+  });
+}
 
 /** An embed's note, from the loaded window or the whole catalog, with its body read. */
 export async function findEmbedTarget(noteTarget: string): Promise<EmbedTarget> {
@@ -50,9 +79,10 @@ export async function findEmbedTarget(noteTarget: string): Promise<EmbedTarget> 
   if (found.kind !== "node") return found;
   if (found.node.kind !== "note") return { kind: "miss" };
   const id = found.node.id;
-  const body = useVaultStore.getState().nodes[id]?.content ?? (await useVaultStore.getState().ensureNoteBody(id));
-  if (body == null) return { kind: "unsure" };
-  return { kind: "note", node: useVaultStore.getState().nodes[id] ?? found.node, body };
+  const body = await readEmbedBody(id);
+  const node = useVaultStore.getState().nodes[id] ?? found.node;
+  if (body == null) return { kind: "unread", node };
+  return { kind: "note", node, body };
 }
 
 let clickSeq = 0;
