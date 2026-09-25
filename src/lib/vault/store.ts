@@ -252,6 +252,7 @@ import {
   fetchShellAdmit,
   fetchShellForget,
   fetchShellNote,
+  fetchShellSearch,
   mergeShellRows,
   onShellCatalogReconciled,
   wakeShellCatalog,
@@ -6097,6 +6098,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				openMockFsa: (files: Record<string, string>) => Promise<void>;
 				openMockFsaCount: (n: number) => Promise<void>;
 				openPagedFsa: (n: number) => Promise<Record<string, unknown>>;
+				plantPagedNote: (name: string, text: string) => Promise<void>;
+				openCatalogNote: (path: string) => Promise<Record<string, unknown>>;
 				saveActiveMarker: (marker: string) => Promise<Record<string, unknown>>;
 				search: (query: string, limit?: number) => Promise<unknown>;
 				openNotes: (limit?: number) => Promise<number>;
@@ -6319,6 +6322,43 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 					st.nodes[st.activeNoteId!]?.content !== undefined,
 			};
 		},
+		plantPagedNote: async (name: string, text: string) => {
+			const { queueMemoryVaultBody } = await import("./memory-directory");
+			queueMemoryVaultBody(name, text);
+		},
+		openCatalogNote: async (path: string) => {
+			const { fsaNodeId } = await import("./fs-adapter");
+			const id = fsaNodeId(path);
+			useVaultStore.getState().setActiveNote(id);
+			const deadline = Date.now() + 8000;
+			let bodyLength = 0;
+			while (Date.now() < deadline) {
+				const node = useVaultStore.getState().nodes[id];
+				if (node?.kind === "note" && typeof node.content === "string") {
+					bodyLength = node.content.length;
+					break;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 40));
+			}
+			const live = useVaultStore.getState();
+			let windowNotes = 0;
+			let bodies = 0;
+			for (const nid in live.nodes) {
+				const node = live.nodes[nid];
+				if (node?.kind !== "note") continue;
+				windowNotes += 1;
+				if (node.content !== undefined) bodies += 1;
+			}
+			return {
+				id,
+				path,
+				bodyLength,
+				windowNotes,
+				bodies,
+				shellCatalog: live.shellCatalog,
+				catalogNoteCount: live.catalogNoteCount,
+			};
+		},
 		saveActiveMarker: async (marker: string) => {
 			const { readMemoryVaultNote } = await import("./memory-directory");
 			const st = useVaultStore.getState();
@@ -6430,6 +6470,25 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				"@/lib/search/search-backend"
 			);
 			const s = useVaultStore.getState();
+			if (s.shellCatalog && s.shellDbPath === BROWSER_SHELL_DB) {
+				const rows = await fetchShellSearch(s.shellDbPath, query, limit);
+				const hits = (rows ?? [])
+					.filter((hit) => hit.kind === "note")
+					.map((hit) => ({
+						noteId: hit.id,
+						path: hit.path,
+						title: hit.title || hit.name.replace(/\.md$/i, ""),
+						snippet: hit.path,
+						score: 1,
+						matchType: "title" as const,
+					}));
+				return {
+					hits,
+					searchEngine: describeSearchEngine(),
+					notes: Object.keys(s.nodes).length,
+					catalog: true,
+				};
+			}
 			const hits = await searchWithBackendAsync(s.nodes, query, limit);
 			return { hits, searchEngine: describeSearchEngine(), notes: Object.keys(s.nodes).length };
 		},

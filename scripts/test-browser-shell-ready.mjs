@@ -58,6 +58,45 @@ try {
   assert.equal(saved.dirty, false);
   assert.match(saved.path ?? "", /\.md$/);
   console.log("browser-shell ready: PASS");
+
+  const deepNotes = 4500;
+  const deepName = "n04050.md";
+  const deepToken = "zxqwv_nexus_deepbody_991";
+  const deepBody = `${"a".repeat(4096)} ${deepToken}\n`;
+  const deep = await page.evaluate(
+    async ({ notes, name, text, token }) => {
+      await window.__NEXUS_SOAK__.plantPagedNote(name, text);
+      const opened = await window.__NEXUS_SOAK__.openPagedFsa(notes);
+      const before = await window.__NEXUS_SOAK__.search(token, 8);
+      const focused = await window.__NEXUS_SOAK__.openCatalogNote(name);
+      let after = await window.__NEXUS_SOAK__.search(token, 8);
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline && !(after.hits ?? []).some((hit) => hit.path === name)) {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        after = await window.__NEXUS_SOAK__.search(token, 8);
+      }
+      const live = window.__NEXUS_STRESS__?.() ?? {};
+      return { opened, before, focused, after, liveNotes: live.notes, liveCatalog: live.catalogNoteCount };
+    },
+    { notes: deepNotes, name: deepName, text: deepBody, token: deepToken },
+  );
+  console.log(JSON.stringify(deep, null, 2));
+  assert.equal(deep.opened.phase, "ready");
+  assert.equal(deep.opened.shellCatalog, true);
+  assert.equal(deep.opened.catalogNoteCount, deepNotes);
+  assert.ok(deep.opened.windowNotes <= 200);
+  assert.ok(deep.opened.windowNotes < deep.opened.catalogNoteCount);
+  assert.equal((deep.before.hits ?? []).length, 0);
+  assert.ok(deep.focused.bodyLength > 4096, "body " + deep.focused.bodyLength);
+  assert.ok(
+    (deep.after.hits ?? []).some((hit) => hit.path === deepName),
+    "deep search misses " + JSON.stringify(deep.after.hits),
+  );
+  assert.ok(deep.focused.windowNotes <= 220, "window " + deep.focused.windowNotes);
+  assert.ok(deep.focused.bodies <= 4, "bodies " + deep.focused.bodies);
+  assert.equal(deep.focused.catalogNoteCount, deepNotes);
+  assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
+  console.log("browser-shell deep body: PASS");
 } finally {
   await browser.close();
 }

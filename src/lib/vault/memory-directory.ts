@@ -11,6 +11,15 @@ type ReadStats = { getFileCalls: number };
 
 let lastRoot: MemDir | null = null;
 let lastStats: ReadStats | null = null;
+/** Bodies applied the next time a memory folder is built. */
+const queuedBodies = new Map<string, string>();
+
+/** Put one file’s text into the next granted folder. Does not open a vault. */
+export function queueMemoryVaultBody(name: string, text: string): void {
+  const file = name.split("/").filter(Boolean).pop();
+  if (!file) return;
+  queuedBodies.set(file, text);
+}
 
 function missing(name: string): Error {
   const err = new Error(name);
@@ -108,10 +117,11 @@ export function memoryVaultDirectory(noteCount: number): FileSystemDirectoryHand
     root.children.set(name, {
       kind: "file",
       name,
-      text: `# Note ${i}\n\nPage body ${i}.\n`,
+      text: queuedBodies.get(name) ?? `# Note ${i}\n\nPage body ${i}.\n`,
       mtime: 1 + i,
     });
   }
+  queuedBodies.clear();
   lastRoot = root;
   lastStats = stats;
   return new MemoryDirHandle(root, stats) as unknown as FileSystemDirectoryHandle;
