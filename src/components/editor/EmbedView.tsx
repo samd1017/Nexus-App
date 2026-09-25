@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle } from "@/lib/vault/types";
 import { resolveWikilink } from "@/lib/graph/build-graph";
+import { catalogLinkTarget } from "@/lib/editor/open-wikilink";
 import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { markdownToHtml, previewSnippet } from "@/lib/markdown/serialize";
@@ -27,7 +28,7 @@ export function EmbedView({ node, editor }: NodeViewProps) {
     /* editor not mounted */
   }
 
-  const hit = useMemo(() => {
+  const localHit = useMemo(() => {
     if (parts.noteTarget) return resolveWikilink(parts.noteTarget, nodes);
     if (hostNoteId) {
       const self = nodes[hostNoteId];
@@ -35,7 +36,49 @@ export function EmbedView({ node, editor }: NodeViewProps) {
     }
     return null;
   }, [parts.noteTarget, nodes, hostNoteId]);
+
+  // Not in the loaded window: ask the whole catalog, as a wikilink click does.
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
+  const [outside, setOutside] = useState<{
+    target: string;
+    id: string | null;
+    state: "looking" | "found" | "miss" | "unsure";
+  } | null>(null);
+  const askCatalog = !localHit && Boolean(parts.noteTarget) && shellCatalog && Boolean(shellDbPath);
+  const retryKey = outside?.state === "unsure" ? shellLiveTick : 0;
+  useEffect(() => {
+    if (!askCatalog) {
+      setOutside(null);
+      return;
+    }
+    const noteTarget = parts.noteTarget;
+    let cancelled = false;
+    setOutside((prev) =>
+      prev?.target === noteTarget && prev.state !== "miss" ? prev : { target: noteTarget, id: null, state: "looking" },
+    );
+    void catalogLinkTarget(noteTarget).then((found) => {
+      if (cancelled) return;
+      if (found.kind === "node" && found.node.kind === "note") {
+        setOutside({ target: noteTarget, id: found.node.id, state: "found" });
+      } else {
+        setOutside({ target: noteTarget, id: null, state: found.kind === "unsure" ? "unsure" : "miss" });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [askCatalog, parts.noteTarget, shellDbPath, retryKey]);
+
+  const outsideNote =
+    outside?.state === "found" && outside.target === parts.noteTarget && outside.id
+      ? nodes[outside.id] ?? null
+      : null;
+  const hit = localHit ?? outsideNote;
   const note = hit?.kind === "note" ? hit : null;
+  const finding = !note && askCatalog && (!outside || outside.state === "looking");
+  const unsure = !note && askCatalog && outside?.state === "unsure";
 
   useEffect(() => {
     if (!note) {
@@ -108,6 +151,8 @@ export function EmbedView({ node, editor }: NodeViewProps) {
               <span className="text-[var(--text-muted)]"> {sliceLabel}</span>
             ) : null}
           </button>
+        ) : finding || unsure ? (
+          <span className="text-[var(--text-muted)]">Finding ![[{target}]]…</span>
         ) : (
           <span className="nexus-embed-missing">Missing embed ![[{target || "note"}]]</span>
         )}
@@ -131,7 +176,9 @@ export function EmbedView({ node, editor }: NodeViewProps) {
               {previewSnippet(sliced.body, 280) || "Empty note"}
             </p>
           )
-        ) : (
+        ) : unsure ? (
+          <p className="text-[var(--text-muted)]">Still reading the vault. This fills in when it can.</p>
+        ) : finding ? null : (
           <p className="nexus-embed-missing">Create the note or fix the wikilink target.</p>
         )}
         {note && (parts.heading || parts.blockId) && !sliced.sliced && body ? (

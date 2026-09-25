@@ -88,11 +88,64 @@ async function renderMath(
   }
 }
 
-function renderEmbeds(
+/** The whole catalog's answer for an embed the loaded window does not have. */
+export type FindOutsideEmbed = (
+  noteTarget: string,
+) => Promise<{ kind: "note"; node: VaultNode; body: string } | { kind: "miss" } | { kind: "unsure" }>;
+
+/** At most this many embeds per render are looked up and read from disk. */
+export const OUTSIDE_EMBED_CAP = 12;
+
+function missingEmbedHtml(target: string): string {
+  return `<div class="nexus-embed-head"><span class="nexus-embed-missing">Missing embed ![[${escapeHtml(target || "note")}]]</span></div>`;
+}
+
+function fillEmbed(
+  el: HTMLElement,
+  note: VaultNode,
+  body: string,
+  target: string,
+  activeNoteId: string | null,
+): void {
+  const parts = parseWikilinkInner(target);
+  const sliceLabel = parts.blockId
+    ? `#^${parts.blockId}`
+    : parts.heading
+      ? `#${parts.heading}`
+      : "";
+  const selfFull =
+    note.id === activeNoteId && !parts.heading && !parts.blockId;
+  let bodyHtml = "";
+  if (selfFull) {
+    bodyHtml =
+      '<p class="nexus-embed-missing">This note — add #Heading or #^block to embed a slice.</p>';
+  } else {
+    const sliced = sliceEmbedBody(body, parts.heading, parts.blockId);
+    try {
+      bodyHtml = markdownToHtml(
+        sliced.body.replace(/!\[\[[^\]]+\]\]/g, ""),
+      );
+    } catch {
+      bodyHtml = `<p>${escapeHtml((sliced.body || "").slice(0, 280))}</p>`;
+    }
+  }
+  el.innerHTML = `
+      <div class="nexus-embed-head">
+        <button type="button" class="min-w-0 truncate font-medium hover:underline" data-open-note="${escapeHtml(note.id)}" data-jump-heading="${escapeHtml(parts.heading || "")}" data-jump-block="${escapeHtml(parts.blockId || "")}">${escapeHtml(noteTitle(note))}${sliceLabel ? ` <span class="text-[var(--text-muted)]">${escapeHtml(sliceLabel)}</span>` : ""}</button>
+        <span class="ml-auto font-mono text-[10px] text-[var(--text-muted)]">![[${escapeHtml(target)}]]</span>
+      </div>
+      <div class="nexus-embed-body">${bodyHtml}</div>
+    `;
+}
+
+async function renderEmbeds(
   els: HTMLElement[],
   nodes: Record<string, VaultNode>,
   activeNoteId: string | null,
-): void {
+  cancelled: () => boolean,
+  findOutside?: FindOutsideEmbed,
+): Promise<void> {
+  const outside: { el: HTMLElement; target: string; noteTarget: string }[] = [];
   for (const el of els) {
     const target = (el.getAttribute("data-embed-target") || "").trim();
     const parts = parseWikilinkInner(target);
@@ -102,42 +155,27 @@ function renderEmbeds(
         ? nodes[activeNoteId]
         : null;
     const note = hit?.kind === "note" ? hit : null;
-    const sliceLabel = parts.blockId
-      ? `#^${parts.blockId}`
-      : parts.heading
-        ? `#${parts.heading}`
-        : "";
-    if (!note) {
-      el.innerHTML = `<div class="nexus-embed-head"><span class="nexus-embed-missing">Missing embed ![[${escapeHtml(target || "note")}]]</span></div>`;
-      continue;
-    }
-    const selfFull =
-      note.id === activeNoteId && !parts.heading && !parts.blockId;
-    let bodyHtml = "";
-    if (selfFull) {
-      bodyHtml =
-        '<p class="nexus-embed-missing">This note — add #Heading or #^block to embed a slice.</p>';
+    // A loaded row whose body is not read yet goes the same way as a miss.
+    const needsCatalog = findOutside && parts.noteTarget && (!note || note.content === undefined);
+    if (note && !needsCatalog) {
+      fillEmbed(el, note, note.content ?? "", target, activeNoteId);
+    } else if (needsCatalog && outside.length < OUTSIDE_EMBED_CAP) {
+      el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">Finding ![[${escapeHtml(target)}]]…</span></div>`;
+      outside.push({ el, target, noteTarget: parts.noteTarget });
+    } else if (needsCatalog) {
+      el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">![[${escapeHtml(target)}]] is not shown here. Open the note to read it.</span></div>`;
     } else {
-      const sliced = sliceEmbedBody(
-        note.content ?? "",
-        parts.heading,
-        parts.blockId,
-      );
-      try {
-        bodyHtml = markdownToHtml(
-          sliced.body.replace(/!\[\[[^\]]+\]\]/g, ""),
-        );
-      } catch {
-        bodyHtml = `<p>${escapeHtml((sliced.body || "").slice(0, 280))}</p>`;
-      }
+      el.innerHTML = missingEmbedHtml(target);
     }
-    el.innerHTML = `
-      <div class="nexus-embed-head">
-        <button type="button" class="min-w-0 truncate font-medium hover:underline" data-open-note="${escapeHtml(note.id)}" data-jump-heading="${escapeHtml(parts.heading || "")}" data-jump-block="${escapeHtml(parts.blockId || "")}">${escapeHtml(noteTitle(note))}${sliceLabel ? ` <span class="text-[var(--text-muted)]">${escapeHtml(sliceLabel)}</span>` : ""}</button>
-        <span class="ml-auto font-mono text-[10px] text-[var(--text-muted)]">![[${escapeHtml(target)}]]</span>
-      </div>
-      <div class="nexus-embed-body">${bodyHtml}</div>
-    `;
+  }
+  for (const item of outside) {
+    const found = await findOutside!(item.noteTarget).catch(() => ({ kind: "unsure" as const }));
+    if (cancelled()) return;
+    if (found.kind === "note") fillEmbed(item.el, found.node, found.body, item.target, activeNoteId);
+    else if (found.kind === "miss") item.el.innerHTML = missingEmbedHtml(item.target);
+    else {
+      item.el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">Finding ![[${escapeHtml(item.target)}]]…</span></div><div class="nexus-embed-body"><p class="text-[var(--text-muted)]">Still reading the vault. This fills in when it can.</p></div>`;
+    }
   }
 }
 
@@ -187,6 +225,7 @@ export async function hydratePreviewSpecials(
   nodes: Record<string, VaultNode>,
   activeNoteId: string | null,
   cancelled: () => boolean,
+  findOutside?: FindOutsideEmbed,
 ): Promise<void> {
   promoteLeftoverMermaidFences(root);
   const mermaidEls = Array.from(
@@ -204,9 +243,10 @@ export async function hydratePreviewSpecials(
     root.querySelectorAll<HTMLElement>("[data-type='query']"),
   );
 
-  renderEmbeds(embedEls, nodes, activeNoteId);
+  const embeds = renderEmbeds(embedEls, nodes, activeNoteId, cancelled, findOutside);
   renderQueries(queryEls, nodes);
   await Promise.all([
+    embeds,
     renderMermaid(mermaidEls, theme, cancelled),
     renderMath(mathEls, cancelled),
   ]);

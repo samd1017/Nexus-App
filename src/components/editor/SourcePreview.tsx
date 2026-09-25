@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { markdownToHtml } from "@/lib/markdown/serialize";
-import { openWikilink } from "@/lib/editor/open-wikilink";
+import { findEmbedTarget, openWikilink } from "@/lib/editor/open-wikilink";
 import { useVaultStore } from "@/lib/vault/store";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { hydratePreviewSpecials } from "@/lib/editor/hydrate-preview";
@@ -40,6 +40,7 @@ export function SourcePreview({
         state.nodes,
         noteId ?? state.activeNoteId,
         () => cancelled,
+        findEmbedTarget,
       );
     });
     return () => {

@@ -1,7 +1,8 @@
 /**
- * Wikilink clicks from the visual editor and the reading view. A large vault
- * keeps only a window of notes in memory, so a miss there is not a miss:
- * the catalog is asked before a note is created.
+ * Wikilink clicks and `![[embeds]]` from the visual editor and the reading
+ * view. A large vault keeps only a window of notes in memory, so a miss there
+ * is not a miss: the catalog is asked before a note is created or an embed
+ * is called missing.
  */
 
 import { resolveWikilink } from "@/lib/graph/build-graph";
@@ -35,6 +36,23 @@ export async function catalogLinkTarget(noteTarget: string): Promise<LinkTarget>
   live.ingestShellRows([found.row]);
   const node = useVaultStore.getState().nodes[found.row.id];
   return node ? { kind: "node", node } : { kind: "unsure" };
+}
+
+export type EmbedTarget =
+  | { kind: "note"; node: VaultNode; body: string }
+  | { kind: "miss" }
+  | { kind: "unsure" };
+
+/** An embed's note, from the loaded window or the whole catalog, with its body read. */
+export async function findEmbedTarget(noteTarget: string): Promise<EmbedTarget> {
+  const local = resolveWikilink(noteTarget, useVaultStore.getState().nodes);
+  const found: LinkTarget = local ? { kind: "node", node: local } : await catalogLinkTarget(noteTarget);
+  if (found.kind !== "node") return found;
+  if (found.node.kind !== "note") return { kind: "miss" };
+  const id = found.node.id;
+  const body = useVaultStore.getState().nodes[id]?.content ?? (await useVaultStore.getState().ensureNoteBody(id));
+  if (body == null) return { kind: "unsure" };
+  return { kind: "note", node: useVaultStore.getState().nodes[id] ?? found.node, body };
 }
 
 let clickSeq = 0;

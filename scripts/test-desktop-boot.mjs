@@ -1862,10 +1862,48 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   store.shellCatalog = false;
   await openWikilink("Fresh", { pane: "primary" });
   assert.deepEqual(store.created, ["Fresh"]);
+  // Embeds use the same lookup: loaded window first, then the whole catalog,
+  // and the body is read when the row has none.
+  const { findEmbedTarget } = await import(file);
+  const reads = [];
+  const withBodies = () => {
+    const s = makeStore();
+    s.ensureNoteBody = async (id) => { reads.push(id); return id === "gone" ? null : `# ${id}\n\nbody of ${id}\n`; };
+    return s;
+  };
+  store = globalThis.__linkStore = withBodies();
+  store.nodes.here.content = "# here\n\nloaded\n";
+  let emb = await findEmbedTarget("here");
+  assert.equal(emb.kind, "note");
+  assert.equal(emb.body, "# here\n\nloaded\n");
+  assert.deepEqual(reads, [], "a loaded body is not read again");
+  store = globalThis.__linkStore = withBodies();
+  emb = await findEmbedTarget("here");
+  assert.equal(emb.body, "# here\n\nbody of here\n", "a loaded row without a body reads it");
+  store = globalThis.__linkStore = withBodies();
+  globalThis.__linkCatalog = async () => ({
+    row: { id: "desk_Deep/Topic 499999.md", path: "Deep/Topic 499999.md", name: "Topic 499999", kind: "note", mtime: 1 },
+    settled: true,
+  });
+  emb = await findEmbedTarget("Topic 499999#Plan");
+  assert.equal(emb.kind, "note");
+  assert.equal(emb.node.id, "desk_Deep/Topic 499999.md");
+  assert.equal(emb.body.includes("body of desk_Deep/Topic 499999.md"), true);
+  globalThis.__linkCatalog = async () => ({ row: null, settled: true });
+  assert.equal((await findEmbedTarget("No Such Note")).kind, "miss");
+  globalThis.__linkCatalog = async () => ({ row: null, settled: false });
+  assert.equal((await findEmbedTarget("Maybe")).kind, "unsure");
   delete globalThis.__linkStore;
   delete globalThis.__linkCatalog;
 
+  const embedViewSrc = readFileSync(new URL("../src/components/editor/EmbedView.tsx", import.meta.url), "utf8");
+  assert.equal(embedViewSrc.includes("void catalogLinkTarget(noteTarget).then((found) => {"), true);
+  assert.equal(embedViewSrc.includes("const hit = localHit ?? outsideNote;"), true);
+  const hydrateSrc = readFileSync(new URL("../src/lib/editor/hydrate-preview.ts", import.meta.url), "utf8");
+  assert.equal(hydrateSrc.includes("const needsCatalog = findOutside && parts.noteTarget && (!note || note.content === undefined);"), true);
+  assert.equal(hydrateSrc.includes("export const OUTSIDE_EMBED_CAP = 12;"), true);
   const previewSrc = readFileSync(new URL("../src/components/editor/SourcePreview.tsx", import.meta.url), "utf8");
+  assert.equal(previewSrc.includes("() => cancelled,\n        findEmbedTarget,"), true);
   const visualSrc2 = readFileSync(new URL("../src/components/editor/VisualEditor.tsx", import.meta.url), "utf8");
   for (const s of [previewSrc, visualSrc2]) {
     assert.equal(s.includes("openWikilink("), true);
