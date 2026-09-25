@@ -5,6 +5,13 @@
 
 import { headingsMatch, normalizeBlockId } from "@/lib/markdown/note-slice";
 
+function renderedNote(root: ParentNode): Element | null {
+  return (
+    root.querySelector(".note-editor:not(.nexus-source-preview)") ??
+    root.querySelector("[data-reading-view] .nexus-source-preview")
+  );
+}
+
 function paneRoot(pane?: string | null): ParentNode {
   if (typeof document === "undefined") return { querySelector: () => null, querySelectorAll: () => [] } as unknown as ParentNode;
   if (pane && pane !== "solo") {
@@ -24,8 +31,8 @@ export function jumpToOutlineHeading(
   if (!needle) return false;
   const root = paneRoot(pane);
 
-  // Visual mode: TipTap headings
-  const editor = root.querySelector(".note-editor:not(.nexus-source-preview)");
+  // Visual mode (TipTap headings) or the reading view
+  const editor = renderedNote(root);
   if (editor) {
     const headings = editor.querySelectorAll("h1,h2,h3,h4,h5,h6");
     for (const h of Array.from(headings)) {
@@ -89,7 +96,7 @@ export function jumpToBlockRef(
   const root = paneRoot(pane);
   const needle = `^${id}`;
 
-  const editor = root.querySelector(".note-editor:not(.nexus-source-preview)");
+  const editor = renderedNote(root);
   if (editor) {
     const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
     let node: Node | null;

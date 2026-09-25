@@ -148,6 +148,13 @@ fn query_passes(db: &Path, root: &Path) {
                 );
             }
         }
+        for target in ["Topic 15", "Topic 1541.md", "02/Topic 15", "No Such Note Here"] {
+            let t = Instant::now();
+            let out = sc::query_resolve_link(&r, target);
+            let el = ms(t.elapsed());
+            let got = out.map(|o| (o.settled, o.row.map(|row| row.path)));
+            println!("bench resolve link {target:<18} {el:>9.1} ms  {got:?}");
+        }
         time("suggest 'topic 15'", || sc::query_suggest(&r, "topic 15", sc::SHELL_SUGGEST_LIMIT));
         time("suggest 'hub'", || sc::query_suggest(&r, "hub", sc::SHELL_SUGGEST_LIMIT));
         time("suggest 'retrieval index'", || sc::query_suggest(&r, "retrieval index", sc::SHELL_SUGGEST_LIMIT));

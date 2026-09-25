@@ -106,7 +106,7 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   openVault: "Open vault folder",
   settings: "Open Settings",
   focusMode: "Focus / zen mode",
-  toggleEditor: "Toggle Visual / Source / Preview",
+  toggleEditor: "Toggle reading view",
   graph: "Fullscreen graph (Esc / Exit to leave)",
   newNote: "New note",
   daily: "Today's daily note",

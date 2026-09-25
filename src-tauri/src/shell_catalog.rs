@@ -2156,6 +2156,84 @@ pub fn query_known_norms(conn: &Connection, norms: &[String]) -> Result<Vec<Stri
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ShellLinkResolve {
+    pub row: Option<ShellRow>,
+    /// False when the lookup ran out of time before it could rule the target
+    /// out, so the caller must not create a note that may already exist.
+    pub settled: bool,
+}
+
+fn resolve_link_id(conn: &Connection, norm: &str) -> rusqlite::Result<Option<String>> {
+    let leaf = norm.rsplit('/').next().unwrap_or(norm);
+    let leaf_file = format!("{leaf}.md");
+    let file = format!("{norm}.md");
+    let nested = norm.contains('/');
+    if nested {
+        match conn.query_row(
+            "SELECT id FROM note_meta WHERE lower(path) = ?1 AND kind='note' AND deleted=0 LIMIT 1",
+            params![file],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(id) => return Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    // Same file name in several folders: the shortest path wins, and a
+    // `[[folder/name]]` link only takes a path that ends with it.
+    let suffix = format!("/{file}");
+    let mut by_name = conn.prepare_cached(
+        "SELECT id, lower(path) FROM note_meta
+         WHERE lower(name) = ?1 AND kind='note' AND deleted=0
+         ORDER BY length(path), path LIMIT 64",
+    )?;
+    let mut rows = by_name.query(params![leaf_file])?;
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let path: String = row.get(1)?;
+        if !nested || path == file || path.ends_with(&suffix) {
+            return Ok(Some(id));
+        }
+    }
+    drop(rows);
+    if nested {
+        return Ok(None);
+    }
+    match conn.query_row(
+        "SELECT id FROM note_meta WHERE lower(title) = ?1 AND kind='note' AND deleted=0
+         ORDER BY length(path), path LIMIT 1",
+        params![norm],
+        |r| r.get::<_, String>(0),
+    ) {
+        Ok(id) => Ok(Some(id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// The note a wikilink names, looked up in the whole catalog rather than the
+/// loaded window. Each step uses one expression index; before they exist the
+/// lookup is budgeted and an unfinished one reports `settled: false`.
+pub fn query_resolve_link(conn: &Connection, target: &str) -> Result<ShellLinkResolve, String> {
+    let norm = link_norm(target).trim_matches('/').to_string();
+    if norm.is_empty() {
+        return Ok(ShellLinkResolve { row: None, settled: true });
+    }
+    let budget = if shell_search_indexes_ready(conn) {
+        Duration::from_secs(2)
+    } else {
+        SHELL_SCAN_BUDGET
+    };
+    let found = with_time_budget(conn, budget, || resolve_link_id(conn, &norm));
+    match found {
+        Ok(Some(id)) => Ok(ShellLinkResolve { row: query_note(conn, &id)?, settled: true }),
+        Ok(None) => Ok(ShellLinkResolve { row: None, settled: true }),
+        Err(_) => Ok(ShellLinkResolve { row: None, settled: false }),
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ShellMentionHead {
     pub from_id: String,
     pub from_path: String,
@@ -2509,6 +2587,37 @@ mod tests {
             assert_eq!(page.note_total, size);
             assert!(page.rows.len() < size as usize || size <= SHELL_CHILD_PAGE);
         }
+    }
+
+    #[test]
+    fn wikilinks_resolve_from_the_whole_catalog() {
+        let conn = open_mem();
+        insert_note(&conn, "Deep/Nest/Topic 15.md", None);
+        insert_note(&conn, "Topic 15.md", None);
+        insert_note(&conn, "Other/Nest/Plan.md", None);
+        insert_note(&conn, "Hub/Nest/Plan.md", None);
+        insert_note(&conn, "Journal/2026-09-24.md", None);
+        conn.execute(
+            "UPDATE note_meta SET title='Launch Plan' WHERE path='Journal/2026-09-24.md'",
+            [],
+        )
+        .unwrap();
+        ensure_shell_indexes(&conn).unwrap();
+        let path_of = |target: &str| {
+            let out = query_resolve_link(&conn, target).unwrap();
+            assert!(out.settled, "{target}");
+            out.row.map(|r| r.path)
+        };
+        assert_eq!(path_of("topic 15").as_deref(), Some("Topic 15.md"));
+        assert_eq!(path_of("Topic 15.md").as_deref(), Some("Topic 15.md"));
+        assert_eq!(path_of("Nest/Topic 15").as_deref(), Some("Deep/Nest/Topic 15.md"));
+        assert_eq!(path_of("Hub/Nest/Plan").as_deref(), Some("Hub/Nest/Plan.md"));
+        assert_eq!(path_of("launch plan").as_deref(), Some("Journal/2026-09-24.md"));
+        assert_eq!(path_of("Nope/Topic 15"), None);
+        assert_eq!(path_of("No Such Note"), None);
+        assert_eq!(path_of("  "), None);
+        conn.execute("UPDATE note_meta SET deleted=1 WHERE path='Topic 15.md'", []).unwrap();
+        assert_eq!(path_of("Topic 15").as_deref(), Some("Deep/Nest/Topic 15.md"));
     }
 
     #[test]

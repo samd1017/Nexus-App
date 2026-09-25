@@ -57,7 +57,7 @@ import {
 import { cn } from "@/lib/utils";
 import { buildWikilinkIndex, resolveWikilink } from "@/lib/graph/build-graph";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
-import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
+import { openWikilink, type LinkJump } from "@/lib/editor/open-wikilink";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import {
   isOnlySerializationNoise,
@@ -112,58 +112,36 @@ function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) 
   } catch {
     /* ignore */
   }
-  const parts = parseWikilinkInner(target);
   const ev = event as MouseEvent | undefined;
   const pane =
     ev && (ev.altKey || (ev.metaKey && ev.shiftKey))
       ? ("secondary" as const)
       : ("primary" as const);
-  const jump = {
-    heading: parts.heading,
-    blockId: parts.blockId,
-    pane,
-  };
-  const hostId = hostNoteId || state.activeNoteId;
-  const hit = parts.noteTarget
-    ? resolveWikilink(parts.noteTarget, state.nodes)
-    : hostId
-      ? state.nodes[hostId]
-      : null;
-  const activateNote = (id: string) => {
-    const noteCount = ensureVaultIndex(state.nodes).noteCount;
+  const activateNote = (id: string, jump: LinkJump) => {
+    const live = useVaultStore.getState();
+    const noteCount = ensureVaultIndex(live.nodes).noteCount;
     // Large vaults: wikilink open → ego neighborhood (does not thrash setActiveNote scope)
     if (shouldUseFolderGraph(noteCount) && pane !== "secondary") {
-      state.enterGraphEgo?.({ returnPath: state.graphBrowsePath || "" });
+      live.enterGraphEgo?.({ returnPath: live.graphBrowsePath || "" });
     }
-    state.setActiveNote(id, jump);
+    live.setActiveNote(id, jump);
   };
-  if (!hit) {
-    const title = (parts.noteTarget || "").trim();
-    if (!title) {
-      state.setToast(`No note found for [[${target}]]`);
-      return;
-    }
-    const created = state.createNote(null, title, { activate: false });
-    if (created) {
-      state.setToast(`Created “${title}”`);
-      activateNote(created);
-      return;
-    }
-    state.setToast(`No note found for [[${target}]]`);
-    return;
-  }
-  if (hit.kind === "folder") {
-    if (!state.expandedFolders.includes(hit.id)) {
-      state.toggleFolder(hit.id);
-    }
-    const child = Object.values(state.nodes)
-      .filter((n) => n.parentId === hit.id && n.kind === "note")
-      .sort((a, b) => a.name.localeCompare(b.name))[0];
-    if (child) activateNote(child.id);
-    else state.setToast(`Opened folder “${hit.name}”`);
-    return;
-  }
-  activateNote(hit.id);
+  void openWikilink(target, {
+    hostId: hostNoteId || state.activeNoteId,
+    pane,
+    open: activateNote,
+    onFolder: (folder, jump) => {
+      const live = useVaultStore.getState();
+      if (!live.expandedFolders.includes(folder.id)) {
+        live.toggleFolder(folder.id);
+      }
+      const child = Object.values(live.nodes)
+        .filter((n) => n.parentId === folder.id && n.kind === "note")
+        .sort((a, b) => a.name.localeCompare(b.name))[0];
+      if (child) activateNote(child.id, jump);
+      else live.setToast(`Opened folder “${folder.name}”`);
+    },
+  });
 }
 
 /**

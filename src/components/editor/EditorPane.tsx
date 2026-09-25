@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BookOpen,
   Code2,
   Columns2,
   Eye,
@@ -57,6 +58,8 @@ export function EditorPane({
   pane?: "primary" | "secondary";
 } = {}) {
   const editorMode = useVaultStore((s) => s.settings.editorMode);
+  const readingView = useVaultStore((s) => s.readingView);
+  const toggleReadingView = useVaultStore((s) => s.toggleReadingView);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
   const rightOpen = useVaultStore((s) => s.settings.rightOpen);
   const leftOpen = useVaultStore((s) => s.settings.leftOpen);
@@ -103,6 +106,25 @@ export function EditorPane({
     // Close find when switching notes
     setFindOpen(false);
   }, [note?.id]);
+
+  // Ctrl+E unmounts the surface that had focus; the keys stay with this pane.
+  const wasReading = useRef(readingView);
+  useEffect(() => {
+    if (wasReading.current === readingView) return;
+    wasReading.current = readingView;
+    if (getFindFocusPane() !== pane && workspaceSplit) return;
+    const frame = window.requestAnimationFrame(() => {
+      const own = document.querySelector<HTMLElement>(`[data-editor-pane="${pane}"]`);
+      if (!own) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== document.body && !own.contains(active)) return;
+      const target = readingView
+        ? own.querySelector<HTMLElement>("[data-reading-view] .nexus-source-preview")
+        : own.querySelector<HTMLElement>(".ProseMirror, textarea[aria-label='Markdown source']");
+      target?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [readingView, pane, workspaceSplit]);
 
   useEffect(() => {
     if (!pendingJump || !note?.id || pendingJump.noteId !== note.id) return;
@@ -452,7 +474,9 @@ export function EditorPane({
 
   const body = note.content ?? "";
   const canvasNote = isCanvasNote(body);
-  const editorKey = `${editorMode}::${canvasNote ? "canvas" : "note"}`;
+  const reading = readingView && !canvasNote;
+  const editing = !reading;
+  const editorKey = `${reading ? "reading" : editorMode}::${canvasNote ? "canvas" : "note"}`;
   const previewBody = splitLive?.id === note.id ? splitLive.text : body;
 
   return (
@@ -590,11 +614,11 @@ export function EditorPane({
                   type="button"
                   className={cn(
                     "chip-btn !border-0",
-                    editorMode === "visual" && "is-active",
+                    editing && editorMode === "visual" && "is-active",
                   )}
                   onClick={() => setEditorMode("visual")}
                   title="Visual mode"
-                  aria-pressed={editorMode === "visual"}
+                  aria-pressed={editing && editorMode === "visual"}
                 >
                   <Eye size={13} />
                   <span className="hidden md:inline">
@@ -605,11 +629,11 @@ export function EditorPane({
                   type="button"
                   className={cn(
                     "chip-btn !border-0",
-                    editorMode === "source" && "is-active",
+                    editing && editorMode === "source" && "is-active",
                   )}
                   onClick={() => setEditorMode("source")}
-                  title={`Source mode (${formatShortcut("E")})`}
-                  aria-pressed={editorMode === "source"}
+                  title="Source mode"
+                  aria-pressed={editing && editorMode === "source"}
                 >
                   <Code2 size={13} />
                   <span className="hidden md:inline">Source</span>
@@ -619,14 +643,27 @@ export function EditorPane({
                     type="button"
                     className={cn(
                       "chip-btn !border-0",
-                      editorMode === "split" && "is-active",
+                      editing && editorMode === "split" && "is-active",
                     )}
                     onClick={() => setEditorMode("split")}
                     title="Source + live preview of this note"
-                    aria-pressed={editorMode === "split"}
+                    aria-pressed={editing && editorMode === "split"}
                   >
                     <Columns2 size={13} />
                     <span className="hidden md:inline">Preview</span>
+                  </button>
+                ) : null}
+                {!canvasNote ? (
+                  <button
+                    type="button"
+                    className={cn("chip-btn !border-0", reading && "is-active")}
+                    onClick={() => toggleReadingView()}
+                    title={`Reading view (${formatShortcut("E")})`}
+                    aria-pressed={reading}
+                    data-testid="reading-view-toggle"
+                  >
+                    <BookOpen size={13} />
+                    <span className="hidden md:inline">Read</span>
                   </button>
                 ) : null}
                 {!isSecondary ? (
@@ -733,7 +770,14 @@ export function EditorPane({
         key={editorKey}
         className="editor-surface-enter flex min-h-0 flex-1 flex-col"
       >
-        {editorMode === "visual" && canvasNote ? (
+        {reading ? (
+          <div
+            className="nexus-reading-view flex min-h-0 flex-1 flex-col"
+            data-reading-view="true"
+          >
+            <SourcePreview content={body} noteId={note.id} reading />
+          </div>
+        ) : editorMode === "visual" && canvasNote ? (
           <CanvasBoard noteId={note.id} content={body} />
         ) : editorMode === "visual" ? (
           <VisualEditor noteId={note.id} content={body} pane={pane} />

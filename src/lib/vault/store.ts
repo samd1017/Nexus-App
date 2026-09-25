@@ -368,6 +368,8 @@ export type VaultStore = {
   shellLoaded: Record<string, number>;
   /** Bumps while fill commits so tags and deferred pages refresh. */
   shellLiveTick: number;
+  /** Obsidian's reading view: the open note rendered, no editor. Not persisted. */
+  readingView: boolean;
 
   bootstrap: () => Promise<void>;
   openDemoVault: () => void;
@@ -400,6 +402,8 @@ export type VaultStore = {
   setEditorMode: (mode: EditorMode) => void;
   setGraphMode: (mode: GraphMode) => void;
   toggleEditorMode: () => void;
+  setReadingView: (on: boolean) => void;
+  toggleReadingView: () => void;
   toggleLeft: () => void;
   toggleRight: () => void;
   toggleGraphFullscreen: () => void;
@@ -2234,6 +2238,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	secondaryNoteId: null,
 	...SHELL_CATALOG_OFF,
 	shellLiveTick: 0,
+	readingView: false,
 	pendingJump: null,
 	settings: { ...DEFAULT_SETTINGS },
 	expandedFolders: [],
@@ -3887,11 +3892,16 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	} }),
 	setEditorMode: (mode) => {
 		flushActiveEditors();
-		set({ settings: {
+		set({ readingView: false, settings: {
 			...get().settings,
 			editorMode: mode
 		} });
 	},
+	setReadingView: (on) => {
+		if (on) flushActiveEditors();
+		if (get().readingView !== on) set({ readingView: on });
+	},
+	toggleReadingView: () => get().setReadingView(!get().readingView),
 	setGraphMode: (mode) => {
 		const prev = get().settings.graphMode;
 		const cur = get().settings;
@@ -3930,7 +3940,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const cur = get().settings.editorMode;
 		const next =
 			cur === "visual" ? "source" : cur === "source" ? "split" : "visual";
-		set({ settings: {
+		set({ readingView: false, settings: {
 			...get().settings,
 			editorMode: next
 		} });
@@ -4207,6 +4217,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (parentId && !stage.expandedFolders.includes(parentId)) stage.expandedFolders = [...stage.expandedFolders, parentId];
 		if (activate) {
 			stage.activeNoteId = id;
+			// A new note is for writing: reading view would leave nowhere to type.
+			if (get().readingView) set({ readingView: false });
 		}
 		if (!stage.dirtyNoteIds.includes(id)) stage.dirtyNoteIds = [...stage.dirtyNoteIds, id];
 		patchVaultIndex(stage.nodes, [id]);

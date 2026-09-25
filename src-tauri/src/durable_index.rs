@@ -1869,6 +1869,24 @@ pub fn vault_shell_known_norms(
     })
 }
 
+/// The note a clicked wikilink names, from the whole catalog. Reads on the
+/// search connection so a fill holding the shell lock cannot stall the click.
+#[tauri::command(async)]
+pub fn vault_shell_resolve_link(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    target: String,
+) -> Result<crate::shell_catalog::ShellLinkResolve, String> {
+    if let Some(found) = with_search_reader(&db_path, |conn| {
+        crate::shell_catalog::query_resolve_link(conn, &target)
+    }) {
+        return found;
+    }
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_resolve_link(conn, &target)
+    })
+}
+
 /// How many notes have had their links and tags read (backlinks and tags
 /// panels say so until every note has).
 #[tauri::command(async)]

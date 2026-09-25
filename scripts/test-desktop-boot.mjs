@@ -1773,6 +1773,127 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   const libSrc2 = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
   assert.equal(libSrc2.includes("vault_shell_link_coverage,"), true);
 }
+// Ctrl/Cmd+E is Obsidian's reading view. Links clicked there or in the editor
+// ask the whole catalog before creating a note, so a 500k vault does not get a
+// duplicate of a note outside the loaded window. Runtime with stubs, pins for wiring.
+{
+  const { writeFileSync, mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const src = readFileSync(new URL("../src/lib/editor/open-wikilink.ts", import.meta.url), "utf8");
+  const wikilinksUrl = new URL("../src/lib/markdown/wikilinks.ts", import.meta.url).href;
+  const stubbed =
+    `import { parseWikilinkInner } from ${JSON.stringify(wikilinksUrl)};\n` +
+    `const resolveWikilink = (t, nodes) => Object.values(nodes).find((n) => n.title === t.toLowerCase()) ?? null;\n` +
+    `const fetchShellResolveLink = (db, t) => globalThis.__linkCatalog(db, t);\n` +
+    `const useVaultStore = { getState: () => globalThis.__linkStore };\n` +
+    src
+      .replace(/^import \{ resolveWikilink \} from "@\/lib\/graph\/build-graph";\n/m, "")
+      .replace(/^import \{ parseWikilinkInner \} from "@\/lib\/markdown\/wikilinks";\n/m, "")
+      .replace(/^import \{ fetchShellResolveLink \} from "@\/lib\/vault\/shell-catalog";\n/m, "")
+      .replace(/^import \{ useVaultStore \} from "@\/lib\/vault\/store";\n/m, "");
+  assert.equal(/from "@\//.test(stubbed.replace(/^import type .*$/m, "")), false, "every alias import was replaced");
+  const dir = mkdtempSync(join(tmpdir(), "nexus-wikilink-"));
+  const file = join(dir, "open-wikilink.ts");
+  writeFileSync(file, stubbed);
+  const { openWikilink } = await import(file);
+  const makeStore = () => {
+    const s = {
+      nodes: { here: { id: "here", kind: "note", title: "here" } },
+      activeNoteId: "here",
+      shellCatalog: true,
+      shellDbPath: "/db",
+      readingView: true,
+      opened: [],
+      created: [],
+      toasts: [],
+      setActiveNote: (id, jump) => { s.opened.push([id, jump.pane]); s.activeNoteId = id; },
+      ingestShellRows: (rows) => { for (const r of rows) s.nodes[r.id] = { ...r, title: r.name.toLowerCase() }; },
+      createNote: (_p, title) => { s.created.push(title); return `new_${title}`; },
+      setToast: (m) => s.toasts.push(m),
+      setReadingView: (on) => { s.readingView = on; },
+    };
+    return s;
+  };
+  // In the window: opens this tick, no catalog call.
+  let store = (globalThis.__linkStore = makeStore());
+  let asked = 0;
+  globalThis.__linkCatalog = async () => { asked += 1; return { row: null, settled: true }; };
+  const p = openWikilink("here", { pane: "primary" });
+  assert.deepEqual(store.opened, [["here", "primary"]]);
+  await p;
+  assert.equal(asked, 0);
+  // Outside the window: the catalog row opens, nothing is created.
+  store = globalThis.__linkStore = makeStore();
+  globalThis.__linkCatalog = async (_db, t) => ({
+    row: { id: "desk_10-Projects/02/Topic 15.md", path: "10-Projects/02/Topic 15.md", name: "Topic 15", kind: "note", mtime: 1 },
+    settled: t === "Topic 15",
+  });
+  await openWikilink("Topic 15#Plan", { pane: "secondary" });
+  assert.deepEqual(store.opened, [["desk_10-Projects/02/Topic 15.md", "secondary"]]);
+  assert.deepEqual(store.created, []);
+  // The catalog rules it out: Obsidian's create-on-click, and the new note is for writing.
+  store = globalThis.__linkStore = makeStore();
+  globalThis.__linkCatalog = async () => ({ row: null, settled: true });
+  await openWikilink("Brand New", { pane: "primary" });
+  assert.deepEqual(store.created, ["Brand New"]);
+  assert.deepEqual(store.opened, [["new_Brand New", "primary"]]);
+  assert.equal(store.readingView, false);
+  // The catalog ran out of time or is not there: say so, never create a maybe-duplicate.
+  for (const answer of [{ row: null, settled: false }, null]) {
+    store = globalThis.__linkStore = makeStore();
+    globalThis.__linkCatalog = async () => answer;
+    await openWikilink("Topic 99", { pane: "primary" });
+    assert.deepEqual(store.created, []);
+    assert.deepEqual(store.opened, []);
+    assert.equal(store.toasts[0], "Still reading the vault. Try [[Topic 99]] again in a moment.");
+  }
+  // The user moved on before the answer came back: nothing jumps.
+  store = globalThis.__linkStore = makeStore();
+  let release;
+  globalThis.__linkCatalog = () => new Promise((r) => { release = r; });
+  const late = openWikilink("Topic 15", { pane: "primary" });
+  store.activeNoteId = "elsewhere";
+  release({ row: { id: "x", path: "x.md", name: "x", kind: "note", mtime: 1 }, settled: true });
+  await late;
+  assert.deepEqual(store.opened, []);
+  // Small vault without a catalog: a miss creates, as before.
+  store = globalThis.__linkStore = makeStore();
+  store.shellCatalog = false;
+  await openWikilink("Fresh", { pane: "primary" });
+  assert.deepEqual(store.created, ["Fresh"]);
+  delete globalThis.__linkStore;
+  delete globalThis.__linkCatalog;
+
+  const previewSrc = readFileSync(new URL("../src/components/editor/SourcePreview.tsx", import.meta.url), "utf8");
+  const visualSrc2 = readFileSync(new URL("../src/components/editor/VisualEditor.tsx", import.meta.url), "utf8");
+  for (const s of [previewSrc, visualSrc2]) {
+    assert.equal(s.includes("openWikilink("), true);
+    assert.equal(s.includes("createNote(null, title"), false, "only open-wikilink creates from a link");
+  }
+  const kbSrc = readFileSync(new URL("../src/components/chrome/KeyboardShortcuts.tsx", import.meta.url), "utf8");
+  assert.equal(kbSrc.includes('case "toggleEditor":\n      if (!hasVault || overlayOpen) return false;\n      store.toggleReadingView();'), true);
+  const appShellSrc = readFileSync(new URL("../src/components/layout/AppShell.tsx", import.meta.url), "utf8");
+  assert.equal(appShellSrc.includes("toggleSource: () => useVaultStore.getState().toggleReadingView(),"), true);
+  const libSrc3 = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  assert.equal(libSrc3.includes('"Toggle Reading View",\n                true,\n                Some("CmdOrCtrl+E"),'), true);
+  assert.equal(libSrc3.includes("vault_shell_resolve_link,"), true);
+  const idxSrc4 = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
+  assert.equal(idxSrc4.includes("pub fn vault_shell_resolve_link("), true);
+  assert.equal(idxSrc4.includes("with_search_reader(&db_path, |conn| {\n        crate::shell_catalog::query_resolve_link(conn, &target)"), true);
+  const scSrc = readFileSync(new URL("../src-tauri/src/shell_catalog.rs", import.meta.url), "utf8");
+  assert.equal(scSrc.includes("with_time_budget(conn, budget, || resolve_link_id(conn, &norm))"), true);
+  const paneSrc = readFileSync(new URL("../src/components/editor/EditorPane.tsx", import.meta.url), "utf8");
+  assert.equal(paneSrc.includes('data-reading-view="true"'), true);
+  assert.equal(paneSrc.includes("<SourcePreview content={body} noteId={note.id} reading />"), true);
+  assert.equal(paneSrc.includes('title={`Reading view (${formatShortcut("E")})`}'), true);
+  const storeSrc3 = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
+  assert.equal(storeSrc3.includes("if (get().readingView) set({ readingView: false });"), true, "a created note opens for writing");
+  assert.equal(storeSrc3.includes("set({ readingView: false, settings: {\n\t\t\t...get().settings,\n\t\t\teditorMode: mode"), true);
+  const hkSrc = readFileSync(new URL("../src/lib/prefs/hotkeys.ts", import.meta.url), "utf8");
+  assert.equal(hkSrc.includes('toggleEditor: "Toggle reading view",'), true);
+  assert.equal(hkSrc.includes('toggleEditor: { key: "e" },'), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

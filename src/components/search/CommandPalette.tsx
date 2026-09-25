@@ -10,6 +10,7 @@ import {
   FolderOpen,
   FolderPlus,
   Network,
+  BookOpen,
   Code2,
   Eye,
   FilePlus,
@@ -282,6 +283,7 @@ function CommandPaletteOpen() {
   const toggleLeft = useVaultStore((s) => s.toggleLeft);
   const toggleRight = useVaultStore((s) => s.toggleRight);
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
+  const toggleReadingView = useVaultStore((s) => s.toggleReadingView);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openSyntheticVault = useVaultStore((s) => s.openSyntheticVault);
@@ -1080,11 +1082,22 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "toggle-reading-view",
+          label: "Toggle reading view",
+          keywords: ["reading", "read", "preview", "edit", "view", "obsidian"],
+          icon: <BookOpen size={15} />,
+          shortcut: formatShortcut("E"),
+          run: wrapRun("toggle-reading-view", () => {
+            toggleReadingView();
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "toggle-editor",
           label: "Cycle Visual / Source / Split",
           keywords: ["editor", "source", "visual", "split", "mode", "markdown"],
           icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-          shortcut: formatShortcut("E"),
+          shortcut: undefined as string | undefined,
           run: wrapRun("toggle-editor", () => {
             toggleEditorMode();
             setCommandOpen(false);
@@ -1154,6 +1167,7 @@ function CommandPaletteOpen() {
       toggleLeft,
       toggleRight,
       toggleEditorMode,
+      toggleReadingView,
       setCommandOpen,
       setToast,
     ],
@@ -1442,10 +1456,21 @@ function CommandPaletteOpen() {
         }),
       },
       {
+        id: "toggle-reading-view",
+        label: "Toggle reading view",
+        icon: <BookOpen size={15} />,
+        shortcut: formatShortcut("E") as string | undefined,
+        run: wrapRun("toggle-reading-view", () => {
+          toggleReadingView();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
         id: "toggle-editor",
         label: "Cycle Visual / Source / Split",
         icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-        shortcut: formatShortcut("E"),
+        shortcut: undefined as string | undefined,
         run: wrapRun("toggle-editor", () => {
           toggleEditorMode();
           setCommandOpen(false);
@@ -1527,6 +1552,7 @@ function CommandPaletteOpen() {
     toggleLeft,
     toggleRight,
     toggleEditorMode,
+    toggleReadingView,
     editorMode,
     flushDirty,
     setToast,

@@ -769,6 +769,42 @@ export type ShellMentionHead = {
   body: string;
 };
 
+/** `settled` false: the catalog could not rule the target out in time. */
+export type ShellLinkResolve = { row: ShellRow | null; settled: boolean };
+
+function linkNorm(target: string): string {
+  return target.trim().replace(/\.md$/i, "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").toLowerCase();
+}
+
+/** The note a wikilink names, from the whole catalog. Null without a catalog. */
+export async function fetchShellResolveLink(
+  dbPath: string,
+  target: string,
+): Promise<ShellLinkResolve | null> {
+  const browser = browserApi(dbPath);
+  if (browser) {
+    const norm = linkNorm(target);
+    if (!norm) return { row: null, settled: true };
+    const leaf = norm.split("/").pop() || norm;
+    const hits = await browser.suggest(leaf, 24);
+    const hit = hits.find((h) => {
+      if (h.kind !== "note") return false;
+      const path = h.path.toLowerCase();
+      if (norm.includes("/")) return path === `${norm}.md` || path.endsWith(`/${norm}.md`);
+      return h.title.toLowerCase() === norm || path.split("/").pop() === `${norm}.md`;
+    });
+    if (!hit) return { row: null, settled: hits.length < 24 };
+    const row = await browser.note(hit.id);
+    return { row, settled: true };
+  }
+  if (!dbPath || !target.trim()) return null;
+  const call = await callShell<Record<string, unknown>>("vault_shell_resolve_link", { dbPath, target });
+  if (!call.ok || !call.value || typeof call.value !== "object") return null;
+  const raw = call.value;
+  const row = raw.row && typeof raw.row === "object" ? asRow(raw.row as Record<string, unknown>) : null;
+  return { row: row?.id ? row : null, settled: Boolean(raw.settled) };
+}
+
 export type ShellLinkCoverage = { scanned: number; total: number; complete: boolean };
 
 /** How many notes have had their links and tags read. Null for the browser shell. */

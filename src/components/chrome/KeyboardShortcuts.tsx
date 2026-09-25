@@ -109,7 +109,7 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     case "toggleEditor":
       if (!hasVault || overlayOpen) return false;
-      store.toggleEditorMode();
+      store.toggleReadingView();
       return true;
     case "leftSidebar":
       if (!hasVault || overlayOpen || prefs.focusMode) return false;

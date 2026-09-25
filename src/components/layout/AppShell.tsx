@@ -322,7 +322,7 @@ export function AppShell() {
         else useVaultStore.getState().createNote(focusedEmptyFolderId(), "Untitled");
       },
       toggleGraph: () => toggleGraphForViewport(),
-      toggleSource: () => useVaultStore.getState().toggleEditorMode(),
+      toggleSource: () => useVaultStore.getState().toggleReadingView(),
     }).then((fn) => {
       un = fn;
     });
