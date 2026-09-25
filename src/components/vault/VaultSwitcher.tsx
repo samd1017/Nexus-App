@@ -11,6 +11,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
+import { getOpenProgress, subscribeOpenProgress } from "@/lib/vault/native-index";
+import { vaultSwitcherShowsIndexing } from "@/lib/vault/sqlite-fill-progress";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import {
   formatShortcut,
@@ -41,7 +43,21 @@ export function VaultSwitcher() {
   const closeVault = useVaultStore((s) => s.closeVault);
   const connecting = useVaultStore((s) => s.connecting);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
-  const openLocked = connecting || indexFillBusy;
+  const [bannerPhase, setBannerPhase] = useState(() => getOpenProgress().phase);
+  useEffect(
+    () =>
+      subscribeOpenProgress((p) => {
+        setBannerPhase((cur) => (cur === p.phase ? cur : p.phase));
+      }),
+    [],
+  );
+  // Indexing does not lock the menu. Only an open or close in progress does.
+  const openLocked = connecting;
+  const showIndexing = vaultSwitcherShowsIndexing({
+    connecting,
+    indexFillBusy,
+    bannerPhase,
+  });
 
   const [open, setOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -128,7 +144,7 @@ export function VaultSwitcher() {
             {vaultName || "Select vault"}
           </div>
           <div className="truncate text-[11px] text-[var(--text-muted)]">
-            {connecting ? "Working…" : indexFillBusy ? "Indexing…" : subtitle}
+            {connecting ? "Working…" : showIndexing ? "Indexing…" : subtitle}
           </div>
         </div>
         <ChevronDown

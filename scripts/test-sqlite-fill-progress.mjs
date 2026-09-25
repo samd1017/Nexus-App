@@ -41,6 +41,7 @@ const {
   shouldJoinDesktopFill,
   shouldBlockDesktopOpen,
   shouldWaitForInflightFill,
+  vaultSwitcherShowsIndexing,
 } = await import("../src/lib/vault/sqlite-fill-progress.ts");
 
 assert.equal(
@@ -181,8 +182,8 @@ assert.equal(
     nextRoot: "/vault/Other",
     fillInFlight: true,
   }),
-  true,
-  "different folder Open during fill is blocked",
+  false,
+  "indexing does not block opening another folder",
 );
 assert.equal(
   shouldBlockDesktopOpen({
@@ -198,8 +199,33 @@ assert.equal(
     nextRoot: "/vault/Notes",
     fillInFlight: true,
   }),
+  false,
+  "a fill with no current root still does not block Open",
+);
+assert.equal(
+  vaultSwitcherShowsIndexing({
+    connecting: false,
+    indexFillBusy: true,
+    bannerPhase: "indexing",
+  }),
   true,
-  "no current root + fill still blocks a second Open",
+);
+assert.equal(
+  vaultSwitcherShowsIndexing({
+    connecting: false,
+    indexFillBusy: true,
+    bannerPhase: "ready",
+  }),
+  false,
+  "Ready already on the banner — the card does not say Indexing",
+);
+assert.equal(
+  vaultSwitcherShowsIndexing({
+    connecting: true,
+    indexFillBusy: true,
+    bannerPhase: "indexing",
+  }),
+  false,
 );
 
 assert.equal(

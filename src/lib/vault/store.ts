@@ -170,8 +170,6 @@ import {
   sqliteFillSettledMessage,
   isInFlightFillError,
   isTitleSearchLive,
-  FILL_IN_PROGRESS_TOAST,
-  shouldBlockDesktopOpen,
   shouldJoinDesktopFill,
   shouldWaitForInflightFill,
 } from "./sqlite-fill-progress";
@@ -1036,9 +1034,9 @@ function vaultFillBusy(): boolean {
 	);
 }
 
-/** Open / remount is locked while connecting or a healthy fill is running. */
+/** The switcher locks only while a vault is opening or closing. Indexing stays in the background. */
 export function vaultOpenLocked(): boolean {
-	return useVaultStore.getState().connecting || vaultFillBusy();
+	return useVaultStore.getState().connecting;
 }
 
 /** Notes already on screen get a SQLite deep head once fill has stopped. */
@@ -1096,18 +1094,22 @@ async function completeDiskSearchIndex(opts?: {
 	const run = runCompleteDiskSearchIndex(opts);
 	diskSearchInflight = run;
 	diskSearchInflightRoot = root;
-	useVaultStore.setState({ indexFillBusy: true });
+	// Ready is already the announcement. Do not raise Indexing over it.
+	if (getOpenProgress().phase !== "ready" && !diskSearchReady) {
+		useVaultStore.setState({ indexFillBusy: true });
+	}
 	try {
 		return await run;
 	} finally {
 		if (diskSearchInflight === run) {
 			diskSearchInflight = null;
 			diskSearchInflightRoot = null;
-			// Keep Open locked while background FTS (after ready-meta) still writes.
-			if (!isNativeFillInFlight() && !isIndexFillInFlight()) {
+			const pageReady = getOpenProgress().phase === "ready" || diskSearchReady;
+			const fillQuiet = !isNativeFillInFlight() && !isIndexFillInFlight();
+			if (pageReady || fillQuiet) {
 				useVaultStore.setState({ indexFillBusy: false });
-				desktopFillRoot = null;
 			}
+			if (fillQuiet) desktopFillRoot = null;
 		}
 	}
 }
@@ -1175,6 +1177,9 @@ async function runCompleteDiskSearchIndex(opts?: {
 					// Ready is the interactive window. Later title batches must
 					// not put the banner back on a full-folder listing.
 					if (interactiveFillSettled && p.phase !== "error") {
+						if (useVaultStore.getState().indexFillBusy) {
+							useVaultStore.setState({ indexFillBusy: false });
+						}
 						if (p.phase === "catalog-counted") {
 							const seen = p.total > 0 ? p.total : p.scanned;
 							if (seen > 0 && useVaultStore.getState().shellCatalog) {
@@ -2022,7 +2027,9 @@ function openFilledIndexAfterReady(
 	root: string,
 ): void {
 	if (root) desktopFillRoot = root;
-	useVaultStore.setState({ indexFillBusy: true });
+	if (getOpenProgress().phase !== "ready" && !diskSearchReady) {
+		useVaultStore.setState({ indexFillBusy: true });
+	}
 	void (async () => {
 		await yieldToUi(true);
 		await prepareDurableIndex(vaultId, mode, dbPath);
@@ -2083,22 +2090,7 @@ async function mountDesktopVaultAt(
 			searchIndexState: getSearchIndexState(),
 		};
 	}
-	if (
-		!sameFill &&
-		shouldBlockDesktopOpen({
-			currentRoot: remembered,
-			nextRoot: root,
-			fillInFlight: fillBusy,
-		})
-	) {
-		set({
-			connecting: false,
-			toast: FILL_IN_PROGRESS_TOAST,
-		});
-		throw new Error(FILL_IN_PROGRESS_TOAST);
-	}
-	// UI was cleared while this folder's fill is still writing. Remount
-	// metadata and join. Do not cancel the native writer.
+	// A different folder cancels the fill in progress. The same folder joins it.
 	cancelVaultModuleState(sameFill ? { keepFill: true } : undefined);
 	clearBodyArchive();
 	invalidateVaultTagsCache();
@@ -2476,10 +2468,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	openDemoVault: () => {
 		// Don't clobber an in-flight vault open (e.g. large test vault)
 		if (get().connecting) return;
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		cancelVaultModuleState();
 		clearBodyArchive();
 		invalidateVaultTagsCache();
@@ -2543,10 +2531,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		// Single-flight: one concurrent open; connecting stays true until done/fail
 		if (get().connecting) return;
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		const restoreEarly = opts?.restore && opts.restore !== true ? opts.restore : null;
 		set({
 			connecting: true,
@@ -2784,10 +2768,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return;
 		}
 		if (get().connecting) return;
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		set({ connecting: true, folderAccessLost: false });
 		cancelVaultModuleState();
 		const gen = vaultGen;
@@ -3049,10 +3029,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		resetAndSeedNav(get().activeNoteId);
 	},
 	openFolderAsVault: async () => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		if (get().connecting) return;
 		set({
 			connecting: true,
@@ -3157,10 +3133,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	createMemoryVault: (name) => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
 		get().openLocalVault(vaultName, buildBlankVault(vaultName));
 		get().setToast(
@@ -3168,10 +3140,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		);
 	},
 	createNewVault: async (name) => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
 		const welcome = [
 			"# Welcome",
@@ -3436,10 +3404,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	closeVault: async () => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		flushActiveEditors();
 		flushStageNow(set);
 		const mode = get().mode;

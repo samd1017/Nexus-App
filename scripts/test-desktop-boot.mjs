@@ -2061,5 +2061,39 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
 }
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
+// Indexing stays in the background: the vault menu stays usable, and a Ready
+// banner is not paired with an Indexing line on the vault card.
+{
+  const switcherSrc = readFileSync(
+    new URL("../src/components/vault/VaultSwitcher.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.equal(switcherSrc.includes("const openLocked = connecting;"), true);
+  assert.equal(switcherSrc.includes("vaultSwitcherShowsIndexing({"), true);
+  assert.equal(switcherSrc.includes('showIndexing ? "Indexing…" : subtitle'), true);
+  const settingsPick = readFileSync(
+    new URL("../src/components/settings/SettingsPanel.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.equal(
+    settingsPick.includes("const openLocked = useVaultStore((s) => s.connecting);"),
+    true,
+  );
+  const storePick = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
+  assert.equal(storePick.includes("FILL_IN_PROGRESS_TOAST"), false);
+  assert.equal(
+    storePick.includes("A different folder cancels the fill in progress. The same folder joins it."),
+    true,
+  );
+  assert.equal(
+    storePick.includes('if (getOpenProgress().phase !== "ready" && !diskSearchReady) {\n\t\tuseVaultStore.setState({ indexFillBusy: true });'),
+    true,
+  );
+  const cancelFn = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
+  assert.equal(
+    cancelFn.includes("request_fill_cancel(&db_path);\n    stop_links_pass(&db_path);"),
+    true,
+  );
+}
 
 console.log("desktop-boot: PASS");

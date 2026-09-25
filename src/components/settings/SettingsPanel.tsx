@@ -103,7 +103,7 @@ export function SettingsPanel() {
   const connectCloud = useVaultStore((s) => s.connectCloud);
   const disconnectCloud = useVaultStore((s) => s.disconnectCloud);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
-  const openLocked = useVaultStore((s) => s.connecting || s.indexFillBusy);
+  const openLocked = useVaultStore((s) => s.connecting);
   const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
   const getConflictItems = useVaultStore((s) => s.getConflictItems);
   const conflictCount = useSyncExternalStore(

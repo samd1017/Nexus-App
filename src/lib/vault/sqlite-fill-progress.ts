@@ -274,13 +274,29 @@ export function shouldWaitForInflightFill(args: {
   return args.fillInFlight && !args.searchReady;
 }
 
-/** Opening a different folder while fill is healthy — block, do not start a second writer. */
-export function shouldBlockDesktopOpen(args: {
+/**
+ * Indexing is background work. Opening another folder is allowed; the
+ * caller cancels the previous vault's fill instead of refusing the open.
+ */
+export function shouldBlockDesktopOpen(_args: {
   currentRoot: string | null | undefined;
   nextRoot: string;
   fillInFlight: boolean;
 }): boolean {
-  return args.fillInFlight && !shouldJoinDesktopFill(args);
+  return false;
+}
+
+/**
+ * The vault card says "Indexing…" only while the banner is still opening.
+ * Ready is the announcement; the card must not contradict it.
+ */
+export function vaultSwitcherShowsIndexing(args: {
+  connecting: boolean;
+  indexFillBusy: boolean;
+  bannerPhase: string;
+}): boolean {
+  if (args.connecting) return false;
+  return args.indexFillBusy && args.bannerPhase !== "ready";
 }
 
 export const FILL_IN_PROGRESS_TOAST =

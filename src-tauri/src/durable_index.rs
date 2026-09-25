@@ -1415,6 +1415,7 @@ pub async fn vault_index_fill_from_disk(
 #[tauri::command]
 pub fn vault_index_fill_cancel(db_path: String) -> Result<OkResult, String> {
     request_fill_cancel(&db_path);
+    stop_links_pass(&db_path);
     Ok(OkResult { ok: true })
 }
 
