@@ -2067,8 +2067,11 @@ assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles a
     "../src/lib/graph/level-counts.ts"
   );
   assert.deepEqual(folderLevelCounts(2, 4, 2, 4), { folders: 2, notes: 4 });
-  assert.deepEqual(folderLevelCounts(0, 0, 0, 0), { folders: 0, notes: 0 });
+  assert.deepEqual(folderLevelCounts(0, 0, 12, 100075), { folders: 0, notes: 0 });
+  assert.deepEqual(folderLevelCounts(0, 1, 99, 99999), { folders: 0, notes: 1 });
+  assert.deepEqual(folderLevelCounts(null, null, 3, 5), { folders: 3, notes: 5 });
   assert.equal(folderLevelShowsVaultTotal(""), true);
+  assert.equal(folderLevelShowsVaultTotal("Meetings"), false);
   assert.equal(folderLevelShowsVaultTotal("EmptyFolder"), false);
   assert.equal(folderLevelShowsVaultTotal("10-Projects/Tiny"), false);
   const graphLevel = readFileSync(new URL("../src/components/graph/GraphView.tsx", import.meta.url), "utf8");

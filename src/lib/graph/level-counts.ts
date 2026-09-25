@@ -1,17 +1,18 @@
 /**
  * Folder-map badge counts for the open level.
- * Direct children of that folder. Zero is an empty level, not a stand-in
- * for the rest of the vault.
+ * A number, including zero, is that level’s own children. Drawn totals are
+ * used only when the level has not reported a child count yet.
  */
 export function folderLevelCounts(
-  childFolders: number,
-  childNotes: number,
-  shownFolders: number,
-  shownNotes: number,
+  childFolders: number | null | undefined,
+  childNotes: number | null | undefined,
+  shownFolders = 0,
+  shownNotes = 0,
 ): { folders: number; notes: number } {
   return {
-    folders: childFolders > 0 ? childFolders : Math.max(0, shownFolders),
-    notes: childNotes > 0 ? childNotes : Math.max(0, shownNotes),
+    folders:
+      childFolders == null ? Math.max(0, shownFolders) : Math.max(0, childFolders),
+    notes: childNotes == null ? Math.max(0, shownNotes) : Math.max(0, childNotes),
   };
 }
 
