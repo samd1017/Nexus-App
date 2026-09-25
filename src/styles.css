@@ -2480,6 +2480,13 @@ button:focus-visible,
 /* The white helper text above is for dark surfaces. In the light theme the same
    lines sit on light panels, so they take the strong dark ink instead. Dialogs
    are dark in both themes and keep their white copy. */
+/* Neon success green is for dark chrome. On the pale light title bar it
+   falls under 2:1, so On disk / Saved take a darker green that still reads. */
+[data-theme="light"] .nexus-disk-chip {
+  color: #146c36;
+  border-color: rgba(20, 108, 54, 0.35);
+  background-color: rgba(20, 108, 54, 0.1);
+}
 [data-theme="light"] .editor-status,
 [data-theme="light"] [data-panel-empty],
 [data-theme="light"] [data-testid="tree-empty-folder-banner"],

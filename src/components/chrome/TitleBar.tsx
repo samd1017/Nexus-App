@@ -106,7 +106,7 @@ export function TitleBar() {
           className={cn(
             "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium sm:px-2.5 sm:text-[11px]",
             flashSaved
-              ? "border-[rgba(48,209,88,0.3)] bg-[rgba(48,209,88,0.1)] text-[var(--success)]"
+              ? "nexus-disk-chip border-[rgba(48,209,88,0.3)] bg-[rgba(48,209,88,0.1)] text-[var(--success)]"
               : "border-[rgba(255,159,10,0.28)] bg-[rgba(255,159,10,0.08)] text-[var(--warning)]",
           )}
           title="Demo vault — changes stay in this browser session only"
@@ -118,7 +118,7 @@ export function TitleBar() {
     if (lastExternalSync) {
       return (
         <span
-          className="hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.3)] bg-[rgba(48,209,88,0.1)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--success)] sm:flex"
+          className="nexus-disk-chip hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.3)] bg-[rgba(48,209,88,0.1)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--success)] sm:flex"
           title={new Date(lastExternalSync).toLocaleString()}
         >
           Live · {formatRelativeTime(lastExternalSync)}
@@ -128,7 +128,8 @@ export function TitleBar() {
     if (mode === "fsa" || mode === "desktop") {
       return (
         <span
-          className="hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.25)] bg-[rgba(48,209,88,0.08)] px-2.5 py-0.5 text-[11px] text-[var(--success)] sm:flex"
+          className="nexus-disk-chip hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.25)] bg-[rgba(48,209,88,0.08)] px-2.5 py-0.5 text-[11px] text-[var(--success)] sm:flex"
+          data-vault-status="on-disk"
           title={
             mode === "desktop"
               ? "Desktop vault — notes on disk"
@@ -151,7 +152,7 @@ export function TitleBar() {
       );
     }
     return (
-      <span className="hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.25)] bg-[rgba(48,209,88,0.08)] px-2.5 py-0.5 text-[11px] text-[var(--success)] sm:flex">
+      <span className="nexus-disk-chip hidden items-center gap-1 rounded-full border border-[rgba(48,209,88,0.25)] bg-[rgba(48,209,88,0.08)] px-2.5 py-0.5 text-[11px] text-[var(--success)] sm:flex">
         {flashSaved ? "Saved" : "Local"}
       </span>
     );

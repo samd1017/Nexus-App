@@ -5,6 +5,7 @@
  *   node scripts/test-browser-shell-ready.mjs http://127.0.0.1:8080/
  */
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
 import { chromium } from "playwright";
 
 const BASE = process.argv.find((a) => a.startsWith("http")) || "http://127.0.0.1:8080/";
@@ -162,6 +163,85 @@ try {
   assert.ok(snappy.paged.bodies <= 16, "bodies after page " + snappy.paged.bodies);
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.log("browser-shell snappy: PASS");
+
+  const craftDir = "/tmp/nexus-craft";
+  mkdirSync(craftDir, { recursive: true });
+  const readyCopy = await page.locator("[data-open-progress='ready']").innerText();
+  assert.match(readyCopy, /Ready · titles and open notes/);
+  await page.screenshot({ path: `${craftDir}/ready-dark.png` });
+
+  await page.locator("[aria-label='Open settings']").focus();
+  const settingsRing = await page.evaluate(() => {
+    const s = getComputedStyle(document.activeElement);
+    return `${s.outlineWidth} ${s.outlineStyle} ${s.outlineColor}`;
+  });
+  assert.match(settingsRing, /rgb\(90, 216, 255\)/);
+
+  await page.locator(".note-title-input").focus();
+  const titleOutline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
+  assert.equal(titleOutline, "none");
+
+  await page.keyboard.press("Control+k");
+  const palette = page.locator("[aria-label='Command palette']");
+  await palette.waitFor({ state: "visible", timeout: 5000 });
+  assert.match(await palette.innerText(), /Command palette/);
+  await page.screenshot({ path: `${craftDir}/palette.png` });
+  await page.keyboard.press("Escape");
+
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  // The title-bar chip eases its color. Read it after that settle.
+  await page.waitForFunction(
+    () => getComputedStyle(document.querySelector("[data-vault-status='on-disk']")).color === "rgb(20, 108, 54)",
+    { timeout: 2000 },
+  );
+  const light = await page.evaluate(() => {
+    const word = document.querySelector("header .nexus-wordmark");
+    const chip = document.querySelector("[data-vault-status='on-disk']");
+    return {
+      word: word ? getComputedStyle(word).backgroundImage : "",
+      chip: chip ? getComputedStyle(chip).color : "",
+      chipText: chip ? chip.textContent.trim() : "",
+    };
+  });
+  assert.match(light.word, /rgb\(59, 66, 82\)/);
+  assert.equal(light.chip, "rgb(20, 108, 54)");
+  assert.match(light.chipText, /On disk|Saved/);
+  await page.screenshot({ path: `${craftDir}/ready-light.png` });
+
+  await page.getByRole("button", { name: "New folder" }).click();
+  const emptyStatus = page.locator("[data-testid='tree-empty-folder-status']");
+  await emptyStatus.waitFor({ state: "visible", timeout: 5000 });
+  const emptyFit = await emptyStatus.evaluate((el) => {
+    const row = el.closest("[role='treeitem']");
+    const rr = row?.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    return {
+      text: el.textContent.trim(),
+      overflow: el.scrollWidth - el.clientWidth,
+      rowH: rr ? Math.round(rr.height) : 0,
+      fitsRow: rr ? er.top >= rr.top - 1 && er.bottom <= rr.bottom + 1 : false,
+      color: getComputedStyle(el).color,
+    };
+  });
+  assert.match(emptyFit.text, /Enter starts a note/);
+  assert.ok(emptyFit.overflow <= 1, "empty line overflow " + emptyFit.overflow);
+  assert.equal(emptyFit.rowH, 30);
+  assert.equal(emptyFit.fitsRow, true);
+  assert.equal(emptyFit.color, "rgb(18, 20, 26)");
+  const emptyBox = await emptyStatus.boundingBox();
+  if (emptyBox) {
+    await page.screenshot({
+      path: `${craftDir}/empty-row.png`,
+      clip: {
+        x: 0,
+        y: Math.max(0, emptyBox.y - 36),
+        width: 280,
+        height: 90,
+      },
+    });
+  }
+  assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
+  console.log("browser-shell craft: PASS", JSON.stringify(emptyFit));
 } finally {
   await browser.close();
 }
