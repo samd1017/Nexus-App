@@ -1747,6 +1747,32 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(idxSrc2.includes("rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY"), true);
   assert.equal(idxSrc2.includes("drop_search_reader(&db_path);"), true);
 }
+// Large vaults: links and tags are read for every note after Ready, and until
+// they are, backlinks and tags say how far that has got instead of looking complete.
+{
+  const { linkCoverageLine } = await import(new URL("../src/lib/vault/link-coverage-line.ts", import.meta.url).href);
+  assert.equal(linkCoverageLine({ scanned: 1200, total: 500000, complete: false }, "Links"), "Links read in 1,200 of 500,000 notes so far. More may appear.");
+  assert.equal(linkCoverageLine({ scanned: 600000, total: 500000, complete: false }, "Tags"), "Tags read in 500,000 of 500,000 notes so far. More may appear.");
+  assert.equal(linkCoverageLine({ scanned: 500000, total: 500000, complete: true }, "Links"), null);
+  assert.equal(linkCoverageLine(null, "Links"), null);
+  const rightSrc = readFileSync(new URL("../src/components/right/RightPanel.tsx", import.meta.url), "utf8");
+  assert.equal(rightSrc.includes('data-testid="links-coverage"'), true);
+  assert.equal(rightSrc.includes('? "No backlinks found yet."'), true);
+  assert.equal(rightSrc.includes("}, [shellCatalog, shellDbPath, tab, note?.id, coverageStep]);"), true);
+  const leftSrc = readFileSync(new URL("../src/components/layout/LeftSidebar.tsx", import.meta.url), "utf8");
+  assert.equal(leftSrc.includes('data-testid="tags-coverage"'), true);
+  assert.equal(leftSrc.includes("indexFillBusy, shellLiveTick, tagCoverageStep]);"), true);
+  const idxSrc3 = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
+  assert.equal(idxSrc3.includes("start_links_pass(db_path.to_string(), vault_root.to_string());"), true);
+  assert.equal(idxSrc3.includes("start_links_pass(db_path, vault_root);"), true);
+  assert.equal((idxSrc3.match(/stop_links_pass\(&db_path\);/g) ?? []).length >= 3, true, "a fill, close, and wipe stop the pass");
+  assert.equal(idxSrc3.includes("pub fn vault_shell_link_coverage("), true);
+  const fillSrc = readFileSync(new URL("../src-tauri/src/index_fill.rs", import.meta.url), "utf8");
+  assert.equal(fillSrc.includes("pub const LINKS_PASS_BATCH: usize = 400;"), true);
+  assert.equal(fillSrc.includes("std::thread::sleep(Duration::from_millis(4));"), true);
+  const libSrc2 = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  assert.equal(libSrc2.includes("vault_shell_link_coverage,"), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

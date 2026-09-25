@@ -769,6 +769,21 @@ export type ShellMentionHead = {
   body: string;
 };
 
+export type ShellLinkCoverage = { scanned: number; total: number; complete: boolean };
+
+/** How many notes have had their links and tags read. Null for the browser shell. */
+export async function fetchShellLinkCoverage(dbPath: string): Promise<ShellLinkCoverage | null> {
+  if (browserApi(dbPath) || !dbPath) return null;
+  const call = await callShell<Record<string, unknown>>("vault_shell_link_coverage", { dbPath });
+  if (!call.ok || !call.value) return null;
+  const raw = call.value;
+  return {
+    scanned: num(raw.scanned),
+    total: num(raw.total),
+    complete: Boolean(raw.complete),
+  };
+}
+
 export async function fetchShellMentions(
   dbPath: string,
   phrase: string,

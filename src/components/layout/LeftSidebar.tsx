@@ -41,6 +41,7 @@ import { formatShortcut } from "@/lib/platform";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
+import { linkCoverageLine, useLinkCoverage } from "@/lib/vault/link-coverage";
 
 const DEFAULT_LEFT_WIDTH = 260;
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -107,6 +108,19 @@ export function LeftSidebar() {
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
   const [catalogTags, setCatalogTags] = useState<TagHit[] | null>(null);
+  const tagCoverage = useLinkCoverage(
+    shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB ? shellDbPath : null,
+    true,
+  );
+  const tagCoverageLine = linkCoverageLine(tagCoverage, "Tags");
+  // Counts over a whole large vault take tens of milliseconds, so the list is
+  // asked again at each twentieth of the vault read, not at every poll.
+  const tagCoverageStep =
+    tagCoverage && !tagCoverage.complete && tagCoverage.total > 0
+      ? Math.floor((tagCoverage.scanned / tagCoverage.total) * 20)
+      : tagCoverage?.complete
+        ? 20
+        : -1;
   const [catalogRecent, setCatalogRecent] = useState<VaultNode[] | null>(null);
   const [pinnedCatalog, setPinnedCatalog] = useState<VaultNode[]>([]);
 
@@ -123,7 +137,7 @@ export function LeftSidebar() {
     return () => {
       cancel = true;
     };
-  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy, shellLiveTick]);
+  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy, shellLiveTick, tagCoverageStep]);
 
   useEffect(() => {
     if (!shellCatalog || !shellDbPath) {
@@ -696,6 +710,15 @@ export function LeftSidebar() {
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {sidebarTagsOpen && tagCoverageLine ? (
+              <p
+                role="status"
+                data-testid="tags-coverage"
+                className="px-1 pt-1 text-[11px] leading-snug text-[var(--text-muted)]"
+              >
+                {tagCoverageLine}
+              </p>
             ) : null}
           </div>
         ) : null}

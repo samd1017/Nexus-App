@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { getBodyGen, isContentLoaded, subscribeBodyGen } from "@/lib/vault/content";
+import { linkCoverageLine, useLinkCoverage } from "@/lib/vault/link-coverage";
 import {
   getUnreadPulseCount,
   subscribePulse,
@@ -87,6 +88,13 @@ export function RightPanel() {
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
   const shellDbPath = useVaultStore((s) => s.shellDbPath);
   const [shellBacklinks, setShellBacklinks] = useState<Backlink[] | null>(null);
+  const linkCoverage = useLinkCoverage(
+    shellCatalog && shellDbPath && shellDbPath !== "browser" ? shellDbPath : null,
+    tab === "backlinks",
+  );
+  const coverageLine = linkCoverageLine(linkCoverage, "Links");
+  // While links are still being read, the list is asked again as more are.
+  const coverageStep = linkCoverage && !linkCoverage.complete ? linkCoverage.scanned : -1;
   const openConflictCount = useVaultStore((s) => {
     // Depend on nodes + dismissals so badge updates live
     void s.nodes;
@@ -144,7 +152,7 @@ export function RightPanel() {
     return () => {
       cancel = true;
     };
-  }, [shellCatalog, shellDbPath, tab, note?.id]);
+  }, [shellCatalog, shellDbPath, tab, note?.id, coverageStep]);
 
   const backlinks = useMemo(() => {
     if (tab !== "backlinks" || !note || note.kind !== "note") return [];
@@ -422,9 +430,20 @@ export function RightPanel() {
                 <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                   Linked mentions
                 </div>
+                {coverageLine ? (
+                  <p
+                    role="status"
+                    data-testid="links-coverage"
+                    className="mb-2 px-1 text-[11.5px] leading-snug text-[var(--text-muted)]"
+                  >
+                    {coverageLine}
+                  </p>
+                ) : null}
                 {groupedBacklinks.length === 0 ? (
                   <PanelStatus kind="backlinks">
-                    No backlinks yet. Other notes that mention this one show up here.
+                    {coverageLine
+                      ? "No backlinks found yet."
+                      : "No backlinks yet. Other notes that mention this one show up here."}
                   </PanelStatus>
                 ) : (
                   <ul className="flex flex-col gap-1">
