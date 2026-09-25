@@ -2077,24 +2077,32 @@ button:focus-visible,
   box-shadow: 0 0 0 4px rgba(90, 216, 255, 0.8);
 }
 
-/* Real Rebuild control: black on cyan so a click-hunt does not have to OCR for it. */
+/* Rebuild: a secondary action with a readable label, not the loudest thing in Settings. */
 .nexus-rebuild-btn {
-  display: flex;
+  display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 44px;
-  border-radius: 10px;
-  border: 2px solid #5ad8ff;
-  background: #5ad8ff;
-  color: #000;
-  font-size: 16px;
-  font-weight: 700;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-dim);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.nexus-rebuild-btn:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: var(--accent);
 }
 .nexus-rebuild-btn:focus,
 .nexus-rebuild-btn:focus-visible {
-  outline: 3px solid #fff;
-  outline-offset: 3px;
+  outline: 2px solid #5ad8ff;
+  outline-offset: 2px;
 }
 
 /* Search field uses the same cyan ring, inset so the palette cannot clip it. */

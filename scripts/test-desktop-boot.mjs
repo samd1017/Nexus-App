@@ -1918,6 +1918,18 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(cssSrc.includes(".nexus-tree-label {\n  container-type: inline-size;\n}"), true);
   assert.equal(cssSrc.includes("@container (max-width: 6.5rem) {\n  .nexus-empty-tag {\n    display: none;"), true);
 }
+// Rebuild search stays under the Settings title, as a secondary action beside
+// its label rather than a full-width cyan block.
+{
+  const cssSrc3 = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  const rule = cssSrc3.slice(cssSrc3.indexOf(".nexus-rebuild-btn {"), cssSrc3.indexOf(".nexus-rebuild-btn:hover"));
+  assert.equal(rule.includes("width: 100%"), false);
+  assert.equal(rule.includes("background: var(--accent-dim);"), true);
+  assert.equal(rule.includes("height: 32px;"), true);
+  const settingsSrc2 = readFileSync(new URL("../src/components/settings/SettingsPanel.tsx", import.meta.url), "utf8");
+  assert.equal(settingsSrc2.includes(">Search index</div>"), true);
+  assert.equal(settingsSrc2.includes("<RotateCcw size={13} aria-hidden />\n            Rebuild search"), true);
+}
 // The empty-folder banner speaks for the list's cursor: it leaves when focus
 // does, and an open folder's row below already says it.
 {

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
-import { Settings, X, Cloud } from "lucide-react";
+import { Settings, X, Cloud, RotateCcw } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import {
   ACCENT_PRESETS,
@@ -389,7 +389,13 @@ export function SettingsPanel() {
             <X size={16} />
           </button>
         </div>
-        <div className="shrink-0 border-b border-[var(--border)] px-5 py-3">
+        <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium text-[var(--text-primary)]">Search index</div>
+            <p className="text-[12px] leading-snug text-[var(--text-muted)]">
+              Your notes stay where they are.
+            </p>
+          </div>
           <button
             type="button"
             className="nexus-rebuild-btn"
@@ -404,6 +410,7 @@ export function SettingsPanel() {
               setConfirmKind("rebuild");
             }}
           >
+            <RotateCcw size={13} aria-hidden />
             Rebuild search
           </button>
         </div>
