@@ -1894,6 +1894,30 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(hkSrc.includes('toggleEditor: "Toggle reading view",'), true);
   assert.equal(hkSrc.includes('toggleEditor: { key: "e" },'), true);
 }
+// Deep folders: indentation steps down after three levels and never leaves a
+// row less than its room, so a folder name and "Enter starts a note." stay
+// whole and the list does not scroll sideways. Arrowing off an empty folder
+// hands Enter to the row the cursor is on.
+{
+  const ti = await import(new URL("../src/lib/vault/tree-indent.ts", import.meta.url).href);
+  assert.deepEqual([0, 1, 2, 3, 4, 12].map(ti.treeIndentPx), [8, 22, 36, 50, 58, 122]);
+  assert.equal(ti.treeIndentCss(0), "8px");
+  assert.equal(ti.treeIndentCss(12), "max(8px, min(122px, calc(100% - 172px)))");
+  assert.equal(ti.treeGuideCss(0), undefined);
+  assert.equal(ti.treeGuideCss(1), "calc(8px + 7px)");
+  assert.equal(ti.treeGuideCss(3), "calc(max(8px, min(36px, calc(100% - 172px))) + 7px)");
+  const treeSrc2 = readFileSync(new URL("../src/components/vault/FileTree.tsx", import.meta.url), "utf8");
+  assert.equal(treeSrc2.includes("depth * 14"), false, "every row indents through tree-indent");
+  assert.equal((treeSrc2.match(/paddingLeft: treeIndentCss\((row\.)?depth\)/g) ?? []).length, 3);
+  assert.equal(treeSrc2.includes('"--tree-guide-x": treeGuideCss(depth),'), true);
+  assert.equal(treeSrc2.includes("overflow-y-auto overflow-x-hidden"), true);
+  assert.equal(treeSrc2.includes('className="nexus-tree-label flex min-w-0 flex-1 items-center gap-2"'), true);
+  assert.equal((treeSrc2.match(/leaveEmptyFolderFor\((next|0|last)\);/g) ?? []).length, 4, "Up, Down, Home, End");
+  assert.equal(treeSrc2.includes("if (next && (next.id === held || next.emptyParentId === held)) return;"), true);
+  const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.equal(cssSrc.includes(".nexus-tree-label {\n  container-type: inline-size;\n}"), true);
+  assert.equal(cssSrc.includes("@container (max-width: 6.5rem) {\n  .nexus-empty-tag {\n    display: none;"), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

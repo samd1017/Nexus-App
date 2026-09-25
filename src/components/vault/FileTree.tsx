@@ -35,6 +35,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { renameKeyAction } from "@/lib/chrome/rename-key";
 import { emptyFolderIdFromTarget, treeRowIdFromTarget } from "@/lib/vault/empty-folder-target";
+import { treeGuideCss, treeIndentCss } from "@/lib/vault/tree-indent";
 import { bufferRenameKey, claimEmptyFolderEnter, isIdleEnterTarget, isProgrammaticFocusSteal, scheduleEmptyNoteRename, settleRename, startRenameBuffer, takeRenameBuffer } from "@/lib/chrome/empty-folder-enter";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import { finishReveal, takePendingFolderReveal } from "@/lib/chrome/reveal-list";
@@ -320,9 +321,9 @@ const TreeRow = memo(function TreeRow({
       )}
       style={
         {
-          paddingLeft: 8 + depth * 14,
+          paddingLeft: treeIndentCss(depth),
           height: ROW_H,
-          "--tree-guide-x": depth > 0 ? `${8 + (depth - 1) * 14 + 7}px` : undefined,
+          "--tree-guide-x": treeGuideCss(depth),
         } as React.CSSProperties
       }
       data-depth={depth}
@@ -437,15 +438,16 @@ const TreeRow = memo(function TreeRow({
           onPointerDown={(e) => e.stopPropagation()}
         />
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="nexus-tree-label flex min-w-0 flex-1 items-center gap-2">
           <span
             className="min-w-0 cursor-grab truncate active:cursor-grabbing"
           >
             {displayName(node)}
           </span>
           {folderEmpty && emptyKnown(node.id) ? (
-            // A short tag fits beside any name. Open, the row below says the
-            // whole line; the list's hint says it while the folder has the cursor.
+            // A short tag beside the name; a deep row drops it (styles.css) so the
+            // name stays. Open, the row below says the whole line; the list's hint
+            // says it while the folder has the cursor.
             <span
               className="nexus-empty-tag shrink-0"
               data-testid="tree-empty-folder-tag"
@@ -749,6 +751,21 @@ export const FileTree = memo(function FileTree() {
     );
     if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "auto" });
   }, [virtualizer]);
+
+  // The arrows took the cursor off an empty folder. Enter now belongs to the
+  // row the cursor is on, so the folder gives up its focus and its arm.
+  const leaveEmptyFolderFor = useCallback((nextIdx: number) => {
+    const tree = parentRef.current;
+    const focusedFolder = emptyFolderIdFromTarget(document.activeElement);
+    const held = focusedFolder ?? armedEmptyRef.current;
+    if (!tree || !held) return;
+    const next = flatRowsRef.current[nextIdx];
+    if (next && (next.id === held || next.emptyParentId === held)) return;
+    armedEmptyRef.current = null;
+    tree.removeAttribute("data-empty-armed");
+    tree.removeAttribute("data-focused-empty-folder");
+    if (focusedFolder) tree.focus({ preventScroll: true });
+  }, []);
 
   const onFocusRow = useCallback((id: string) => {
     const idx = flatRowsRef.current.findIndex((r) => r.id === id);
@@ -1115,6 +1132,7 @@ export const FileTree = memo(function FileTree() {
       if (!row) return;
       if (e.key === "Home") {
         e.preventDefault();
+        leaveEmptyFolderFor(0);
         setFocusedIndex(0);
         virtualizer.scrollToIndex(0, { align: "auto" });
         return;
@@ -1122,6 +1140,7 @@ export const FileTree = memo(function FileTree() {
       if (e.key === "End") {
         e.preventDefault();
         const last = rows.length - 1;
+        leaveEmptyFolderFor(last);
         setFocusedIndex(last);
         virtualizer.scrollToIndex(last, { align: "auto" });
         return;
@@ -1130,6 +1149,7 @@ export const FileTree = memo(function FileTree() {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         const next = Math.min(focusedIndex + 1, rows.length - 1);
+        leaveEmptyFolderFor(next);
         setFocusedIndex(next);
         virtualizer.scrollToIndex(next, { align: "auto" });
         return;
@@ -1137,6 +1157,7 @@ export const FileTree = memo(function FileTree() {
       if (e.key === "ArrowUp") {
         e.preventDefault();
         const next = Math.max(focusedIndex - 1, 0);
+        leaveEmptyFolderFor(next);
         setFocusedIndex(next);
         virtualizer.scrollToIndex(next, { align: "auto" });
         return;
@@ -1237,6 +1258,7 @@ export const FileTree = memo(function FileTree() {
       setCtx,
       createNote,
       openCreatedRename,
+      leaveEmptyFolderFor,
     ],
   );
 
@@ -1519,7 +1541,7 @@ export const FileTree = memo(function FileTree() {
             "tree-item flex w-full items-center text-left text-[12px] text-[var(--text-muted)] hover:text-[var(--text-secondary)]",
             treeHasFocus && focusedId === row.id && "is-focused",
           )}
-          style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
+          style={{ paddingLeft: treeIndentCss(row.depth), height: ROW_H }}
           role="treeitem"
           data-keyboard-focus={
             treeHasFocus && focusedId === row.id ? "row" : undefined
@@ -1572,7 +1594,7 @@ export const FileTree = memo(function FileTree() {
           data-keyboard-focus={
             treeHasFocus && focusedId === row.id ? "row" : undefined
           }
-          style={{ paddingLeft: 8 + row.depth * 14, height: ROW_H }}
+          style={{ paddingLeft: treeIndentCss(row.depth), height: ROW_H }}
         >
           <span
             role="status"
@@ -1640,7 +1662,7 @@ export const FileTree = memo(function FileTree() {
       data-tree-virtualized="1"
       data-focused-empty-folder={focusedEmptyFolder ?? undefined}
       className={cn(
-        "titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-3 outline-none",
+        "titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-3 outline-none",
         rootDropActive &&
           "rounded-lg ring-1 ring-inset ring-[rgba(0,200,255,0.35)]",
       )}
