@@ -340,6 +340,130 @@ fn replace_note_tags(conn: &Connection, id: &str, tags: &[String]) -> Result<(),
     Ok(())
 }
 
+/// How far the links pass has read. `complete` once every note row up to the
+/// newest one has had its links and tags read.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkCoverage {
+    pub scanned: i64,
+    pub total: i64,
+    pub complete: bool,
+}
+
+pub const LINKS_CURSOR_KEY: &str = "links_cursor";
+pub const LINKS_SEEN_KEY: &str = "links_seen";
+/// Notes read per transaction. Small, so a UI write waits a few milliseconds.
+pub const LINKS_PASS_BATCH: usize = 400;
+/// Larger files are read up to this size; links past it are not listed.
+const LINKS_PASS_MAX_BYTES: u64 = 512 * 1024;
+
+fn meta_i64(conn: &Connection, key: &str) -> i64 {
+    conn.query_row("SELECT value FROM meta_kv WHERE key = ?1", params![key], |r| r.get::<_, String>(0))
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Three small reads: no count over the catalog.
+pub fn link_coverage(conn: &Connection) -> LinkCoverage {
+    let cursor = meta_i64(conn, LINKS_CURSOR_KEY);
+    let seen = meta_i64(conn, LINKS_SEEN_KEY);
+    let newest: i64 = conn
+        .query_row("SELECT COALESCE(MAX(rowid), 0) FROM note_meta", [], |r| r.get(0))
+        .unwrap_or(0);
+    let mut total = meta_i64(conn, "shell_note_count");
+    if total <= 0 {
+        total = conn
+            .query_row("SELECT COUNT(*) FROM note_meta WHERE kind='note' AND deleted=0", [], |r| r.get(0))
+            .unwrap_or(0);
+    }
+    let complete = newest == 0 || cursor >= newest;
+    LinkCoverage {
+        scanned: if complete { total } else { seen.min(total) },
+        total,
+        complete,
+    }
+}
+
+/// Links and tags for every note, read after Ready. A deep fill reads bodies
+/// only for the open set, so at 500k notes backlinks and tags covered a few
+/// hundred notes. This reads each remaining file, keeps only its wikilinks
+/// and tags (no body enters the search index), and commits small batches with
+/// a pause between them. It resumes where it stopped.
+pub fn run_links_pass(
+    conn: &mut Connection,
+    vault_root: &Path,
+    mut is_cancelled: impl FnMut() -> bool,
+    mut on_batch: impl FnMut(&LinkCoverage),
+) -> Result<LinkCoverage, String> {
+    loop {
+        if is_cancelled() {
+            break;
+        }
+        let cursor = meta_i64(conn, LINKS_CURSOR_KEY);
+        let rows: Vec<(i64, String, String, i64)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT rowid, id, path, COALESCE(fill_depth, 0) FROM note_meta
+                     WHERE rowid > ?1 AND kind='note' AND deleted=0
+                     ORDER BY rowid
+                     LIMIT ?2",
+                )
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt
+                .query_map(params![cursor, LINKS_PASS_BATCH as i64], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })
+                .map_err(|e| e.to_string())?;
+            mapped.filter_map(|r| r.ok()).collect()
+        };
+        let Some(last) = rows.last().map(|r| r.0) else {
+            // Nothing past the cursor: mark the newest row read.
+            let newest: i64 = conn
+                .query_row("SELECT COALESCE(MAX(rowid), 0) FROM note_meta", [], |r| r.get(0))
+                .unwrap_or(0);
+            if newest > cursor {
+                let _ = conn.execute(
+                    "INSERT INTO meta_kv(key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![LINKS_CURSOR_KEY, newest.to_string()],
+                );
+            }
+            break;
+        };
+        // Read outside the transaction; notes whose body is indexed already have links.
+        let mut parsed: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+        for (_, id, rel, depth) in &rows {
+            if *depth >= FILL_DEPTH_PARTIAL {
+                continue;
+            }
+            let abs = vault_root.join(rel);
+            let Ok(file) = std::fs::File::open(&abs) else { continue };
+            let mut body = String::new();
+            if file.take(LINKS_PASS_MAX_BYTES).read_to_string(&mut body).is_err() {
+                continue;
+            }
+            parsed.push((id.clone(), extract_wikilink_targets(&body), extract_tags(&body)));
+        }
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for (id, links, tags) in &parsed {
+            replace_source_links(&tx, id, links)?;
+            replace_note_tags(&tx, id, tags)?;
+        }
+        let seen = meta_i64(&tx, LINKS_SEEN_KEY) + rows.len() as i64;
+        tx.execute(
+            "INSERT INTO meta_kv(key, value) VALUES (?1, ?2), (?3, ?4)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![LINKS_CURSOR_KEY, last.to_string(), LINKS_SEEN_KEY, seen.to_string()],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        on_batch(&link_coverage(conn));
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    Ok(link_coverage(conn))
+}
+
 /// One-shot from already-indexed heads when an older fill never wrote `tag_map`.
 fn backfill_tags_from_fts(conn: &mut Connection) -> Result<(), String> {
     let rows: Vec<(String, String)> = {
@@ -3345,6 +3469,60 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         conn.execute_batch(TEST_DDL).unwrap();
         let _ = conn.busy_timeout(Duration::from_millis(2_000));
         conn
+    }
+
+    #[test]
+    fn links_pass_reads_links_and_tags_for_notes_the_fill_left() {
+        let (vault, db) = temp_pair("links-pass");
+        write_note(&vault, "A.md", "# A\n\nSee [[B]] and [[C]]. #alpha\n");
+        write_note(&vault, "Sub/B.md", "# B\n\n#beta [[A]]\n");
+        write_note(&vault, "C.md", "# C\n\nno links here\n");
+        let mut conn = open_test_conn(&db);
+        let _ = fill_until(&mut conn, &vault, false, FillUntil::Meta, &[]);
+        let edges_for = |conn: &Connection, rel: &str| -> Vec<String> {
+            let mut stmt = conn
+                .prepare("SELECT target_norm FROM link_edge WHERE source_id = ?1 ORDER BY target_norm")
+                .unwrap();
+            stmt.query_map(params![desk_node_id(rel)], |r| r.get::<_, String>(0))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+        let tags_for = |conn: &Connection, rel: &str| -> Vec<String> {
+            let mut stmt = conn
+                .prepare("SELECT tag FROM tag_map WHERE note_id = ?1 ORDER BY tag")
+                .unwrap();
+            stmt.query_map(params![desk_node_id(rel)], |r| r.get::<_, String>(0))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+        // A meta fill reads no bodies: nothing links yet, and the panels say so.
+        let before = link_coverage(&conn);
+        assert!(!before.complete, "{before:?}");
+        assert_eq!(before.total, 3);
+        // A stopped pass does no work and stays resumable.
+        let stopped = run_links_pass(&mut conn, &vault, || true, |_| {}).unwrap();
+        assert!(!stopped.complete);
+        let mut batches = 0;
+        let cov = run_links_pass(&mut conn, &vault, || false, |_| batches += 1).unwrap();
+        assert!(cov.complete, "{cov:?}");
+        assert_eq!(cov.scanned, cov.total);
+        assert!(batches >= 1);
+        assert_eq!(edges_for(&conn, "A.md"), vec!["b".to_string(), "c".to_string()]);
+        assert_eq!(edges_for(&conn, "Sub/B.md"), vec!["a".to_string()]);
+        assert_eq!(tags_for(&conn, "A.md"), vec!["alpha".to_string()]);
+        assert_eq!(tags_for(&conn, "Sub/B.md"), vec!["beta".to_string()]);
+        assert!(edges_for(&conn, "C.md").is_empty());
+        // Nothing left: a second pass is a no-op and stays complete.
+        assert!(run_links_pass(&mut conn, &vault, || false, |_| {}).unwrap().complete);
+        // A note added later makes coverage incomplete until the pass reads it.
+        write_note(&vault, "D.md", "# D\n\n[[C]] #delta\n");
+        let _ = fill_until(&mut conn, &vault, false, FillUntil::Meta, &[]);
+        assert!(!link_coverage(&conn).complete);
+        assert!(run_links_pass(&mut conn, &vault, || false, |_| {}).unwrap().complete);
+        assert_eq!(edges_for(&conn, "D.md"), vec!["c".to_string()]);
+        assert_eq!(tags_for(&conn, "D.md"), vec!["delta".to_string()]);
     }
 
     fn fill_until(

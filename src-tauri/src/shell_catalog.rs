@@ -1689,20 +1689,47 @@ pub fn query_tag_notes(conn: &Connection, tag: &str, limit: i64) -> Result<Vec<S
     if tag.is_empty() {
         return Ok(Vec::new());
     }
-    let mut stmt = conn
-        .prepare(
-            "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
-             FROM note_meta m
-             JOIN tag_map t ON t.note_id = m.id
-             WHERE m.deleted=0 AND m.kind='note' AND t.tag = ?1
-             ORDER BY m.mtime DESC, m.name COLLATE NOCASE
-             LIMIT ?2",
-        )
-        .map_err(|e| e.to_string())?;
-    let mapped = stmt
-        .query_map(params![tag, limit], map_row)
-        .map_err(|e| e.to_string())?;
-    Ok(mapped.filter_map(|r| r.ok()).collect())
+    // A rare tag: its few notes, sorted. A tag on most of a 500k vault would
+    // sort hundreds of thousands of rows, so when that runs out of time the
+    // newest notes are walked instead and checked for the tag, which stops at
+    // the page.
+    let collect = |sql: &str, budget: Duration| -> Option<Vec<ShellRow>> {
+        let mut stmt = conn.prepare(sql).ok()?;
+        with_time_budget(conn, budget, || {
+            let mapped = stmt.query_map(params![tag, limit], map_row).ok()?;
+            let mut out = Vec::new();
+            for row in mapped {
+                match row {
+                    Ok(r) => out.push(r),
+                    // Out of time. The sorted query has nothing yet; the walk keeps what it has.
+                    Err(_) if out.is_empty() => return None,
+                    Err(_) => break,
+                }
+            }
+            Some(out)
+        })
+    };
+    if let Some(rows) = collect(
+        "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
+         FROM note_meta m
+         JOIN tag_map t ON t.note_id = m.id
+         WHERE m.deleted=0 AND m.kind='note' AND t.tag = ?1
+         ORDER BY m.mtime DESC, m.name COLLATE NOCASE
+         LIMIT ?2",
+        Duration::from_millis(60),
+    ) {
+        return Ok(rows);
+    }
+    Ok(collect(
+        "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
+         FROM note_meta m
+         WHERE m.deleted=0 AND m.kind='note'
+           AND EXISTS (SELECT 1 FROM tag_map t WHERE t.tag = ?1 AND t.note_id = m.id)
+         ORDER BY m.mtime DESC
+         LIMIT ?2",
+        SHELL_SCAN_BUDGET,
+    )
+    .unwrap_or_default())
 }
 
 fn like_prefix(q: &str) -> String {

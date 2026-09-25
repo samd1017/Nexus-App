@@ -751,6 +751,7 @@ pub fn vault_index_close(
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     guard.conns.remove(&db_path);
     drop_search_reader(&db_path);
+    stop_links_pass(&db_path);
     Ok(OkResult { ok: true })
 }
 
@@ -763,6 +764,7 @@ pub fn vault_index_wipe(
     if fill_is_inflight(&db_path) {
         return Err("index fill in progress".into());
     }
+    stop_links_pass(&db_path);
     let conn = guard
         .conns
         .get(&db_path)
@@ -1115,19 +1117,87 @@ fn fill_from_disk_job(
     );
     if result.is_ok() && !fill_is_cancelled(db_path) {
         let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
+        start_links_pass(db_path.to_string(), vault_root.to_string());
     }
     result
 }
 
 /// A vault whose titles were already searchable skips the fill, so its
-/// lookup indexes are built here, after Ready, on a short-lived writer.
-fn ensure_shell_indexes_later(db_path: String) {
+/// lookup indexes are built here, after Ready, on a short-lived writer, and
+/// the links pass carries on where it stopped.
+fn ensure_shell_indexes_later(db_path: String, vault_root: String) {
     std::thread::spawn(move || {
         let Ok(conn) = open_conn(&db_path) else { return };
         if !crate::shell_catalog::shell_search_indexes_ready(&conn) {
             let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
         }
+        drop(conn);
+        start_links_pass(db_path, vault_root);
     });
+}
+
+fn links_passes() -> &'static Mutex<HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>> {
+    static PASSES: OnceLock<Mutex<HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>> =
+        OnceLock::new();
+    PASSES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Read links and tags for the notes a fill did not open, on its own writer,
+/// a little after Ready. One pass per index; a fill, close, or wipe stops it,
+/// and it resumes from its cursor next time.
+fn start_links_pass(db_path: String, vault_root: String) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let Ok(mut passes) = links_passes().lock() else { return };
+        if passes.contains_key(&db_path) {
+            return;
+        }
+        passes.insert(db_path.clone(), stop.clone());
+    }
+    let mine = stop.clone();
+    std::thread::spawn(move || {
+        // After Ready settles, and after the fill that started this pass has
+        // handed its result back.
+        std::thread::sleep(Duration::from_millis(2_000));
+        for _ in 0..30 {
+            if !fill_is_inflight(&db_path) || stop.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1_000));
+        }
+        let run = || -> Result<(), String> {
+            if stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path) {
+                return Ok(());
+            }
+            let mut conn = open_conn(&db_path)?;
+            if crate::index_fill::link_coverage(&conn).complete {
+                return Ok(());
+            }
+            crate::index_fill::run_links_pass(
+                &mut conn,
+                Path::new(&vault_root),
+                || stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path),
+                |_| {},
+            )?;
+            Ok(())
+        };
+        let _ = run();
+        if let Ok(mut passes) = links_passes().lock() {
+            if passes.get(&db_path).is_some_and(|flag| Arc::ptr_eq(flag, &mine)) {
+                passes.remove(&db_path);
+            }
+        }
+    });
+}
+
+fn stop_links_pass(db_path: &str) {
+    if let Ok(passes) = links_passes().lock() {
+        if let Some(flag) = passes.get(db_path) {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
 }
 
 /// Walk the vault on disk in phases. Title search for a fixed window is
@@ -1250,7 +1320,7 @@ pub async fn vault_index_fill_from_disk(
             // The page is already searchable. Do not open a writer. That
             // connection was setting WAL mode again and checkpointing the file.
             if !fill_is_inflight(&db_path) {
-                ensure_shell_indexes_later(db_path.clone());
+                ensure_shell_indexes_later(db_path.clone(), vault_root.clone());
                 return Ok(IndexFillResult {
                     indexed: 0,
                     skipped: notes,
@@ -1263,6 +1333,7 @@ pub async fn vault_index_fill_from_disk(
         }
     }
     clear_fill_cancel(&db_path);
+    stop_links_pass(&db_path);
     match start_or_join(&db_path) {
         FillRole::Joiner(joiner) => {
             // Idempotent: await the in-flight writer. Progress events already
@@ -1796,6 +1867,16 @@ pub fn vault_shell_known_norms(
     with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_known_norms(conn, &norms)
     })
+}
+
+/// How many notes have had their links and tags read (backlinks and tags
+/// panels say so until every note has).
+#[tauri::command(async)]
+pub fn vault_shell_link_coverage(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+) -> Result<crate::index_fill::LinkCoverage, String> {
+    with_shell_conn(&state, &db_path, |conn| Ok(crate::index_fill::link_coverage(conn)))
 }
 
 #[tauri::command(async)]

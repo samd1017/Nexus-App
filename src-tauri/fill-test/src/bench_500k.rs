@@ -184,6 +184,61 @@ fn bench_large_queries() {
         let w = writer(Path::new(&db));
         time("ensure_shell_indexes", || sc::ensure_shell_indexes(&w));
     }
+    if std::env::var("NEXUS_BENCH_LINKS").is_ok() {
+        // The links pass on its own writer while gestures run on the shell reader.
+        let db2 = PathBuf::from(&db);
+        let root2 = PathBuf::from(&vault);
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let pass = std::thread::spawn(move || {
+            let mut w = writer(&db2);
+            let t = Instant::now();
+            let cov = crate::index_fill::run_links_pass(&mut w, &root2, || false, |_| {});
+            flag.store(true, Ordering::SeqCst);
+            (t.elapsed(), cov)
+        });
+        let r = reader(Path::new(&db));
+        let mut children = Lat(Vec::new(), 0);
+        let mut backlinks = Lat(Vec::new(), 0);
+        let mut suggest = Lat(Vec::new(), 0);
+        let note: String = r
+            .query_row("SELECT id FROM note_meta WHERE kind='note' AND path LIKE '%Topic 1541.md'", [], |x| x.get(0))
+            .unwrap_or_default();
+        let mut i = 0i64;
+        while !done.load(Ordering::SeqCst) {
+            i += 1;
+            let t = Instant::now();
+            match sc::query_children(&r, "60-Systems/07", sc::SHELL_CHILD_PAGE, (i * 60) % 3_000) {
+                Ok(_) => children.0.push(ms(t.elapsed())),
+                Err(_) => children.1 += 1,
+            }
+            let t = Instant::now();
+            match sc::query_backlinks(&r, &note, 40) {
+                Ok(_) => backlinks.0.push(ms(t.elapsed())),
+                Err(_) => backlinks.1 += 1,
+            }
+            let t = Instant::now();
+            match sc::query_suggest(&r, "topic 15", sc::SHELL_SUGGEST_LIMIT) {
+                Ok(_) => suggest.0.push(ms(t.elapsed())),
+                Err(_) => suggest.1 += 1,
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let (el, cov) = pass.join().unwrap();
+        println!("bench links pass                         {:>9.1} ms  {cov:?}", ms(el));
+        println!("-- gestures on the shell reader during the links pass --");
+        children.line("children page");
+        backlinks.line("backlinks Topic 1541");
+        suggest.line("suggest topic 15");
+        let counts: (i64, i64) = r
+            .query_row("SELECT (SELECT COUNT(*) FROM link_edge), (SELECT COUNT(*) FROM tag_map)", [], |x| Ok((x.get(0)?, x.get(1)?)))
+            .unwrap_or((0, 0));
+        println!("bench   link_edge={} tag_map={}", counts.0, counts.1);
+        let n = time("backlinks Topic 1541", || sc::query_backlinks(&r, &note, 40)).map(|b| (b.total, b.rows.len()));
+        println!("bench   backlinks total/rows={n:?}");
+        let n = time("tags", || sc::query_tags(&r, 40)).map(|v| v.iter().take(3).map(|t| (t.tag.clone(), t.count)).collect::<Vec<_>>());
+        println!("bench   top tags={n:?}");
+    }
     query_passes(Path::new(&db), Path::new(&vault));
 }
 

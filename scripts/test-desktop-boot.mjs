@@ -1698,7 +1698,7 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   }
   assert.equal(/#\[tauri::command\]\npub fn vault_shell_/.test(idxSrc), false, "no shell command left on the main thread");
   assert.equal(idxSrc.includes("let _ = crate::shell_catalog::ensure_shell_indexes(&conn);"), true);
-  assert.equal(idxSrc.includes("ensure_shell_indexes_later(db_path.clone());"), true);
+  assert.equal(idxSrc.includes("ensure_shell_indexes_later(db_path.clone(), vault_root.clone());"), true);
   const catSrc = readFileSync(new URL("../src-tauri/src/shell_catalog.rs", import.meta.url), "utf8");
   for (const idx of ["note_meta_title_norm", "note_meta_name_norm", "note_meta_path_norm", "link_target_id", "note_meta_live_recent"]) {
     assert.equal(catSrc.includes(`CREATE INDEX IF NOT EXISTS ${idx}`), true, idx);
