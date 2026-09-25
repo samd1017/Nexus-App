@@ -1653,6 +1653,14 @@ export const FileTree = memo(function FileTree() {
       : focusedRow?.kind === "folder" && folderHasNothing(focusedRow.id)
         ? focusedRow.id
         : null;
+  // The banner speaks for the list's cursor, so it leaves with the focus. An
+  // open folder already says it on the row below, so it is not said twice.
+  const emptyBannerFolder =
+    treeHasFocus &&
+    focusedEmptyFolder &&
+    !flatRows.some((r) => r.kind === "empty" && r.emptyParentId === focusedEmptyFolder)
+      ? focusedEmptyFolder
+      : null;
 
   return (
     <div
@@ -1754,21 +1762,21 @@ export const FileTree = memo(function FileTree() {
         flatRows.map((row) => renderRow(row))
       )}
 
-      {focusedEmptyFolder ? (
+      {emptyBannerFolder ? (
         <p
           role="status"
           data-testid="tree-empty-folder-banner"
-          data-empty-parent={focusedEmptyFolder}
+          data-empty-parent={emptyBannerFolder}
           className="sticky bottom-1 z-[1] mx-1 mt-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12px] leading-snug text-[var(--text-secondary)]"
           onPointerDown={() => {
-            armEmptyFolder(focusedEmptyFolder);
+            armEmptyFolder(emptyBannerFolder);
             const tree = parentRef.current;
             const row =
               tree?.querySelector<HTMLElement>(
-                `[data-folder-empty="1"][data-empty-parent="${focusedEmptyFolder}"]`,
+                `[data-folder-empty="1"][data-empty-parent="${emptyBannerFolder}"]`,
               ) ??
               tree?.querySelector<HTMLElement>(
-                `[data-node-id="${focusedEmptyFolder}"][data-folder-empty="1"]`,
+                `[data-node-id="${emptyBannerFolder}"][data-folder-empty="1"]`,
               );
             row?.focus({ preventScroll: true });
           }}

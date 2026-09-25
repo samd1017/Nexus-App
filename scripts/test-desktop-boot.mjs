@@ -1918,6 +1918,14 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(cssSrc.includes(".nexus-tree-label {\n  container-type: inline-size;\n}"), true);
   assert.equal(cssSrc.includes("@container (max-width: 6.5rem) {\n  .nexus-empty-tag {\n    display: none;"), true);
 }
+// The empty-folder banner speaks for the list's cursor: it leaves when focus
+// does, and an open folder's row below already says it.
+{
+  const treeSrc3 = readFileSync(new URL("../src/components/vault/FileTree.tsx", import.meta.url), "utf8");
+  assert.equal(treeSrc3.includes("treeHasFocus &&\n    focusedEmptyFolder &&\n    !flatRows.some((r) => r.kind === \"empty\" && r.emptyParentId === focusedEmptyFolder)"), true);
+  assert.equal(treeSrc3.includes("{emptyBannerFolder ? (\n        <p\n          role=\"status\"\n          data-testid=\"tree-empty-folder-banner\""), true);
+  assert.equal(treeSrc3.includes("data-focused-empty-folder={focusedEmptyFolder ?? undefined}"), true, "Enter still reads the cursor's folder");
+}
 // Writing surfaces draw no focus box: the global cyan ring stays for controls,
 // and this override comes after it so it wins without !important.
 {
