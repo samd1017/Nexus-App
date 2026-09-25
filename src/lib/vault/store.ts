@@ -925,6 +925,27 @@ function browserCatalogOwnsSearch(): boolean {
 	return live.shellCatalog && live.shellDbPath === BROWSER_SHELL_DB;
 }
 
+/**
+ * The browser catalog is the window. Ready is that page, not a second copy
+ * of every note in the tab.
+ */
+function announceBrowserCatalogReady(): void {
+	diskSearchReady = true;
+	if (getSearchIndexState() === "idle") setSearchIndexState("ready-meta");
+	if (getOpenProgress().phase === "ready") return;
+	const live = useVaultStore.getState();
+	let pageNotes = 0;
+	for (const id in live.nodes) {
+		if (live.nodes[id]?.kind === "note") pageNotes += 1;
+	}
+	setOpenProgress({
+		phase: "ready",
+		scanned: Math.max(1, Math.min(32, pageNotes || 1)),
+		totalHint: null,
+		message: SAVED_PAGE_READY_MESSAGE,
+	});
+}
+
 function maybeSyncDurableIndex(
 	vaultId: string | null,
 	mode: VaultMode,
@@ -1125,6 +1146,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 	const gen = vaultGen;
 	const st = useVaultStore.getState();
 	if (browserCatalogOwnsSearch()) {
+		announceBrowserCatalogReady();
 		return { indexed: 0, errors: 0, skipped: true };
 	}
 	if (!shouldUseDurableIndex(st.mode, st.vaultId)) {
@@ -1751,6 +1773,84 @@ function applyChromeFsaGuard(
 function fsaChromeScaleSettings(noteCount: number): Partial<VaultSettings> {
 	if (noteCount < 400) return {};
 	return { graphMode: "hidden", rightOpen: false };
+}
+
+/**
+ * Open a folder the browser was granted. The catalog keeps the paths.
+ * The window is one page. Ready is that page.
+ */
+async function mountGrantedFsaFolder(
+	handle: FileSystemDirectoryHandle,
+	opts: { vaultId: string; toast: string; freshPrefs: boolean; rememberHandle?: boolean },
+): Promise<void> {
+	cancelVaultModuleState();
+	clearBodyArchive();
+	invalidateVaultTagsCache();
+	desktopRoot = null;
+	setDesktopVaultRoot(null);
+	fsaRoot = handle;
+	const get = useVaultStore.getState;
+	const set = useVaultStore.setState;
+	if (opts.rememberHandle !== false) {
+		await saveDirectoryHandle(handle, { id: opts.vaultId, name: handle.name });
+	}
+	const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
+		preferPath: get().settings.lastNotePath,
+	});
+	const noteCount = shell?.notes || countVaultNotes(scan.nodes);
+	if (applyChromeFsaGuardFromCount(noteCount, handle.name) === "refused") return;
+	const shellSession = shellSessionFromMount(shell, noteCount);
+	const first =
+		(shell?.activeNoteId && scan.nodes[shell.activeNoteId]) ||
+		Object.values(scan.nodes).find((n) => n.kind === "note");
+	const recents = pushRecent({
+		id: opts.vaultId,
+		name: handle.name,
+		path: handle.name,
+		lastOpened: Date.now(),
+		mode: "fsa",
+	});
+	const prefs = opts.freshPrefs ? getPrefs() : null;
+	set({
+		vaultId: opts.vaultId,
+		vaultName: handle.name,
+		vaultPath: handle.name,
+		mode: "fsa",
+		nodes: prepareMountedNodes(scan.nodes, "fsa", [first?.id ?? ""], { metaOnly }),
+		rootIds: scan.rootIds,
+		activeNoteId: first?.id ?? null,
+		expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
+		dirtyNoteIds: [],
+		recentVaults: recents,
+		connecting: false,
+		toast: opts.toast,
+		chromeFsaLimit: get().chromeFsaLimit,
+		...GRAPH_SCOPE_DEFAULTS,
+		...shellSession,
+		settings: {
+			...get().settings,
+			...(opts.freshPrefs
+				? {
+						lastNotePath: first?.path ?? null,
+						editorMode: prefs!.defaultEditorMode,
+						graphMode: prefs!.defaultGraphView,
+						rightOpen: prefs!.defaultGraphView === "panel",
+					}
+				: {}),
+			...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
+		},
+	});
+	syncActiveBackend("fsa");
+	{
+		const st = useVaultStore.getState();
+		if (st.activeNoteId) await st.ensureNoteBody(st.activeNoteId);
+		await prepareDurableIndex(st.vaultId, st.mode);
+		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+		await completeDiskSearchIndex();
+	}
+	applyLaunchNotePreference();
+	set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+	resetAndSeedNav(get().activeNoteId);
 }
 
 /** Drop LRU victims from the live node map so ≤20k FSA does not keep every opened body. */
@@ -3083,67 +3183,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				});
 				return;
 			}
-			cancelVaultModuleState();
-			clearBodyArchive();
-			invalidateVaultTagsCache();
-			fsaRoot = handle;
 			const vaultId = "fsa-" + handle.name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
-			await saveDirectoryHandle(handle, {
-				id: vaultId,
-				name: handle.name
-			});
-			const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
-				preferPath: get().settings.lastNotePath,
-			});
-			const noteCount = shell?.notes || countVaultNotes(scan.nodes);
-			if (applyChromeFsaGuardFromCount(noteCount, handle.name) === "refused") return;
-			const shellSession = shellSessionFromMount(shell, noteCount);
-			const first =
-				(shell?.activeNoteId && scan.nodes[shell.activeNoteId]) ||
-				Object.values(scan.nodes).find((n) => n.kind === "note");
-			const recents = pushRecent({
-				id: vaultId,
-				name: handle.name,
-				path: handle.name,
-				lastOpened: Date.now(),
-				mode: "fsa"
-			});
-			set({
+			await mountGrantedFsaFolder(handle, {
 				vaultId,
-				vaultName: handle.name,
-				vaultPath: handle.name,
-				mode: "fsa",
-				nodes: prepareMountedNodes(scan.nodes, "fsa", [first?.id ?? ""], { metaOnly }),
-				rootIds: scan.rootIds,
-				activeNoteId: first?.id ?? null,
-				expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
-				dirtyNoteIds: [],
-				recentVaults: recents,
-				connecting: false,
 				toast: `Opened vault: ${handle.name}`,
-				chromeFsaLimit: get().chromeFsaLimit,
-				...GRAPH_SCOPE_DEFAULTS,
-				...shellSession,
-				settings: {
-					...get().settings,
-					lastNotePath: first?.path ?? null,
-					editorMode: getPrefs().defaultEditorMode,
-					graphMode: getPrefs().defaultGraphView,
-					rightOpen: getPrefs().defaultGraphView === "panel",
-					...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
-				}
+				freshPrefs: true,
 			});
-			syncActiveBackend("fsa");
-			{
-				const st = useVaultStore.getState();
-				if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-				await prepareDurableIndex(st.vaultId, st.mode);
-				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-				await completeDiskSearchIndex();
-			}
-			applyLaunchNotePreference();
-			set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
-			resetAndSeedNav(get().activeNoteId);
 		} catch (e) {
 			if (isChromeFsaCapError(e)) {
 				applyChromeFsaGuardFromCount(e.notes, "This folder");
@@ -3358,63 +3403,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				await get().openFolderAsVault();
 				return;
 			}
-			cancelVaultModuleState();
-			clearBodyArchive();
-			invalidateVaultTagsCache();
-			fsaRoot = handle;
-			const vaultId = id;
-			await saveDirectoryHandle(handle, {
-				id: vaultId,
-				name: handle.name
-			});
-			const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
-				preferPath: get().settings.lastNotePath,
-			});
-			const noteCount = shell?.notes || countVaultNotes(scan.nodes);
-			if (applyChromeFsaGuardFromCount(noteCount, handle.name) === "refused") return;
-			const shellSession = shellSessionFromMount(shell, noteCount);
-			const first =
-				(shell?.activeNoteId && scan.nodes[shell.activeNoteId]) ||
-				Object.values(scan.nodes).find((n) => n.kind === "note");
-			const recents = pushRecent({
-				id: vaultId,
-				name: handle.name,
-				path: handle.name,
-				lastOpened: Date.now(),
-				mode: "fsa"
-			});
-			set({
-				vaultId,
-				vaultName: handle.name,
-				vaultPath: handle.name,
-				mode: "fsa",
-				nodes: prepareMountedNodes(scan.nodes, "fsa", [first?.id ?? ""], { metaOnly }),
-				rootIds: scan.rootIds,
-				activeNoteId: first?.id ?? null,
-				expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
-				dirtyNoteIds: [],
-				recentVaults: recents,
-				connecting: false,
+			await mountGrantedFsaFolder(handle, {
+				vaultId: id,
 				toast: `Reopened vault: ${handle.name}`,
-				chromeFsaLimit: get().chromeFsaLimit,
-				...GRAPH_SCOPE_DEFAULTS,
-				...shellSession,
-				settings: {
-					...get().settings,
-					...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
-				},
+				freshPrefs: false,
 			});
-			syncActiveBackend("fsa");
-			{
-				const st = useVaultStore.getState();
-				if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-				await prepareDurableIndex(st.vaultId, st.mode);
-				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-				await completeDiskSearchIndex();
-			}
-			applyLaunchNotePreference();
-		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
-		resetAndSeedNav(get().activeNoteId);
 		} catch (e) {
 			if (isChromeFsaCapError(e)) {
 				applyChromeFsaGuardFromCount(e.notes, "This folder");
@@ -6041,6 +6034,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			notes,
 			folders,
 			bodiesLoaded,
+			shellCatalog: s.shellCatalog,
+			catalogNoteCount: s.catalogNoteCount,
 			dirty: s.dirtyNoteIds.length,
 			activeNoteId: s.activeNoteId,
 			activeNotePath: s.activeNoteId ? s.nodes[s.activeNoteId]?.path ?? null : null,
@@ -6101,6 +6096,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				clearOverlay: () => Promise<void>;
 				openMockFsa: (files: Record<string, string>) => Promise<void>;
 				openMockFsaCount: (n: number) => Promise<void>;
+				openPagedFsa: (n: number) => Promise<Record<string, unknown>>;
+				saveActiveMarker: (marker: string) => Promise<Record<string, unknown>>;
 				search: (query: string, limit?: number) => Promise<unknown>;
 				openNotes: (limit?: number) => Promise<number>;
 				heapTrend: (opens?: number) => Promise<Record<string, unknown>>;
@@ -6283,6 +6280,65 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				}
 			).__NEXUS_SOAK__;
 			await soak?.openMockFsa(files);
+		},
+		openPagedFsa: async (n: number) => {
+			const { memoryVaultDirectory, memoryVaultFileReads } = await import("./memory-directory");
+			const count = Math.max(1, Math.floor(n));
+			const handle = memoryVaultDirectory(count);
+			useVaultStore.setState({ connecting: true, folderAccessLost: false });
+			await mountGrantedFsaFolder(handle, {
+				vaultId: "fsa-paged",
+				toast: `Opened vault: ${handle.name}`,
+				freshPrefs: true,
+				rememberHandle: false,
+			});
+			const st = useVaultStore.getState();
+			let windowNotes = 0;
+			let bodies = 0;
+			for (const id in st.nodes) {
+				const node = st.nodes[id];
+				if (node?.kind !== "note") continue;
+				windowNotes += 1;
+				if (node.content !== undefined) bodies += 1;
+			}
+			const progress = getOpenProgress();
+			return {
+				phase: progress.phase,
+				message: progress.message,
+				shellCatalog: st.shellCatalog,
+				catalogNoteCount: st.catalogNoteCount,
+				windowNotes,
+				bodies,
+				getFileCalls: memoryVaultFileReads(),
+				hidden: Object.values(st.shellUnloaded).reduce((sum, n) => sum + n, 0),
+				limitKind: st.chromeFsaLimit?.kind ?? null,
+				activePath: st.activeNoteId ? st.nodes[st.activeNoteId]?.path ?? null : null,
+				activeHasBody:
+					Boolean(st.activeNoteId) &&
+					st.nodes[st.activeNoteId!]?.kind === "note" &&
+					st.nodes[st.activeNoteId!]?.content !== undefined,
+			};
+		},
+		saveActiveMarker: async (marker: string) => {
+			const { readMemoryVaultNote } = await import("./memory-directory");
+			const st = useVaultStore.getState();
+			const id = st.activeNoteId;
+			const node = id ? st.nodes[id] : null;
+			if (!id || !node || node.kind !== "note") {
+				return { ok: false, reason: "no-active-note" };
+			}
+			const body =
+				node.content !== undefined ? node.content : await st.ensureNoteBody(id);
+			const next = `${body ?? ""}\n${marker}\n`;
+			useVaultStore.getState().updateNoteContent(id, next, { source: true });
+			await useVaultStore.getState().flushDirty();
+			const path = useVaultStore.getState().nodes[id]?.path ?? node.path;
+			const disk = readMemoryVaultNote(path);
+			return {
+				ok: Boolean(disk && disk.includes(marker)),
+				path,
+				dirty: useVaultStore.getState().dirtyNoteIds.includes(id),
+			};
 		},
 		openNotes: async (limit = 20) => {
 			const st = useVaultStore.getState();

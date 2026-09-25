@@ -7,7 +7,7 @@
  */
 
 import { fsaNodeId, walkCollect } from "./fs-adapter";
-import { CHROME_FSA_NOTE_CAP } from "./chrome-fsa-cap";
+import { CHROME_FSA_GETFILE_MAX, CHROME_FSA_NOTE_CAP } from "./chrome-fsa-cap";
 import { extractTagsFromMarkdown } from "./tags";
 import { extractWikilinkTargets, normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import {
@@ -1418,7 +1418,10 @@ export async function mountBrowserShell(
       appendNoteCatalog(row, head, tokenCounts, tagCounts, chunk.edges, chunk.tags, chunk.posts);
       scanned += 1;
       if (chunk.rows.length >= 200) await flush();
-      if (onProgress && scanned % 250 === 0) onProgress(scanned);
+      if (scanned % 250 === 0) {
+        if (onProgress) onProgress(scanned);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     },
     async (path, name) => {
       chunk.rows.push(browserRecord(path, name, "folder", 1));
@@ -1426,7 +1429,9 @@ export async function mountBrowserShell(
     },
     {
       maxNotes: CHROME_FSA_NOTE_CAP,
-      skipGetFileAfter: undefined,
+      // Past this many files, keep the path and skip the blob. Chrome retains
+      // native File objects, and a 20k getFile walk discards the tab.
+      skipGetFileAfter: CHROME_FSA_GETFILE_MAX,
     },
   );
   await flush();

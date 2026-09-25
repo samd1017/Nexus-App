@@ -3,6 +3,7 @@
  * to the renderer. The native page query is covered by the Rust tests.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const r = spawnSync(
@@ -327,3 +328,13 @@ console.log("shell-catalog: PASS");
 if (r.stdout) process.stdout.write(r.stdout);
 if (r.stderr) process.stderr.write(r.stderr);
 if (r.status !== 0) process.exit(r.status ?? 1);
+
+const shellSrc = readFileSync("src/lib/vault/browser-shell.ts", "utf8");
+const storeSrc = readFileSync("src/lib/vault/store.ts", "utf8");
+assert.match(shellSrc, /skipGetFileAfter:\s*CHROME_FSA_GETFILE_MAX/);
+assert.match(shellSrc, /maxNotes:\s*CHROME_FSA_NOTE_CAP/);
+assert.doesNotMatch(shellSrc, /skipGetFileAfter:\s*undefined/);
+assert.match(storeSrc, /function announceBrowserCatalogReady\(/);
+assert.match(storeSrc, /announceBrowserCatalogReady\(\)/);
+assert.match(storeSrc, /await mountGrantedFsaFolder\(/);
+console.log("shell-catalog page contract: PASS");
