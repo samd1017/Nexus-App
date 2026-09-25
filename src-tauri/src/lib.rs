@@ -14,7 +14,8 @@ use durable_index::{
     vault_shell_children, vault_shell_ego, vault_shell_forget, vault_shell_level,
     vault_shell_broken, vault_shell_known_norms, vault_shell_link_coverage, vault_shell_mentions, vault_shell_mount,
     vault_shell_note, vault_shell_orphans, vault_shell_path_page, vault_shell_paths,
-    vault_shell_recent, vault_shell_resolve_link, vault_shell_suggest, vault_shell_tag_notes,
+    vault_shell_admit, vault_shell_recent, vault_shell_resolve_link, vault_shell_suggest,
+    vault_shell_tag_notes,
     vault_shell_tags, IndexState,
 };
 use vault_scope::{
@@ -296,6 +297,7 @@ pub fn run() {
             vault_shell_mentions,
             vault_shell_link_coverage,
             vault_shell_resolve_link,
+            vault_shell_admit,
         ])
         .on_page_load(|_webview, payload| {
             let url = payload.url().as_str();

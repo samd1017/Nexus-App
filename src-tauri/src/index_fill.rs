@@ -2523,6 +2523,251 @@ fn index_priority_files(
     indexed
 }
 
+/// What a disk/catalog reconcile changed. `complete` is false when the
+/// folder could not be read in full, and then nothing was removed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogReconcile {
+    pub added: i64,
+    pub removed: i64,
+    pub notes: i64,
+    pub folders: i64,
+    pub complete: bool,
+}
+
+pub const RECONCILE_ADD_BATCH: usize = 200;
+const RECONCILE_PAGE: i64 = 2_000;
+const RECONCILE_DELETE_BATCH: usize = 64;
+
+/// Every note and folder under the vault by the fill's rules, sorted by
+/// byte order (the catalog's `path` order). None when a directory could not
+/// be read or the walk was cancelled.
+fn list_vault_paths(
+    root: &Path,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Option<(Vec<String>, Vec<String>)> {
+    let mut notes = Vec::new();
+    let mut dirs = Vec::new();
+    let mut stack = vec![(root.to_path_buf(), String::new())];
+    let mut seen = 0usize;
+    while let Some((abs, rel)) = stack.pop() {
+        if is_cancelled() {
+            return None;
+        }
+        for entry in std::fs::read_dir(&abs).ok()? {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let kind = entry.file_type().ok()?;
+            if kind.is_dir() {
+                if FILL_SKIP_DIRS.iter().any(|s| *s == name) {
+                    continue;
+                }
+                let child = child_rel(&rel, &name);
+                dirs.push(child.clone());
+                stack.push((entry.path(), child));
+            } else if kind.is_file() && is_md_name(&name) {
+                notes.push(child_rel(&rel, &name));
+            }
+            seen += 1;
+            if seen % 4_096 == 0 && is_cancelled() {
+                return None;
+            }
+        }
+    }
+    notes.sort_unstable();
+    dirs.sort_unstable();
+    Some((notes, dirs))
+}
+
+/// Catalog rows of one kind that the disk listing does not have, and listed
+/// paths the catalog does not have. Both sides are in `path` byte order, so
+/// the catalog is read a page at a time instead of held in memory.
+fn diff_catalog_kind(
+    conn: &Connection,
+    kind: &str,
+    disk: &[String],
+) -> Result<(Vec<String>, Vec<(String, String)>), String> {
+    let mut missing_rows = Vec::new();
+    let mut new_paths = Vec::new();
+    let mut i = 0usize;
+    let mut after = String::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path FROM note_meta
+             WHERE kind = ?1 AND deleted = 0 AND path > ?2
+             ORDER BY path LIMIT ?3",
+        )
+        .map_err(|e| e.to_string())?;
+    loop {
+        let page: Vec<(String, String)> = stmt
+            .query_map(params![kind, after, RECONCILE_PAGE], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        let Some(last) = page.last() else { break };
+        after = last.1.clone();
+        for (id, path) in page {
+            while i < disk.len() && disk[i] < path {
+                new_paths.push(disk[i].clone());
+                i += 1;
+            }
+            if i < disk.len() && disk[i] == path {
+                i += 1;
+            } else {
+                missing_rows.push((id, path));
+            }
+        }
+    }
+    new_paths.extend(disk[i..].iter().cloned());
+    Ok((new_paths, missing_rows))
+}
+
+fn delete_catalog_rows(conn: &mut Connection, root: &Path, rows: &[(String, String)]) -> i64 {
+    let mut removed = 0i64;
+    for chunk in rows.chunks(RECONCILE_DELETE_BATCH) {
+        let Ok(tx) = conn.unchecked_transaction() else { break };
+        let mut done = 0i64;
+        for (id, path) in chunk {
+            // Written back while the folder was listed: keep it.
+            if root.join(path).exists() {
+                continue;
+            }
+            let _ = tx.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id]);
+            let _ = tx.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id]);
+            let _ = delete_note_fts(&tx, id);
+            if tx.execute("DELETE FROM note_meta WHERE id = ?1", params![id]).is_ok() {
+                done += 1;
+            }
+        }
+        if tx.commit().is_ok() {
+            removed += done;
+        }
+        std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+    }
+    removed
+}
+
+fn folder_rows_for(dirs: &[String]) -> Vec<crate::shell_catalog::ShellRow> {
+    dirs.iter()
+        .map(|rel| crate::shell_catalog::ShellRow {
+            id: desk_node_id(rel),
+            path: rel.clone(),
+            name: rel.rsplit('/').next().unwrap_or(rel).to_string(),
+            kind: "folder".into(),
+            parent_id: parent_id_for(rel),
+            mtime: 0,
+            child_notes: 0,
+        })
+        .collect()
+}
+
+/// A catalog that answered Ready from an earlier fill does not walk the
+/// folder again, so notes added or removed outside Nexus since then were not
+/// in it. This lists the folder, adds what is new (title, head, links, tags),
+/// drops what is gone, and stores the real totals.
+pub fn reconcile_catalog_with_disk(
+    conn: &mut Connection,
+    root: &Path,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> CatalogReconcile {
+    let mut out = CatalogReconcile::default();
+    let listing = list_vault_paths(root, &mut is_cancelled);
+    if let Some((disk_notes, disk_dirs)) = listing {
+        let notes_diff = diff_catalog_kind(conn, "note", &disk_notes);
+        let dirs_diff = diff_catalog_kind(conn, "folder", &disk_dirs);
+        if let (Ok((new_notes, gone_notes)), Ok((new_dirs, gone_dirs))) = (notes_diff, dirs_diff) {
+            // An unreadable or unmounted folder can list as empty. That is not
+            // a reason to drop a whole catalog.
+            let trust_removals = !disk_notes.is_empty() || gone_notes.is_empty();
+            if !new_dirs.is_empty() {
+                let _ = crate::shell_catalog::upsert_shell_rows(conn, folder_rows_for(&new_dirs));
+            }
+            for batch in new_notes.chunks(RECONCILE_ADD_BATCH) {
+                if is_cancelled() {
+                    break;
+                }
+                out.added += index_priority_files(conn, root, batch, DEFAULT_DEEP_HEAD, &mut is_cancelled);
+                std::thread::sleep(Duration::from_millis(DISCOVER_TAIL_YIELD_MS));
+            }
+            if trust_removals && !is_cancelled() {
+                out.removed += delete_catalog_rows(conn, root, &gone_notes);
+                out.removed += delete_catalog_rows(conn, root, &gone_dirs);
+            }
+            out.complete = trust_removals && !is_cancelled();
+        }
+    }
+    if let Ok((notes, folders)) = crate::shell_catalog::catalog_counts(conn) {
+        out.notes = notes;
+        out.folders = folders;
+        if out.complete {
+            crate::shell_catalog::store_catalog_counts(conn, notes, folders);
+        }
+    }
+    out
+}
+
+/// Paths the watcher reported that the catalog does not have yet: folder
+/// rows for their parents and full rows for the notes. Returns what it added.
+pub fn admit_new_paths(conn: &mut Connection, root: &Path, rels: &[String]) -> Vec<String> {
+    let mut notes = Vec::new();
+    let mut dirs: BTreeSet<String> = BTreeSet::new();
+    for raw in rels.iter().take(400) {
+        let rel = raw.replace('\\', "/").trim_matches('/').to_string();
+        if rel.is_empty()
+            || rel.split('/').any(|p| {
+                p.is_empty() || p == ".." || p.starts_with('.') || FILL_SKIP_DIRS.contains(&p)
+            })
+        {
+            continue;
+        }
+        let abs = root.join(&rel);
+        let is_dir = abs.is_dir();
+        if !is_dir && !(is_md_name(&rel) && abs.is_file()) {
+            continue;
+        }
+        let mut cur = if is_dir { Some(rel.as_str()) } else { rel.rsplit_once('/').map(|(p, _)| p) };
+        while let Some(dir) = cur {
+            dirs.insert(dir.to_string());
+            cur = dir.rsplit_once('/').map(|(p, _)| p);
+        }
+        if is_dir {
+            continue;
+        }
+        let known = conn
+            .query_row(
+                "SELECT 1 FROM note_meta WHERE path = ?1 AND kind = 'note' AND deleted = 0",
+                params![rel],
+                |_| Ok(()),
+            )
+            .is_ok();
+        if !known {
+            notes.push(rel);
+        }
+    }
+    let new_dirs: Vec<String> = dirs
+        .into_iter()
+        .filter(|d| {
+            conn.query_row(
+                "SELECT 1 FROM note_meta WHERE path = ?1 AND kind = 'folder' AND deleted = 0",
+                params![d],
+                |_| Ok(()),
+            )
+            .is_err()
+        })
+        .collect();
+    if !new_dirs.is_empty() {
+        let _ = crate::shell_catalog::upsert_shell_rows(conn, folder_rows_for(&new_dirs));
+    }
+    let mut never = || false;
+    index_priority_files(conn, root, &notes, DEFAULT_DEEP_HEAD, &mut never);
+    let mut added = new_dirs;
+    added.extend(notes.into_iter().filter(|rel| existing_note(conn, rel).is_some()));
+    added
+}
+
 /// Saved paths whose files are gone. Not part of Ready: a filled reopen does
 /// not stat the catalog. Tests call this directly.
 #[cfg(test)]
@@ -3469,6 +3714,126 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         conn.execute_batch(TEST_DDL).unwrap();
         let _ = conn.busy_timeout(Duration::from_millis(2_000));
         conn
+    }
+
+    fn live_note_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM note_meta WHERE kind='note' AND deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn stored_note_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT CAST(value AS INTEGER) FROM meta_kv WHERE key='shell_note_count'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    }
+
+    #[test]
+    fn reconcile_brings_a_warm_catalog_in_line_with_the_folder() {
+        let (vault, db) = temp_pair("reconcile");
+        write_official_shaped(&vault, 40);
+        let mut conn = open_test_conn(&db);
+        let _ = fill_until(&mut conn, &vault, false, FillUntil::Deep, &[]);
+        assert!(title_search_already_live(&conn));
+        let before = live_note_count(&conn);
+        // Outside Nexus, after that fill: a root hub, a note in a new folder,
+        // one note removed, and a total left over from a bigger vault.
+        write_note(&vault, "Tip25e5EmbedHub.md", "# Tip25e5EmbedHub\n\n![[Hub 0]] #soak\n");
+        write_note(&vault, "Fresh/Deep/Note Z.md", "# Note Z\n\nbody\n");
+        let gone: String = conn
+            .query_row(
+                "SELECT path FROM note_meta WHERE kind='note' AND deleted=0 ORDER BY path LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        fs::remove_file(vault.join(&gone)).unwrap();
+        conn.execute(
+            "INSERT INTO meta_kv(key, value) VALUES('shell_note_count', '500001')
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [],
+        )
+        .unwrap();
+        // A warm reopen answers from the catalog and does not list the folder.
+        let _ = fill_until(&mut conn, &vault, false, FillUntil::Deep, &[]);
+        assert!(!fts_path_at(&db, "Tip25e5EmbedHub.md"), "warm Ready does not see new files");
+        let out = reconcile_catalog_with_disk(&mut conn, &vault, || false);
+        assert!(out.complete);
+        assert_eq!(out.added, 2);
+        assert_eq!(out.removed, 1);
+        assert_eq!(out.notes, before + 1);
+        assert_eq!(live_note_count(&conn), before + 1);
+        assert_eq!(stored_note_count(&conn), before + 1, "the stale total is replaced, lower included");
+        assert!(fts_path_at(&db, "Tip25e5EmbedHub.md"));
+        assert!(fts_path_at(&db, "Fresh/Deep/Note Z.md"));
+        assert!(!fts_path_at(&db, &gone));
+        let hits: Vec<String> = crate::shell_catalog::query_suggest(&conn, "tip25e5", 10)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.path)
+            .collect();
+        assert_eq!(hits, vec!["Tip25e5EmbedHub.md".to_string()]);
+        for dir in ["Fresh", "Fresh/Deep"] {
+            let parent: Option<String> = conn
+                .query_row(
+                    "SELECT parent_id FROM note_meta WHERE path=?1 AND kind='folder' AND deleted=0",
+                    params![dir],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(parent, dir.rsplit_once('/').map(|(p, _)| desk_node_id(p)));
+        }
+        let tags: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tag_map WHERE note_id=?1 AND tag='soak'",
+                params![desk_node_id("Tip25e5EmbedHub.md")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tags, 1, "a reconciled note has its head read");
+        // Nothing changed since: a second pass is a no-op.
+        let again = reconcile_catalog_with_disk(&mut conn, &vault, || false);
+        assert_eq!((again.added, again.removed, again.notes), (0, 0, before + 1));
+        // A folder that lists as empty does not wipe the catalog.
+        let (empty, _) = temp_pair("reconcile-empty");
+        let blank = reconcile_catalog_with_disk(&mut conn, &empty, || false);
+        assert!(!blank.complete);
+        assert_eq!(blank.removed, 0);
+        assert_eq!(live_note_count(&conn), before + 1);
+        // Cancelled: nothing is removed.
+        fs::remove_file(vault.join("Tip25e5EmbedHub.md")).unwrap();
+        let stopped = reconcile_catalog_with_disk(&mut conn, &vault, || true);
+        assert!(!stopped.complete);
+        assert_eq!(stopped.removed, 0);
+    }
+
+    #[test]
+    fn watcher_paths_join_the_catalog_once() {
+        let (vault, db) = temp_pair("admit");
+        write_note(&vault, "A.md", "# A\n");
+        let mut conn = open_test_conn(&db);
+        let _ = fill_until(&mut conn, &vault, false, FillUntil::Deep, &[]);
+        write_note(&vault, "Dropped.md", "# Dropped\n\nhello #new\n");
+        write_note(&vault, "Box/Inner/Seeded.md", "# Seeded\n");
+        write_note(&vault, ".hidden/x.md", "# x\n");
+        write_note(&vault, "notes.txt", "not a note");
+        let paths: Vec<String> = ["Dropped.md", "Box/Inner/Seeded.md", ".hidden/x.md", "notes.txt", "A.md", "../A.md"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut added = admit_new_paths(&mut conn, &vault, &paths);
+        added.sort();
+        assert_eq!(added, vec!["Box", "Box/Inner", "Box/Inner/Seeded.md", "Dropped.md"]);
+        assert!(fts_path_at(&db, "Dropped.md"));
+        assert!(fts_path_at(&db, "Box/Inner/Seeded.md"));
+        assert!(!fts_path_at(&db, ".hidden/x.md"));
+        assert!(admit_new_paths(&mut conn, &vault, &paths).is_empty(), "already in the catalog");
     }
 
     #[test]

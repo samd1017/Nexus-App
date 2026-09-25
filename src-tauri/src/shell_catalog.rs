@@ -261,6 +261,26 @@ pub fn update_page_snapshot_notes(db_path: &str, notes: i64) {
     let _ = write_page_snapshot(db_path, &mount);
 }
 
+/// The saved page's total set to a counted value, lower included. A
+/// reconcile that dropped notes must not leave the next open showing more.
+pub fn set_page_snapshot_notes(db_path: &str, notes: i64) {
+    if notes > 0 {
+        write_note_total_sidecar(db_path, notes);
+    } else {
+        let _ = std::fs::remove_file(note_total_path(db_path));
+    }
+    let Some(mut mount) = read_page_snapshot(db_path) else {
+        return;
+    };
+    if mount.notes == notes {
+        return;
+    }
+    let shown = mount.rows.iter().filter(|r| r.kind == "note").count() as i64;
+    mount.notes = notes.max(shown);
+    mount.omitted_notes = (mount.notes - shown).max(0);
+    let _ = write_page_snapshot(db_path, &mount);
+}
+
 pub fn read_page_snapshot(db_path: &str) -> Option<ShellMount> {
     if db_path.is_empty() || !Path::new(db_path).is_file() {
         return None;

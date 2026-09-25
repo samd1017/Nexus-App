@@ -1698,7 +1698,7 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   }
   assert.equal(/#\[tauri::command\]\npub fn vault_shell_/.test(idxSrc), false, "no shell command left on the main thread");
   assert.equal(idxSrc.includes("let _ = crate::shell_catalog::ensure_shell_indexes(&conn);"), true);
-  assert.equal(idxSrc.includes("ensure_shell_indexes_later(db_path.clone(), vault_root.clone());"), true);
+  assert.equal(idxSrc.includes("ensure_shell_indexes_later(app.clone(), db_path.clone(), vault_root.clone());"), true);
   const catSrc = readFileSync(new URL("../src-tauri/src/shell_catalog.rs", import.meta.url), "utf8");
   for (const idx of ["note_meta_title_norm", "note_meta_name_norm", "note_meta_path_norm", "link_target_id", "note_meta_live_recent"]) {
     assert.equal(catSrc.includes(`CREATE INDEX IF NOT EXISTS ${idx}`), true, idx);
@@ -1763,8 +1763,8 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(leftSrc.includes('data-testid="tags-coverage"'), true);
   assert.equal(leftSrc.includes("indexFillBusy, shellLiveTick, tagCoverageStep]);"), true);
   const idxSrc3 = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
-  assert.equal(idxSrc3.includes("start_links_pass(db_path.to_string(), vault_root.to_string());"), true);
-  assert.equal(idxSrc3.includes("start_links_pass(db_path, vault_root);"), true);
+  assert.equal(idxSrc3.includes("start_links_pass(app.clone(), db_path.to_string(), vault_root.to_string());"), true);
+  assert.equal(idxSrc3.includes("start_links_pass(app, db_path, vault_root);"), true);
   assert.equal((idxSrc3.match(/stop_links_pass\(&db_path\);/g) ?? []).length >= 3, true, "a fill, close, and wipe stop the pass");
   assert.equal(idxSrc3.includes("pub fn vault_shell_link_coverage("), true);
   const fillSrc = readFileSync(new URL("../src-tauri/src/index_fill.rs", import.meta.url), "utf8");
@@ -1986,6 +1986,36 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
   assert.equal(cssSrc.includes(".nexus-tree-label {\n  container-type: inline-size;\n}"), true);
   assert.equal(cssSrc.includes("@container (max-width: 6.5rem) {\n  .nexus-empty-tag {\n    display: none;"), true);
+}
+// A warm index answers Ready without listing the folder. The pass after it
+// reconciles disk against the catalog (new notes in, gone notes out, the real
+// total stored and published), and watcher paths join title search at once.
+// The graph badge's vault total follows the open vault, not the last render.
+{
+  const idx = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
+  const pass = idx.slice(idx.indexOf("fn start_links_pass("), idx.indexOf("fn stop_links_pass("));
+  const recAt = pass.indexOf("crate::index_fill::reconcile_catalog_with_disk(");
+  const linksAt = pass.indexOf("crate::index_fill::link_coverage(&conn).complete");
+  assert.equal(recAt > 0 && linksAt > recAt, true, "reconcile runs before the links pass, every time");
+  assert.equal(pass.includes('"vault-catalog-reconciled",'), true);
+  assert.equal(pass.includes("crate::shell_catalog::set_page_snapshot_notes(&db_path, reconciled.notes);"), true);
+  assert.equal(idx.includes("ensure_shell_indexes_later(app.clone(), db_path.clone(), vault_root.clone());"), true, "the warm path starts the pass");
+  assert.equal(idx.includes("pub fn vault_shell_admit("), true);
+  assert.equal(idx.includes("if paths.is_empty() || fill_is_inflight(&db_path) {"), true);
+  const lib = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  assert.equal(lib.includes("            vault_shell_admit,\n"), true);
+  const fillRs = readFileSync(new URL("../src-tauri/src/index_fill.rs", import.meta.url), "utf8");
+  assert.equal(fillRs.includes("let trust_removals = !disk_notes.is_empty() || gone_notes.is_empty();"), true);
+  assert.equal(fillRs.includes("if root.join(path).exists() {\n                continue;"), true, "a path written back meanwhile is kept");
+  const store4 = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
+  assert.equal(store4.includes('syncActiveBackend("desktop");\n\tlistenForCatalogReconcile();'), true);
+  assert.equal(store4.includes("catalogNoteCount: ev.notes,\n\t\t\tcatalogFolderCount: ev.folders,"), true, "the reconciled total replaces, lower included");
+  assert.equal(store4.includes("if (!live.shellCatalog || !ev.dbPath || ev.dbPath !== live.shellDbPath) return;"), true, "another vault's total is ignored");
+  assert.equal(store4.includes("const admitted = await fetchShellAdmit(db, root, paths);"), true);
+  const graphSrc = readFileSync(new URL("../src/components/graph/GraphView.tsx", import.meta.url), "utf8");
+  assert.equal(graphSrc.includes("const total = useVaultStore((s) => (s.shellCatalog ? s.catalogNoteCount : fallback));"), true);
+  assert.equal(graphSrc.includes("{vaultNoteCount.toLocaleString()} in vault"), false);
+  assert.equal((graphSrc.match(/<VaultTotal fallback=\{vaultNoteCount\}/g) ?? []).length, 2);
 }
 // Light theme: the wordmark is graphite metal on the pale title bar; dark
 // islands (Settings) keep the silver one.

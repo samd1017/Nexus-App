@@ -1117,7 +1117,7 @@ fn fill_from_disk_job(
     );
     if result.is_ok() && !fill_is_cancelled(db_path) {
         let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
-        start_links_pass(db_path.to_string(), vault_root.to_string());
+        start_links_pass(app.clone(), db_path.to_string(), vault_root.to_string());
     }
     result
 }
@@ -1125,14 +1125,14 @@ fn fill_from_disk_job(
 /// A vault whose titles were already searchable skips the fill, so its
 /// lookup indexes are built here, after Ready, on a short-lived writer, and
 /// the links pass carries on where it stopped.
-fn ensure_shell_indexes_later(db_path: String, vault_root: String) {
+fn ensure_shell_indexes_later(app: tauri::AppHandle, db_path: String, vault_root: String) {
     std::thread::spawn(move || {
         let Ok(conn) = open_conn(&db_path) else { return };
         if !crate::shell_catalog::shell_search_indexes_ready(&conn) {
             let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
         }
         drop(conn);
-        start_links_pass(db_path, vault_root);
+        start_links_pass(app, db_path, vault_root);
     });
 }
 
@@ -1142,10 +1142,21 @@ fn links_passes() -> &'static Mutex<HashMap<String, std::sync::Arc<std::sync::at
     PASSES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Read links and tags for the notes a fill did not open, on its own writer,
-/// a little after Ready. One pass per index; a fill, close, or wipe stops it,
-/// and it resumes from its cursor next time.
-fn start_links_pass(db_path: String, vault_root: String) {
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogReconciledEvent {
+    db_path: String,
+    added: i64,
+    removed: i64,
+    notes: i64,
+    folders: i64,
+}
+
+/// A little after Ready, on its own writer: first bring the catalog in line
+/// with the folder (a filled index answers Ready without listing it), then
+/// read links and tags for the notes a fill did not open. One pass per index;
+/// a fill, close, or wipe stops it, and the links part resumes from its cursor.
+fn start_links_pass(app: tauri::AppHandle, db_path: String, vault_root: String) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     let stop = Arc::new(AtomicBool::new(false));
@@ -1172,6 +1183,25 @@ fn start_links_pass(db_path: String, vault_root: String) {
                 return Ok(());
             }
             let mut conn = open_conn(&db_path)?;
+            let reconciled = crate::index_fill::reconcile_catalog_with_disk(
+                &mut conn,
+                Path::new(&vault_root),
+                || stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path),
+            );
+            if reconciled.complete {
+                crate::shell_catalog::set_page_snapshot_notes(&db_path, reconciled.notes);
+                use tauri::Emitter;
+                let _ = app.emit(
+                    "vault-catalog-reconciled",
+                    CatalogReconciledEvent {
+                        db_path: db_path.clone(),
+                        added: reconciled.added,
+                        removed: reconciled.removed,
+                        notes: reconciled.notes,
+                        folders: reconciled.folders,
+                    },
+                );
+            }
             if crate::index_fill::link_coverage(&conn).complete {
                 return Ok(());
             }
@@ -1320,7 +1350,7 @@ pub async fn vault_index_fill_from_disk(
             // The page is already searchable. Do not open a writer. That
             // connection was setting WAL mode again and checkpointing the file.
             if !fill_is_inflight(&db_path) {
-                ensure_shell_indexes_later(db_path.clone(), vault_root.clone());
+                ensure_shell_indexes_later(app.clone(), db_path.clone(), vault_root.clone());
                 return Ok(IndexFillResult {
                     indexed: 0,
                     skipped: notes,
@@ -1804,6 +1834,28 @@ pub fn vault_shell_forget(
 ) -> Result<crate::shell_catalog::ShellForget, String> {
     with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::forget_missing_paths(conn, Path::new(&vault_root), &paths)
+    })
+}
+
+/// New notes and folders the watcher saw, written into the catalog so title
+/// search and the list have them without a rebuild. A running fill lists
+/// them itself, and the reconcile after it catches the rest.
+#[tauri::command(async)]
+pub fn vault_shell_admit(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    vault_root: String,
+    paths: Vec<String>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    if paths.is_empty() || fill_is_inflight(&db_path) {
+        return Ok(Vec::new());
+    }
+    with_shell_conn(&state, &db_path, |conn| {
+        let added = crate::index_fill::admit_new_paths(conn, Path::new(&vault_root), &paths);
+        if added.is_empty() {
+            return Ok(Vec::new());
+        }
+        crate::shell_catalog::query_by_paths(conn, &added)
     })
 }
 

@@ -89,6 +89,30 @@ type GNode = {
 
 type NeighborhoodMode = "all" | "1hop" | "2hop" | "3hop";
 
+/**
+ * The open vault's total in the graph badge. The scene reads the count once
+ * per render so fill ticks do not rebuild it; this line subscribes, so a vault
+ * switch or a recount shows at once instead of the last vault's number.
+ */
+function VaultTotal({
+  fallback,
+  shown,
+  kind,
+}: {
+  fallback: number;
+  shown: number;
+  kind: "in" | "of";
+}) {
+  const total = useVaultStore((s) => (s.shellCatalog ? s.catalogNoteCount : fallback));
+  if (total <= shown) return null;
+  return (
+    <span data-testid="graph-vault-total">
+      <span className="mx-1.5 opacity-40">·</span>
+      {kind === "of" ? `of ${total.toLocaleString()}` : `${total.toLocaleString()} in vault`}
+    </span>
+  );
+}
+
 function hopCount(mode: NeighborhoodMode): 1 | 2 | 3 {
   if (mode === "2hop") return 2;
   if (mode === "3hop") return 3;
@@ -2435,12 +2459,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
               this level
             </>
           )}
-          {vaultNoteCount > badgeNoteCount ? (
-            <>
-              <span className="mx-1.5 opacity-40">·</span>
-              {vaultNoteCount.toLocaleString()} in vault
-            </>
-          ) : null}
+          <VaultTotal fallback={vaultNoteCount} shown={badgeNoteCount} kind="in" />
         </>
       ) : graphModeResolved === "ego" || isPartialVaultGraph ? (
         <>
@@ -2451,12 +2470,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
               {realNoteCount} note{realNoteCount === 1 ? "" : "s"}
               <span className="mx-1.5 opacity-40">·</span>
               {realLinkCount} link{realLinkCount === 1 ? "" : "s"}
-              {vaultNoteCount > realNoteCount ? (
-                <>
-                  <span className="mx-1.5 opacity-40">·</span>
-                  of {vaultNoteCount.toLocaleString()}
-                </>
-              ) : null}
+              <VaultTotal fallback={vaultNoteCount} shown={realNoteCount} kind="of" />
               {shellCatalog && realLinkCount === 0 && indexFillBusy ? (
                 <>
                   <span className="mx-1.5 opacity-40">·</span>

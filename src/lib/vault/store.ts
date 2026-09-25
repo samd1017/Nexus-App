@@ -251,9 +251,11 @@ import {
   SHELL_ROOT_KEY,
   dropShellIds,
   fetchShellChildren,
+  fetchShellAdmit,
   fetchShellForget,
   fetchShellNote,
   mergeShellRows,
+  onShellCatalogReconciled,
   wakeShellCatalog,
   adoptBootShell,
   mountShellCatalog,
@@ -2177,6 +2179,7 @@ async function mountDesktopVaultAt(
 		},
 	});
 	syncActiveBackend("desktop");
+	listenForCatalogReconcile();
 	{
 		const st = useVaultStore.getState();
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
@@ -3818,6 +3821,18 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					await admitBrowserPaths(paths);
 				} catch {
 					/* the page reload still shows rows already in the catalog */
+				}
+			}
+			if (db && root && db !== BROWSER_SHELL_DB) {
+				// A note dropped into the folder after Ready joins title search now.
+				const admitted = await fetchShellAdmit(db, root, paths);
+				if (admitted?.length && get().shellDbPath === db) {
+					const notes = admitted.filter((r) => r.kind === "note").length;
+					get().ingestShellRows(admitted);
+					set({
+						catalogNoteCount: get().catalogNoteCount + notes,
+						catalogFolderCount: get().catalogFolderCount + (admitted.length - notes),
+					});
 				}
 			}
 			let goneIds: string[] = [];
@@ -5886,6 +5901,32 @@ noteShellReadDeferred = (parentId: string) => {
 	shellDeferredParents.add(parentId);
 	scheduleShellWake();
 };
+
+let reconcileListen: Promise<unknown> | null = null;
+
+/**
+ * After a warm Ready the native side lists the folder against the catalog.
+ * Its totals replace whatever this window last counted, lower included, and
+ * the open pages reload so notes added outside Nexus show in the list.
+ */
+function listenForCatalogReconcile(): void {
+	if (reconcileListen || !isDesktopShell()) return;
+	reconcileListen = onShellCatalogReconciled((ev) => {
+		const live = useVaultStore.getState();
+		if (!live.shellCatalog || !ev.dbPath || ev.dbPath !== live.shellDbPath) return;
+		useVaultStore.setState({
+			catalogNoteCount: ev.notes,
+			catalogFolderCount: ev.folders,
+		});
+		if (ev.added > 0 || ev.removed > 0) {
+			const open = [SHELL_ROOT_KEY, ...live.expandedFolders.filter((id) => live.nodes[id])];
+			for (const id of open.slice(0, 8)) void useVaultStore.getState().reloadShellParent(id);
+			useVaultStore.setState((s) => ({ shellLiveTick: (s.shellLiveTick ?? 0) + 1 }));
+		}
+	}).then((stop) => {
+		if (!stop) reconcileListen = null;
+	});
+}
 
 noteShellFillProgress = () => {
 	const now = Date.now();

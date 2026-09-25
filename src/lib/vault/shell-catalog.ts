@@ -696,6 +696,41 @@ export async function fetchShellForget(
   return { ids, paths: gone };
 }
 
+/** Watcher paths the catalog does not have yet, written in; the rows it added. */
+export async function fetchShellAdmit(
+  dbPath: string,
+  vaultRoot: string,
+  paths: string[],
+): Promise<ShellRow[] | null> {
+  if (browserApi(dbPath) || !dbPath || !vaultRoot || !paths.length) return null;
+  const call = await callShell<unknown[]>("vault_shell_admit", { dbPath, vaultRoot, paths: paths.slice(0, 400) });
+  if (!call.ok || !Array.isArray(call.value)) return null;
+  return call.value.map((entry) => asRow(entry as Record<string, unknown>)).filter((row) => row.id);
+}
+
+export type ShellReconciled = { dbPath: string; added: number; removed: number; notes: number; folders: number };
+
+/** Keeps the open vault's totals and pages in line after a disk reconcile. */
+export async function onShellCatalogReconciled(
+  handler: (event: ShellReconciled) => void,
+): Promise<(() => void) | null> {
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    return await listen<Record<string, unknown>>("vault-catalog-reconciled", (ev) => {
+      const raw = ev.payload ?? {};
+      handler({
+        dbPath: String(raw.dbPath ?? raw.db_path ?? ""),
+        added: num(raw.added),
+        removed: num(raw.removed),
+        notes: num(raw.notes),
+        folders: num(raw.folders),
+      });
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchShellByPaths(
   dbPath: string,
   paths: string[],

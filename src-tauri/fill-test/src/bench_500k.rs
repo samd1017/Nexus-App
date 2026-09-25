@@ -246,6 +246,48 @@ fn bench_large_queries() {
         let n = time("tags", || sc::query_tags(&r, 40)).map(|v| v.iter().take(3).map(|t| (t.tag.clone(), t.count)).collect::<Vec<_>>());
         println!("bench   top tags={n:?}");
     }
+    if std::env::var("NEXUS_BENCH_RECONCILE").is_ok() {
+        // A warm catalog against its folder: a hub dropped at the root after
+        // the fill, then the same hub removed again.
+        let root = PathBuf::from(&vault);
+        let hub = root.join("Tip25e5EmbedHub.md");
+        std::fs::write(&hub, "# Tip25e5EmbedHub\n\n![[Topic 499999]]\n").unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let db2 = PathBuf::from(&db);
+        let root2 = root.clone();
+        let pass = std::thread::spawn(move || {
+            let mut w = writer(&db2);
+            let t = Instant::now();
+            let out = crate::index_fill::reconcile_catalog_with_disk(&mut w, &root2, || false);
+            flag.store(true, Ordering::SeqCst);
+            (t.elapsed(), out)
+        });
+        let r = reader(Path::new(&db));
+        let mut suggest = Lat(Vec::new(), 0);
+        while !done.load(Ordering::SeqCst) {
+            let t = Instant::now();
+            match sc::query_suggest(&r, "topic 15", sc::SHELL_SUGGEST_LIMIT) {
+                Ok(_) => suggest.0.push(ms(t.elapsed())),
+                Err(_) => suggest.1 += 1,
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let (el, out) = pass.join().unwrap();
+        println!("bench reconcile (hub added)              {:>9.1} ms  {out:?}", ms(el));
+        suggest.line("suggest topic 15 during reconcile");
+        let found: Vec<String> = sc::query_suggest(&r, "Tip25e5EmbedHub", 5)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| h.path)
+            .collect();
+        println!("bench   switcher Tip25e5EmbedHub -> {found:?}");
+        std::fs::remove_file(&hub).unwrap();
+        let mut w = writer(Path::new(&db));
+        let t = Instant::now();
+        let out = crate::index_fill::reconcile_catalog_with_disk(&mut w, &root, || false);
+        println!("bench reconcile (hub removed)            {:>9.1} ms  {out:?}", ms(t.elapsed()));
+    }
     query_passes(Path::new(&db), Path::new(&vault));
 }
 
