@@ -24,7 +24,7 @@ import {
   useVaultStore,
   vaultOpenLocked,
 } from "@/lib/vault/store";
-import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
+import { nodeMapToken, VaultWatcher } from "@/lib/vault/watcher";
 import { startDesktopWatch } from "@/lib/vault/tauri-adapter";
 import { shouldLazyBodies } from "@/lib/vault/scale-flags";
 import { applyPrefsToDom, getPrefs, settleSystemTheme, usePrefsStore } from "@/lib/prefs/preferences";
@@ -503,7 +503,7 @@ export function AppShell() {
       setWatcherAck(null);
       setDesktopWatchAck(null);
       watcher.start(
-        () => vaultContentHash(useVaultStore.getState().nodes),
+        () => nodeMapToken(useVaultStore.getState().nodes),
         () => {
           /* zustand drives UI */
         },

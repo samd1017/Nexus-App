@@ -318,11 +318,19 @@ export class VaultWatcher {
   }
 }
 
-export function vaultContentHash(
-  nodes: Record<string, { path: string; mtime: number; content?: string }>,
-): string {
-  return Object.values(nodes)
-    .map((n) => `${n.path}:${n.mtime}:${(n.content ?? "").length}`)
-    .sort()
-    .join("|");
+const nodeMapTokens = new WeakMap<object, string>();
+let nodeMapSeq = 0;
+
+/**
+ * Poll signal for memory vaults: changes when the store swaps in a new node
+ * map, at the same cost for 12 notes or 500k.
+ */
+export function nodeMapToken(nodes: object): string {
+  let token = nodeMapTokens.get(nodes);
+  if (!token) {
+    nodeMapSeq += 1;
+    token = String(nodeMapSeq);
+    nodeMapTokens.set(nodes, token);
+  }
+  return token;
 }

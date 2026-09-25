@@ -9,6 +9,26 @@ import {
 import { formatShortcut } from "@/lib/platform";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 
+const hasNoteByMap = new WeakMap<object, boolean>();
+
+/**
+ * The selector runs on every store update, and enumerating a 500k-key map
+ * costs the whole map even when the first key is a note. Once per map.
+ */
+function nodeMapHasNote(nodes: Record<string, { kind?: string } | undefined>): boolean {
+  const hit = hasNoteByMap.get(nodes);
+  if (hit !== undefined) return hit;
+  let found = false;
+  for (const id in nodes) {
+    if (nodes[id]?.kind === "note") {
+      found = true;
+      break;
+    }
+  }
+  hasNoteByMap.set(nodes, found);
+  return found;
+}
+
 /**
  * Lightweight first-hour coach — appears once after the first vault opens.
  * Teaches the three moves that make Nexus feel magical.
@@ -25,8 +45,7 @@ export function FirstRunCoach() {
   const [visible, setVisible] = useState(false);
   const vaultEmpty = useVaultStore((s) => {
     if (s.shellCatalog) return s.catalogNoteCount <= 0 && s.rootIds.length === 0;
-    for (const id in s.nodes) if (s.nodes[id]?.kind === "note") return false;
-    return true;
+    return !nodeMapHasNote(s.nodes);
   });
 
   useEffect(() => {
