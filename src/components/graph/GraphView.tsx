@@ -50,6 +50,7 @@ import {
 } from "@/lib/graph/graph-filters";
 import { graphEmptyCopy } from "@/lib/graph/graph-empty";
 import { startFirstNote } from "@/lib/vault/first-note";
+import { clearLabelTextures, releaseSharedSpheres, updateGraphLod } from "@/lib/graph/planet-lod";
 
 /** Stable empty map so a null store snapshot cannot throw during graph render. */
 const EMPTY_GRAPH_NODES: Record<string, VaultNode> = {};
@@ -701,6 +702,12 @@ function applyLodCap(
     return keep.has(s) && keep.has(t);
   });
   return { nodes, links, lowDetail: true };
+}
+
+/** GPU copies of shared planet and plate resources belong to one renderer. */
+function releaseSharedGraphResources() {
+  clearLabelTextures();
+  releaseSharedSpheres();
 }
 
 function cancelCameraFly(graph: ForceGraph3DInstance | null) {
@@ -1679,23 +1686,13 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     let raf = 0;
     let cancelled = false;
     const t0 = performance.now();
-    let driftAt = t0;
     const drift = () => {
       if (cancelled) return;
       const now = performance.now();
-      const dt = Math.min(0.05, (now - driftAt) * 0.001);
-      driftAt = now;
       const t = (now - t0) * 0.001;
       for (const layer of parallaxLayers) {
         layer.obj.rotation.y = t * layer.speed;
       }
-      nodeObjMapRef.current.forEach((obj) => {
-        for (const child of obj.children) {
-          const data = child.userData as { nexusRing?: number; nexusCloud?: number };
-          if (typeof data.nexusRing === "number") child.rotation.z += data.nexusRing * dt;
-          if (typeof data.nexusCloud === "number") child.rotation.y += data.nexusCloud * dt;
-        }
-      });
       try {
         const controls = graph.controls() as {
           autoRotate?: boolean;
@@ -1793,6 +1790,15 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     };
     el.addEventListener("wheel", onWheelZoom, { passive: false, capture: true });
 
+    const sceneForLod = graph.scene();
+    sceneForLod.onBeforeRender = (renderer, _scene, camera) => {
+      updateGraphLod(
+        (graph.graphData()?.nodes ?? []) as GNode[],
+        camera,
+        renderer.domElement.height,
+      );
+    };
+
     graphRef.current = graph;
     setEngineReady(true);
 
@@ -1859,6 +1865,7 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
       el.removeEventListener("pointerdown", hideHint);
       el.removeEventListener("pointercancel", clearPointerHover);
       el.removeEventListener("wheel", onWheelZoom, true);
+      sceneForLod.onBeforeRender = () => {};
       interactCleanup?.();
       flyGenRef.current += 1;
       if (zoomRaf) cancelAnimationFrame(zoomRaf);
@@ -1882,6 +1889,11 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
             else if (mat) mat.dispose();
           });
         }
+      } catch {
+        /* ok */
+      }
+      try {
+        releaseSharedGraphResources();
       } catch {
         /* ok */
       }
@@ -1930,6 +1942,10 @@ export const GraphView = memo(function GraphView({ mode, className }: Props) {
     };
     lastGraphDataRef.current = displayData;
     lastGraphTopoKeyRef.current = nextKey;
+    const liveIds = new Set(merged.nodes.map((n) => n.id));
+    for (const id of nodeObjMapRef.current.keys()) {
+      if (!liveIds.has(id)) nodeObjMapRef.current.delete(id);
+    }
     try {
       graphRef.current.graphData(merged);
     } catch (err) {

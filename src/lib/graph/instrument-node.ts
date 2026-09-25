@@ -5,6 +5,13 @@
  */
 
 import * as THREE from "three";
+import {
+  cachedLabelTexture,
+  rememberLabelTexture,
+  unitSphere,
+  type LabelSpec,
+  type PlanetLod,
+} from "./planet-lod";
 
 export type InstrumentKind = "note" | "folder" | "aggregate";
 
@@ -107,32 +114,49 @@ void main() {
 }
 `;
 
+const keepProgram = () => {};
+
+/**
+ * Node teardown disposes every material. Once the last planet of a level is
+ * gone, three.js would free the shared shader program and the next level
+ * would compile it again. Materials stay collectable; only that release is
+ * skipped.
+ */
+function retainProgram<M extends THREE.Material>(material: M): M {
+  material.dispose = keepProgram;
+  return material;
+}
+
 function bodyMaterial(color: THREE.Color, opacity: number): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: color.clone() },
-      uOpacity: { value: opacity },
-    },
-    vertexShader: BODY_VERT,
-    fragmentShader: BODY_FRAG,
-    transparent: opacity < 0.98,
-    depthWrite: opacity > 0.5,
-    toneMapped: false,
-  });
+  return retainProgram(
+    new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: color.clone() },
+        uOpacity: { value: opacity },
+      },
+      vertexShader: BODY_VERT,
+      fragmentShader: BODY_FRAG,
+      transparent: opacity < 0.98,
+      depthWrite: opacity > 0.5,
+      toneMapped: false,
+    }),
+  );
 }
 
 function limbMaterial(color: THREE.Color, opacity: number): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: color.clone() },
-      uOpacity: { value: opacity },
-    },
-    vertexShader: BODY_VERT,
-    fragmentShader: LIMB_FRAG,
-    transparent: true,
-    depthWrite: false,
-    toneMapped: false,
-  });
+  return retainProgram(
+    new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: color.clone() },
+        uOpacity: { value: opacity },
+      },
+      vertexShader: BODY_VERT,
+      fragmentShader: LIMB_FRAG,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
 }
 
 function truncateLabel(name: string | undefined | null, max = 22): string {
@@ -141,12 +165,18 @@ function truncateLabel(name: string | undefined | null, max = 22): string {
   return clean.slice(0, max - 1) + "…";
 }
 
+let fontRead: { at: number; stack: string } | null = null;
+
+/** Read once per second at most; a rebuild of 400 plates must not restyle 400 times. */
 function fontStack(): string {
   if (typeof document === "undefined") return "system-ui, sans-serif";
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if (fontRead && now - fontRead.at < 1000) return fontRead.stack;
   const stack = getComputedStyle(document.documentElement)
     .getPropertyValue("--font-sans")
     .trim();
-  return stack || "system-ui, sans-serif";
+  fontRead = { at: now, stack: stack || "system-ui, sans-serif" };
+  return fontRead.stack;
 }
 
 type LabelRole = "active" | "hub" | "readout" | "idle";
@@ -208,18 +238,11 @@ function makeLabel(
   const weight = role === "active" ? "600" : "500";
   const fill = dim ? "#d5dee8" : role === "active" ? "#f7fbff" : "#eef3f8";
   const glyphs = Array.from(text);
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return new THREE.Object3D();
-
-  ctx.font = `${weight} ${fontPx}px ${fontStack()}`;
-  const widths = glyphWidths(ctx, glyphs);
+  const font = `${weight} ${fontPx}px ${fontStack()}`;
   const tracking = fontPx * trackingEm;
-  const textW =
-    widths.reduce((sum, w) => sum + w, 0) + tracking * Math.max(0, glyphs.length - 1);
-  const sample = ctx.measureText(text || "N");
-  const ascent = sample.actualBoundingBoxAscent || fontPx * 0.74;
-  const descent = sample.actualBoundingBoxDescent || fontPx * 0.2;
+  const metrics = plateMetrics(text, glyphs, font, fontPx, tracking);
+  if (!metrics) return new THREE.Object3D();
+  const { widths, textW, ascent, descent } = metrics;
   const padX = role === "readout" ? 16 : 14;
   const padY = 11;
   const rail = role === "active" ? 7 : role === "hub" ? 5 : 0;
@@ -227,42 +250,61 @@ function makeLabel(
   const boxH = Math.ceil(ascent + descent + padY * 2);
   const bleed = 3;
   const scale = 2;
-  canvas.width = Math.ceil((boxW + bleed * 2) * scale);
-  canvas.height = Math.ceil((boxH + bleed * 2) * scale);
-  ctx.setTransform(scale, 0, 0, scale, bleed * scale, bleed * scale);
-  ctx.font = `${weight} ${fontPx}px ${fontStack()}`;
-  ctx.textBaseline = "alphabetic";
+  const canvasW = Math.ceil((boxW + bleed * 2) * scale);
+  const canvasH = Math.ceil((boxH + bleed * 2) * scale);
 
-  drawPlate(ctx, boxW, boxH, 5);
-  if (role === "active") {
-    ctx.fillStyle = "rgba(232, 240, 248, 0.96)";
-    ctx.fillRect(6, 8, 2.5, boxH - 16);
-  } else if (role === "hub") {
-    const mark = boxH * 0.36;
-    ctx.fillStyle = "rgba(206, 220, 232, 0.88)";
-    ctx.fillRect(6, (boxH - mark) / 2, 2, mark);
+  const draw = (): THREE.Texture | null => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    canvas.width = canvasW;
+    canvas.height = canvasH;
+    ctx.setTransform(scale, 0, 0, scale, bleed * scale, bleed * scale);
+    ctx.font = font;
+    ctx.textBaseline = "alphabetic";
+
+    drawPlate(ctx, boxW, boxH, 5);
+    if (role === "active") {
+      ctx.fillStyle = "rgba(232, 240, 248, 0.96)";
+      ctx.fillRect(6, 8, 2.5, boxH - 16);
+    } else if (role === "hub") {
+      const mark = boxH * 0.36;
+      ctx.fillStyle = "rgba(206, 220, 232, 0.88)";
+      ctx.fillRect(6, (boxH - mark) / 2, 2, mark);
+    }
+
+    const baseline = (boxH - (ascent + descent)) / 2 + ascent;
+    ctx.fillStyle = fill;
+    let cursor = padX + rail + (boxW - padX * 2 - rail - textW) / 2;
+    glyphs.forEach((glyph, i) => {
+      ctx.fillText(glyph, cursor, baseline);
+      cursor += widths[i] + tracking;
+    });
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+    return texture;
+  };
+
+  const key = `${role}|${dim ? 1 : 0}|${font}|${text}`;
+  const always = role === "active";
+  let map = cachedLabelTexture(key);
+  if (!map && always) {
+    map = draw();
+    if (map) map = rememberLabelTexture(key, map);
   }
-
-  const baseline = (boxH - (ascent + descent)) / 2 + ascent;
-  ctx.fillStyle = fill;
-  let cursor = padX + rail + (boxW - padX * 2 - rail - textW) / 2;
-  glyphs.forEach((glyph, i) => {
-    ctx.fillText(glyph, cursor, baseline);
-    cursor += widths[i] + tracking;
-  });
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  texture.needsUpdate = true;
-  const material = new THREE.SpriteMaterial({
-    map: texture,
-    transparent: true,
-    depthTest: false,
-    depthWrite: false,
-    toneMapped: false,
-    sizeAttenuation: true,
-  });
+  const material = retainProgram(
+    new THREE.SpriteMaterial({
+      map,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+      sizeAttenuation: true,
+    }),
+  );
   const sprite = new THREE.Sprite(material);
   const glyphH =
     role === "active"
@@ -273,13 +315,47 @@ function makeLabel(
           ? full ? 1.52 : 1.32
           : full ? 1.58 : 1.36;
   const worldH = glyphH * (boxH / fontPx);
-  const worldW = worldH * (canvas.width / canvas.height);
+  const worldW = worldH * (canvasW / canvasH);
   sprite.scale.set(worldW, worldH, 1);
   sprite.position.y = radius * 1.34 + worldH * 0.5 + 0.55;
   sprite.renderOrder = role === "active" ? 20 : 8;
   sprite.material.opacity = dim ? 0.88 : 1;
-  sprite.userData.nexusLabel = true;
+  sprite.visible = !!map;
+  sprite.userData.nexusLabel = { key, draw, always } satisfies LabelSpec;
   return sprite;
+}
+
+type PlateMetrics = { widths: number[]; textW: number; ascent: number; descent: number };
+
+const plateMetricCache = new Map<string, PlateMetrics>();
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+
+function plateMetrics(
+  text: string,
+  glyphs: string[],
+  font: string,
+  fontPx: number,
+  tracking: number,
+): PlateMetrics | null {
+  const key = `${font}\u0000${tracking}\u0000${text}`;
+  const hit = plateMetricCache.get(key);
+  if (hit) return hit;
+  if (measureCtx === undefined) measureCtx = document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return null;
+  measureCtx.font = font;
+  const widths = glyphWidths(measureCtx, glyphs);
+  const textW =
+    widths.reduce((sum, w) => sum + w, 0) + tracking * Math.max(0, glyphs.length - 1);
+  const sample = measureCtx.measureText(text || "N");
+  const metrics: PlateMetrics = {
+    widths,
+    textW,
+    ascent: sample.actualBoundingBoxAscent || fontPx * 0.74,
+    descent: sample.actualBoundingBoxDescent || fontPx * 0.2,
+  };
+  if (plateMetricCache.size > 4000) plateMetricCache.clear();
+  plateMetricCache.set(key, metrics);
+  return metrics;
 }
 
 /**
@@ -341,21 +417,29 @@ export function createInstrumentNode(
         ? 0.55
         : 0.96;
 
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, segs, segs),
-    bodyMaterial(tint, bodyOpacity),
-  );
+  // Unit spheres scaled to size: the shaders normalize normals, so a scaled
+  // unit sphere draws the same pixels as a sphere built at this radius.
+  const body = new THREE.Mesh(unitSphere(segs, segs), bodyMaterial(tint, bodyOpacity));
+  body.scale.setScalar(radius);
   body.userData.nexusCore = true;
+  body.userData.nexusLod = { radius, topW: segs, topH: segs, current: segs } satisfies PlanetLod;
   body.renderOrder = 1;
   group.add(body);
 
   if (!isGhost) {
     const haze = new THREE.Color().setRGB(0.42, 0.68, 1.0);
     const limbMat = limbMaterial(haze, dim ? 0.28 : isActive ? 1 : 0.95);
-    const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 1.34, Math.max(20, segs - 2), Math.max(16, segs - 4)),
-      limbMat,
-    );
+    const atmoRadius = radius * 1.34;
+    const atmoW = Math.max(20, segs - 2);
+    const atmoH = Math.max(16, segs - 4);
+    const atmo = new THREE.Mesh(unitSphere(atmoW, atmoH), limbMat);
+    atmo.scale.setScalar(atmoRadius);
+    atmo.userData.nexusLod = {
+      radius: atmoRadius,
+      topW: atmoW,
+      topH: atmoH,
+      current: atmoW,
+    } satisfies PlanetLod;
     atmo.renderOrder = 2;
     group.add(atmo);
   }
@@ -363,12 +447,14 @@ export function createInstrumentNode(
   if (isActive || isHover) {
     const indicator = new THREE.Mesh(
       new THREE.TorusGeometry(radius * 1.2, Math.max(0.02, radius * 0.008), 4, full ? 56 : 40),
-      new THREE.MeshBasicMaterial({
-        color: new THREE.Color().setHex(0x6a7e92),
-        transparent: true,
-        opacity: 0.55,
-        depthWrite: false,
-      }),
+      retainProgram(
+        new THREE.MeshBasicMaterial({
+          color: new THREE.Color().setHex(0x6a7e92),
+          transparent: true,
+          opacity: 0.55,
+          depthWrite: false,
+        }),
+      ),
     );
     indicator.rotation.x = Math.PI / 2;
     indicator.renderOrder = 3;
