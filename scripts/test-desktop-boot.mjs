@@ -1720,6 +1720,33 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   // One word of the query no longer glues the rest together ("topic 15" was "topic15").
   assert.equal(catSrc.includes('let match_q = format!("\\"{token}\\"*");'), false);
 }
+// The quick switcher paints title-index hits first, in index order, as soon as
+// they arrive; the ranked search runs once typing pauses and only adds what the
+// titles missed. Runtime for the order, source pins for the wiring.
+{
+  const { switcherHits } = await import(new URL("../src/lib/search/switcher-order.ts", import.meta.url).href);
+  const t = (id) => ({ noteId: id });
+  const titles = [t("Topic 15"), t("Topic 150"), t("Topic 1500")];
+  const ranked = [t("Topic 150001"), t("Topic 15"), t("Topic 150008")];
+  // A ranking that would put an inbox note first only orders the extras.
+  const rank = (extra) => [...extra].reverse();
+  assert.deepEqual(switcherHits(titles, ranked, 40, rank).map((h) => h.noteId), ["Topic 15", "Topic 150", "Topic 1500", "Topic 150008", "Topic 150001"]);
+  assert.deepEqual(switcherHits(titles, ranked, 2, rank).map((h) => h.noteId), ["Topic 15", "Topic 150"]);
+  assert.deepEqual(switcherHits([], ranked, 40).map((h) => h.noteId), ["Topic 150001", "Topic 15", "Topic 150008"]);
+  const at = paletteSrc.indexOf("const typed = (searchText || raw).trim();");
+  assert.ok(at > 0);
+  const block = paletteSrc.slice(at, paletteSrc.indexOf("return () => {", at));
+  assert.equal(block.includes("const settled = debouncedSearch.trim() === raw.trim();"), true);
+  assert.equal(block.includes("const ftsStarted = settled && ftsAvailable;"), true);
+  assert.equal(block.includes("if (catalogSettled && (ftsSettled || catalogHits.length > 0)) setNoteSearchPending(false);"), true);
+  assert.equal(block.includes("void fetchShellSuggest(db, typed, PALETTE_RESULT_LIMIT)"), true);
+  assert.equal(block.includes("mergeCatalogAndFtsHits"), false);
+  // The ranked search has its own read-only connection, so a title suggestion never waits on it.
+  const idxSrc2 = readFileSync(new URL("../src-tauri/src/durable_index.rs", import.meta.url), "utf8");
+  assert.equal(idxSrc2.includes("if let Some(found) = with_search_reader(&db_path, |conn| search_tx(conn, &query, limit)) {"), true);
+  assert.equal(idxSrc2.includes("rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY"), true);
+  assert.equal(idxSrc2.includes("drop_search_reader(&db_path);"), true);
+}
 // The saved-page Ready shows no page count beside it.
 assert.equal(shellSrc.includes('!(isReady && progress.message.includes("titles and open notes"))'), true);
 

@@ -750,6 +750,7 @@ pub fn vault_index_close(
     }
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     guard.conns.remove(&db_path);
+    drop_search_reader(&db_path);
     Ok(OkResult { ok: true })
 }
 
@@ -839,7 +840,53 @@ pub fn vault_index_search(
     limit: Option<i64>,
 ) -> Result<Vec<SearchHitDto>, String> {
     let limit = limit.unwrap_or(40);
+    // A ranked search can take its whole budget. On the shell connection that
+    // queued the next keystroke's title suggestions behind it.
+    if let Some(found) = with_search_reader(&db_path, |conn| search_tx(conn, &query, limit)) {
+        return found;
+    }
     with_shell_conn(&state, &db_path, |conn| search_tx(conn, &query, limit))
+}
+
+fn search_readers() -> &'static Mutex<HashMap<String, Connection>> {
+    static READERS: OnceLock<Mutex<HashMap<String, Connection>>> = OnceLock::new();
+    READERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Full-text search on its own read-only connection (WAL readers do not block
+/// each other or the writer). Opened without the shell's journal handling,
+/// which must not run beside live connections. None when it cannot open.
+fn with_search_reader<T>(
+    db_path: &str,
+    f: impl FnOnce(&Connection) -> Result<T, String>,
+) -> Option<Result<T, String>> {
+    let mut guard = search_readers().lock().ok()?;
+    if !guard.contains_key(db_path) {
+        if !Path::new(db_path).is_file() {
+            return None;
+        }
+        let conn = Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .ok()?;
+        let _ = conn.execute_batch("PRAGMA cache_size=-8192; PRAGMA temp_store=MEMORY;");
+        guard.insert(db_path.to_string(), conn);
+    }
+    let conn = guard.get(db_path)?;
+    let _ = conn.busy_timeout(Duration::from_millis(crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS));
+    let out = f(conn);
+    if out.is_err() {
+        guard.remove(db_path);
+        return None;
+    }
+    Some(out)
+}
+
+fn drop_search_reader(db_path: &str) {
+    if let Ok(mut guard) = search_readers().lock() {
+        guard.remove(db_path);
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

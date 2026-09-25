@@ -3,6 +3,7 @@ import { Command } from "cmdk";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { revealFolderInList, revealInFlight } from "@/lib/chrome/reveal-list";
 import { diskFolderRow, folderForEnter } from "@/lib/search/folder-enter";
+import { switcherHits } from "@/lib/search/switcher-order";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
   FileText,
@@ -92,7 +93,6 @@ import {
   getSearchIndexState,
   isNoteHeadSearchLive,
   isTitleSearchLive,
-  mergeCatalogAndFtsHits,
   searchEmptyStateMessage,
   searchEmptyStatus,
 } from "@/lib/vault/sqlite-fill-progress";
@@ -600,39 +600,44 @@ function CommandPaletteOpen() {
           .map((hit) =>
             asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path),
           );
+      // Titles come from the title index already in quick-switcher order
+      // ("Topic 15", "Topic 150"…) and paint as soon as they arrive. The ranked
+      // search runs once typing pauses and only adds what the titles missed; it
+      // never reorders them or holds the first paint.
+      const typed = (searchText || raw).trim();
+      const settled = debouncedSearch.trim() === raw.trim();
       let catalogHits: SearchHit[] = [];
       let ftsHits: SearchHit[] = [];
       let catalogReady = false;
-      const ftsStarted = Boolean(idx?.ready && idx.searchFtsAsync);
+      const ftsAvailable = Boolean(idx?.ready && idx.searchFtsAsync);
+      const ftsStarted = settled && ftsAvailable;
       let catalogSettled = false;
-      let ftsSettled = !ftsStarted;
+      // Still typing: the ranked search comes with the pause, so no hits yet
+      // is not a miss yet.
+      let ftsSettled = !ftsAvailable;
       setNoteSearchPending(true);
       const settleIfDone = () => {
-        if (cancelled || !catalogSettled || !ftsSettled) return;
-        setNoteSearchPending(false);
+        if (cancelled) return;
+        if (catalogSettled && (ftsSettled || catalogHits.length > 0)) setNoteSearchPending(false);
       };
       const publish = () => {
         if (cancelled) return;
         if (!catalogReady && ftsHits.length === 0) return;
-        const merged = mergeCatalogAndFtsHits(catalogHits, ftsHits, PALETTE_RESULT_LIMIT);
-        // An empty index reply must not hide titles already on the open page.
-        if (merged.length === 0) return;
-        setNoteSearchFailed(false);
-        if (!titleLive || ftsHits.length === 0) {
-          setAsyncHits(merged);
-          return;
-        }
         const recentIds = vaultId
           ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT)
           : [];
-        setAsyncHits(
-          fuseSearchHits(merged, {
-            recentIds,
-            activeNoteId,
-            neighborIds: [],
-            queryText: needle,
-          }),
+        const merged = switcherHits(
+          catalogHits,
+          ftsHits,
+          PALETTE_RESULT_LIMIT,
+          titleLive
+            ? (extra) => fuseSearchHits(extra, { recentIds, activeNoteId, neighborIds: [], queryText: typed })
+            : undefined,
         );
+        // An empty index reply must not hide titles already on the open page.
+        if (merged.length === 0) return;
+        setNoteSearchFailed(false);
+        setAsyncHits(merged);
       };
       const applyCatalog = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
         if (cancelled || !hits) return;
@@ -646,7 +651,7 @@ function CommandPaletteOpen() {
         setNoteSearchFailed(true);
         settleIfDone();
       };
-      void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
+      void fetchShellSuggest(db, typed, PALETTE_RESULT_LIMIT).then((hits) => {
         if (cancelled) return;
         if (!hits) {
           markCatalogMissed();
@@ -655,7 +660,7 @@ function CommandPaletteOpen() {
             if (cancelled) return;
             catalogSettled = false;
             setNoteSearchPending(true);
-            void fetchShellSuggest(db, needle, PALETTE_RESULT_LIMIT).then((rows) => {
+            void fetchShellSuggest(db, typed, PALETTE_RESULT_LIMIT).then((rows) => {
               if (cancelled) return;
               if (!rows) {
                 markCatalogMissed();
@@ -675,12 +680,12 @@ function CommandPaletteOpen() {
       if (ftsStarted) {
         void (async () => {
           try {
-            const rows = await searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT);
+            const rows = await searchWithBackendAsync(nodes, typed, PALETTE_RESULT_LIMIT);
             if (cancelled) return;
             ftsHits = rows;
             publish();
           } catch {
-            if (!cancelled) setNoteSearchFailed(true);
+            if (!cancelled && catalogHits.length === 0) setNoteSearchFailed(true);
           } finally {
             ftsSettled = true;
             settleIfDone();
