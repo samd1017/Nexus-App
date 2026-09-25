@@ -2537,7 +2537,7 @@ pub struct CatalogReconcile {
 
 pub const RECONCILE_ADD_BATCH: usize = 200;
 const RECONCILE_PAGE: i64 = 2_000;
-const RECONCILE_DELETE_BATCH: usize = 64;
+const RECONCILE_DELETE_BATCH: usize = 512;
 
 /// Every note and folder under the vault by the fill's rules, sorted by
 /// byte order (the catalog's `path` order). None when a directory could not
@@ -2672,10 +2672,21 @@ pub fn reconcile_catalog_with_disk(
     conn: &mut Connection,
     root: &Path,
     mut is_cancelled: impl FnMut() -> bool,
+    mut on_listed: impl FnMut(&CatalogReconcile),
 ) -> CatalogReconcile {
     let mut out = CatalogReconcile::default();
     let listing = list_vault_paths(root, &mut is_cancelled);
     if let Some((disk_notes, disk_dirs)) = listing {
+        // The folder is the count. Say it now; adding and dropping rows can
+        // take a while on a folder that changed a lot.
+        if !disk_notes.is_empty() {
+            on_listed(&CatalogReconcile {
+                notes: disk_notes.len() as i64,
+                folders: disk_dirs.len() as i64,
+                complete: true,
+                ..CatalogReconcile::default()
+            });
+        }
         let notes_diff = diff_catalog_kind(conn, "note", &disk_notes);
         let dirs_diff = diff_catalog_kind(conn, "folder", &disk_dirs);
         if let (Ok((new_notes, gone_notes)), Ok((new_dirs, gone_dirs))) = (notes_diff, dirs_diff) {
@@ -3763,7 +3774,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         // A warm reopen answers from the catalog and does not list the folder.
         let _ = fill_until(&mut conn, &vault, false, FillUntil::Deep, &[]);
         assert!(!fts_path_at(&db, "Tip25e5EmbedHub.md"), "warm Ready does not see new files");
-        let out = reconcile_catalog_with_disk(&mut conn, &vault, || false);
+        let mut listed = Vec::new();
+        let out = reconcile_catalog_with_disk(&mut conn, &vault, || false, |l| listed.push(l.notes));
+        assert_eq!(listed, vec![before + 1], "the folder's count is said before rows change");
         assert!(out.complete);
         assert_eq!(out.added, 2);
         assert_eq!(out.removed, 1);
@@ -3798,17 +3811,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             .unwrap();
         assert_eq!(tags, 1, "a reconciled note has its head read");
         // Nothing changed since: a second pass is a no-op.
-        let again = reconcile_catalog_with_disk(&mut conn, &vault, || false);
+        let again = reconcile_catalog_with_disk(&mut conn, &vault, || false, |_| {});
         assert_eq!((again.added, again.removed, again.notes), (0, 0, before + 1));
         // A folder that lists as empty does not wipe the catalog.
         let (empty, _) = temp_pair("reconcile-empty");
-        let blank = reconcile_catalog_with_disk(&mut conn, &empty, || false);
+        let blank = reconcile_catalog_with_disk(&mut conn, &empty, || false, |_| {});
         assert!(!blank.complete);
         assert_eq!(blank.removed, 0);
         assert_eq!(live_note_count(&conn), before + 1);
         // Cancelled: nothing is removed.
         fs::remove_file(vault.join("Tip25e5EmbedHub.md")).unwrap();
-        let stopped = reconcile_catalog_with_disk(&mut conn, &vault, || true);
+        let stopped = reconcile_catalog_with_disk(&mut conn, &vault, || true, |_| {});
         assert!(!stopped.complete);
         assert_eq!(stopped.removed, 0);
     }

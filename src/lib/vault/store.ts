@@ -2179,7 +2179,6 @@ async function mountDesktopVaultAt(
 		},
 	});
 	syncActiveBackend("desktop");
-	listenForCatalogReconcile();
 	{
 		const st = useVaultStore.getState();
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
@@ -5927,6 +5926,9 @@ function listenForCatalogReconcile(): void {
 		if (!stop) reconcileListen = null;
 	});
 }
+// A relaunch into the last vault mounts on another path than Open; listen
+// before either, so no mount misses the recount.
+listenForCatalogReconcile();
 
 noteShellFillProgress = () => {
 	const now = Date.now();

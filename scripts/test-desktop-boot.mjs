@@ -2008,7 +2008,7 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(fillRs.includes("let trust_removals = !disk_notes.is_empty() || gone_notes.is_empty();"), true);
   assert.equal(fillRs.includes("if root.join(path).exists() {\n                continue;"), true, "a path written back meanwhile is kept");
   const store4 = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
-  assert.equal(store4.includes('syncActiveBackend("desktop");\n\tlistenForCatalogReconcile();'), true);
+  assert.equal(store4.includes("// before either, so no mount misses the recount.\nlistenForCatalogReconcile();"), true, "every mount path hears the recount");
   assert.equal(store4.includes("catalogNoteCount: ev.notes,\n\t\t\tcatalogFolderCount: ev.folders,"), true, "the reconciled total replaces, lower included");
   assert.equal(store4.includes("if (!live.shellCatalog || !ev.dbPath || ev.dbPath !== live.shellDbPath) return;"), true, "another vault's total is ignored");
   assert.equal(store4.includes("const admitted = await fetchShellAdmit(db, root, paths);"), true);

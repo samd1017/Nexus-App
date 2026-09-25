@@ -1183,24 +1183,28 @@ fn start_links_pass(app: tauri::AppHandle, db_path: String, vault_root: String) 
                 return Ok(());
             }
             let mut conn = open_conn(&db_path)?;
-            let reconciled = crate::index_fill::reconcile_catalog_with_disk(
-                &mut conn,
-                Path::new(&vault_root),
-                || stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path),
-            );
-            if reconciled.complete {
-                crate::shell_catalog::set_page_snapshot_notes(&db_path, reconciled.notes);
+            let publish = |r: &crate::index_fill::CatalogReconcile| {
                 use tauri::Emitter;
                 let _ = app.emit(
                     "vault-catalog-reconciled",
                     CatalogReconciledEvent {
                         db_path: db_path.clone(),
-                        added: reconciled.added,
-                        removed: reconciled.removed,
-                        notes: reconciled.notes,
-                        folders: reconciled.folders,
+                        added: r.added,
+                        removed: r.removed,
+                        notes: r.notes,
+                        folders: r.folders,
                     },
                 );
+            };
+            let reconciled = crate::index_fill::reconcile_catalog_with_disk(
+                &mut conn,
+                Path::new(&vault_root),
+                || stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path),
+                |listed| publish(listed),
+            );
+            if reconciled.complete {
+                crate::shell_catalog::set_page_snapshot_notes(&db_path, reconciled.notes);
+                publish(&reconciled);
             }
             if crate::index_fill::link_coverage(&conn).complete {
                 return Ok(());

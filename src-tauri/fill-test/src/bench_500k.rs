@@ -259,7 +259,7 @@ fn bench_large_queries() {
         let pass = std::thread::spawn(move || {
             let mut w = writer(&db2);
             let t = Instant::now();
-            let out = crate::index_fill::reconcile_catalog_with_disk(&mut w, &root2, || false);
+            let out = crate::index_fill::reconcile_catalog_with_disk(&mut w, &root2, || false, |_| {});
             flag.store(true, Ordering::SeqCst);
             (t.elapsed(), out)
         });
@@ -285,7 +285,7 @@ fn bench_large_queries() {
         std::fs::remove_file(&hub).unwrap();
         let mut w = writer(Path::new(&db));
         let t = Instant::now();
-        let out = crate::index_fill::reconcile_catalog_with_disk(&mut w, &root, || false);
+        let out = crate::index_fill::reconcile_catalog_with_disk(&mut w, &root, || false, |_| {});
         println!("bench reconcile (hub removed)            {:>9.1} ms  {out:?}", ms(t.elapsed()));
     }
     query_passes(Path::new(&db), Path::new(&vault));
