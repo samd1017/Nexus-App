@@ -51,7 +51,7 @@ export function SourcePreview({
   return (
     <div
       ref={hostRef}
-      className={reading ? "nexus-source-preview note-editor outline-none" : "nexus-source-preview note-editor"}
+      className="nexus-source-preview note-editor"
       tabIndex={reading ? -1 : undefined}
       aria-label={reading ? "Reading view" : undefined}
       onClick={(e) => {

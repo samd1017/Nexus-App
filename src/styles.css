@@ -2010,6 +2010,11 @@
   overflow: auto;
   padding: 20px 28px 48px;
 }
+/* The reading view takes focus only so the keys scroll it, like the editor it replaces. */
+[data-reading-view] .nexus-source-preview:focus,
+[data-reading-view] .nexus-source-preview:focus-visible {
+  outline: none;
+}
 .nexus-wikilink-hover {
   position: fixed;
   z-index: 96;
