@@ -1050,6 +1050,9 @@ export function SettingsPanel() {
                 <p className="mt-1.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
                   Local-first Markdown notes for humans and agents.
                 </p>
+                <p className="mt-1 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                  No plugin API in this beta — plain Markdown + built-in query blocks.
+                </p>
                 <div className="mt-1 text-[12px] text-[var(--text-muted)]">
                   Version {NEXUS_VERSION}
                 </div>

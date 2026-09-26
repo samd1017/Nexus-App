@@ -12,6 +12,7 @@
 - Mobile Tauri shell polish
 - Multiplayer / sync servers
 - Full Obsidian plugin parity
+- No plugin API in this beta — plain Markdown + built-in query blocks
 - Semantic embedding index (vector rerank)
 - Signed / notarized installers (unsigned Alpha only)
 - Background bulk indexer UI

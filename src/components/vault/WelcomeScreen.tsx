@@ -207,6 +207,12 @@ export function WelcomeScreen() {
             Plain Markdown on your machine. Search that cites the source.
             A graph you can fly. No account.
           </p>
+          <p
+            className="mt-2 max-w-lg text-[13.5px] leading-relaxed text-[var(--text-secondary)]"
+            style={{ animation: "welcomeFadeUp 520ms ease-out 180ms both" }}
+          >
+            No plugin API in this beta — plain Markdown + built-in query blocks.
+          </p>
 
           {!fsaOk && !desktop ? (
             <div className="mt-6 flex flex-wrap items-start gap-3 rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_40%,var(--border))] bg-[var(--accent-dim)] px-4 py-3">
