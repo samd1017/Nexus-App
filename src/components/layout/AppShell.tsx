@@ -545,7 +545,7 @@ export function AppShell() {
         <TitleBar />
         <OpenProgressBanner />
         <ChromeFsaLimitBanner />
-        <main id="main-content" tabIndex={-1} className="min-h-0 flex-1 outline-none">
+        <main id="main-content" tabIndex={-1} className="min-h-0 flex-1">
           <WelcomeScreen />
         </main>
         <Toast />
@@ -571,7 +571,7 @@ export function AppShell() {
       <main
         id="main-content"
         tabIndex={-1}
-        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
+        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
       >
         {graphMode !== "fullscreen" ? <LeftSidebar /> : null}
         {graphMode !== "fullscreen" ? <Workspace /> : null}
