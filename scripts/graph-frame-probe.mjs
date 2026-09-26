@@ -8,11 +8,12 @@
  * and right after open while the indexes are still filling.
  *
  * Run: node scripts/graph-frame-probe.mjs [baseUrl] --notes 100000,500000
- *      [--out /opt/cursor/artifacts/graph/frame-probe.json] [--shots dir]
+ *      [--out path] [--shots dir]
  */
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { artifactPath } from "./artifact-dir.mjs";
 import { checkedUrl } from "./browser-guard.mjs";
 
 const argv = process.argv.slice(2);
@@ -25,7 +26,7 @@ const SIZES = String(flag("--notes", "100000"))
   .split(",")
   .map((n) => Number(n.trim()))
   .filter((n) => Number.isFinite(n) && n > 0);
-const OUT = flag("--out", "/opt/cursor/artifacts/graph/frame-probe.json");
+const OUT = flag("--out", artifactPath("graph", "frame-probe.json"));
 const SHOTS = flag("--shots", "");
 const SAMPLE_MS = Number(flag("--sample-ms", "3000"));
 /** Render with the desktop shell's graph settings (no MSAA, pixel ratio 1). */
