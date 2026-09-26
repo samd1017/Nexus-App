@@ -20,6 +20,8 @@ export type PhysicsIntensity = "calm" | "standard" | "energetic";
 export type DefaultEditorMode = "visual" | "source" | "split";
 export type SavedSearch = { id: string; name: string; query: string };
 export type DefaultGraphView = "panel" | "hidden";
+/** Local 2D neighborhood is the note-context default. 3D is opt-in Explore. */
+export type GraphSurface = "local" | "explore";
 /** Which note to open when a vault mounts */
 export type LaunchNoteMode = "today" | "last" | "smart";
 export type ThemeMode = "dark" | "light" | "system";
@@ -33,6 +35,8 @@ export interface NexusPrefs {
   editorFontSize: number;
   spellCheck: boolean;
   defaultGraphView: DefaultGraphView;
+  /** Flat neighborhood around the open note, or the 3D graph. */
+  graphSurface: GraphSurface;
   physicsIntensity: PhysicsIntensity;
   confirmDelete: boolean;
   openLastVault: boolean;
@@ -99,6 +103,7 @@ export const DEFAULT_PREFS: NexusPrefs = {
   editorFontSize: 15,
   spellCheck: false,
   defaultGraphView: "panel",
+  graphSurface: "local",
   physicsIntensity: "standard",
   confirmDelete: true,
   openLastVault: true,
@@ -272,6 +277,7 @@ function snapshotPrefs(s: NexusPrefs): NexusPrefs {
     editorFontSize: s.editorFontSize,
     spellCheck: s.spellCheck,
     defaultGraphView: s.defaultGraphView,
+    graphSurface: s.graphSurface === "explore" ? "explore" : "local",
     physicsIntensity: s.physicsIntensity,
     confirmDelete: s.confirmDelete,
     openLastVault: s.openLastVault,
@@ -409,6 +415,7 @@ export const usePrefsStore = create<PrefsStore>()(
             p.theme === "light" || p.theme === "system" || p.theme === "dark"
               ? p.theme
               : DEFAULT_PREFS.theme,
+          graphSurface: p.graphSurface === "explore" ? "explore" : "local",
           hotkeyOverrides: sanitizeHotkeyOverrides(p.hotkeyOverrides),
           savedSearches: Array.isArray(p.savedSearches)
             ? (p.savedSearches as SavedSearch[])

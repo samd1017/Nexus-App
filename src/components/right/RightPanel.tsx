@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { noteBodyFailed, useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
@@ -22,11 +22,7 @@ import { PulseRail } from "@/components/right/PulseRail";
 import { AttachmentsRail } from "@/components/right/AttachmentsRail";
 import { HistoryRail } from "@/components/right/HistoryRail";
 import { ErrorBoundary } from "@/components/chrome/ErrorBoundary";
-
-const GraphView = lazy(async () => {
-  const m = await import("@/components/graph/GraphView");
-  return { default: m.GraphView };
-});
+import { GraphSlot } from "@/components/graph/GraphSlot";
 import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { openCommandPalette } from "@/components/search/CommandPalette";
@@ -287,18 +283,7 @@ export function RightPanel() {
           label="Graph"
           resetKeys={[vaultId, mode, "fullscreen"]}
         >
-          <Suspense
-            fallback={
-              <div
-                className="flex h-full items-center justify-center text-[12px] text-[var(--text-muted)]"
-                data-graph-progress
-              >
-                Building graph…
-              </div>
-            }
-          >
-            <GraphView mode="fullscreen" className="h-full" />
-          </Suspense>
+          <GraphSlot mode="fullscreen" className="h-full" />
         </ErrorBoundary>
       </div>
     );
@@ -687,9 +672,7 @@ export function RightPanel() {
                 label="Graph"
                 resetKeys={[vaultId, mode, tab]}
               >
-                <Suspense fallback={<div className="flex min-h-[280px] items-center justify-center text-[12px] text-[var(--text-muted)]">Loading graph…</div>}>
-                  <GraphView mode="panel" className="h-full min-h-[280px]" />
-                </Suspense>
+                <GraphSlot mode="panel" className="h-full min-h-[280px]" />
               </ErrorBoundary>
             </div>
           ) : null}
