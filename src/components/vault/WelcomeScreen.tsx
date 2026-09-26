@@ -25,11 +25,13 @@ import {
 import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
 import { ThemeToggle } from "@/components/chrome/ThemeToggle";
 import {
+  chromeFsaHonestyLine,
   chromeFsaRefuseChrome,
   chromeFsaRefuseDesktop,
   chromeFsaRefuseLead,
   chromeFsaRefuseTitle,
   chromeFsaWarnMessage,
+  chromeFsaWelcomeDetail,
 } from "@/lib/vault/chrome-fsa-cap";
 
 type PendingAction =
@@ -211,6 +213,20 @@ export function WelcomeScreen() {
             Local-first Markdown. Visual + Source. Live folder sync. Light or dark.
             Zero accounts.
           </p>
+
+          <div
+            className="mt-6 max-w-xl rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] bg-[var(--accent-dim)] px-4 py-3"
+            data-chrome-fsa-honesty
+            role="note"
+            style={{ animation: "welcomeFadeUp 520ms ease-out 180ms both" }}
+          >
+            <p className="text-[15px] font-semibold leading-snug tracking-tight text-[var(--text-primary)]">
+              {chromeFsaHonestyLine()}
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+              {chromeFsaWelcomeDetail()}
+            </p>
+          </div>
 
           {!fsaOk && !desktop ? (
             <div className="mt-6 flex flex-wrap items-start gap-3 rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_40%,var(--border))] bg-[var(--accent-dim)] px-4 py-3">
@@ -440,7 +456,7 @@ export function WelcomeScreen() {
               {
                 icon: Search,
                 title: "Find",
-                body: "Chrome: about 20,000 notes. Desktop: SQLite FTS5 for 100k+.",
+                body: `${chromeFsaHonestyLine()} Desktop search is SQLite FTS5.`,
               },
               {
                 icon: Network,
@@ -466,13 +482,6 @@ export function WelcomeScreen() {
                 </div>
               </div>
             ))}
-          </div>
-
-          <div className="mt-6 rounded-[16px] border border-[var(--border)] bg-[var(--fill-subtle)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-            Chrome in the browser: about 20,000 notes. A lifetime
-            Obsidian-sized vault (100k–300k) needs Nexus Desktop — same
-            markdown folder, SQLite search, no tab discard. We will not open
-            25,000+ notes in Chrome.
           </div>
 
           <p className="mt-8 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">

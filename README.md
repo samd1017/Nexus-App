@@ -24,10 +24,12 @@ Writing, the 3D graph, and visual design matter. Ranking quality and grounded re
 
 ## Why Nexus
 
+**Desktop for large vaults; Chrome ≤20k.** Chrome in the browser supports about 20,000 notes or fewer. We will not open a folder of about 25,000 notes in Chrome. Use Nexus Desktop for large vaults — same markdown folder.
+
 - **Local-first by design** — no accounts for core editing; vault contents stay on your device
 - **Retrieval-first** — DurableIndex FTS (memory or SQLite) scaled for large vaults, with lazy bodies
 - **Plain files** — Hermes-compatible Markdown; no proprietary format
-- **Desktop + web** — Tauri 2 (macOS / Windows) and File System Access API in Chromium browsers
+- **Desktop + web** — Tauri 2 (macOS / Windows) for large vaults; File System Access API in Chrome/Edge for about 20,000 notes or fewer
 - **Agent-friendly** — live on-disk sync when other tools write into the vault folder
 
 ---
@@ -64,6 +66,8 @@ Everything else (editor, graph, command palette) supports that core loop.
 ---
 
 ## Status (honest)
+
+**Desktop for large vaults; Chrome ≤20k.** Chrome in the browser supports about 20,000 notes or fewer. We will not open a folder of about 25,000 notes in Chrome. Use Nexus Desktop for large vaults — same markdown folder.
 
 **What works well today**
 - Local-first Markdown vault (plain `.md` files)

@@ -1,7 +1,7 @@
 # Nexus public beta scope
 
 ## Supported
-- **Web** (Chrome/Edge folder vault + in-browser demo/local)
+- **Web** (Chrome/Edge folder vault + in-browser demo/local) — Desktop for large vaults; Chrome ≤20k. Chrome in the browser supports about 20,000 notes or fewer. We will not open a folder of about 25,000 notes in Chrome. Use Nexus Desktop for large vaults — same markdown folder.
 - **Desktop (Mac/Win/Linux via Tauri)** — local folder vault, native menu, window state
 - Large vaults: meta-only open, lazy bodies, durable FTS, folder/ego graph
 - Heading/block wikilinks and embeds, dual-note workspace, attachments rail, note history

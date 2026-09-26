@@ -16,6 +16,29 @@ export const CHROME_FSA_WATCH_MAX = 4_000;
 /** After this many files, meta scan skips getFile() (Chrome retains native File blobs). */
 export const CHROME_FSA_GETFILE_MAX = 4_000;
 
+function formatCap(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/** Compact product form: 20_000 → "20k". Falls back to a full label otherwise. */
+function formatCapShort(n: number): string {
+  if (n >= 1000 && n % 1000 === 0) return `${n / 1000}k`;
+  return formatCap(n);
+}
+
+/**
+ * Unmistakable product line for Welcome and README.
+ * Tracks `CHROME_FSA_SUPPORTED_MAX` so the figure cannot drift.
+ */
+export function chromeFsaHonestyLine(): string {
+  return `Desktop for large vaults; Chrome ≤${formatCapShort(CHROME_FSA_SUPPORTED_MAX)}.`;
+}
+
+/** Shown on Welcome before folder open. Counts come from the constants above. */
+export function chromeFsaWelcomeDetail(): string {
+  return `Chrome in the browser supports about ${formatCap(CHROME_FSA_SUPPORTED_MAX)} notes or fewer. We will not open a folder of about ${formatCap(CHROME_FSA_NOTE_CAP)} notes in Chrome. Use Nexus Desktop for large vaults — same markdown folder.`;
+}
+
 export class ChromeFsaCapError extends Error {
   readonly notes: number;
   constructor(notes: number) {
@@ -46,7 +69,7 @@ export type ChromeFsaLimit = {
  * DEV-only crash-reproduction escape hatch — not a supported product path.
  */
 export const FORCED_LARGE_FSA_CONFIRM =
-  "STOP. Chrome has already discarded this tab after 8–12 notes on a 15GB machine. Opening a 25,000+ folder here is a crash reproduction, not a vault. Chrome is not the 100k path. Nexus Desktop is (same markdown folder, SQLite FTS5). Continue only if you are a developer forcing an OOM on purpose.";
+  `STOP. Chrome has already discarded this tab after 8–12 notes on a 15GB machine. Opening a ${formatCap(CHROME_FSA_NOTE_CAP)}+ folder here is a crash reproduction, not a vault. Chrome is not the 100k path. Nexus Desktop is (same markdown folder, SQLite FTS5). Continue only if you are a developer forcing an OOM on purpose.`;
 
 export function isForcedLargeFsaBuildAllowed(): boolean {
   try {
@@ -113,22 +136,22 @@ export function chromeFsaRefuseLead(notes: number): string {
 }
 
 export function chromeFsaRefuseDesktop(): string {
-  return `Use Nexus Desktop. Same markdown folder you already have (Obsidian-compatible files on disk). Search is SQLite FTS5, not an in-tab index. Desktop is required for 25,000+ notes and for a lifetime vault.`;
+  return `Use Nexus Desktop. Same markdown folder you already have (Obsidian-compatible files on disk). Search is SQLite FTS5, not an in-tab index. Desktop is required for ${formatCap(CHROME_FSA_NOTE_CAP)}+ notes and for a lifetime vault.`;
 }
 
 export function chromeFsaRefuseChrome(): string {
-  return `Chrome in the browser is for about 20,000 notes or fewer — a large personal vault, not a lifetime Obsidian archive.`;
+  return `Chrome in the browser is for about ${formatCap(CHROME_FSA_SUPPORTED_MAX)} notes or fewer — a large personal vault, not a lifetime Obsidian archive.`;
 }
 
 /** Toast / one-line refuse. */
 export function chromeFsaRefuseMessage(notes: number, folder = "This folder"): string {
-  return `${folder} has ${notes.toLocaleString()} notes. Chrome will discard this tab. Use Nexus Desktop — same markdown folder; required for 25k+ vaults. Chrome max is about 20,000 notes.`;
+  return `${folder} has ${notes.toLocaleString()} notes. Chrome will discard this tab. Use Nexus Desktop — same markdown folder; required for ${formatCapShort(CHROME_FSA_NOTE_CAP)}+ vaults. Chrome max is about ${formatCap(CHROME_FSA_SUPPORTED_MAX)} notes.`;
 }
 
 export function chromeFsaRefuseBanner(notes: number, folder: string): string {
-  return `${folder} has ${notes.toLocaleString()} notes. Chrome will discard this tab. Use Nexus Desktop (same markdown folder). Chrome max is about 20,000 notes.`;
+  return `${folder} has ${notes.toLocaleString()} notes. Chrome will discard this tab. Use Nexus Desktop (same markdown folder). Chrome max is about ${formatCap(CHROME_FSA_SUPPORTED_MAX)} notes.`;
 }
 
 export function chromeFsaWarnMessage(notes: number): string {
-  return `This folder has ${notes.toLocaleString()} notes — already large for Chrome. Chrome has discarded tabs at this size. If this vault will keep growing, open it in Nexus Desktop now. Same files. Browser max is about 20,000 notes.`;
+  return `This folder has ${notes.toLocaleString()} notes — already large for Chrome. Chrome has discarded tabs at this size. If this vault will keep growing, open it in Nexus Desktop now. Same files. Browser max is about ${formatCap(CHROME_FSA_SUPPORTED_MAX)} notes.`;
 }
