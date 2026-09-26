@@ -26,6 +26,7 @@ screenshots/
 
 # Internal / agent
 .grok/
+docs/SCALE_SOAK_REPORT.md
 AGENTS.md
 AGENTS.project.md
 startup.sh
