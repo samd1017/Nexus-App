@@ -466,7 +466,7 @@ On a ~100k **desktop** vault with Graph panel or fullscreen open:
 2. Camera must not thrash (no stacked 750ms fly-tos). If the note is not on this level, highlight/edges only — no `graphData()` rebuild.
 3. Orbit or zoom, then click another note — fly-to must not steal the view.
 
-**Phase 2 — daily-driver vs Obsidian (Tower)**
+**Phase 2 — daily-driver vs Obsidian**
 4. Click **20 notes**. Inspector shows title + out/in chips. Click a chip → that note opens. Tree click ↔ orb highlight stay in sync.
 5. Switch **Map / Links**. Folder empty states explain the next action (never a blank mystery).
 6. Filters: type in the filter field, toggle Ghosts / Orphans, pick a tag or folder. View updates; no full-vault rebuild.
