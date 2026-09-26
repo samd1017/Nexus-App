@@ -1,9 +1,10 @@
 import { chromium } from "playwright";
 import fs from "fs";
-import { screenshotPath } from "./screenshot-dir.mjs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const url = process.argv[2] || "http://127.0.0.1:8080/";
-const out = process.argv[3] || screenshotPath("wave-c-qa.png");
+const out = process.argv[3] || artifactPath("screenshots", "wave-c-qa.png");
+fs.mkdirSync(artifactPath("screenshots"), { recursive: true });
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

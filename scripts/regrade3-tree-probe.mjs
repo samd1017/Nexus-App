@@ -3,10 +3,12 @@
  */
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:8080/";
-const OUT = "/opt/cursor/artifacts/regrade3-tree-probe.json";
-mkdirSync("/opt/cursor/artifacts/regrade3", { recursive: true });
+const OUT = artifactPath("regrade3-tree-probe.json");
+const SHOT_DIR = artifactPath("regrade3");
+mkdirSync(SHOT_DIR, { recursive: true });
 
 async function probe(page) {
   return page.evaluate(() => {
@@ -64,7 +66,7 @@ async function main() {
   }
 
   await dismissChrome(page);
-  await page.screenshot({ path: "/opt/cursor/artifacts/regrade3/tree_probe_ready.png" });
+  await page.screenshot({ path: artifactPath("regrade3", "tree_probe_ready.png") });
 
   // Expand 00-Inbox if collapsed
   const inbox = page.locator('[data-file-tree] [data-node-kind="folder"]', { hasText: "00-Inbox" }).first();
@@ -119,7 +121,7 @@ async function main() {
     }
   }
 
-  await page.screenshot({ path: "/opt/cursor/artifacts/regrade3/tree_probe_after.png" });
+  await page.screenshot({ path: artifactPath("regrade3", "tree_probe_after.png") });
 
   const report = {
     ok: results.filter((r) => r.ok).length >= 3 && results.some((r) => r.switched),

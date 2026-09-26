@@ -3,12 +3,14 @@
  */
 import { chromium } from "playwright";
 import { mkdirSync, copyFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:8080/";
-const VID_DIR = "/tmp/nexus-regrade3-video";
-const OUT = "/opt/cursor/artifacts/nexus_regrade_after_fixes.webm";
+const VID_DIR = artifactPath("regrade3-video");
+const OUT = artifactPath("nexus_regrade_after_fixes.webm");
 mkdirSync(VID_DIR, { recursive: true });
+mkdirSync(dirname(OUT), { recursive: true });
 
 async function probe(page) {
   return page.evaluate(() => {
