@@ -9,6 +9,7 @@
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv.find((a) => a.startsWith("http")) || "http://127.0.0.1:8080/";
 const sizesArg = process.argv.find((_, i, a) => a[i - 1] === "--sizes");
@@ -18,7 +19,7 @@ const SIZES = (sizesArg || "10000,50000,100000")
   .filter((n) => Number.isFinite(n) && n > 0);
 
 const BLOCK_MS = 1000;
-const OUT_DIR = "/opt/cursor/artifacts/stress";
+const OUT_DIR = artifactPath("stress");
 mkdirSync(OUT_DIR, { recursive: true });
 
 function pct(arr, p) {

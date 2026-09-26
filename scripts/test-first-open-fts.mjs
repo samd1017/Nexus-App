@@ -4,7 +4,7 @@
  * Linux CI: JS phase / settle rules. Rust 1k/10k timing budgets run via
  * `npm run test:sqlite-fill-rust` (first_open_timing_budget_*).
  *
- * Windows 100k is a Tower verification target, not claimed here.
+ * Windows 100k is a desktop verification target, not claimed here.
  *
  *   npm run test:first-open
  */
@@ -61,6 +61,6 @@ console.log("    folders with hub_files=0 are a false alarm — probe those with
 console.log("  After ready-meta, palette title search is live (not “try again when Ready”).");
 console.log("  Mid-fill clicks (tree/graph/note) must stay snappy: cooperative WAL batches,");
 console.log("    no body hydrate/upsert on every select, banner isolated from AppShell.");
-console.log("  Windows 100k (Tower): tree/editor <3s; usable title search with ready-meta;");
+console.log("  Windows 100k: tree/editor <3s; usable title search with ready-meta;");
 console.log("    usable body search (hub/cluster) <15s via short-head FTS; full 8k FTS background");
 console.log("first-open: PASS");

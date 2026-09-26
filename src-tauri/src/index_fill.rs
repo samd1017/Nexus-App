@@ -1162,7 +1162,7 @@ pub fn fill_from_disk_with_opts(
     }
     flush_note_batch(conn, &mut batch, &mut indexed, &mut errors, &mut written);
 
-    // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
+    // PASSIVE never waits for writers; never TRUNCATE (TRUNCATE hung a 100k fill).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
     let search_state = if is_cancelled() {

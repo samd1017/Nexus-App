@@ -17,7 +17,7 @@ export function documentsDir() {
   return path.join(home, "Documents");
 }
 
-/** Folder name matching docs / Tower soak: `nexus-soak-100k`, not `nexus-soak-100000`. */
+/** Folder name: `nexus-soak-100k`, not `nexus-soak-100000`. */
 export function soakVaultFolderName(notes) {
   const n = Number(notes);
   const label = Number.isFinite(n) && n > 0 ? n : 100000;

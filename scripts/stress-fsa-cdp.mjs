@@ -1,6 +1,6 @@
 /**
  * Drive a REAL Chrome tab that already has a folder open via File System Access.
- * Playwright cannot click showDirectoryPicker for /workspace/nexus-soak-100k.
+ * Playwright cannot click showDirectoryPicker for a large on-disk vault.
  *
  *   # Terminal 1 — human Chrome (not Playwright's headless)
  *   google-chrome --remote-debugging-port=9222 --enable-precise-memory-info \
@@ -15,12 +15,13 @@
  */
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const CDP = process.argv.find((a) => a.startsWith("http")) || "http://127.0.0.1:9222";
 const opensArg = process.argv.find((_, i, a) => a[i - 1] === "--opens");
 const OPENS = Math.max(8, Number(opensArg || 20) || 20);
-const OUT = "/opt/cursor/artifacts/stress/fsa-cdp.json";
-mkdirSync("/opt/cursor/artifacts/stress", { recursive: true });
+const OUT = artifactPath("stress", "fsa-cdp.json");
+mkdirSync(artifactPath("stress"), { recursive: true });
 
 function fail(report, msg) {
   writeFileSync(OUT, JSON.stringify(report, null, 2));

@@ -94,7 +94,7 @@ npm run soak:wave-e-desktop -- --notes 100000
 npm run soak:wave-e-desktop -- --notes 300000
 ```
 
-That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\…`) if missing, then prints the prove steps. Documents is inside the production `fs:scope` allow-list; a home-dir folder like `%USERPROFILE%\nexus-soak-100k` still works if you open it programmatically — Wave E registers that path with plugin-fs persisted-scope the same way **Open folder** does. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
+That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\nexus-soak-100k` and `%USERPROFILE%\Documents\nexus-soak-300k`) if missing, then prints the prove steps. Documents is inside the production `fs:scope` allow-list. Wave E registers that folder with plugin-fs persisted-scope the same way **Open folder** does. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
 
 ### Prove (must all hold) — honest phases
 
@@ -138,7 +138,7 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 
 **Fill expectations (not SCALE READY):**
 
-- Cold 100k: tree/editor in **seconds**. Title/Hub search should be useful after the title seed (`ready-meta` — seconds to low tens of seconds, not a 20+ minute empty catalog). Short-head `cluster` / `retrieval hub` should follow as soon as the first head batches commit (Tower target under 15s). Full 8k-head FTS may still take minutes on HDD — **background only**, never a browse gate. Do **not** claim SCALE READY from one soak.
+- Cold 100k: tree/editor in **seconds**. Title/Hub search should be useful after the title seed (`ready-meta` — seconds to low tens of seconds, not a 20+ minute empty catalog). Short-head `cluster` / `retrieval hub` should follow as soon as the first head batches commit (target under 15s). Full 8k-head FTS may still take minutes on HDD — **background only**, never a browse gate. Do **not** claim SCALE READY from one soak.
 - Re-open of the same unchanged 100k vault: **seconds** (stat + skip), not another hour.
 - Do not claim SCALE READY from this first-open architecture alone.
 | FS scope | Production capabilities allow Documents / Desktop / Downloads + app data. Programmatic path open grants that folder only (not `$HOME/**`). Forbidden reads fail the progress banner — they do not spin at scanned:0. |

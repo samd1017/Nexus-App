@@ -109,7 +109,7 @@ Disk vaults always:
 2. **Lazy body hydrate** + automatic LRU memory budget
 3. **DurableIndex** — two different engines, do not conflate:
    - **Desktop Tauri:** SQLite FTS5 BM25 via `searchFtsAsync` (≤50ms target)
-   - **Web / FSA / this VM:** in-memory inverted index, **800-candidate cap** (not BM25). Palette heading always shows `Memory FTS (capped)`.
+   - **Web / FSA:** in-memory inverted index, **800-candidate cap** (not BM25). Palette heading always shows `Memory FTS (capped)`.
    - **FSA/disk Ready means search is filled:** after the meta scan, a second pass reads a 2k file head into FTS and drops the string. Store nodes stay meta-only. Do not mark Ready after metadata alone.
 4. **Ego graph** (neighborhood)
 5. **Virtualized file tree**

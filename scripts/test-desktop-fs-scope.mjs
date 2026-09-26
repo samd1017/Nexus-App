@@ -28,7 +28,7 @@ const {
 const { defaultSoakVaultPath, documentsDir } = await import("./soak-vault-path.mjs");
 
 assert.equal(
-  isForbiddenFsError(new Error("forbidden path: C:\\Users\\samd1\\nexus-soak-100k")),
+  isForbiddenFsError(new Error("forbidden path: C:\\Users\\you\\nexus-soak-100k")),
   true,
 );
 assert.equal(
@@ -46,7 +46,7 @@ assert.equal(
 assert.equal(isForbiddenFsError(new Error("ENOENT: no such file")), false);
 assert.equal(isForbiddenFsError(new Error("read failed")), false);
 
-const msg = desktopFsForbiddenMessage("C:\\\\Users\\\\samd1\\\\nexus-soak-100k");
+const msg = desktopFsForbiddenMessage("C:\\\\Users\\\\you\\\\nexus-soak-100k");
 assert.match(msg, /desktop FS scope denied/i);
 assert.match(msg, /Open folder|Documents/i);
 const boom = new DesktopFsForbiddenError("/tmp/out-of-scope");

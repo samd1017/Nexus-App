@@ -1,5 +1,9 @@
 import { chromium } from "playwright";
 import fs from "fs";
+import { artifactPath } from "./artifact-dir.mjs";
+
+const SHOTS = artifactPath("screenshots");
+fs.mkdirSync(SHOTS, { recursive: true });
 
 const url = "http://127.0.0.1:8080/";
 const browser = await chromium.launch({ headless: true });
@@ -45,7 +49,7 @@ async function runDesktop() {
   settingsText = await page.locator("body").innerText();
   const hasScale = /Vault scale/i.test(settingsText);
   const hasMemory = /Memory budget/i.test(settingsText);
-  await page.screenshot({ path: "/workspace/screenshots/wave-c-settings.png" });
+  await page.screenshot({ path: `${SHOTS}/wave-c-settings.png` });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
 
@@ -87,7 +91,7 @@ async function runDesktop() {
   const studioText = await page.locator("body").innerText();
   const hasStudio = /Conflict Studio/i.test(studioText);
   const hasKeepMine = /Keep mine/i.test(studioText);
-  await page.screenshot({ path: "/workspace/screenshots/wave-c-studio.png" });
+  await page.screenshot({ path: `${SHOTS}/wave-c-studio.png` });
 
   if (hasStudio) {
     const keep = page.getByRole("button", { name: /^Keep mine$/i }).first();
@@ -103,14 +107,14 @@ async function runDesktop() {
       open: st?.conflictStudioOpen ?? null,
     };
   });
-  await page.screenshot({ path: "/workspace/screenshots/wave-c-resolved.png" });
+  await page.screenshot({ path: `${SHOTS}/wave-c-resolved.png` });
 
   const pulse = page.locator('button[title="Pulse"]').first();
   if (await pulse.count()) await pulse.click();
   await page.waitForTimeout(400);
   const pulseText = await page.locator("body").innerText();
   const hasPulse = /Agent inbox|Inbox|Conflicts/i.test(pulseText);
-  await page.screenshot({ path: "/workspace/screenshots/wave-c-pulse.png" });
+  await page.screenshot({ path: `${SHOTS}/wave-c-pulse.png` });
 
   // Banner check: re-inject and select primary
   await page.evaluate(() => {
@@ -139,7 +143,7 @@ async function runDesktop() {
   });
   await page.waitForTimeout(400);
   const banner = await page.locator("[data-conflict-banner]").count();
-  await page.screenshot({ path: "/workspace/screenshots/wave-c-banner.png" });
+  await page.screenshot({ path: `${SHOTS}/wave-c-banner.png` });
 
   const hardConsole = consoleErrors.filter(
     (e) => !/React state update on a component that hasn't mounted/i.test(e),
@@ -179,7 +183,7 @@ async function runMobile() {
       document.documentElement.clientWidth + 2,
   );
   const text = await page.locator("body").innerText();
-  await page.screenshot({ path: "/workspace/screenshots/wave-c-mobile.png" });
+  await page.screenshot({ path: `${SHOTS}/wave-c-mobile.png` });
   return { overflow, mobileLen: text.length, pageErrors };
 }
 
@@ -220,7 +224,7 @@ const ok =
 
 const report = { ok, pass1: d1, pass2: d2, mobile1: m1, mobile2: m2 };
 fs.writeFileSync(
-  "/workspace/screenshots/wave-c-final-qa.json",
+  `${SHOTS}/wave-c-final-qa.json`,
   JSON.stringify(report, null, 2),
 );
 console.log(JSON.stringify(report, null, 2));

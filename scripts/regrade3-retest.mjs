@@ -1,15 +1,15 @@
 /**
- * Post-fix retest for COMPLETE-REGRADE-AFTER-FIXES.
+ * Retest after scale fixes.
  * Covers: Welcome fold (no 45k), demo edit/search/graph/shortcuts,
  * 45k open, tree note open, rename, search, graph panel-first, save chip, Ctrl+N.
  */
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:8080/";
-const OUT_DIR = "/opt/cursor/artifacts";
-const SHOT = `${OUT_DIR}/regrade3`;
-const REPORT = `${OUT_DIR}/regrade3-retest.json`;
+const SHOT = artifactPath("regrade3");
+const REPORT = artifactPath("regrade3-retest.json");
 
 mkdirSync(SHOT, { recursive: true });
 
