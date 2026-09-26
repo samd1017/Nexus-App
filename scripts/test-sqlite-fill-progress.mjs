@@ -30,6 +30,9 @@ const {
   sqliteFillPhaseMessage,
   isTitleSearchLive,
   isNoteHeadSearchLive,
+  MEMORY_FTS_ENGINE_LABEL,
+  MEMORY_SEARCH_CAP_NOTE,
+  memorySearchIsPartial,
   searchEmptyStateMessage,
   searchEmptyStatus,
   searchStateFromPhase,
@@ -442,6 +445,63 @@ assert.equal(
   }),
   "No notes match.",
 );
+assert.equal(
+  MEMORY_FTS_ENGINE_LABEL,
+  "Memory FTS (capped)",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: true,
+    memoryCapped: true,
+  }),
+  `No notes match. ${MEMORY_SEARCH_CAP_NOTE}`,
+);
+assert.equal(
+  MEMORY_SEARCH_CAP_NOTE,
+  "Showing top matches while the index fills (browser cap).",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: true,
+    memoryCapped: true,
+    pending: true,
+  }),
+  "Looking through notes…",
+);
+assert.equal(
+  memorySearchIsPartial({
+    engineId: "memory-fts-capped",
+    hitCount: 16,
+    pageLimit: 16,
+  }),
+  true,
+);
+assert.equal(
+  memorySearchIsPartial({
+    engineId: "sqlite-fts5-bm25",
+    hitCount: 16,
+    pageLimit: 16,
+  }),
+  false,
+);
+assert.equal(
+  memorySearchIsPartial({
+    engineId: "memory-fts-capped",
+    hitCount: 3,
+    pageLimit: 16,
+  }),
+  false,
+);
+{
+  const { readFileSync } = await import("node:fs");
+  const backend = readFileSync("src/lib/search/search-backend.ts", "utf8");
+  assert.match(backend, /uiLabel:\s*MEMORY_FTS_ENGINE_LABEL/);
+  const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
+  assert.match(palette, /const engineBit = searchEngine\.uiLabel/);
+  assert.equal(palette.includes('uiLabel: "In this vault"'), false);
+}
 assert.equal(
   searchEmptyStatus({ titleSearchLive: false, memorySearch: true }),
   "miss",

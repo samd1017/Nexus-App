@@ -93,6 +93,8 @@ import {
   getSearchIndexState,
   isNoteHeadSearchLive,
   isTitleSearchLive,
+  MEMORY_SEARCH_CAP_NOTE,
+  memorySearchIsPartial,
   searchEmptyStateMessage,
   searchEmptyStatus,
 } from "@/lib/vault/sqlite-fill-progress";
@@ -1601,6 +1603,12 @@ function CommandPaletteOpen() {
     pending: noteSearchPending,
   });
   const engineBit = searchEngine.uiLabel;
+  const memoryCapped = searchEngine.id === "memory-fts-capped";
+  const memoryPartial = memorySearchIsPartial({
+    engineId: searchEngine.id,
+    hitCount: hits.length,
+    pageLimit: PALETTE_RESULT_LIMIT,
+  });
   const notesHeading = isEmptyQuery
     ? "Recent notes"
     : hasPathFolderOp
@@ -1993,23 +2001,34 @@ function CommandPaletteOpen() {
               aria-live="polite"
               data-search-status={emptyStatus}
               data-testid={emptyStatus === "miss" ? "search-miss" : undefined}
-              className="flex items-center gap-2 px-3 py-3 text-[13px] leading-snug text-[var(--text-secondary)]"
+              className="px-3 py-3 text-[13px] leading-snug text-[var(--text-secondary)]"
             >
-              <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
-              <span>
-                {searchEmptyStateMessage({
-                  titleSearchLive:
-                    titleSearchLive || searchEngine.id !== "sqlite-fts5-bm25",
-                  headsReady:
-                    isNoteHeadSearchLive(searchIndexState) ||
-                    searchEngine.id !== "sqlite-fts5-bm25",
-                  catalogSearch: Boolean(
-                    shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
-                  ),
-                  failed: searchIndexState === "error" || noteSearchFailed,
-                  pending: noteSearchPending,
-                })}
-              </span>
+              {memoryCapped ? (
+                <div
+                  className="pb-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--text-muted)]"
+                  data-testid="search-engine-heading"
+                >
+                  {notesHeading}
+                </div>
+              ) : null}
+              <div className="flex items-center gap-2">
+                <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+                <span>
+                  {searchEmptyStateMessage({
+                    titleSearchLive:
+                      titleSearchLive || searchEngine.id !== "sqlite-fts5-bm25",
+                    headsReady:
+                      isNoteHeadSearchLive(searchIndexState) ||
+                      searchEngine.id !== "sqlite-fts5-bm25",
+                    catalogSearch: Boolean(
+                      shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
+                    ),
+                    failed: searchIndexState === "error" || noteSearchFailed,
+                    pending: noteSearchPending,
+                    memoryCapped,
+                  })}
+                </span>
+              </div>
             </div>
           ) : null}
 
@@ -2034,6 +2053,20 @@ function CommandPaletteOpen() {
               >
                 Clear search
               </button>
+            </div>
+          ) : null}
+
+          {memoryPartial &&
+          q &&
+          !isAskMode &&
+          !isCommandMode &&
+          !isTagBrowse &&
+          !(exactTagQuery && hits.length > 1) ? (
+            <div
+              className="px-3 pb-1 pt-2 text-[12px] leading-snug text-[var(--text-muted)]"
+              data-testid="search-memory-cap"
+            >
+              {MEMORY_SEARCH_CAP_NOTE}
             </div>
           ) : null}
 

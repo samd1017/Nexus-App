@@ -15,6 +15,7 @@ import { getDurableIndex } from "@/lib/vault/durable-index";
 import { searchOpenPageTitles } from "@/lib/vault/shell-catalog";
 import {
   getSearchIndexState,
+  MEMORY_FTS_ENGINE_LABEL,
   sqliteEngineShortLabel,
   type SearchIndexState,
 } from "@/lib/vault/sqlite-fill-progress";
@@ -164,8 +165,8 @@ export function describeSearchEngine(): {
     return {
       id: "memory-fts-capped",
       label: "In-memory FTS (800-candidate cap, not SQLite BM25)",
-      shortLabel: "Memory FTS (capped)",
-      uiLabel: "In this vault",
+      shortLabel: MEMORY_FTS_ENGINE_LABEL,
+      uiLabel: MEMORY_FTS_ENGINE_LABEL,
       ranked: false,
       indexState: "idle",
     };

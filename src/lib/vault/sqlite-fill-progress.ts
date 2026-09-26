@@ -308,6 +308,26 @@ export function sqliteEngineShortLabel(state: SearchIndexState): string {
   return "SQLite FTS5 BM25";
 }
 
+/** Visible palette heading for the web / in-memory index. */
+export const MEMORY_FTS_ENGINE_LABEL = "Memory FTS (capped)";
+
+/** Empty and partial palette line for the 800-candidate browser index. */
+export const MEMORY_SEARCH_CAP_NOTE =
+  "Showing top matches while the index fills (browser cap).";
+
+/** A full palette page on Memory FTS is a limited slice, not the whole vault. */
+export function memorySearchIsPartial(args: {
+  engineId: string;
+  hitCount: number;
+  pageLimit: number;
+}): boolean {
+  return (
+    args.engineId === "memory-fts-capped" &&
+    args.pageLimit > 0 &&
+    args.hitCount >= args.pageLimit
+  );
+}
+
 /** Title/path FTS is queryable — palette must not wait for note heads. */
 export function isTitleSearchLive(state: SearchIndexState): boolean {
   return STATE_RANK[state] >= STATE_RANK["ready-meta"] && state !== "error";
@@ -353,6 +373,8 @@ export function searchEmptyStateMessage(args: {
   failed?: boolean;
   /** A lookup is in flight and nothing has matched yet. */
   pending?: boolean;
+  /** Web / in-memory FTS. A miss may sit outside the 800-candidate cap. */
+  memoryCapped?: boolean;
 }): string {
   if (args.failed) return "Search did not finish. Try again.";
   if (!args.titleSearchLive) {
@@ -362,5 +384,6 @@ export function searchEmptyStateMessage(args: {
   // Titles are live. Say we are still looking, then a plain miss.
   // Do not tell the user to wait until Ready.
   if (args.pending) return "Looking through notes…";
+  if (args.memoryCapped) return `No notes match. ${MEMORY_SEARCH_CAP_NOTE}`;
   return "No notes match.";
 }
