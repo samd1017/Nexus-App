@@ -89,7 +89,7 @@ function ModePill({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition",
+        "graph-mode-pill rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition",
         active
           ? "bg-[var(--accent)] text-black shadow-[0_0_16px_rgba(0,200,255,0.22)]"
           : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]",
@@ -244,7 +244,7 @@ export function GraphChrome(props: GraphChromeProps) {
               value={props.query}
               onChange={(e) => props.onQuery(e.target.value)}
               placeholder="Filter this view"
-              className="h-8 w-full min-w-[7rem] rounded-full border border-white/[0.16] bg-[rgba(4,6,10,0.92)] pl-7 pr-2 text-[12.5px] font-medium text-[#f2f6fb] outline-none placeholder:text-[#c5ceda] focus:border-[var(--accent)]/40"
+              className="nexus-field h-8 w-full min-w-[7rem] rounded-full border border-white/[0.16] bg-[rgba(4,6,10,0.92)] pl-7 pr-2 text-[12.5px] font-medium text-[#f2f6fb] placeholder:text-[#c5ceda]"
               aria-label="Filter graph"
               data-graph-filter
             />
