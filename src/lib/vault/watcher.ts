@@ -1,5 +1,5 @@
 /**
- * Live vault watching — Hermes-ready.
+ * Live vault watching — ready for outside writers.
  * Prefers FileSystemObserver when available; falls back to signature poll.
  * Large FSA vaults keep signatures only — a second 100k node map was a
  * Chrome-discard retainer.

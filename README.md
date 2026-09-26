@@ -26,7 +26,7 @@ Writing, the 3D graph, and visual design matter. Ranking quality and grounded re
 
 - **Local-first by design** — no accounts for core editing; vault contents stay on your device
 - **Retrieval-first** — DurableIndex FTS (memory or SQLite) scaled for large vaults, with lazy bodies
-- **Plain files** — Hermes-compatible Markdown; no proprietary format
+- **Plain files** — ordinary Markdown; no proprietary format
 - **Desktop + web** — Tauri 2 (macOS / Windows) and File System Access API in Chromium browsers
 - **Agent-friendly** — live on-disk sync when other tools write into the vault folder
 
@@ -93,7 +93,7 @@ Contributions and hard feedback are welcome. See [CONTRIBUTING.md](CONTRIBUTING.
 
 | Layer | Role |
 |-------|------|
-| **Markdown files on disk** | Only source of truth. Hermes-compatible. No proprietary format. |
+| **Markdown files on disk** | Only source of truth. Ordinary Markdown. No proprietary format. |
 | **DurableIndex** | Desktop: SQLite FTS5 BM25 via `searchFtsAsync`. Web/FSA: in-memory FTS (800-candidate cap, not BM25). Disposable; lives outside the vault. |
 | **In-memory graph** | Backlinks, structure, 3D view. |
 | **Hybrid ranking (goal)** | Lexical (FTS5 + BM25 + title/path boosts) + semantic (local embeddings) + structural signals. |

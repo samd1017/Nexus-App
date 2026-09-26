@@ -141,13 +141,13 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
 | You get | Agents get |
 | --- | --- |
 | Readable Markdown | Same readable Markdown |
-| \`git diff\` that makes sense | CLI and Hermes-friendly paths |
+| \`git diff\` that makes sense | Ordinary file paths |
 | Portability forever | No lock-in API |
 
 ## Related
 
 - [[Welcome]]
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Linking Notes]]
 - [[Settings & Shortcuts]]
 `,
@@ -226,7 +226,7 @@ The graph turns [[wikilinks]] into a living map of your thinking.
 - [[Welcome]]
 - [[Linking Notes]]
 - [[Design Language]]
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Local-first Vault]]
 `,
     ),
@@ -387,7 +387,7 @@ folder:Research
 
 ## Round-trip rules
 
-Nexus keeps files clean so [[Hermes Compatibility]] and \`git diff\` stay honest. Prefer standard Markdown; avoid proprietary blobs.
+Nexus keeps files clean so [[External Agents]] and \`git diff\` stay honest. Prefer standard Markdown; avoid proprietary blobs.
 
 ## Practice
 
@@ -405,14 +405,14 @@ Nexus keeps files clean so [[Hermes Compatibility]] and \`git diff\` stay honest
 
   add(
     note(
-      pathJoin("Systems", "Hermes Compatibility.md"),
-      "Hermes Compatibility.md",
+      pathJoin("Systems", "External Agents.md"),
+      "External Agents.md",
       systems.id,
-      `# Hermes Compatibility
+      `# External Agents
 
-#agents #hermes
+#agents #pulse
 
-Hermes (and any agent or script) should treat this vault as ordinary files.
+Any agent or script should treat this vault as ordinary files.
 
 ## Contract
 
@@ -427,9 +427,9 @@ Creates, edits, renames, and deletes from outside the app appear in the UI withi
 
 ## Demo it now
 
-In the vault switcher menu (More), choose **Simulate agent write**. A new note lands under Systems. Pulse opens so you can treat it like a Grok / Hermes dump.
+In the vault switcher menu (More), choose **Simulate agent write**. A new note lands under Systems. Pulse opens so you can treat it like an outside write.
 
-To see a conflict: **Practice agent conflict** (vault menu, Pulse, Settings → Agents, or ⌘K). Conflict Studio opens with a line diff — Keep mine or Take theirs.
+To see a conflict: **Practice agent conflict** (vault menu, Pulse, Settings → External agents, or ⌘K). Conflict Studio opens with a line diff — Keep mine or Take theirs.
 
 ## Linked
 
@@ -525,7 +525,7 @@ Alt-click [[Graph View]] to open it beside this note. **⌘2** toggles the works
 
 - [[Welcome]]
 - [[Visual & Source]]
-- [[Hermes Compatibility]]
+- [[External Agents]]
 `,
     ),
   );
@@ -537,9 +537,9 @@ Alt-click [[Graph View]] to open it beside this note. **⌘2** toggles the works
       systems.id,
       `# Agent Day
 
-#agents #grok #pulse
+#agents #pulse
 
-First-hour path for humans + Grok on the same folder.
+First-hour path for a person and an outside writer on the same folder.
 
 Welcome already has the feature tour — this note is the five-minute switch: open, ask, let an agent write, resolve a conflict.
 
@@ -550,10 +550,10 @@ This demo vault is already open. For a real folder: **Open…** and point at any
 ## Agent write
 
 1. Vault menu → **More → Practice agent conflict**
-2. Or press **⌘K**, type \`hermes\` / \`agent\`
-3. Pulse shows **Hermes Pulse** — an external write
+2. Or press **⌘K**, type \`agent\`
+3. Pulse shows **Agent Pulse** — an external write
 
-On disk, the same thing happens when Cursor, Grok Bot, or a script saves a file.
+On disk, the same thing happens when another app or a script saves a file.
 
 ## Conflict
 
@@ -565,7 +565,7 @@ Edit a note in Nexus (leave it dirty) while an agent writes the same path. Nexus
 
 ## Related
 
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Local-first Vault]]
 - [[Welcome]]
 `,
@@ -581,7 +581,7 @@ Edit a note in Nexus (leave it dirty) while an agent writes the same path. Nexus
 
 Opened the vault for the first time.
 
-The graph already ties together [[Local-first Vault]], [[Graph View]], and [[Hermes Compatibility]]. That loop — **write, link, see** — is the product.
+The graph already ties together [[Local-first Vault]], [[Graph View]], and [[External Agents]]. That loop — **write, link, see** — is the product.
 
 ## Tasks
 
@@ -651,10 +651,10 @@ This is your vault. Notes are ordinary Markdown in a folder — you, git, and ag
   return { nodes, rootIds: [welcome.id], vaultName };
 }
 
-export const HERMES_SAMPLE_NOTE = {
-  path: pathJoin("Systems", "Hermes Pulse.md"),
-  name: "Hermes Pulse.md",
-  content: `# Hermes Pulse
+export const AGENT_SAMPLE_NOTE = {
+  path: pathJoin("Systems", "Agent Pulse.md"),
+  name: "Agent Pulse.md",
+  content: `# Agent Pulse
 
 This note was written by an **external process** (simulated agent).
 
@@ -666,7 +666,7 @@ The filesystem watcher picked this up without a manual refresh. The vault remain
 
 ## Links
 
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Local-first Vault]]
 - [[Welcome]]
 `,

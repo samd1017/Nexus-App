@@ -1,6 +1,6 @@
 /**
  * Note templates + daily note helpers — human habit spine for Nexus.
- * All output is plain Markdown (Hermes-safe).
+ * All output is plain Markdown.
  */
 
 import { getPrefs } from "@/lib/prefs/preferences";

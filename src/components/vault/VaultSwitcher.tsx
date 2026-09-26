@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 /**
  * Finder-style vault menu:
  * Recents → Open → Create → Reveal → Close
- * Cloud / demo / Hermes are not primary destinations.
+ * Cloud and the demo are not primary destinations.
  */
 export function VaultSwitcher() {
   const vaultId = useVaultStore((s) => s.vaultId);

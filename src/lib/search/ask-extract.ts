@@ -88,7 +88,7 @@ export function scoreAskSentence(
 ): number {
   if (isAskCatalogNoise(sentence)) return 0;
   const lower = sentence.toLowerCase();
-  const grounded = /\b(agents?|hermes|grok|share|vault|files?)\b/i.test(sentence);
+  const grounded = /\b(agents?|share|vault|files?)\b/i.test(sentence);
   if (
     baseTokens.length &&
     !baseTokens.some((t) => t.length >= 3 && lower.includes(t)) &&

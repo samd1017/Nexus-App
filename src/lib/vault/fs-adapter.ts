@@ -1,6 +1,6 @@
 /**
  * Real local vault via File System Access API.
- * Notes are plain .md files on disk — Hermes-compatible.
+ * Notes are plain .md files on disk.
  * Supports full scan + incremental re-read of changed paths only.
  * Wave C: pure path-patch tree merge when change set is small.
  */

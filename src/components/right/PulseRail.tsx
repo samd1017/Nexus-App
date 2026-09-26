@@ -242,7 +242,7 @@ export function PulseRail() {
             type="button"
             className="chip-btn text-[11px]"
             onClick={() => practiceAgentConflict()}
-            title="Edit Hermes Pulse locally, then write an agent copy so Conflict Studio opens"
+            title="Edit the agent note locally, then write another copy so Conflict Studio opens"
           >
             Practice conflict
           </button>

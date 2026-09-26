@@ -1,6 +1,6 @@
 /**
  * Native desktop vault via Tauri 2 plugins (fs + dialog).
- * Path-based, Hermes-compatible plain Markdown on disk.
+ * Path-based plain Markdown on disk.
  * Only used when running inside the Tauri shell.
  */
 

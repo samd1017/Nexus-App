@@ -35,7 +35,7 @@ Until those are set up, users must approve the OS warnings once.
 
 - Native window (overlay title bar on macOS, native menus)
 - **Open Vault…** uses the native folder dialog
-- Notes are plain `.md` files on disk (Hermes-compatible)
+- Notes are plain `.md` files on disk
 - **OS-level folder watching** for external edits
 - **On-disk SQLite search index** (disposable cache under app data — not inside the vault)
 - Same UI as the browser product (editor, graph, settings, search)

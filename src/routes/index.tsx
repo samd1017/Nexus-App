@@ -11,7 +11,7 @@ export const Route = createFileRoute("/")({
 
 function Home() {
   return (
-    <main className="h-[calc(100dvh-var(--grok-banner-h,0px))] min-h-0 overflow-hidden">
+    <main className="h-[100dvh] min-h-0 overflow-hidden">
       <ClientOnly
         fallback={
           <div className="flex h-full flex-col items-center justify-center gap-3 bg-[var(--bg-deepest,#050507)] text-[var(--text-secondary,#a1a1aa)]">

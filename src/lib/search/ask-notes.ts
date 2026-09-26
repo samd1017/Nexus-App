@@ -34,10 +34,8 @@ export type AskAnswer = {
 };
 
 const SYNONYMS: Record<string, string[]> = {
-  agent: ["hermes", "grok", "pulse", "bot"],
-  agents: ["hermes", "grok", "pulse"],
-  grok: ["hermes", "agent", "pulse"],
-  hermes: ["agent", "grok", "pulse"],
+  agent: ["pulse", "automation", "script"],
+  agents: ["pulse", "automation"],
   share: ["folder", "vault", "disk", "markdown"],
   vault: ["folder", "notes", "markdown"],
   conflict: ["studio", "keep", "theirs", "mine"],

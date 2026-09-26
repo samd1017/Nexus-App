@@ -1295,30 +1295,23 @@ function CommandPaletteOpen() {
           })),
         ] : []),
         {
-          id: "hermes-sim",
+          id: "agent-sim",
           label: "Simulate agent write",
-          keywords: ["hermes", "agent", "external", "simulate", "grok", "pulse"],
+          keywords: ["agent", "external", "simulate", "pulse", "automation"],
           icon: <Sparkles size={15} />,
           shortcut: undefined as string | undefined,
-          run: wrapRun("hermes-sim", () => {
+          run: wrapRun("agent-sim", () => {
             simulateHermesWrite();
             setCommandOpen(false);
           }),
         },
         {
-          id: "hermes-conflict",
+          id: "agent-conflict",
           label: "Practice agent conflict",
-          keywords: [
-            "hermes",
-            "conflict",
-            "studio",
-            "agent",
-            "practice",
-            "grok",
-          ],
+          keywords: ["conflict", "studio", "agent", "practice", "external"],
           icon: <Sparkles size={15} />,
           shortcut: undefined as string | undefined,
-          run: wrapRun("hermes-conflict", () => {
+          run: wrapRun("agent-conflict", () => {
             practiceAgentConflict();
             setCommandOpen(false);
           }),

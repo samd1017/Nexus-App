@@ -41,7 +41,7 @@
     "targets": ["app", "dmg", "nsis"],
     "category": "Productivity",
     "shortDescription": "Notes for Humans and Agents",
-    "longDescription": "Nexus is a local-first Markdown knowledge vault with a visual editor, live graph, and Hermes-compatible plain files.",
+    "longDescription": "Nexus is a local-first Markdown knowledge vault with a visual editor, live graph, and plain files.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

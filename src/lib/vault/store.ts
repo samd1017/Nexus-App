@@ -14,7 +14,7 @@ import type {
   VaultSettings,
 } from "./types";
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
-import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
+import { AGENT_SAMPLE_NOTE, buildBlankVault, buildDemoVault } from "./demo-vault";
 import { shouldSkipLaunchNote } from "./launch-note";
 import { keepIdsByPath, keepRecentLocalBodies, keepRenamedShellIds } from "./stable-ids";
 import { writeIntentState } from "@/lib/editor/write-intent";
@@ -4979,9 +4979,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const { nodes, rootIds, mode } = get();
 		const systems = Object.values(nodes).find((n) => n.kind === "folder" && n.path === "Systems");
-		const path = HERMES_SAMPLE_NOTE.path;
+		const path = AGENT_SAMPLE_NOTE.path;
 		const existing = Object.values(get().nodes).find((n) => n.path === path);
-		const content = HERMES_SAMPLE_NOTE.content.replace("${TS}", (new Date()).toISOString());
+		const content = AGENT_SAMPLE_NOTE.content.replace("${TS}", (new Date()).toISOString());
 		if (existing) {
 			const mine = existing.content ?? "";
 			const dirty =
@@ -5019,7 +5019,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				pushPulse({
 					kind: "hermes",
 					path: siblingPath,
-					title: "Hermes Pulse",
+					title: "Agent Pulse",
 					message: "Agent write conflicted — open Conflict Studio",
 					vaultId: get().vaultId,
 				});
@@ -5033,14 +5033,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			pushPulse({
 				kind: "hermes",
 				path,
-				title: "Hermes Pulse",
-				message: "Hermes updated Systems/Hermes Pulse.md",
+				title: "Agent Pulse",
+				message: `An agent updated ${path}`,
 				vaultId: get().vaultId
 			});
 			set({
 				lastExternalSync: Date.now(),
 				hermesTick: get().hermesTick + 1,
-				toast: "Hermes updated Systems/Hermes Pulse.md",
+				toast: `An agent updated ${path}`,
 				toastAction: { label: "Open Pulse", kind: "open-pulse" },
 				activeNoteId: existing.id,
 				rightTab: "pulse",
@@ -5052,7 +5052,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const node: VaultNode = {
 			id,
 			path,
-			name: HERMES_SAMPLE_NOTE.name,
+			name: AGENT_SAMPLE_NOTE.name,
 			kind: "note",
 			parentId: systems?.id ?? null,
 			mtime: Date.now(),
@@ -5069,7 +5069,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			expandedFolders: expanded,
 			lastExternalSync: Date.now(),
 			hermesTick: get().hermesTick + 1,
-			toast: "Hermes created Systems/Hermes Pulse.md",
+			toast: `An agent created ${path}`,
 			toastAction: { label: "Open Pulse", kind: "open-pulse" },
 			activeNoteId: id,
 			rightTab: "pulse",
@@ -5078,8 +5078,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		pushPulse({
 			kind: "hermes",
 			path,
-			title: "Hermes Pulse",
-			message: "Hermes created Systems/Hermes Pulse.md",
+			title: "Agent Pulse",
+			message: `An agent created ${path}`,
 			vaultId: get().vaultId
 		});
 		if (isDiskVault(mode)) queueDiskWrite(() => persistNoteIfFsa(path, content));
@@ -5090,14 +5090,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		} catch {
 			/* ignore */
 		}
-		const path = HERMES_SAMPLE_NOTE.path;
+		const path = AGENT_SAMPLE_NOTE.path;
 		let existing = Object.values(get().nodes).find((n) => n.path === path);
 		if (!existing) {
 			get().simulateHermesWrite();
 			existing = Object.values(get().nodes).find((n) => n.path === path);
 		}
 		if (!existing || existing.kind !== "note") {
-			get().setToast("Could not open Hermes Pulse");
+			get().setToast("Could not open Agent Pulse");
 			return;
 		}
 		const mine = `${existing.content ?? ""}\n\nI am still editing this — keep mine.\n`;

@@ -796,7 +796,7 @@ export function SettingsPanel() {
             </div>
           </Section>
 
-          <Section title="Agents & Grok">
+          <Section title="External agents">
             <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
               An agent can write Markdown in this same folder. Nexus notices the
               new file and opens a side-by-side compare if you were editing it too.
@@ -832,8 +832,8 @@ export function SettingsPanel() {
               </p>
             )}
             <p className="mt-3 text-[11.5px] leading-snug text-[var(--text-muted)]">
-              No API keys live in Nexus. Grok Bot and external agents write
-              files on disk. Keep notes in clean Markdown so diffs stay honest.
+              No API keys live in Nexus. External tools write files on disk.
+              Keep notes in clean Markdown so diffs stay honest.
             </p>
           </Section>
 
@@ -1017,8 +1017,8 @@ export function SettingsPanel() {
                 body="Built-in sync watches your vault folder. Put it in Dropbox, Drive, OneDrive, iCloud, or Syncthing — no Nexus account. Conflicts open in Conflict Studio."
               />
               <HelpItem
-                title="Hermes, Grok & agents"
-                body={`External apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Practice agent conflict from the vault menu, Pulse, Settings → Agents, or ${formatShortcut("K")}.`}
+                title="External agents"
+                body={`Other apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Practice a conflict from the vault menu, Pulse, Settings → External agents, or ${formatShortcut("K")}.`}
               />
               <HelpItem
                 title="Desktop"

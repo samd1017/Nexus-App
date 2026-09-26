@@ -1,5 +1,5 @@
 /**
- * Light tag support — plain #tags in Markdown (Hermes-safe, no proprietary DB).
+ * Light tag support — plain #tags in Markdown (no proprietary DB).
  * Tags are extracted from note bodies; optional YAML-ish frontmatter tags: too.
  *
  * collectVaultTags is generation-cached (VaultStructuralIndex.generation() when

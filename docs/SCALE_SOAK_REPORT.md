@@ -274,7 +274,7 @@ localStorage still cannot hold the 45k map. Creates and edits on large in-memory
 
 Remount reapplies both. Title bar says **Test · this browser**. Banner: writes stay in this browser; **Open a folder** for files that survive across machines. Overlay is not a 300k vault and is not cross-browser. Disk vaults already write markdown; they do not use this overlay.
 
-## FSA 100k (Grok Bot Linux box, `907d8ea`)
+## FSA 100k (local browser, `907d8ea`)
 
 | Fact | Result |
 |------|--------|
@@ -359,8 +359,8 @@ Opening one note after Ready was the last straw. Baseline heap was already huge:
 
 ## What is still not proven
 
-- Chrome **refuse card** on a real ≥25k / 100k folder (Grok Bot on the Linux box).
-- Real Chrome FSA **≤20k** folder: 20 opens, no discard, `cluster` hits (Grok Bot).
+- Chrome **refuse card** on a real ≥25k / 100k folder (local browser on the Linux box).
+- Real Chrome FSA **≤20k** folder: 20 opens, no discard, `cluster` hits (local browser).
 - Tauri open of `~/Documents/nexus-soak-100k` then `~/Documents/nexus-soak-300k` with SQLite FTS5 BM25. **Required for SCALE READY.**
 - Overlay surviving a different browser / machine (it will not — by design).
 - Desktop 300–500k as a daily driver.

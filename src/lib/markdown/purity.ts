@@ -1,5 +1,5 @@
 /**
- * Markdown purity — never rewrite Hermes/external notes without real user edits.
+ * Markdown purity — never rewrite external notes without real user edits.
  */
 
 /** Canonical normalize for equality (line endings + trailing space) */
@@ -31,7 +31,7 @@ export function preferCleanWrite(previous: string, next: string): string {
   if (!previous) return normalizeMarkdown(next);
   if (normalizeMarkdown(previous) === normalizeMarkdown(next)) return previous;
   if (markdownFingerprint(previous) === markdownFingerprint(next)) {
-    // Round-trip noise only — keep original formatting (Hermes-friendly)
+    // Round-trip noise only — keep original formatting
     return previous;
   }
   return normalizeMarkdown(next);

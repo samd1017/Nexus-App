@@ -1,4 +1,4 @@
-/** Core vault domain types — plain-folder knowledge vault (Hermes-compatible). */
+/** Core vault domain types — plain-folder knowledge vault. */
 
 export type VaultNodeKind = "folder" | "note";
 
