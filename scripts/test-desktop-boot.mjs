@@ -598,11 +598,15 @@ assert.equal(treeSrc.includes("isIdleEnterTarget"), true);
 assert.equal(treeSrc.includes("data-empty-armed"), true);
 assert.equal(treeSrc.includes("stopImmediatePropagation"), true);
 const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-assert.equal(cssSrc.includes("outline: 2px solid #5ad8ff"), true);
+assert.equal(cssSrc.includes("--focus-ring: #5ad8ff;"), true);
+assert.equal(cssSrc.includes("--focus-ring: #0078a8;"), true);
+assert.equal(cssSrc.includes("outline: var(--focus-ring-width) solid var(--focus-ring);"), true);
 assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);
 assert.equal(cssSrc.includes('data-keyboard-focus="row"'), true);
 assert.equal(cssSrc.includes('data-keyboard-focus="control"'), true);
-assert.equal(cssSrc.includes("inset 0 0 0 3px #5ad8ff"), true);
+assert.equal(cssSrc.includes("inset 0 0 0 3px #5ad8ff"), false);
+assert.equal(cssSrc.includes("[data-file-tree]:focus-visible .tree-item.is-focused"), true);
+assert.equal(cssSrc.includes('[role="dialog"] button:focus'), false);
 assert.equal(cssSrc.includes("nexus-rebuild-btn"), true);
 assert.equal(cssSrc.includes("nexus-search-field:focus-within"), true);
 assert.equal(cssSrc.includes("caret-color: #5ad8ff"), true);
@@ -2055,10 +2059,33 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
 // and this override comes after it so it wins without !important.
 {
   const cssSrc2 = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-  const ringAt = cssSrc2.indexOf(":focus-visible {\n  outline: 2px solid #5ad8ff;\n  outline-offset: 2px;\n}\n\n/* Where you write");
+  const ringAt = cssSrc2.indexOf(":focus-visible {\n  outline: var(--focus-ring-width) solid var(--focus-ring);\n  outline-offset: var(--focus-ring-offset);\n}\n\n/* Where you write");
   const writeAt = cssSrc2.indexOf(".ProseMirror.note-editor:focus-visible,\n.source-editor:focus-visible,\n.note-title-input:focus-visible {\n  outline: none;\n}");
   assert.equal(ringAt > 0 && writeAt > ringAt, true, "writing-surface override follows the global ring");
   assert.equal(cssSrc2.includes(".chip-btn:focus-visible,"), true, "controls keep their ring");
+  assert.equal(cssSrc2.includes(".note-title-input:focus-visible"), true, "the title stays quiet");
+  const lightAt = cssSrc2.indexOf('[data-theme="light"]');
+  assert.ok(cssSrc2.indexOf("--focus-ring: #0078a8;") > lightAt, "light theme darkens the ring");
+  function relLum(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    const ch = [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map((c) =>
+      c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4,
+    );
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+  }
+  function contrast(a, b) {
+    const L1 = relLum(a);
+    const L2 = relLum(b);
+    const [hi, lo] = L1 > L2 ? [L1, L2] : [L2, L1];
+    return (hi + 0.05) / (lo + 0.05);
+  }
+  assert.ok(contrast("#5ad8ff", "#0f0f12") >= 3, "dark ring on the app background");
+  assert.ok(contrast("#5ad8ff", "#16161a") >= 3, "dark ring on dialogs");
+  assert.ok(contrast("#5ad8ff", "#04060a") >= 3, "dark ring on graph chips");
+  assert.ok(contrast("#0078a8", "#ffffff") >= 3, "light ring on white");
+  assert.ok(contrast("#0078a8", "#f7f8fb") >= 3, "light ring on the page");
+  assert.ok(contrast("#0078a8", "#eef0f4") >= 3, "light ring on the deepest paper");
+  assert.ok(contrast("#061018", "#00c8ff") >= 3, "ring on a solid accent button");
 }
 // Ready is not painted. The phase returns no banner, giant or thin.
 assert.equal(shellSrc.includes('if (progress.phase === "ready") return null;'), true);
