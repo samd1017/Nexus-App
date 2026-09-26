@@ -205,7 +205,7 @@ export function FindInNoteBar({
         <input
           ref={inputRef}
           type="search"
-          className="find-in-note-input min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+          className="nexus-field find-in-note-input min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
           placeholder={`Find in note (${formatShortcut("F")})`}
           value={query}
           spellCheck={false}
@@ -277,7 +277,7 @@ export function FindInNoteBar({
             ref={replaceRef}
             type="text"
             data-find-replace="1"
-            className="find-in-note-input min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+            className="nexus-field find-in-note-input min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
             placeholder="Replace with"
             value={replace}
             spellCheck={false}
