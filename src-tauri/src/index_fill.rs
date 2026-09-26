@@ -3606,7 +3606,7 @@ pub fn fill_from_disk_with_opts<'a>(
     );
 
     crate::shell_catalog::mark_catalog_walk_done(conn);
-    // PASSIVE never waits for writers; never TRUNCATE (that hung Tower after 100k rows).
+    // PASSIVE never waits for writers; never TRUNCATE (that hung a 100k fill).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
     let search_state = if open_set_covers_vault {
