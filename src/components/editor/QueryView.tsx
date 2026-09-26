@@ -3,7 +3,7 @@ import type { NodeViewProps } from "@tiptap/react";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
-import { searchWithOps } from "@/lib/search/query-ops";
+import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
 
 export function QueryView({ node, updateAttributes }: NodeViewProps) {
   const query = String(node.attrs.query || "");
@@ -16,6 +16,7 @@ export function QueryView({ node, updateAttributes }: NodeViewProps) {
     () => (query.trim() ? searchWithOps(nodes, query, 24) : []),
     [nodes, query],
   );
+  const unsupportedHint = unsupportedSearchHint(parseSearchOps(query));
 
   return (
     <NodeViewWrapper className="nexus-query" data-type="query" data-query={query}>
@@ -57,9 +58,14 @@ export function QueryView({ node, updateAttributes }: NodeViewProps) {
         </span>
       </div>
       <div className="nexus-query-body">
+        {unsupportedHint ? (
+          <p className="nexus-query-empty" data-testid="query-unsupported-hint">
+            {unsupportedHint}
+          </p>
+        ) : null}
         {hits.length === 0 ? (
           <p className="nexus-query-empty">
-            No matches. Try path:, folder:, file:, #tag, or -exclude.
+            No matches. Try path:, folder:, file:, #tag, tag:, OR, or -exclude.
           </p>
         ) : (
           <ul className="space-y-1.5">

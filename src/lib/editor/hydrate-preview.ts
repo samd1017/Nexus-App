@@ -7,7 +7,7 @@ import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { markdownToHtml } from "@/lib/markdown/serialize";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { resolveWikilink } from "@/lib/graph/build-graph";
-import { searchWithOps } from "@/lib/search/query-ops";
+import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
 import { noteTitle } from "@/lib/vault/types";
 import type { VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
@@ -196,6 +196,10 @@ function renderQueries(
   for (const el of els) {
     const query = (el.getAttribute("data-query") || el.textContent || "").trim();
     const hits = query ? searchWithOps(nodes, query, 24) : [];
+    const unsupportedHint = unsupportedSearchHint(parseSearchOps(query));
+    const hintHtml = unsupportedHint
+      ? `<p class="nexus-query-empty" data-testid="query-unsupported-hint">${escapeHtml(unsupportedHint)}</p>`
+      : "";
     const list = hits.length
       ? `<ul class="space-y-1.5">${hits
           .map(
@@ -203,13 +207,13 @@ function renderQueries(
               `<li><button type="button" class="flex w-full flex-col items-start rounded-md px-1.5 py-1 text-left hover:bg-white/[0.04]" data-open-note="${escapeHtml(h.noteId)}"><span class="text-[13px] font-medium">${escapeHtml(h.title)}</span><span class="line-clamp-2 text-[11px] text-[var(--text-muted)]">${escapeHtml(h.snippet)}</span></button></li>`,
           )
           .join("")}</ul>`
-      : `<p class="nexus-query-empty">No matches. Try path:, folder:, file:, #tag, or -exclude.</p>`;
+      : `<p class="nexus-query-empty">No matches. Try path:, folder:, file:, #tag, tag:, OR, or -exclude.</p>`;
     el.innerHTML = `
       <div class="nexus-query-head">
         <span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query || "empty query")}</span>
         <span class="ml-auto text-[10px] text-[var(--text-muted)]">${hits.length} live</span>
       </div>
-      <div class="nexus-query-body">${list}</div>
+      <div class="nexus-query-body">${hintHtml}${list}</div>
     `;
   }
 }

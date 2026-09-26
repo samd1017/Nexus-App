@@ -187,7 +187,7 @@ export function retrieveForAsk(
   const free = ops.rest || stripped;
   const raw = ops.fileFilter
     ? []
-    : hasSearchOps(ops)
+    : hasSearchOps(ops) || ops.orClauses.length > 1
       ? searchWithOps(nodes, stripped, Math.max(limit * 3, 24))
       : searchWithPathFolderOps(
           nodes,

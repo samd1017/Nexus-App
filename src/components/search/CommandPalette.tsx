@@ -47,7 +47,14 @@ import {
   searchWithBackendAsync,
   describeSearchEngine,
 } from "@/lib/search/search-backend";
-import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-ops";
+import {
+  hasOrQuery,
+  hasSearchOps,
+  isTagOnlyQuery,
+  parseSearchOps,
+  searchWithOps,
+  unsupportedSearchHint,
+} from "@/lib/search/query-ops";
 import { fuseSearchHits } from "@/lib/search/rank-fusion";
 import { buildAskAnswer, retrieveForAsk } from "@/lib/search/ask-notes";
 import { getBacklinks } from "@/lib/vault/backlinks";
@@ -393,6 +400,9 @@ function CommandPaletteOpen() {
     qLower === "deleted" ||
     qLower === "restore";
   const hasPathFolderOp = hasSearchOps(pathFolderOps);
+  const hasOr = hasOrQuery(pathFolderOps);
+  const useOpsSearch = hasPathFolderOp || hasOr;
+  const unsupportedHint = isCommandMode ? null : unsupportedSearchHint(pathFolderOps);
   const showAllActions = Boolean(raw) || isCommandMode;
   const actionQuery = isCommandMode
     ? q
@@ -401,7 +411,7 @@ function CommandPaletteOpen() {
   const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
 
   const syncHits = useMemo(() => {
-    if (shellCatalog && shellDbPath) {
+    if (shellCatalog && shellDbPath && !hasOr) {
       if (isEmptyQuery) return topNotesByVisitMtime(nodes, 10, vaultId);
       if ((exactTagQuery || isTagBrowse) && !hasPathFolderOp) return [];
       const needle = debouncedSearch.trim() || searchText || raw;
@@ -450,7 +460,7 @@ function CommandPaletteOpen() {
       return retrieveForAsk(nodes, debouncedSearch.trim() || raw, signals, 8);
     }
 
-    if (hasPathFolderOp) {
+    if (useOpsSearch) {
       return fuseSearchHits(
         searchWithOps(nodes, debouncedSearch.trim() || raw, PALETTE_RESULT_LIMIT),
         signals,
@@ -479,6 +489,8 @@ function CommandPaletteOpen() {
     wantsBroken,
     isCommandMode,
     hasPathFolderOp,
+    hasOr,
+    useOpsSearch,
     pathFolderOps.pathFilter,
     pathFolderOps.folderFilter,
     pathFolderOps.fileFilter,
@@ -497,7 +509,7 @@ function CommandPaletteOpen() {
     setAsyncHits(null);
     setNoteSearchPending(false);
     setNoteSearchFailed(false);
-    if (shellCatalog && shellDbPath) {
+    if (shellCatalog && shellDbPath && !hasOr) {
       let cancelled = false;
       const db = shellDbPath;
       const asHit = (id: string, path: string, title: string, snippet: string): SearchHit => ({
@@ -524,15 +536,17 @@ function CommandPaletteOpen() {
           cancelled = true;
         };
       }
-      if (exactTagQuery && !hasPathFolderOp) {
-        const tag = exactTagQuery[1];
-        void fetchShellTagNotes(db, tag).then((rows) => {
-          if (cancelled || !rows) return;
-          setAsyncHits(rows.map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), `#${tag}`)));
-        });
-        return () => {
-          cancelled = true;
-        };
+      if (isTagOnlyQuery(pathFolderOps) || (exactTagQuery && !hasPathFolderOp)) {
+        const tag = pathFolderOps.tagFilter || (exactTagQuery ? exactTagQuery[1] : "");
+        if (tag) {
+          void fetchShellTagNotes(db, tag).then((rows) => {
+            if (cancelled || !rows) return;
+            setAsyncHits(rows.map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), `#${tag}`)));
+          });
+          return () => {
+            cancelled = true;
+          };
+        }
       }
       if (hasPathFolderOp && db !== BROWSER_SHELL_DB) {
         const pathNeedle = pathFolderOps.pathFilter ?? "";
@@ -710,7 +724,7 @@ function CommandPaletteOpen() {
     ) {
       return;
     }
-    const needle = hasPathFolderOp
+    const needle = useOpsSearch
       ? debouncedSearch.trim() || raw
       : debouncedSearch.trim() || searchText || raw;
     if (!needle.trim()) return;
@@ -727,9 +741,9 @@ function CommandPaletteOpen() {
       neighborIds,
       queryText: needle,
     };
-    const useAsyncLookup = !hasPathFolderOp;
+    const useAsyncLookup = !useOpsSearch;
     if (useAsyncLookup) setNoteSearchPending(true);
-    void (hasPathFolderOp
+    void (useOpsSearch
       ? Promise.resolve(searchWithOps(nodes, needle, PALETTE_RESULT_LIMIT))
       : searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT)
     ).then((rows) => {
@@ -759,12 +773,15 @@ function CommandPaletteOpen() {
     wantsBroken,
     isCommandMode,
     hasPathFolderOp,
+    hasOr,
+    useOpsSearch,
     isAskMode,
     activeNoteId,
     shellCatalog,
     shellDbPath,
     pathFolderOps.pathFilter,
     pathFolderOps.folderFilter,
+    pathFolderOps.tagFilter,
     searchIndexState,
   ]);
   const hits = asyncHits ?? syncHits;
@@ -773,7 +790,7 @@ function CommandPaletteOpen() {
   // Folders are not notes, so note search never lists them. Enter on one
   // shows it in the list with the cursor on it.
   const folderHits = useMemo(() => {
-    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp) return [];
+    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return [];
     if (qLower.startsWith("is:")) return [];
     const out: { id: string; name: string; path: string }[] = [];
     for (const id in nodes) {
@@ -785,7 +802,7 @@ function CommandPaletteOpen() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, nodes, shellLiveTick, catalogFolderTick]);
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, hasOr, nodes, shellLiveTick, catalogFolderTick]);
 
   // Enter pressed while the catalog is still being asked for a folder by this
   // name waits for the answer: a folder goes to the list; no folder runs what
@@ -813,7 +830,7 @@ function CommandPaletteOpen() {
   );
   useEffect(() => {
     if (!folderLookup) return;
-    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp) return;
+    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return;
     if (qLower.startsWith("is:")) return;
     const wanted = q.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
     if (!wanted) return;
@@ -858,7 +875,7 @@ function CommandPaletteOpen() {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, folderLookup, catalogDb, shellDbPath, runHeldEnter]);
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, hasOr, folderLookup, catalogDb, shellDbPath, runHeldEnter]);
 
   const catalogFolderPending = Boolean(
     folderLookup &&
@@ -867,6 +884,7 @@ function CommandPaletteOpen() {
       !isCommandMode &&
       !isTagBrowse &&
       !hasPathFolderOp &&
+      !hasOr &&
       !qLower.startsWith("is:"),
   ) && catalogAnsweredRef.current !== q;
   useEffect(() => {
@@ -1681,7 +1699,7 @@ function CommandPaletteOpen() {
               if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
               // Shift+Enter makes a note with this name, even when notes match.
               if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-                if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp) return;
+                if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return;
                 if (qLower.startsWith("is:") || wantsOrphans || wantsBroken) return;
                 e.preventDefault();
                 e.stopPropagation();
@@ -1756,11 +1774,25 @@ function CommandPaletteOpen() {
             Tips: <span className="font-mono text-[var(--text-secondary)]">path:</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">file:</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">tag:</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">OR</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">-exclude</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">is:orphan</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">is:deleted</span> ·{" "}
             <span className="font-mono text-[var(--text-secondary)]">ask:</span> cited answers ·{" "}
-            <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
+            <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands.
+            {" "}
+            <span className="font-mono text-[var(--text-secondary)]">line:</span> and{" "}
+            <span className="font-mono text-[var(--text-secondary)]">section:</span> are not supported yet.
+          </div>
+        ) : null}
+        {unsupportedHint ? (
+          <div
+            className="border-b border-[var(--border)] px-4 py-1.5 text-[11px] text-[var(--text-secondary)]"
+            role="status"
+            data-testid="search-unsupported-hint"
+          >
+            {unsupportedHint}
           </div>
         ) : null}
 
@@ -1885,7 +1917,7 @@ function CommandPaletteOpen() {
             </Command.Group>
           ) : null}
 
-          {!isCommandMode && searchText && hasPathFolderOp ? (
+          {!isCommandMode && searchText && (hasPathFolderOp || hasOr) ? (
             <Command.Group heading="Search" className={GROUP_HEADING}>
               <Command.Item
                 value={`save-search-${raw}`}

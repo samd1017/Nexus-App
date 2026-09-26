@@ -38,6 +38,7 @@ import {
   rebuildIndexedSearch,
 } from "@/lib/search/indexed-search";
 import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
+import { SEARCH_OPERATOR_HELP } from "@/lib/search/query-ops";
 import type { BodyCacheStats } from "@/lib/vault/body-cache";
 import type { VaultMode } from "@/lib/vault/types";
 import { formatShortcut, isAppleModPlatform, canOpenLocalVaultFolder } from "@/lib/platform";
@@ -1006,7 +1007,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Search & Ask"
-                body={`${formatShortcut("K")} opens search. Prefix ask: or ?  for a grounded answer with citations. Operators: path: folder: file: #tag -exclude is:orphan. Trash restore is in the sidebar, the delete toast, and ${formatShortcut("K")} trash / is:deleted.`}
+                body={`${formatShortcut("K")} opens search. Prefix ask: or ?  for a grounded answer with citations. ${SEARCH_OPERATOR_HELP} Trash restore is in the sidebar, the delete toast, and ${formatShortcut("K")} trash / is:deleted.`}
               />
               <HelpItem
                 title="Graph"

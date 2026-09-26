@@ -1,6 +1,7 @@
 /**
  * Shared search operators for the command palette and live ```query blocks.
- * Operators: path: folder: file: #tag -exclude is:orphan
+ * Operators: path: folder: file: #tag tag: -exclude is:orphan OR
+ * line: and section: are recognized only so search can say they are not supported yet.
  */
 
 import type { SearchHit, VaultNode } from "@/lib/vault/types";
@@ -13,6 +14,8 @@ import {
   searchWithPathFolderOps,
 } from "./search-backend";
 
+export type UnsupportedSearchOp = "line" | "section";
+
 export type SearchOps = {
   rest: string;
   pathFilter: string | null;
@@ -21,16 +24,144 @@ export type SearchOps = {
   tagFilter: string | null;
   excludes: string[];
   isOrphan: boolean;
+  /**
+   * Uppercase `OR` clauses, each parsed on its own.
+   * Empty when the query did not use OR. Lowercase "or" stays ordinary text.
+   */
+  orClauses: SearchOps[];
+  /** `line:` / `section:` tokens the user typed. They are not applied as filters. */
+  unsupported: UnsupportedSearchOp[];
 };
 
-const TOKEN = /("([^"]+)"|(\S+))/;
+const UNSUPPORTED_ORDER: UnsupportedSearchOp[] = ["line", "section"];
+
+/** Settings, shortcuts, and palette copy. Keep the unsupported operators explicit. */
+export const SEARCH_OPERATOR_HELP =
+  "Operators: path:, folder:, file:, #tag, tag:, -exclude, is:orphan, and OR for either term (foo OR bar). line: and section: are not supported yet.";
 
 function takeQuotedOrBare(all: string, quoted?: string, bare?: string): string {
   return (quoted ?? bare ?? all ?? "").trim();
 }
 
-export function parseSearchOps(raw: string): SearchOps {
-  let rest = raw || "";
+function canonUnsupported(ops: UnsupportedSearchOp[]): UnsupportedSearchOp[] {
+  return UNSUPPORTED_ORDER.filter((op) => ops.includes(op));
+}
+
+function mergeUnsupported(clauses: SearchOps[]): UnsupportedSearchOp[] {
+  const found: UnsupportedSearchOp[] = [];
+  for (const clause of clauses) {
+    for (const op of clause.unsupported) {
+      if (!found.includes(op)) found.push(op);
+    }
+  }
+  return canonUnsupported(found);
+}
+
+/** One sentence when the query used line: and/or section:. */
+export function unsupportedSearchHint(ops: Pick<SearchOps, "unsupported">): string | null {
+  const present = canonUnsupported(ops.unsupported);
+  if (present.length === 0) return null;
+  const labels = present.map((op) => `${op}:`);
+  if (labels.length === 1) return `${labels[0]} is not supported yet.`;
+  return `${labels[0]} and ${labels[1]} are not supported yet.`;
+}
+
+export function hasOrQuery(ops: SearchOps): boolean {
+  return ops.orClauses.length > 1;
+}
+
+/** `#tag` or `tag:tag` with no other filters — same tag lookup either way. */
+export function isTagOnlyQuery(ops: SearchOps): boolean {
+  return Boolean(
+    ops.tagFilter &&
+      !ops.rest &&
+      !ops.pathFilter &&
+      !ops.folderFilter &&
+      !ops.fileFilter &&
+      ops.excludes.length === 0 &&
+      !ops.isOrphan &&
+      ops.orClauses.length === 0,
+  );
+}
+
+function blankOps(rest = ""): SearchOps {
+  return {
+    rest,
+    pathFilter: null,
+    folderFilter: null,
+    fileFilter: null,
+    tagFilter: null,
+    excludes: [],
+    isOrphan: false,
+    orClauses: [],
+    unsupported: [],
+  };
+}
+
+/** Split on uppercase OR outside quotes. Lowercase "or" is not an operator. */
+function splitUppercaseOr(raw: string): string[] {
+  const parts: string[] = [];
+  let buf = "";
+  let inQuote = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      buf += ch;
+      continue;
+    }
+    if (!inQuote && raw.startsWith("OR", i)) {
+      const before = i === 0 ? "" : raw[i - 1];
+      const after = i + 2 >= raw.length ? "" : raw[i + 2];
+      const boundaryBefore = i === 0 || /\s/.test(before);
+      const boundaryAfter = i + 2 >= raw.length || /\s/.test(after);
+      if (boundaryBefore && boundaryAfter) {
+        parts.push(buf);
+        buf = "";
+        i += 1;
+        while (i + 1 < raw.length && /\s/.test(raw[i + 1])) i += 1;
+        continue;
+      }
+    }
+    buf += ch;
+  }
+  parts.push(buf);
+  return parts;
+}
+
+function stripUnsupported(raw: string): { text: string; unsupported: UnsupportedSearchOp[] } {
+  const unsupported: UnsupportedSearchOp[] = [];
+  let out = "";
+  let inQuote = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      out += ch;
+      continue;
+    }
+    if (!inQuote) {
+      const prev = i === 0 ? "" : raw[i - 1];
+      const boundary = i === 0 || /\W/.test(prev);
+      if (boundary) {
+        const m = /^(line|section):(?:"[^"]*"|[^\s]*)/i.exec(raw.slice(i));
+        if (m) {
+          const key = m[1].toLowerCase() as UnsupportedSearchOp;
+          if (!unsupported.includes(key)) unsupported.push(key);
+          out += " ";
+          i += m[0].length - 1;
+          continue;
+        }
+      }
+    }
+    out += ch;
+  }
+  return { text: out, unsupported: canonUnsupported(unsupported) };
+}
+
+function parseClause(raw: string): SearchOps {
+  const stripped = stripUnsupported(raw);
+  let rest = stripped.text;
   let pathFilter: string | null = null;
   let folderFilter: string | null = null;
   let fileFilter: string | null = null;
@@ -59,6 +190,11 @@ export function parseSearchOps(raw: string): SearchOps {
     isOrphan = true;
     return " ";
   });
+  // tag: is the Obsidian alias of #tag, including tag:#name.
+  rest = rest.replace(/(^|\s)tag:#?([a-zA-Z][\w/-]{0,48})\b/gi, (_, lead, tag: string) => {
+    tagFilter = tag.toLowerCase();
+    return lead;
+  });
   rest = rest.replace(/(^|\s)#([a-zA-Z][\w/-]{0,48})\b/g, (_, lead, tag: string) => {
     tagFilter = tag.toLowerCase();
     return lead;
@@ -72,7 +208,44 @@ export function parseSearchOps(raw: string): SearchOps {
     tagFilter,
     excludes,
     isOrphan,
+    orClauses: [],
+    unsupported: stripped.unsupported,
   };
+}
+
+function clauseHasWork(ops: SearchOps): boolean {
+  return Boolean(ops.rest || hasSearchOps(ops) || ops.unsupported.length);
+}
+
+export function parseSearchOps(raw: string): SearchOps {
+  const parts = splitUppercaseOr(raw || "");
+  const clauses = parts.map((part) => parseClause(part));
+  if (parts.length <= 1) return clauses[0] ?? blankOps();
+
+  const meaningful = clauses.filter(clauseHasWork);
+  if (meaningful.length > 1) {
+    return {
+      rest: meaningful
+        .map((clause) => clause.rest)
+        .filter(Boolean)
+        .join(" "),
+      pathFilter: null,
+      folderFilter: null,
+      fileFilter: null,
+      tagFilter: null,
+      excludes: [],
+      isOrphan: false,
+      orClauses: meaningful,
+      unsupported: mergeUnsupported(meaningful),
+    };
+  }
+  if (meaningful.length === 1) {
+    return {
+      ...meaningful[0],
+      unsupported: mergeUnsupported(clauses),
+    };
+  }
+  return blankOps();
 }
 
 export function hasSearchOps(ops: SearchOps): boolean {
@@ -117,13 +290,29 @@ export function filterHitsByOps(
   return out;
 }
 
-/** Scale-safe operator search used by palette + live query blocks. */
-export function searchWithOps(
+function unionSearchHits(groups: SearchHit[][], limit: number): SearchHit[] {
+  const byId = new Map<string, SearchHit>();
+  for (const group of groups) {
+    for (const hit of group) {
+      const prev = byId.get(hit.noteId);
+      if (!prev || hit.score > prev.score) byId.set(hit.noteId, hit);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
+    .slice(0, limit);
+}
+
+function searchParsedOps(
   nodes: Record<string, VaultNode>,
-  raw: string,
-  limit = 16,
+  ops: SearchOps,
+  limit: number,
 ): SearchHit[] {
-  const ops = parseSearchOps(raw);
+  // An unsupported operator alone is not "match everything".
+  if (!ops.rest && !hasSearchOps(ops)) {
+    if (ops.unsupported.length) return [];
+    return searchWithBackend(nodes, "", limit).slice(0, limit);
+  }
   if (ops.isOrphan) {
     try {
       return getOrphanNotes(nodes, limit).map((n) => ({
@@ -167,4 +356,21 @@ export function searchWithOps(
     hits = searchWithBackend(nodes, "", limit);
   }
   return filterHitsByOps(hits, ops, nodes).slice(0, limit);
+}
+
+/** Scale-safe operator search used by palette + live query blocks. */
+export function searchWithOps(
+  nodes: Record<string, VaultNode>,
+  raw: string,
+  limit = 16,
+): SearchHit[] {
+  const ops = parseSearchOps(raw);
+  if (ops.orClauses.length > 1) {
+    const per = Math.min(Math.max(limit, 16), 80);
+    return unionSearchHits(
+      ops.orClauses.map((clause) => searchParsedOps(nodes, clause, per)),
+      limit,
+    );
+  }
+  return searchParsedOps(nodes, ops, limit);
 }
