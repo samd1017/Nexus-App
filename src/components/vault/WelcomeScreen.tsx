@@ -393,7 +393,7 @@ export function WelcomeScreen() {
           {showCreate ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
               <input
-                className="min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)]"
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
                 placeholder="Vault name"

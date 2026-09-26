@@ -78,6 +78,12 @@
     --titlebar-bg: rgba(8, 8, 10, 0.94);
     --code-inline: rgba(255, 255, 255, 0.06);
     --switch-off: rgba(255, 255, 255, 0.18);
+    /* One keyboard ring. #5ad8ff on #0f0f12 is ~11:1. Light theme darkens it. */
+    --focus-ring: #5ad8ff;
+    --focus-ring-width: 2px;
+    --focus-ring-offset: 2px;
+    /* Solid accent fills: cyan-on-cyan is ~1.2:1, near-black on #00c8ff is ~10:1. */
+    --focus-ring-on-fill: #061018;
   }
 
   [data-theme="light"] {
@@ -103,6 +109,9 @@
     --titlebar-bg: rgba(247, 248, 251, 0.92);
     --code-inline: rgba(16, 18, 28, 0.06);
     --switch-off: #c5cad6;
+    /* #0078a8 on #ffffff is ~4.9:1; on #eef0f4 ~4.3:1. Same ring, readable on paper. */
+    --focus-ring: #0078a8;
+    --focus-ring-on-fill: #061018;
     --danger-dim: color-mix(in srgb, var(--danger) 12%, transparent);
     --warning-dim: color-mix(in srgb, var(--warning) 12%, transparent);
     --success-dim: color-mix(in srgb, var(--success) 12%, transparent);
@@ -165,8 +174,8 @@
   }
 
   :focus-visible {
-    outline: 2px solid #5ad8ff;
-    outline-offset: 2px;
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
   }
 
   @media (pointer: fine) {
@@ -261,7 +270,7 @@
   }
   .skip-link:focus {
     top: 8px;
-    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline: var(--focus-ring-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
 
@@ -932,15 +941,10 @@
     background: rgba(0, 200, 255, 0.1) !important;
     box-shadow: 0 0 0 1px rgba(0, 200, 255, 0.12);
   }
-  .daily-chip:focus-visible {
-    outline: 2px solid rgba(0, 200, 255, 0.55);
-    outline-offset: 2px;
-  }
+  .daily-chip:focus-visible,
   .daily-chip.is-active:focus-visible {
-    outline-color: rgba(0, 200, 255, 0.75);
-    box-shadow:
-      0 0 0 1px rgba(0, 200, 255, 0.18),
-      0 0 12px rgba(0, 200, 255, 0.14);
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
   }
   .daily-chip.daily-chip--day {
     border-radius: 8px;
@@ -959,12 +963,10 @@
   .month-cal-cell--empty {
     pointer-events: none;
   }
-  .month-cal-cell:focus-visible {
-    outline: 2px solid rgba(0, 200, 255, 0.55);
-    outline-offset: 1px;
-  }
+  .month-cal-cell:focus-visible,
   .month-cal-cell.is-active:focus-visible {
-    outline-color: rgba(0, 200, 255, 0.75);
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: 1px;
   }
   .month-calendar {
     color: var(--text-primary);
@@ -1013,11 +1015,6 @@
   [data-theme="light"] .tree-item.is-active {
     background: var(--accent-dim);
     box-shadow: inset 3px 0 0 var(--accent);
-  }
-
-  .tree-item.is-focused {
-    outline: 2px solid #5ad8ff;
-    outline-offset: -2px;
   }
 
   /* Icon button */
@@ -1185,8 +1182,8 @@
 }
 
 .graph-chrome:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .graph-loading-ring {
@@ -1238,6 +1235,15 @@
   color: inherit;
   border: 0;
   font: inherit;
+  outline: none;
+}
+/* The chip wears the ring; the native select does not draw a second box. */
+.graph-chip-select:focus-within {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.graph-chip-select select:focus,
+.graph-chip-select select:focus-visible {
   outline: none;
 }
 .graph-inspector {
@@ -1425,7 +1431,9 @@
   }
 
   /* Graph host canvas fill */
-  .graph-host canvas {
+  .graph-host canvas,
+  .graph-host canvas:focus,
+  .graph-host canvas:focus-visible {
     outline: none;
   }
 
@@ -1458,8 +1466,12 @@
   .chip-btn:focus-visible,
   .primary-btn:focus-visible,
   .ghost-btn:focus-visible {
-    outline: 2px solid #5ad8ff;
-    outline-offset: 2px;
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .primary-btn:focus-visible {
+    outline-color: var(--focus-ring-on-fill);
   }
 
   .cmdk-item[aria-selected="true"] {
@@ -2083,10 +2095,24 @@
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }
 
-/* Unlayered so dark-chrome rings stay visible over preflight. */
+/* Surfaces that stay dark in the light theme keep the bright ring.
+   #5ad8ff on #16161a / #04060a is ~11:1. The page token would sink into them. */
+.nexus-dark-island,
+.month-cal-popover,
+.graph-chip,
+.graph-link-chip,
+.graph-inspector,
+.graph-chrome [data-graph-breadcrumb],
+.graph-chrome [aria-label="Graph mode"],
+.graph-chrome [data-graph-filter],
+.nexus-rename-input {
+  --focus-ring: #5ad8ff;
+}
+
+/* Unlayered so the ring wins over preflight and utility outline resets. */
 :focus-visible {
-  outline: 2px solid #5ad8ff;
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* Where you write, the caret is the focus mark; a ring there boxes in the page. */
@@ -2095,30 +2121,75 @@
 .note-title-input:focus-visible {
   outline: none;
 }
+.note-title-input,
+.nexus-mermaid-edit,
+.nexus-math-edit,
+.nexus-canvas-edit {
+  outline: none;
+}
+.nexus-mermaid-edit:focus-visible,
+.nexus-math-edit:focus-visible,
+.nexus-canvas-edit:focus-visible,
+.graph-host canvas:focus,
+.graph-host canvas:focus-visible {
+  outline: none;
+}
+
+/* Chrome text fields: one ring, same token. Pointer clicks on buttons do not match. */
+.nexus-field {
+  outline: none;
+}
+.nexus-field:focus-visible,
+.nexus-canvas-edge-input:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* A shell that only exists to move the cursor. The control inside wears the ring. */
+.nexus-focus-host:focus,
+.nexus-focus-host:focus-visible {
+  outline: none;
+}
+#main-content:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
 
 .icon-btn:focus-visible,
 .chip-btn:focus-visible,
 .primary-btn:focus-visible,
-.ghost-btn:focus-visible {
-  outline: 2px solid #5ad8ff;
-  outline-offset: 2px;
-}
-
-/* Keyboard cursor on dark chrome. Inset on rows so the scrollport cannot clip it. */
-.tree-item.is-focused,
-.tree-item[data-keyboard-focus="row"] {
-  outline: 3px solid #5ad8ff;
-  outline-offset: -3px;
-  box-shadow: inset 0 0 0 3px #5ad8ff;
-  background: rgba(90, 216, 255, 0.2);
-}
-
+.ghost-btn:focus-visible,
 button:focus-visible,
-[role="dialog"] button:focus,
-[data-keyboard-focus="control"] {
-  outline: 3px solid #5ad8ff;
-  outline-offset: 3px;
-  box-shadow: 0 0 0 4px rgba(90, 216, 255, 0.8);
+[role="menuitem"]:focus-visible,
+[data-keyboard-focus="control"]:not(.nexus-search-field) {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: none;
+}
+.primary-btn:focus-visible,
+.graph-mode-pill[aria-pressed="true"]:focus-visible {
+  outline-color: var(--focus-ring-on-fill);
+}
+
+/* Tree cursor only while the list itself was reached from the keyboard. */
+[data-file-tree]:focus-visible .tree-item.is-focused,
+[data-file-tree]:focus-visible .tree-item[data-keyboard-focus="row"] {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Dark graph controls: inset so the ring sits on the chip, not the pale map. */
+.graph-chip:focus-visible,
+.graph-link-chip:focus-visible,
+.graph-mode-pill:focus-visible,
+.graph-chrome [data-graph-breadcrumb] button:focus-visible,
+.graph-chrome [aria-label="Graph mode"] button:focus-visible,
+.graph-chrome [data-graph-filter]:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.graph-mode-pill[aria-pressed="true"]:focus-visible {
+  outline-color: var(--focus-ring-on-fill);
 }
 
 /* Rebuild: a secondary action with a readable label, not the loudest thing in Settings. */
@@ -2143,24 +2214,22 @@ button:focus-visible,
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   border-color: var(--accent);
 }
-.nexus-rebuild-btn:focus,
 .nexus-rebuild-btn:focus-visible {
-  outline: 2px solid #5ad8ff;
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
-/* Search field uses the same cyan ring, inset so the palette cannot clip it. */
+/* Search field uses the same ring, inset so the palette cannot clip it. */
 .nexus-search-input {
   caret-color: #5ad8ff;
   color: #fff;
+  outline: none;
 }
 .nexus-search-field:focus-within,
-.nexus-search-field:has(input:focus),
 .nexus-search-field[data-keyboard-focus="control"] {
-  border: 2px solid #5ad8ff;
-  outline: 3px solid #5ad8ff;
-  outline-offset: -3px;
-  box-shadow: inset 0 0 0 3px #5ad8ff;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+  box-shadow: none;
 }
 /* One ring: the field carries it, so the text input inside does not draw a second box. */
 .nexus-search-input:focus,
@@ -2181,12 +2250,10 @@ button:focus-visible,
   font-size: 14px;
   font-weight: 700;
 }
-.nexus-settings-nav:focus,
 .nexus-settings-nav:focus-visible {
-  outline: 3px solid #5ad8ff;
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(90, 216, 255, 0.8);
-  background: rgba(90, 216, 255, 0.16);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: none;
 }
 
 [data-confirm-message] {
@@ -2253,9 +2320,15 @@ button:focus-visible,
   background: #0a1216;
   color: #fff;
   font-weight: 600;
-  border: 2px solid #5ad8ff;
-  box-shadow: 0 0 0 3px rgba(90, 216, 255, 0.22);
+  border: 2px solid var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 28%, transparent);
   caret-color: #5ad8ff;
+  outline: none;
+}
+.nexus-rename-input:focus,
+.nexus-rename-input:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
 }
 .nexus-rename-input::selection {
   background: rgba(90, 216, 255, 0.45);
@@ -2315,8 +2388,8 @@ button:focus-visible,
   border-color: rgba(90, 216, 255, 0.6);
 }
 .nexus-miss-actions button:focus-visible {
-  outline: 3px solid #5ad8ff;
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 .nexus-keys-hint kbd {
   font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;

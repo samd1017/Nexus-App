@@ -353,7 +353,7 @@ export function LeftSidebar() {
                 <button
                   type="button"
                   className={cn(
-                    "group flex items-center gap-1 rounded-md px-0.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5ad8ff]",
+                    "group flex items-center gap-1 rounded-md px-0.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]",
                     monthOpen && "text-[var(--accent)]",
                   )}
                   aria-expanded={monthOpen}
@@ -383,7 +383,7 @@ export function LeftSidebar() {
                   align="start"
                   sideOffset={6}
                   collisionPadding={16}
-                  className="month-cal-popover z-[80] w-[min(280px,calc(100vw-24px))] rounded-[14px] border border-[var(--border)] bg-[rgba(16,16,20,0.98)] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.08)] backdrop-blur-xl outline-none"
+                  className="month-cal-popover z-[80] w-[min(280px,calc(100vw-24px))] rounded-[14px] border border-[var(--border)] bg-[rgba(16,16,20,0.98)] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.08)] backdrop-blur-xl"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onEscapeKeyDown={() => setMonthOpen(false)}
                 >
@@ -566,7 +566,7 @@ export function LeftSidebar() {
           <div className="shrink-0 px-3 pt-1 pb-0.5">
             <button
               type="button"
-              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5ad8ff]"
+              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03]"
               aria-expanded={sidebarRecentOpen}
               onClick={() =>
                 updatePrefs({ sidebarRecentOpen: !sidebarRecentOpen })
@@ -634,7 +634,7 @@ export function LeftSidebar() {
           >
             <button
               type="button"
-              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5ad8ff]"
+              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03]"
               aria-expanded={sidebarTagsOpen}
               onClick={() => updatePrefs({ sidebarTagsOpen: !sidebarTagsOpen })}
               onKeyDown={(e) => {

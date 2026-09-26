@@ -1671,7 +1671,7 @@ function CommandPaletteOpen() {
             onValueChange={setQuery}
             placeholder={isCommandMode ? "Select a command…" : "Find or create a note…"}
             aria-label="Search notes"
-            className="nexus-search-input h-12 w-full bg-transparent text-[15px] text-white outline-none placeholder:text-[var(--text-muted)]"
+            className="nexus-search-input h-12 w-full bg-transparent text-[15px] text-white placeholder:text-[var(--text-muted)]"
             autoFocus
             onFocus={(e) => {
               e.currentTarget

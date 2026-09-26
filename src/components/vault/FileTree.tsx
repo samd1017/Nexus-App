@@ -415,7 +415,7 @@ const TreeRow = memo(function TreeRow({
         <input
           ref={inputRef}
           autoFocus
-          className="nexus-rename-input min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-[13px] outline-none"
+          className="nexus-rename-input min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-[13px]"
           spellCheck={false}
           autoComplete="off"
           aria-label="File name. Enter keeps it. Escape puts the old name back."
@@ -521,7 +521,7 @@ function MenuBtn({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)]",
+        "flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors",
         danger
           ? "text-[var(--danger)] hover:bg-[rgba(255,69,58,0.1)]"
           : "text-[var(--text-secondary)] hover:bg-[var(--fill-hover)] hover:text-[var(--text-primary)]",
@@ -1606,7 +1606,7 @@ export const FileTree = memo(function FileTree() {
           </span>
           <button
             type="button"
-            className="mr-1 flex shrink-0 items-center justify-center rounded-md text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
+            className="mr-1 flex shrink-0 items-center justify-center rounded-md text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)]"
             style={{ height: 26, width: 26 }}
             aria-label="New note in this folder"
             title="New note in this folder"
@@ -1670,7 +1670,7 @@ export const FileTree = memo(function FileTree() {
       data-tree-virtualized="1"
       data-focused-empty-folder={focusedEmptyFolder ?? undefined}
       className={cn(
-        "titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-3 outline-none",
+        "nexus-focus-host titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-3",
         rootDropActive &&
           "rounded-lg ring-1 ring-inset ring-[rgba(0,200,255,0.35)]",
       )}

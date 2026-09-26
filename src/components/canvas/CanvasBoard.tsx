@@ -902,7 +902,7 @@ export function CanvasBoard({ noteId, content }: Props) {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Find cards…"
-          className="ml-1 h-7 w-32 rounded-md border border-[var(--border)] bg-transparent px-2 text-[11px] outline-none"
+          className="nexus-field ml-1 h-7 w-32 rounded-md border border-[var(--border)] bg-transparent px-2 text-[11px]"
         />
         <span className="ml-auto hidden text-[11px] text-[var(--text-muted)] lg:inline">
           Drag · right-click · click a line to edit it
@@ -917,7 +917,7 @@ export function CanvasBoard({ noteId, content }: Props) {
             value={pickerQ}
             onChange={(e) => setPickerQ(e.target.value)}
             placeholder="Pin a note…"
-            className="mb-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px] outline-none"
+            className="nexus-field mb-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px]"
           />
           <ul className="max-h-56 overflow-y-auto">
             {filteredNotes.map((n) => (
@@ -950,7 +950,7 @@ export function CanvasBoard({ noteId, content }: Props) {
             value={pickerQ}
             onChange={(e) => setPickerQ(e.target.value)}
             placeholder="https://…"
-            className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px] outline-none"
+            className="nexus-field min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px]"
           />
           <button type="submit" className="chip-btn">Add</button>
         </form>

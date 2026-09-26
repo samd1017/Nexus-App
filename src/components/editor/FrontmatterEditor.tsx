@@ -91,7 +91,7 @@ export function FrontmatterEditor({
           {rows.map((row, i) => (
             <div key={i} className="flex items-center gap-2">
               <input
-                className="w-[7.5rem] shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field w-[7.5rem] shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 font-mono text-[12px] text-[var(--text-primary)]"
                 value={row.key}
                 placeholder="key"
                 spellCheck={false}
@@ -104,7 +104,7 @@ export function FrontmatterEditor({
                 }}
               />
               <input
-                className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[12.5px] text-[var(--text-primary)]"
                 value={row.value}
                 placeholder="value"
                 aria-label={`Property ${i + 1} value`}
