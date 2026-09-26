@@ -25,6 +25,7 @@ screenshots/
 /*.webp
 
 # Internal / agent
+docs/SCALE_SOAK_REPORT.md
 AGENTS.md
 AGENTS.project.md
 startup.sh
@@ -60,3 +61,5 @@ credentials.json
 # Coverage / misc
 coverage/
 *.tsbuildinfo
+*.pid
+*-runner.pid
