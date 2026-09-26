@@ -133,8 +133,8 @@ export const SLASH_ITEMS: SlashItem[] = [
   {
     id: "query",
     label: "Live query",
-    hint: "```query",
-    keywords: ["query", "search", "dataview", "list"],
+    hint: "built-in ```query",
+    keywords: ["query", "search", "dataview", "list", "built-in", "query block"],
     run: (ed, range) =>
       runSlash(ed, range, (c) =>
         c.insertContent({
