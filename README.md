@@ -32,26 +32,39 @@ Writing, the 3D graph, and visual design matter. Ranking quality and grounded re
 
 ---
 
-## Download Alpha (desktop)
+## Desktop: build from source
 
-Unsigned **macOS (Apple Silicon)** and **Windows** installers are attached when the desktop workflow finishes a release build. Check the [Releases](https://github.com/samd1017/Nexus-App/releases) page: **v0.1.0-alpha** has installer assets; **v0.1.1-alpha** is a source checkpoint (no DMG/EXE). If the latest tag has no assets, build from source — see [DESKTOP.md](DESKTOP.md).
+The primary desktop path is **build from source**. Requirements (Rust, Xcode Command Line Tools on macOS, Node 22+) and the full steps are in [DESKTOP.md](DESKTOP.md).
 
-These builds are **unsigned** (not notarized / not code-signed). That is expected for Alpha.
+```bash
+npm install
+npm run tauri:dev      # development
+npm run tauri:build    # production build
+```
 
-### macOS (unsigned)
+> **Installer assets exist on [`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) only** — not on Latest, and not on `v0.1.1-alpha` (source checkpoint, zero DMG/EXE). Do not open `/releases/latest` expecting installers. Those builds are **unsigned** (not notarized / not code-signed). The durable path is [DESKTOP.md](DESKTOP.md).
 
-1. Download the `.dmg` from a release that lists installer assets (currently **v0.1.0-alpha** — not the latest source-only tag).
+### Optional: v0.1.0-alpha installers (unsigned)
+
+Use only these files from the [`v0.1.0-alpha` release](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha):
+
+- macOS (Apple Silicon): `Nexus_0.1.0_aarch64.dmg`
+- Windows: `Nexus_0.1.0_x64-setup.exe`
+
+Files on that same older tag whose names contain `0.1.1` are not Latest. The `v0.1.1-alpha` tag itself has no installer assets.
+
+#### macOS (unsigned)
+
+1. Download `Nexus_0.1.0_aarch64.dmg` from [`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) (not Latest).
 2. Open it and drag **Nexus** into Applications.
 3. First launch: **right-click** the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
 4. macOS Gatekeeper will warn because the developer is unidentified. Confirm Open.
 
-### Windows (unsigned)
+#### Windows (unsigned)
 
-1. Download the `.exe` from a release that lists installer assets (currently **v0.1.0-alpha** — not the latest source-only tag).
+1. Download `Nexus_0.1.0_x64-setup.exe` from [`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) (not Latest).
 2. Run it. If **SmartScreen** appears (“Windows protected your PC”), click **More info** → **Run anyway**.
 3. That warning is normal for unsigned Alpha builds.
-
-Prefer building from source? See [DESKTOP.md](DESKTOP.md).
 
 ---
 
@@ -82,8 +95,8 @@ Everything else (editor, graph, command palette) supports that core loop.
 **What is still early**
 - Semantic embeddings (vector rerank) are not shipped; lexical hybrid + Ask is the daily-driver path
 - Scale targets of 100k–500k notes are being pursued; real-disk proof at those sizes is still in progress
-- Desktop Alpha builds are unsigned (no Apple notarization / no Windows code signing yet)
-- Latest GitHub release tag may be source-only — installers exist on older tags or via `DESKTOP.md` builds
+- Desktop Alpha builds are **unsigned** (not notarized / not code-signed)
+- Installer assets exist on [`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) only. Latest (`v0.1.1-alpha`) is source-only (zero DMG/EXE). Durable path: build from source ([DESKTOP.md](DESKTOP.md))
 
 Contributions and hard feedback are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -144,7 +157,7 @@ Open the URL Vite prints (usually `http://localhost:8080`).
 
 ### Desktop (Tauri)
 
-See [DESKTOP.md](DESKTOP.md) for requirements (Rust, Xcode CLT on macOS, Node 22+).
+**Build from source** — see [DESKTOP.md](DESKTOP.md) (Rust, Xcode CLT on macOS, Node 22+). Published installers are on [`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) only, not Latest / not `v0.1.1-alpha`, and they are unsigned.
 
 ```bash
 npm install

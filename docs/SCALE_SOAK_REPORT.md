@@ -185,7 +185,7 @@ npm run tauri:dev
 npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%\Documents\nexus-soak-100k
 ```
 
-1. `npm run tauri:dev` (signed install is also fine).
+1. `npm run tauri:dev` (a local unsigned `npm run tauri:build` is also fine; there is no signed installer).
 2. Welcome → **Open folder** → pick `~/Documents/nexus-soak-100k` first, then `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\nexus-soak-300k`).
    Or DevTools (DEV build): `await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")`.
    A home-dir path such as `C:\Users\you\nexus-soak-100k` is still valid: programmatic open grants that folder on persisted-scope before scan. Forbidden reads fail the progress banner.
