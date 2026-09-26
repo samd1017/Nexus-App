@@ -6,10 +6,10 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
-import { screenshotDir } from "./screenshot-dir.mjs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const URL = "http://127.0.0.1:8080/";
-const OUT = screenshotDir("folder-graph");
+const OUT = artifactPath("screenshots", "folder-graph");
 const REPORT = path.join(OUT, "qa-visual-report.json");
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -345,7 +345,7 @@ try {
     .sort();
   record(
     "D6",
-    "Screenshots under artifacts/screenshots/folder-graph/ named qa-visual-*.png",
+    "Screenshots named qa-visual-*.png",
     shotFiles.length >= 3,
     { files: shotFiles, dir: OUT },
   );
