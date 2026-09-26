@@ -20,7 +20,6 @@ import {
   Lightbulb,
   Users,
   FolderKanban,
-  LayoutGrid,
   Trash2,
   PanelLeft,
   PanelRight,
@@ -154,7 +153,6 @@ const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   meeting: <Users size={15} />,
   idea: <Lightbulb size={15} />,
   project: <FolderKanban size={15} />,
-  canvas: <LayoutGrid size={15} />,
 };
 
 const ASK_STARTERS = [

@@ -4,7 +4,6 @@ import {
   FilePlus2,
   FileText,
   FolderKanban,
-  LayoutGrid,
   Lightbulb,
   Users,
 } from "lucide-react";
@@ -21,7 +20,6 @@ const ICONS: Record<NoteTemplateId, ReactNode> = {
   meeting: <Users size={14} />,
   idea: <Lightbulb size={14} />,
   project: <FolderKanban size={14} />,
-  canvas: <LayoutGrid size={14} />,
 };
 
 type Props = {

@@ -79,7 +79,6 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Search | **Ctrl/⌘K** — find any note instantly |
 | Callouts | Open [[Callouts]] or insert from the toolbar More menu |
 | Diagrams | Open [[Diagrams & Math]] — mermaid charts and $math$ |
-| Canvas | Open [[Welcome board]] — **tour board** (cards in this vault; not Obsidian Canvas parity) |
 | Theme | Sun/moon in the title bar — Dark, Light, or System |
 | Settings | Gear or **Ctrl/⌘,** — theme and remappable hotkeys |
 | Dual pane | **Pane** or **⌘2** — two notes at once. Alt-click a file to park it beside |
@@ -326,29 +325,8 @@ $$
 \\int_0^1 x^2 \\, dx = \\frac{1}{3}
 $$
 
-Insert from **More → Mermaid diagram** or **Math block**. See also [[Welcome board]] and [[Visual & Source]].
+Insert from **More → Mermaid diagram** or **Math block**. See also [[Visual & Source]].
 `,
-    ),
-  );
-
-  const canvases = add(folder("Canvases", "Canvases", null));
-  add(
-    note(
-      pathJoin("Canvases", "Welcome board.md"),
-      "Welcome board.md",
-      canvases.id,
-      [
-        "---",
-        "type: canvas",
-        "---",
-        "",
-        "# Welcome board",
-        "",
-        "````canvas",
-        '{"cam":{"x":36,"y":24,"k":1},"snap":true,"cards":[{"id":"c_group","x":12,"y":8,"w":580,"h":300,"kind":"group","text":"Welcome","color":"6"},{"id":"c_welcome","x":36,"y":48,"w":240,"h":140,"kind":"text","color":"5","text":"Welcome board\\n\\nDrag a card. Hover a side to connect."},{"id":"c_welcome_link","x":320,"y":48,"w":240,"h":120,"kind":"note","notePath":"Welcome.md","color":"4"},{"id":"c_diagrams","x":320,"y":184,"w":240,"h":100,"kind":"note","notePath":"Research/Diagrams & Math.md"}],"edges":[{"id":"e_next","from":"c_welcome","to":"c_welcome_link","fromSide":"right","toSide":"left","label":"open","color":"5"}]}',
-        "````",
-        "",
-      ].join("\n"),
     ),
   );
 
@@ -610,7 +588,6 @@ Felt immediate. Calm center, powerful edges. Settings accents made it mine in on
     welcome.id,
     projects.id,
     research.id,
-    canvases.id,
     systems.id,
     journal.id,
   ];

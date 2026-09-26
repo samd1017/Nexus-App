@@ -4,7 +4,6 @@
  */
 
 import { getPrefs } from "@/lib/prefs/preferences";
-import { emptyCanvasTemplate } from "@/lib/vault/canvas";
 
 export const DEFAULT_DAILY_FOLDER = "Journal";
 
@@ -36,8 +35,7 @@ export type NoteTemplateId =
   | "daily"
   | "meeting"
   | "idea"
-  | "project"
-  | "canvas";
+  | "project";
 
 export type NoteTemplate = {
   id: NoteTemplateId;
@@ -325,14 +323,6 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
         "",
         "",
       ].join("\n"),
-  },
-  {
-    id: "canvas",
-    label: "Canvas",
-    description: "Spatial board of cards — still a Markdown file",
-    defaultTitle: "Untitled board",
-    preferredFolder: "Canvases",
-    build: ({ title }) => emptyCanvasTemplate(title),
   },
 ];
 

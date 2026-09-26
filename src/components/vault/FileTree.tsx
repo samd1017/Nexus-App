@@ -14,7 +14,6 @@ import {
   Users,
   Lightbulb,
   FolderKanban,
-  LayoutGrid,
   Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -1847,11 +1846,6 @@ export const FileTree = memo(function FileTree() {
                     icon={<FolderKanban size={13} />}
                     label="New project"
                     onClick={() => createFromTemplateInCtx("project")}
-                  />
-                  <MenuBtn
-                    icon={<LayoutGrid size={13} />}
-                    label="New canvas"
-                    onClick={() => createFromTemplateInCtx("canvas")}
                   />
                   <MenuBtn
                     icon={<FolderPlus size={13} />}

@@ -622,7 +622,7 @@ export function EditorPane({
                 >
                   <Eye size={13} />
                   <span className="hidden md:inline">
-                    {canvasNote ? "Tour board" : "Visual"}
+                    {canvasNote ? "Board" : "Visual"}
                   </span>
                 </button>
                 <button
