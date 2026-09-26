@@ -1,7 +1,7 @@
 # Nexus public beta scope
 
 ## Supported
-- **Web** (Chrome/Edge folder vault + in-browser demo/local)
+- **Web** (Chrome/Edge folder vault + in-browser demo/local) — Desktop for large vaults; Chrome ≤20k. Chrome in the browser supports about 20,000 notes or fewer. We will not open a folder of about 25,000 notes in Chrome. Use Nexus Desktop for large vaults — same markdown folder.
 - **Desktop (Mac/Win/Linux via Tauri)** — local folder vault, native menu, window state
 - Large vaults: meta-only open, lazy bodies, durable FTS, folder/ego graph
 - Heading/block wikilinks and embeds, dual-note workspace, attachments rail, note history
@@ -12,6 +12,7 @@
 - Mobile Tauri shell polish
 - Multiplayer / sync servers
 - Full Obsidian plugin parity
+- No plugin API in this beta — plain Markdown + built-in query blocks
 - Semantic embedding index (vector rerank)
 - Signed / notarized installers (unsigned Alpha only)
 - Background bulk indexer UI
@@ -40,4 +41,7 @@ Align `package.json`, Settings About (`NEXUS_VERSION`), and `src-tauri/tauri.con
 Desktop release workflow reads the version from `package.json` (do not hardcode tags).
 
 ## Installers
-Do not claim a download exists unless that release tag has DMG/EXE assets. `v0.1.1-alpha` is a source checkpoint. Build from source via `DESKTOP.md` when assets are missing.
+
+The primary desktop path is **build from source** — see [DESKTOP.md](../DESKTOP.md).
+
+Unsigned installer assets (not notarized / not code-signed) exist on **[`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) only**: `Nexus_0.1.0_aarch64.dmg` and `Nexus_0.1.0_x64-setup.exe`. They are not on Latest and not on `v0.1.1-alpha` (source checkpoint, zero DMG/EXE). Do not point anyone at `/releases/latest` expecting installers. Files on the older `v0.1.0-alpha` tag whose names contain `0.1.1` are not Latest.

@@ -1,25 +1,26 @@
 #!/usr/bin/env node
 /**
  * Lightweight headless load + screenshot for http://127.0.0.1:8080 (or argv URL).
- * Does not try to "play" the app — just proves the page loads and captures a PNG
- * the agent can Read. Exit 0 on success, 1 on navigation failure, 2 if console errors.
+ * Proves the page loads and captures a PNG. Exit 0 on success, 1 on navigation
+ * failure, 2 if console errors.
  *
- * Screenshots default under gitignored artifacts/screenshots
- * (override with NEXUS_SCREENSHOT_DIR). Never a home directory.
+ * Screenshots default under NEXUS_ARTIFACT_DIR, or the OS temp directory
+ * `nexus-artifacts` when that variable is unset. Pass a PNG under that
+ * directory as argv[3].
  *
  * Targets are restricted (browser-guard.mjs): http/https loopback, PNG under
- * that screenshot directory. A rejected target exits 1.
+ * the artifact directory. A rejected target exits 1.
  */
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { chromium } from "playwright";
+import { ARTIFACT_DIR, artifactPath } from "./artifact-dir.mjs";
 import { checkedOutputPath, checkedUrl } from "./browser-guard.mjs";
-import { screenshotPath, screenshotRoot } from "./screenshot-dir.mjs";
 
 const url = checkedUrl(process.argv[2] || "http://127.0.0.1:8080/");
 const outPng = checkedOutputPath(
-  process.argv[3] || screenshotPath("app-builder-preview.png"),
-  [screenshotRoot()],
+  process.argv[3] || artifactPath("screenshots", "app-builder-preview.png"),
+  [ARTIFACT_DIR],
 );
 const timeoutMs = Number(process.env.BROWSER_SMOKE_TIMEOUT_MS || 45000);
 

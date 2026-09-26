@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 // Capture a 1280x800 preview PNG of the dev server (argv[2] -> argv[3]).
-// Contract with SandboxInternal.CapturePreviewThumbnail: exit 0 only after the
-// PNG is written; the service treats any non-zero exit as a gated skip and does
-// not download the file.
+// Exit 0 only after the PNG is written.
+import os from "node:os";
+import path from "node:path";
 import { chromium } from "playwright";
+import { ARTIFACT_DIR } from "./artifact-dir.mjs";
 import { checkedOutputPath, checkedUrl } from "./browser-guard.mjs";
 
-// The service always passes a loopback URL and a /tmp path; the checks keep that
-// true when the script is invoked by hand.
+// Default output is the OS temp directory. Callers may pass any PNG under
+// that directory or under NEXUS_ARTIFACT_DIR.
 const url = checkedUrl(process.argv[2] || "http://127.0.0.1:8080/");
-const outPng = checkedOutputPath(process.argv[3] || "/tmp/preview-thumbnail.png", [
-  "/tmp",
-]);
+const outPng = checkedOutputPath(
+  process.argv[3] || path.join(os.tmpdir(), "preview-thumbnail.png"),
+  [os.tmpdir(), ARTIFACT_DIR],
+);
 const timeoutMs = Number(process.env.PREVIEW_THUMBNAIL_TIMEOUT_MS || 45000);
 
 const browser = await chromium.launch({
