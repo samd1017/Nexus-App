@@ -349,7 +349,7 @@ export function SettingsPanel() {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="nexus-dialog-in nexus-dark-island glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
+        className="nexus-dialog-in nexus-focus-host nexus-dark-island glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)]"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--accent-dim)] text-[var(--accent)]">
@@ -528,7 +528,7 @@ export function SettingsPanel() {
                 Custom
               </button>
               <input
-                className="h-9 min-w-0 flex-1 rounded-[10px] border border-[var(--border)] bg-[var(--bg-primary)] px-3 font-mono text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field h-9 min-w-0 flex-1 rounded-[10px] border border-[var(--border)] bg-[var(--bg-primary)] px-3 font-mono text-[12.5px] text-[var(--text-primary)]"
                 value={customDraft}
                 placeholder="#00C8FF"
                 spellCheck={false}
@@ -751,7 +751,7 @@ export function SettingsPanel() {
               </p>
               <input
                 type="text"
-                className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                className="nexus-field mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)]"
                 value={prefs.dailyFolder}
                 spellCheck={false}
                 aria-label="Daily notes folder"
@@ -778,7 +778,7 @@ export function SettingsPanel() {
                   </p>
                 </div>
                 <select
-                  className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12.5px] text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                  className="nexus-field shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12.5px] text-[var(--text-primary)]"
                   value={prefs.launchNoteMode ?? (prefs.openTodayOnLaunch ? "today" : "last")}
                   onChange={(e) =>
                     updatePrefs({
@@ -970,7 +970,7 @@ export function SettingsPanel() {
                       <button
                         type="button"
                         className={cn(
-                          "rounded-md border px-2 py-0.5 font-mono text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5ad8ff]",
+                          "rounded-md border px-2 py-0.5 font-mono text-[11px]",
                           recordingHotkey === s.id
                             ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]"
                             : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-primary)]",
@@ -1050,6 +1050,9 @@ export function SettingsPanel() {
                 </div>
                 <p className="mt-1.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
                   Local-first Markdown notes for humans and agents.
+                </p>
+                <p className="mt-1 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                  No plugin API in this beta — plain Markdown + built-in query blocks.
                 </p>
                 <div className="mt-1 text-[12px] text-[var(--text-muted)]">
                   Version {NEXUS_VERSION}
@@ -1282,7 +1285,7 @@ function ToggleRow({
         aria-describedby={description ? descId : undefined}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
+          "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200",
           checked ? "bg-[var(--accent)]" : "bg-[var(--switch-off)]",
         )}
       >
