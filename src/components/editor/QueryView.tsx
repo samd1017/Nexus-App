@@ -38,7 +38,7 @@ export function QueryView({ node, updateAttributes }: NodeViewProps) {
                 setEditing(false);
               }
             }}
-            className="min-w-0 flex-1 rounded border border-[var(--border)] bg-transparent px-1.5 py-0.5 font-mono text-[12px] outline-none"
+            className="nexus-field min-w-0 flex-1 rounded border border-[var(--border)] bg-transparent px-1.5 py-0.5 font-mono text-[12px]"
             placeholder='folder:Research #idea -draft'
           />
         ) : (

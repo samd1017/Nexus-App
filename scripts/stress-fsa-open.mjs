@@ -10,6 +10,7 @@
 import { chromium } from "playwright";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv.find((a) => a.startsWith("http")) || "http://127.0.0.1:8080/";
 const notesArg = process.argv.find((_, i, a) => a[i - 1] === "--notes");
@@ -17,8 +18,8 @@ const opensArg = process.argv.find((_, i, a) => a[i - 1] === "--opens");
 const INPAGE = process.argv.includes("--inpage");
 const NOTES = Math.max(50, Number(notesArg || 800) || 800);
 const OPENS = Math.max(8, Number(opensArg || 20) || 20);
-const OUT = "/opt/cursor/artifacts/stress/fsa-open-trend.json";
-mkdirSync("/opt/cursor/artifacts/stress", { recursive: true });
+const OUT = artifactPath("stress", "fsa-open-trend.json");
+mkdirSync(artifactPath("stress"), { recursive: true });
 
 let files = null;
 if (!INPAGE) {

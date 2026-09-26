@@ -6,12 +6,13 @@
 import { chromium } from "playwright";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:8080/";
 const notesArg = process.argv.find((_, i, a) => a[i - 1] === "--notes");
 const NOTES = Math.max(50, Number(notesArg || 800) || 800);
-const OUT = "/opt/cursor/artifacts/stress/fsa-search.json";
-mkdirSync("/opt/cursor/artifacts/stress", { recursive: true });
+const OUT = artifactPath("stress", "fsa-search.json");
+mkdirSync(artifactPath("stress"), { recursive: true });
 
 const gen = spawnSync(
   "npx",

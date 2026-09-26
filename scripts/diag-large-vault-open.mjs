@@ -3,10 +3,12 @@
  */
 import { chromium } from "playwright";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:8080/";
-const OUT = "/opt/cursor/artifacts/stress/large-45k-diag.json";
-mkdirSync("/opt/cursor/artifacts/stress/shots", { recursive: true });
+const OUT = artifactPath("stress", "large-45k-diag.json");
+const SHOT = artifactPath("stress", "shots", "large-45k-diag.png");
+mkdirSync(artifactPath("stress", "shots"), { recursive: true });
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -75,7 +77,7 @@ for (let i = 0; i < 120; i++) {
 }
 
 const openMs = Math.round(performance.now() - t0);
-await page.screenshot({ path: "/opt/cursor/artifacts/stress/shots/large-45k-diag.png" });
+await page.screenshot({ path: SHOT });
 
 // Try search + graph briefly
 let searchMs = null;

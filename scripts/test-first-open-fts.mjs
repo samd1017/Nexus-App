@@ -4,7 +4,7 @@
  * Linux CI: JS phase / settle rules. Rust 1k/10k timing budgets run via
  * `npm run test:sqlite-fill-rust` (first_open_timing_budget_*).
  *
- * Windows 100k is a Tower verification target, not claimed here.
+ * Windows 100k is a desktop verification target, not claimed here.
  *
  *   npm run test:first-open
  */
