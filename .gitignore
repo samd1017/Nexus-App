@@ -61,3 +61,5 @@ credentials.json
 # Coverage / misc
 coverage/
 *.tsbuildinfo
+*.pid
+*-runner.pid
