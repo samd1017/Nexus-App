@@ -9,9 +9,9 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
 endobj
 4 0 obj
-<< /Length 157 >>
+<< /Length 151 >>
 stream
-BT /F1 20 Tf 72 720 Td (Nexus Agent Brief) Tj 0 -32 Td /F1 12 Tf (Same folder. Same Markdown.) Tj 0 -18 Td (Humans, Grok, and Hermes share this vault.) Tj ET
+BT /F1 20 Tf 72 720 Td (Nexus Agent Brief) Tj 0 -32 Td /F1 12 Tf (Same folder. Same Markdown.) Tj 0 -18 Td (Humans and agents share this vault.) Tj ET
 endstream
 endobj
 5 0 obj
@@ -24,10 +24,9 @@ xref
 0000000058 00000 n 
 0000000115 00000 n 
 0000000241 00000 n 
-0000000449 00000 n 
-
+0000000442 00000 n 
 trailer
 << /Size 6 /Root 1 0 R >>
 startxref
-519
+512
 %%EOF

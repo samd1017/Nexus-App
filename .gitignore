@@ -25,7 +25,6 @@ screenshots/
 /*.webp
 
 # Internal / agent
-.grok/
 AGENTS.md
 AGENTS.project.md
 startup.sh
