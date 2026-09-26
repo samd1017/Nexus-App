@@ -25,11 +25,13 @@ import {
 import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
 import { ThemeToggle } from "@/components/chrome/ThemeToggle";
 import {
+  chromeFsaHonestyLine,
   chromeFsaRefuseChrome,
   chromeFsaRefuseDesktop,
   chromeFsaRefuseLead,
   chromeFsaRefuseTitle,
   chromeFsaWarnMessage,
+  chromeFsaWelcomeDetail,
 } from "@/lib/vault/chrome-fsa-cap";
 
 type PendingAction =
@@ -207,6 +209,26 @@ export function WelcomeScreen() {
             Plain Markdown on your machine. Search that cites the source.
             A graph you can fly. No account.
           </p>
+          <p
+            className="mt-2 max-w-lg text-[13.5px] leading-relaxed text-[var(--text-secondary)]"
+            style={{ animation: "welcomeFadeUp 520ms ease-out 180ms both" }}
+          >
+            No plugin API in this beta — plain Markdown + built-in query blocks.
+          </p>
+
+          <div
+            className="mt-6 max-w-xl rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] bg-[var(--accent-dim)] px-4 py-3"
+            data-chrome-fsa-honesty
+            role="note"
+            style={{ animation: "welcomeFadeUp 520ms ease-out 180ms both" }}
+          >
+            <p className="text-[15px] font-semibold leading-snug tracking-tight text-[var(--text-primary)]">
+              {chromeFsaHonestyLine()}
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+              {chromeFsaWelcomeDetail()}
+            </p>
+          </div>
 
           {!fsaOk && !desktop ? (
             <div className="mt-6 flex flex-wrap items-start gap-3 rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_40%,var(--border))] bg-[var(--accent-dim)] px-4 py-3">
@@ -393,7 +415,7 @@ export function WelcomeScreen() {
           {showCreate ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
               <input
-                className="min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)]"
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
                 placeholder="Vault name"
@@ -465,7 +487,6 @@ export function WelcomeScreen() {
           </div>
 
           <p className="mt-6 max-w-xl text-[12.5px] leading-relaxed text-[var(--text-muted)]">
-            Chrome folders warn around 15,000 notes and stop at 25,000.
             Larger vaults stay on Nexus Desktop: the same Markdown folder,
             search that fills in, and a folder map or neighborhood. Never one
             orb per note.
