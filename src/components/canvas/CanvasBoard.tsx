@@ -63,7 +63,7 @@ import {
   type CanvasEdge,
   type CanvasSide,
 } from "@/lib/vault/canvas";
-import { previewSnippet } from "@/lib/markdown/serialize";
+import { markdownToHtml } from "@/lib/markdown/serialize";
 import {
   scheduleFillSafeHydrate,
   shouldSkipBackgroundBodyHydrate,
@@ -110,6 +110,39 @@ function ColorDots({
         />
       ))}
     </div>
+  );
+}
+
+function CanvasNoteBody({ content }: { content: string | undefined }) {
+  const html = useMemo(() => {
+    if (typeof content !== "string") return "";
+    try {
+      return markdownToHtml(content);
+    } catch {
+      return "<p></p>";
+    }
+  }, [content]);
+  if (content == null) {
+    return (
+      <p className="text-[11px] text-[var(--text-muted)]" data-testid="canvas-note-render">
+        Loading note…
+      </p>
+    );
+  }
+  if (!content.trim()) {
+    return (
+      <p className="text-[11px] text-[var(--text-muted)]" data-testid="canvas-note-render">
+        Empty note
+      </p>
+    );
+  }
+  return (
+    <div
+      className="nexus-canvas-note-render"
+      data-testid="canvas-note-render"
+      dangerouslySetInnerHTML={{ __html: html }}
+      onPointerDown={(e) => e.stopPropagation()}
+    />
   );
 }
 
@@ -207,7 +240,13 @@ export function CanvasBoard({ noteId, content }: Props) {
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
-    const onNativeWheel = (e: WheelEvent) => {
+      const onNativeWheel = (e: WheelEvent) => {
+      const render = (e.target as HTMLElement | null)?.closest?.(".nexus-canvas-note-render");
+      if (render instanceof HTMLElement && render.scrollHeight > render.clientHeight + 2) {
+        render.scrollTop += e.deltaY;
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const cx = e.clientX - rect.left;
@@ -906,7 +945,7 @@ export function CanvasBoard({ noteId, content }: Props) {
       <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
         <span className="font-semibold text-[var(--text-secondary)]">Board</span>
         {" · "}
-        Shift-click or Ctrl-click cards, then Connect or Frame. Note cards show the live title and a plain preview. Still missing: the note rendered inside the card, and community canvas plugins.
+        Shift-click or Ctrl-click cards, then Connect or Frame. Note cards render the note inside the card. Still missing: community canvas plugins.
       </div>
       <div className="nexus-canvas-toolbar">
         <div className="relative" data-canvas-add>
@@ -1440,13 +1479,13 @@ export function CanvasBoard({ noteId, content }: Props) {
                 ? Object.values(nodes).find((n) => n.kind === "note" && n.path === card.notePath)
                 : null;
               const noteLabel = card.kind === "note" ? canvasNoteTitle(card.notePath || "", note?.name) : "";
-              const preview = note && typeof note.content === "string" ? previewSnippet(note.content, 180) : "";
               const hex = canvasColorHex(card.color);
               const dim = q
                 ? !(
                     (card.text || "").toLowerCase().includes(q) ||
                     (card.notePath || "").toLowerCase().includes(q) ||
                     (note ? noteTitle(note).toLowerCase().includes(q) : false) ||
+                    (note && typeof note.content === "string" && note.content.toLowerCase().includes(q)) ||
                     (card.url || "").toLowerCase().includes(q)
                   )
                 : false;
@@ -1532,12 +1571,13 @@ export function CanvasBoard({ noteId, content }: Props) {
                           Open
                         </button>
                       </span>
-                      <span
-                        className="line-clamp-4 text-[11px] leading-relaxed text-[var(--text-muted)]"
-                        data-testid="canvas-note-preview"
-                      >
-                        {preview || (note && note.content === undefined ? "Loading preview…" : note ? "Empty note" : "Missing note")}
-                      </span>
+                      {note ? (
+                        <CanvasNoteBody content={note.content} />
+                      ) : (
+                        <p className="text-[11px] text-[var(--text-muted)]" data-testid="canvas-note-render">
+                          Missing note
+                        </p>
+                      )}
                     </div>
                   ) : card.kind === "image" ? (
                     card.imageSrc ? (
