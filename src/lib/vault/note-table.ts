@@ -72,7 +72,7 @@ export type SummaryKind = (typeof SUMMARY_KIND_IDS)[number];
 export const CUSTOM_SUMMARY_PREFIX = "custom:";
 /** A built-in summary, or `custom:<name>` for a summary formula. */
 export type SummaryChoice = SummaryKind | `custom:${string}`;
-/** A summary formula: `values` is the column's values in each group. Shared by both views, like a .base file. */
+/** A summary formula: `values` is the column's values in each group. Shared by every view, like a .base file. */
 export type BasesSummaryFormula = { name: string; expr: string };
 export const MAX_SUMMARY_FORMULAS = 12;
 

@@ -715,7 +715,7 @@ export function NoteTable() {
     live?.sync.adopt({ text, session: result.session });
     setSession(result.session);
     setBaseNotice({
-      title: live?.onDisk ? `Imported ${file.name}; ${LIVE_BASE_FILE} now holds its views.` : `Imported ${file.name} into both views.`,
+      title: live?.onDisk ? `Imported ${file.name}; ${LIVE_BASE_FILE} now holds its views.` : `Imported ${file.name}.`,
       lines: result.notes.length ? result.notes : ["Every view, column, formula, filter, and sort carried over."],
       tone: "ok",
       undo: { session: previous, base: previousBase, label: "Undo import", kind: "import" },
@@ -1131,7 +1131,7 @@ export function NoteTable() {
           type="button"
           className="chip-btn"
           data-testid="bases-import-base"
-          title="Replace both views with the views in an Obsidian .base file"
+          title="Replace the open views with the views in an Obsidian .base file"
           onClick={() => baseInput.current?.click()}
         >
           Import .base
@@ -1152,7 +1152,7 @@ export function NoteTable() {
           type="button"
           className="chip-btn"
           data-testid="bases-export-base"
-          title={`Write a copy of both views as ${BASE_EXPORT_FILE}`}
+          title={`Write a copy of these views as ${BASE_EXPORT_FILE}`}
           onClick={() => void exportBase()}
         >
           Export .base
@@ -1291,7 +1291,7 @@ export function NoteTable() {
         >
           <p className="text-[11px] text-[var(--text-muted)]">
             A summary formula runs once per group, and once for all notes, over the column you pick it for. values is that
-            column's values, one per note, with null for a note that has none; values.length counts the notes. Both views share
+            column's values, one per note, with null for a note that has none; values.length counts the notes. Every view shares
             these, like summaries: in a .base file.
           </p>
           {summaryFormulas.map((f, at) => {
