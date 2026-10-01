@@ -6001,4 +6001,142 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         assert!(cluster_ms.is_some(), "cluster must land during short heads");
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
+
+    /// Always-on gate: 100k desktop fill. Ready stays a page (same 8s ceiling
+    /// as the 10k title-seed budget). After the body pass, title suggest and
+    /// a rare body token stay inside the documented search ceilings, with
+    /// debug-build headroom (SCALING title suggest ≤20ms, full-text ≤50ms;
+    /// shell rank budget is 120ms).
+    fn gate_snappy(
+        n: usize,
+        ready_ms: u128,
+        fill_budget_ms: u128,
+        suggest_ms: u128,
+        body_ms: u128,
+        page_ms: u128,
+    ) {
+        let (vault, db) = temp_pair(&format!("gate{n}"));
+        write_official_shaped(&vault, n);
+        write_note(
+            &vault,
+            "zz-unopened/Hidden Body.md",
+            "# Hidden Body\n\nzephyrquillgate sits only in this body.\n",
+        );
+        let mut conn = open_test_conn(&db);
+        let t0 = Instant::now();
+        let mut ready_at: Option<u128> = None;
+        let mut token_at_ready = false;
+        let result = fill_from_disk_with_opts(
+            &mut conn,
+            &vault,
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && ready_at.is_none() {
+                    ready_at = Some(t0.elapsed().as_millis());
+                    token_at_ready = fts_has_at(&db, "zephyrquillgate");
+                }
+            },
+        )
+        .unwrap();
+        let ready = ready_at.expect("ready-meta");
+        let fill_ms = t0.elapsed().as_millis();
+        assert!(
+            ready < ready_ms,
+            "{n} ready-meta {ready}ms exceeds {ready_ms}ms"
+        );
+        assert!(
+            fill_ms < fill_budget_ms,
+            "{n} body fill {fill_ms}ms exceeds {fill_budget_ms}ms"
+        );
+        assert!(!token_at_ready, "body token must wait until after Ready");
+        assert!(result.notes >= n as i64, "catalog notes {}", result.notes);
+        assert_eq!(result.search_state, "ready-fts");
+        assert!(fts_has(&conn, "zephyrquillgate"));
+
+        crate::shell_catalog::ensure_shell_indexes(&conn).unwrap();
+
+        let t_suggest = Instant::now();
+        let hits = crate::shell_catalog::query_suggest(&conn, "hub 0", 16).unwrap();
+        let suggest = t_suggest.elapsed().as_millis();
+        assert!(
+            hits.iter().any(|h| h.title.to_ascii_lowercase().contains("hub")),
+            "title suggest missed Hub, got {:?}",
+            hits.iter().map(|h| h.title.as_str()).collect::<Vec<_>>()
+        );
+        assert!(
+            suggest < suggest_ms,
+            "{n} title suggest {suggest}ms exceeds {suggest_ms}ms"
+        );
+
+        let t_body = Instant::now();
+        let body_hits = crate::shell_catalog::search_note_ops(
+            &conn,
+            &[crate::shell_catalog::SearchOpsClause {
+                rest: "zephyrquillgate".into(),
+                path_filter: String::new(),
+                folder_filter: String::new(),
+                file_filter: String::new(),
+                tag_filter: String::new(),
+                excludes: Vec::new(),
+            }],
+            16,
+        )
+        .unwrap();
+        let body = t_body.elapsed().as_millis();
+        assert_eq!(body_hits.len(), 1, "body token find {:?}", body_hits.len());
+        assert!(body_hits[0].path.contains("Hidden Body"));
+        assert!(
+            body < body_ms,
+            "{n} body token {body}ms exceeds {body_ms}ms"
+        );
+
+        let t_page = Instant::now();
+        let page = crate::shell_catalog::query_children(&conn, "00-Inbox/00", 200, 0).unwrap();
+        let page_took = t_page.elapsed().as_millis();
+        assert!(page.rows.len() <= 200, "shell page {}", page.rows.len());
+        assert!(
+            page.note_total > 200,
+            "folder must page, total {}",
+            page.note_total
+        );
+        assert!(
+            page_took < page_ms,
+            "{n} shell page {page_took}ms exceeds {page_ms}ms"
+        );
+        eprintln!(
+            "gate n={n} ready-meta {ready}ms fill {fill_ms}ms suggest {suggest}ms body {body}ms page {page_took}ms notes={}",
+            result.notes
+        );
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    /// Part of `qa:gate` via `npm run test:scale-gate` (ignored by the
+    /// shorter rust suite so it is not run twice).
+    #[test]
+    #[ignore]
+    fn gate_100k_snappy_ready_suggest_and_body() {
+        // Ready uses the 10k title-seed ceiling (8s). A measured 100k run
+        // announced Ready in 2ms and finished the body fill in ~35s, so the
+        // fill ceiling is 90s. Suggest, body find, and the shell page use
+        // the shell rank budget (120ms). SCALING asks for 20ms/50ms; this
+        // gate runs a debug build.
+        gate_snappy(100_000, 8_000, 90_000, 120, 120, 120);
+    }
+
+    /// Not part of qa:gate. `npm run qa:gate:500k`.
+    #[test]
+    #[ignore]
+    fn gate_500k_snappy_ready_suggest_and_body() {
+        // Same Ready and search ceilings. Fill ceiling scales from the
+        // measured 100k body pass (~35s) with headroom for 5× the files.
+        gate_snappy(500_000, 8_000, 480_000, 120, 120, 120);
+    }
 }
