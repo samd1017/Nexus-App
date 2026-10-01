@@ -245,7 +245,7 @@ export function NoteTable() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--bg)]" data-testid="bases-table">
-      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-2">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
@@ -306,7 +306,7 @@ export function NoteTable() {
           value={relationQuery}
           onChange={(e) => setRelationQuery(e.target.value)}
           placeholder="Filter linked note"
-          className="nexus-field h-8 w-32 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+          className="nexus-field h-9 min-w-[12rem] flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 text-[13px]"
           data-testid="bases-relation-filter"
         />
         <button
