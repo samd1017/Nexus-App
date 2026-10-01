@@ -178,7 +178,8 @@ assert.equal(ctime.rows[0].fields[0].value, "—");
 
 assert.equal(runNexusQuery("LIST path:Missing", nodes).error?.includes("No folder"), true);
 assert.match(runNexusQuery("TABLE file.link FROM #tag", nodes).error, /not Dataview/);
-assert.match(runNexusQuery("LIST FROM #a WHERE date(today)", nodes).error, /not Dataview/);
+assert.match(runNexusQuery("LIST FROM #a WHERE date(today)", nodes).error, /WHERE filters a tag or a field/);
+assert.doesNotMatch(runNexusQuery("LIST FROM #a WHERE date(today)", nodes).error, /not Dataview/);
 assert.equal(parseNexusQuery("").kind, "help");
 assert.match(runNexusQuery("LIST", nodes).error, /path:/);
 assert.match(runNexusQuery("SORT path:Research", nodes).error, /Not Dataview/);
@@ -210,7 +211,9 @@ const demoList = runNexusQuery("LIST FROM path:Journal", demo.nodes);
 assert.ok(demoList.rows.some((r) => r.path === "Journal/First Light.md"));
 assert.match(noteList.content, /SORT mtime/);
 assert.match(noteList.content, /WHERE status = "draft"/);
-assert.match(noteList.content, /no joins, no date\(\), no formulas/);
+assert.match(noteList.content, /no joins, no formulas/);
+assert.match(noteList.content, /due > date\(today\)/);
+assert.doesNotMatch(noteList.content, /no date\(\)/);
 assert.doesNotMatch(noteList.content, /are the whole language/);
 
 const html = marked.parse("```nexus-query\nLIST path:Research\n```");
@@ -231,7 +234,8 @@ assert.match(view, /model\.footer/);
 assert.match(view, /setActiveNote/);
 const lib = readFileSync("src/lib/vault/nexus-query.ts", "utf8");
 assert.match(lib, /Not Dataview/);
-assert.match(lib, /no joins, no date\(\), no formulas/);
+assert.match(lib, /no joins, no formulas/);
+assert.doesNotMatch(lib, /no date\(\)/);
 assert.doesNotMatch(lib, /no full DQL/);
 assert.match(view, /queryColumnLabel/);
 assert.match(view, /data-testid="nexus-query-field"/);
@@ -243,12 +247,12 @@ assert.match(preview, /queryColumnLabel/);
 const shop = {
   r: folder("r", "Research"),
   draft: {
-    ...note("draft", "Research/Callouts.md", "---\nstatus: draft\ndue: 2026-10-02\n---\n\n# Callouts\n"),
+    ...note("draft", "Research/Callouts.md", "---\nstatus: draft\ndue: 2026-10-02\nprice: 12\n---\n\n# Callouts\n"),
     parentId: "r",
     mtime: 50,
   },
   live: {
-    ...note("live", "Research/Graph View.md", "---\nstatus: live\ndue: 2026-09-01\n---\n\n# Graph\n"),
+    ...note("live", "Research/Graph View.md", "---\nstatus: live\ndue: 2026-09-01\nprice: 4\n---\n\n# Graph\n"),
     parentId: "r",
     mtime: 80,
   },
@@ -281,8 +285,56 @@ assert.match(runNexusQuery('LIST FROM path:Research WHERE status = "a" AND statu
 assert.match(runNexusQuery("TABLE a, b, c, d, e FROM path:Research", shop).error, /Only 4 TABLE columns/);
 assert.match(runNexusQuery("LIST status FROM path:Research", shop).error, /Columns belong on TABLE/);
 assert.match(runNexusQuery('TABLE file.link FROM path:Research', shop).error, /not Dataview/);
-assert.match(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /not Dataview/);
-assert.match(runNexusQuery('LIST FROM path:Research WHERE file.mtime = "1"', shop).error, /is a column/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE contains(status, "a")', shop).error, /not Dataview/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /WHERE filters a tag or a field/);
+assert.doesNotMatch(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /not Dataview/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE file.mtime = "soon"', shop).error, /compares a date/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE file.tags = "graph"', shop).error, /is a column/);
+const clock = Date.UTC(2026, 9, 1, 15, 0);
+const dueAfter = runNexusQuery('LIST FROM path:Research WHERE due > date(today)', shop, null, clock);
+assert.equal(dueAfter.error, null);
+assert.deepEqual(dueAfter.rows.map((r) => r.id), ["draft"]);
+const dueBefore = runNexusQuery('LIST FROM path:Research WHERE due < date(today)', shop, null, clock);
+assert.deepEqual(dueBefore.rows.map((r) => r.id), ["live"]);
+const dueEq = runNexusQuery('LIST FROM path:Research WHERE due = date(2026-10-02)', shop, null, clock);
+assert.deepEqual(dueEq.rows.map((r) => r.id), ["draft"]);
+const dueSame = runNexusQuery('LIST FROM path:Research WHERE due > date(2026-10-02)', shop, null, clock);
+assert.equal(dueSame.rows.length, 0);
+const dueSameGte = runNexusQuery('LIST FROM path:Research WHERE due >= date(2026-10-02)', shop, null, clock);
+assert.deepEqual(dueSameGte.rows.map((r) => r.id), ["draft"]);
+const dueLte = runNexusQuery('LIST FROM path:Research WHERE due <= date(2026-09-01)', shop, null, clock);
+assert.deepEqual(dueLte.rows.map((r) => r.id), ["live"]);
+const dueShift = runNexusQuery('LIST FROM path:Research WHERE due >= date(today) + 1d', shop, null, clock);
+assert.deepEqual(dueShift.rows.map((r) => r.id), ["draft"]);
+const dueWeek = runNexusQuery('TABLE due FROM path:Research WHERE due > date(today) - 2w', shop, null, clock);
+assert.deepEqual(dueWeek.rows.map((r) => r.id), ["draft"]);
+const durOffset = runNexusQuery('LIST FROM path:Research WHERE due > date(today) - dur(7d)', shop, null, clock);
+assert.deepEqual(durOffset.rows.map((r) => r.id), ["draft"]);
+const gluedDate = runNexusQuery('LIST FROM path:Research WHERE due>date(today)-7d', shop, null, clock);
+assert.deepEqual(gluedDate.rows.map((r) => r.id), ["draft"]);
+const pricey = runNexusQuery('LIST FROM path:Research WHERE price > 10', shop, null, clock);
+assert.deepEqual(pricey.rows.map((r) => r.id), ["draft"]);
+const cheap = runNexusQuery('LIST FROM path:Research WHERE price<=10', shop, null, clock);
+assert.deepEqual(cheap.rows.map((r) => r.id), ["live"]);
+const priceEq = runNexusQuery('LIST FROM path:Research WHERE price = 12', shop, null, clock);
+assert.deepEqual(priceEq.rows.map((r) => r.id), ["draft"]);
+const textOrder = runNexusQuery('LIST FROM path:Research WHERE status > draft', shop, null, clock);
+assert.match(textOrder.error, /date or a number/);
+const badDate = runNexusQuery('LIST FROM path:Research WHERE due > date(nope)', shop, null, clock);
+assert.match(badDate.error, /date\(\) takes today/);
+const badOffset = runNexusQuery('LIST FROM path:Research WHERE due > date(today) - 3months', shop, null, clock);
+assert.match(badOffset.error, /7d or 2w/);
+const notADate = runNexusQuery('LIST FROM path:Research WHERE status > date(today)', shop, null, clock);
+assert.equal(notADate.error, null);
+assert.equal(notADate.rows.length, 0);
+const recent = runNexusQuery('LIST FROM path:Journal WHERE file.mtime > date(today) - 7d', nodes, null, clock);
+assert.deepEqual(recent.rows.map((r) => r.id), ["f"]);
+const todayMtime = runNexusQuery('LIST FROM path:Journal WHERE file.mtime >= date(today)', nodes, null, clock);
+assert.deepEqual(todayMtime.rows.map((r) => r.id), ["f"]);
+const afterToday = runNexusQuery('LIST FROM path:Journal WHERE file.mtime > date(today)', nodes, null, clock);
+assert.equal(afterToday.rows.length, 0);
+const weekAgo = runNexusQuery('LIST FROM path:Journal WHERE file.mtime >= date(today) - 1w', nodes, null, clock);
+assert.deepEqual(weekAgo.rows.map((r) => r.id), ["f"]);
 const demoWhere = runNexusQuery('TABLE status FROM path:Research WHERE status = "draft"', demo.nodes);
 assert.equal(demoWhere.error, null);
 assert.equal(demoWhere.rows.length, 1);

@@ -1,8 +1,9 @@
 /**
  * Built-in note list for one fenced block.
- * LIST or TABLE, FROM a folder or tag, WHERE on one frontmatter field,
- * TABLE columns from frontmatter, tags joined by OR or AND, SORT title|mtime.
- * Not full Dataview: no joins, no date(), no formulas.
+ * LIST or TABLE, FROM a folder or tag, WHERE on one field,
+ * including date() and > < comparisons, TABLE columns from frontmatter,
+ * tags joined by OR or AND, SORT title|mtime.
+ * Not full Dataview: no joins, no formulas.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
@@ -18,13 +19,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  "Built-in list. Not Dataview — no joins, no date(), no formulas.";
+  "Built-in list. Not Dataview — no joins, no formulas.";
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft" reads frontmatter. TABLE status, due or field:mtime. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE due > date(today), or WHERE price > 10. file.mtime >= date(today) - 7d. TABLE status, due or field:mtime. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. No joins, no date(), no formulas, no contains(). Use LIST or TABLE, FROM path: or FROM #tag, WHERE field = "value", and SORT title or SORT mtime.';
+  'This block is not Dataview. No joins, no formulas, no contains(). Use LIST or TABLE, FROM path: or FROM #tag, WHERE due > date(today) or WHERE field = "value", and SORT title or SORT mtime.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -59,7 +60,16 @@ type TagJoin = "or" | "and";
 
 type QuerySort = { key: "title" | "mtime"; dir: "asc" | "desc" };
 
-type WhereCmp = { field: string; op: "eq" | "neq"; value: string };
+type WhereOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte";
+
+type WhereValue =
+  | { kind: "text"; text: string }
+  | { kind: "number"; n: number }
+  | { kind: "date"; day: "today" | string; shiftDays: number };
+
+type WhereCmp = { field: string; op: WhereOp; value: WhereValue };
+
+const DAY_MS = 86_400_000;
 
 type Parsed =
   | { kind: "help" }
@@ -87,10 +97,8 @@ function tokenize(source: string): string[] {
 
 function unsupportedDql(token: string): boolean {
   if (/^(file|this)\./i.test(token) && !FILE_META.has(token.toLowerCase())) return true;
-  if (/date\s*\(/i.test(token)) return true;
   if (/contains\s*\(/i.test(token)) return true;
   if (/choice\s*\(/i.test(token)) return true;
-  if (/[<>]/.test(token)) return true;
   if (/^(FLATTEN|GROUP|LIMIT)$/i.test(token)) return true;
   return false;
 }
@@ -120,22 +128,119 @@ function columnParts(token: string): string[] | null {
   return ok ? parts : null;
 }
 
-/** `status = "draft"`, `status="draft"`, or `status != done`, starting at `tokens[at]`. */
-function parseCmpAt(tokens: string[], at: number): { cmp: WhereCmp; end: number } | null {
-  const fieldRe = "(?:file\\.(?:name|path|folder|mtime|tags)|[A-Za-z_][\\w-]*)";
-  const glued = new RegExp(`^(${fieldRe})\\s*(!?=)\\s*(.+)$`).exec(tokens[at] ?? "");
-  if (glued) {
-    const raw = glued[3] ?? "";
-    const quoted = /^["']([\s\S]*)["']$/.exec(raw);
-    return { cmp: { field: glued[1] ?? "", op: glued[2] === "!=" ? "neq" : "eq", value: quoted ? quoted[1] ?? "" : raw }, end: at };
-  }
-  const field = tokens[at] ?? "";
-  const op = tokens[at + 1] ?? "";
-  const value = tokens[at + 2];
-  if (new RegExp(`^${fieldRe}$`).test(field) && (op === "=" || op === "!=") && value !== undefined && value !== "=" && value !== "!=") {
-    return { cmp: { field, op: op === "!=" ? "neq" : "eq", value }, end: at + 2 };
-  }
+const CMP_FIELD = "(?:file\\.(?:name|path|folder|mtime|tags)|[A-Za-z_][\\w-]*)";
+const CMP_OP = "(?:>=|<=|!=|=|>|<)";
+
+function opOf(raw: string): WhereOp | null {
+  if (raw === "=") return "eq";
+  if (raw === "!=") return "neq";
+  if (raw === ">") return "gt";
+  if (raw === "<") return "lt";
+  if (raw === ">=") return "gte";
+  if (raw === "<=") return "lte";
   return null;
+}
+
+function unquote(raw: string): string {
+  const quoted = /^["']([\s\S]*)["']$/.exec(raw.trim());
+  return quoted ? quoted[1] ?? "" : raw.trim();
+}
+
+/** `7d`, `2w`, `dur(7d)`. Weeks are seven days. Months and years are not durations. */
+function durationDays(raw: string): number | null {
+  let body = raw.trim();
+  const wrapped = /^dur\(([^)]+)\)$/i.exec(body);
+  if (wrapped) body = (wrapped[1] ?? "").trim();
+  const match = /^(\d+)\s*(d|day|days|w|week|weeks)$/i.exec(body);
+  if (!match) return null;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n)) return null;
+  return (match[2] ?? "").toLowerCase().startsWith("w") ? n * 7 : n;
+}
+
+function validYmd(day: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const y = Number(day.slice(0, 4));
+  const mo = Number(day.slice(5, 7));
+  const d = Number(day.slice(8, 10));
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+type ValueParse = { value: WhereValue; end: number } | { error: string };
+
+/**
+ * A comparison value starting at `tokens[at]`, or already glued into `inline`.
+ * `date(today) - 7d` may be one token or three.
+ */
+function parseValueAt(tokens: string[], at: number, inline: string | null): ValueParse {
+  const raw = inline ?? tokens[at] ?? "";
+  if (!raw) return { error: "That comparison needs a value." };
+  const dateErr = "date() takes today or YYYY-MM-DD, such as date(today).";
+  const offsetErr = "A date offset is 7d or 2w, such as date(today) - 7d.";
+  const dateCall = /^date\(([^)]*)\)\s*(.*)$/i.exec(raw.trim());
+  if (dateCall || /^date\s*\(/i.test(raw)) {
+    if (!dateCall) return { error: dateErr };
+    const inner = (dateCall[1] ?? "").trim();
+    const day = /^today$/i.test(inner) ? "today" : validYmd(inner) ? inner : null;
+    if (!day) return { error: dateErr };
+    let shiftDays = 0;
+    let end = inline != null ? at : at;
+    const rest = (dateCall[2] ?? "").trim();
+    if (rest) {
+      const shift = /^([+-])\s*(.+)$/.exec(rest);
+      const days = shift ? durationDays(shift[2] ?? "") : null;
+      if (!shift || days == null) return { error: offsetErr };
+      shiftDays = shift[1] === "-" ? -days : days;
+    } else {
+      const sign = tokens[end + 1];
+      const dur = tokens[end + 2];
+      if (sign === "+" || sign === "-") {
+        const days = dur ? durationDays(dur) : null;
+        if (days == null) return { error: offsetErr };
+        shiftDays = sign === "-" ? -days : days;
+        end += 2;
+      }
+    }
+    return { value: { kind: "date", day, shiftDays }, end };
+  }
+  const text = unquote(raw);
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) {
+    return { value: { kind: "number", n: Number(text) }, end: inline != null ? at : at };
+  }
+  return { value: { kind: "text", text }, end: inline != null ? at : at };
+}
+
+type CmpParse = { cmp: WhereCmp; end: number } | { error: string };
+
+/** `status = "draft"`, `due > date(today)`, `price>=10`, starting at `tokens[at]`. */
+function parseCmpAt(tokens: string[], at: number): CmpParse | null {
+  const glued = new RegExp(`^(${CMP_FIELD})\\s*(${CMP_OP})\\s*(.*)$`).exec(tokens[at] ?? "");
+  let field = "";
+  let opRaw = "";
+  let inline: string | null = null;
+  let valueAt = at;
+  if (glued && (glued[3] ?? "") !== "") {
+    field = glued[1] ?? "";
+    opRaw = glued[2] ?? "";
+    inline = glued[3] ?? "";
+    valueAt = at;
+  } else {
+    field = tokens[at] ?? "";
+    opRaw = tokens[at + 1] ?? "";
+    if (!new RegExp(`^${CMP_FIELD}$`).test(field) || !opOf(opRaw)) return null;
+    if (tokens[at + 2] === undefined) return { error: `“${field} ${opRaw}” needs a date, a number, or text.` };
+    valueAt = at + 2;
+  }
+  const op = opOf(opRaw);
+  if (!op) return null;
+  const parsed = parseValueAt(tokens, valueAt, inline);
+  if ("error" in parsed) return parsed;
+  const ordered = op !== "eq" && op !== "neq";
+  if (ordered && parsed.value.kind === "text") {
+    return { error: '> and < compare a date or a number, such as due > date(today) or price > 10.' };
+  }
+  return { cmp: { field, op, value: parsed.value }, end: parsed.end };
 }
 
 function readTag(token: string): string | null {
@@ -191,8 +296,11 @@ export function parseNexusQuery(source: string): Parsed {
   const addWhere = (cmp: WhereCmp): string | null => {
     if (where) return "Only one WHERE comparison is supported.";
     const key = columnKey(cmp.field);
-    if (key === "mtime" || key === "tags") {
+    if (key === "tags") {
       return `WHERE compares a frontmatter field, such as status = "draft". ${cmp.field} is a column.`;
+    }
+    if (key === "mtime" && cmp.value.kind === "text") {
+      return "file.mtime compares a date, such as file.mtime > date(today).";
     }
     where = cmp;
     return null;
@@ -216,6 +324,7 @@ export function parseNexusQuery(source: string): Parsed {
     if (upper === "FROM" || upper === "WHERE") {
       if (upper === "WHERE") {
         const cmp = parseCmpAt(tokens, i + 1);
+        if (cmp && "error" in cmp) return { kind: "error", error: cmp.error };
         if (cmp) {
           const err = addWhere(cmp.cmp);
           if (err) return { kind: "error", error: err };
@@ -234,7 +343,7 @@ export function parseNexusQuery(source: string): Parsed {
       const nextPath = readPath(scope);
       if (nextPath) {
         if (upper === "WHERE") {
-          return { kind: "error", error: 'WHERE filters a tag or a field, such as status = "draft". Use FROM path: for a folder.' };
+          return { kind: "error", error: 'WHERE filters a tag or a field, such as due > date(today) or status = "draft". Use FROM path: for a folder.' };
         }
         if (path) return { kind: "error", error: "Only one path: is supported." };
         path = nextPath;
@@ -244,6 +353,7 @@ export function parseNexusQuery(source: string): Parsed {
     }
     if (upper === "OR" || upper === "AND") {
       const cmp = parseCmpAt(tokens, i + 1);
+      if (cmp && "error" in cmp) return { kind: "error", error: cmp.error };
       if (cmp) {
         const err = addWhere(cmp.cmp);
         if (err) return { kind: "error", error: err };
@@ -425,11 +535,63 @@ function fieldActual(node: VaultNode, field: string): string | null {
   return frontmatterProps(node.content)[key] ?? "";
 }
 
-function whereMatch(node: VaultNode, where: WhereCmp): "yes" | "no" | "unloaded" {
+function startOfUtcDay(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function ymdToMs(text: string): number | null {
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(text.trim());
+  if (!match || !validYmd(match[1] ?? "")) return null;
+  const day = match[1] ?? "";
+  return Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)));
+}
+
+function dateValueMs(value: Extract<WhereValue, { kind: "date" }>, now: number): number {
+  const base = value.day === "today" ? startOfUtcDay(now) : ymdToMs(value.day) ?? startOfUtcDay(now);
+  return base + value.shiftDays * DAY_MS;
+}
+
+function numericActual(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^-?\d+(?:\.\d+)?$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
+}
+
+function ordered(left: number, right: number, op: WhereOp): boolean {
+  if (op === "gt") return left > right;
+  if (op === "lt") return left < right;
+  if (op === "gte") return left >= right;
+  if (op === "lte") return left <= right;
+  if (op === "eq") return left === right;
+  return left !== right;
+}
+
+function whereMatch(node: VaultNode, where: WhereCmp, now: number): "yes" | "no" | "unloaded" {
+  const key = columnKey(where.field);
+  if (key === "mtime" && where.value.kind !== "text") {
+    if (where.value.kind === "date") {
+      return ordered(startOfUtcDay(node.mtime || 0), dateValueMs(where.value, now), where.op) ? "yes" : "no";
+    }
+    return ordered(node.mtime || 0, where.value.n, where.op) ? "yes" : "no";
+  }
   const actual = fieldActual(node, where.field);
   if (actual === null) return "unloaded";
-  const eq = actual === where.value;
-  return (where.op === "eq" ? eq : !eq) ? "yes" : "no";
+  if (where.value.kind === "text") {
+    const eq = actual === where.value.text;
+    return (where.op === "eq" ? eq : !eq) ? "yes" : "no";
+  }
+  if (where.value.kind === "number") {
+    const n = numericActual(actual);
+    if (where.op === "eq") return n === where.value.n ? "yes" : "no";
+    if (where.op === "neq") return n === where.value.n ? "no" : "yes";
+    if (n === null) return "no";
+    return ordered(n, where.value.n, where.op) ? "yes" : "no";
+  }
+  const day = ymdToMs(actual);
+  if (day === null) return where.op === "neq" ? "yes" : "no";
+  return ordered(day, dateValueMs(where.value, now), where.op) ? "yes" : "no";
 }
 
 function rowFrom(node: VaultNode, columns: string[]): NexusQueryRow {
@@ -487,6 +649,7 @@ function collectInFolder(
   tags: string[],
   tagMode: TagJoin,
   where: WhereCmp | null,
+  now: number,
 ): { notes: VaultNode[]; truncated: boolean; budgetHit: boolean; unloaded: number } {
   const idx = ensureVaultIndex(nodes);
   idx.getIdByPath(nodes, prefix);
@@ -513,7 +676,7 @@ function collectInFolder(
     if (!pathHasPrefix(node.path, prefix)) continue;
     if (!hasTags(node, tags, tagMode)) continue;
     if (where) {
-      const match = whereMatch(node, where);
+      const match = whereMatch(node, where, now);
       if (match === "unloaded") {
         unloaded += 1;
         continue;
@@ -533,6 +696,7 @@ export function runNexusQuery(
    * `null` slot: that page failed. `[]`: the tag has no notes.
    */
   tagExtras?: (VaultNode[] | null)[] | null,
+  now = Date.now(),
 ): NexusQueryModel {
   const footer = NEXUS_QUERY_FOOTER;
   const parsed = parseNexusQuery(source);
@@ -580,7 +744,7 @@ export function runNexusQuery(
         fieldNote: null,
       };
     }
-    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where);
+    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where, now);
     notes = collected.notes;
     budgetHit = collected.budgetHit;
     unloaded = collected.unloaded;
@@ -606,7 +770,7 @@ export function runNexusQuery(
     if (parsed.where) {
       const kept: VaultNode[] = [];
       for (const note of notes) {
-        const match = whereMatch(note, parsed.where);
+        const match = whereMatch(note, parsed.where, now);
         if (match === "unloaded") unloaded += 1;
         else if (match === "yes") kept.push(note);
       }
