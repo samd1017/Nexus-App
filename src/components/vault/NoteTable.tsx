@@ -177,8 +177,8 @@ export function NoteTable() {
     const columns = built.keys;
     setSession((prev) => {
       const current = prev.views.find((item) => item.id === prev.activeId) ?? prev.views[0];
-      const next = {
-        activeId: "saved" as const,
+      const next: BasesSession = {
+        activeId: "saved",
         views: prev.views.map((item) =>
           item.id === "saved"
             ? {
@@ -375,17 +375,19 @@ export function NoteTable() {
                     <div key={key} data-prop={key} className="flex flex-wrap items-center gap-1 text-[12px]">
                       <span className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{key}</span>
                       {links.length
-                        ? links.map((link) =>
-                            link.id ? (
+                        ? links.map((link) => {
+                            if (!link.id) return <span key={link.title}>{link.title}</span>;
+                            const noteId = link.id;
+                            return (
                               <button
-                                key={link.id}
+                                key={noteId}
                                 type="button"
                                 className="text-[var(--accent)] hover:underline"
                                 data-testid="bases-relation"
-                                data-note-id={link.id}
+                                data-note-id={noteId}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openNote(link.id);
+                                  openNote(noteId);
                                 }}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") e.stopPropagation();
@@ -393,10 +395,8 @@ export function NoteTable() {
                               >
                                 {link.title}
                               </button>
-                            ) : (
-                              <span key={link.title}>{link.title}</span>
-                            ),
-                          )
+                            );
+                          })
                         : relations.includes(key)
                           ? null
                           : (
