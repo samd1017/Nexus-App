@@ -294,7 +294,8 @@ export type RightTab =
   | "pulse"
   | "attachments"
   | "history"
-  | "tasks";
+  | "tasks"
+  | "outgoing";
 export type ToastAction =
   | { label: string; kind: "open-pulse" }
   | { label: string; kind: "restore-trash"; trashPath: string };

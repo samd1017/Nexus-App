@@ -13,6 +13,7 @@ import {
   FolderOpen,
   FolderPlus,
   Network,
+  ArrowUpRight,
   ListChecks,
   BookOpen,
   Code2,
@@ -1197,6 +1198,17 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "open-outgoing",
+          label: "Outgoing links",
+          keywords: ["outgoing", "links", "unresolved", "wikilink"],
+          icon: <ArrowUpRight size={15} />,
+          run: wrapRun("open-outgoing", () => {
+            useVaultStore.getState().setRightTab("outgoing");
+            useVaultStore.getState().setRightOpen(true);
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "open-tasks",
           label: "Tasks",
           keywords: ["tasks", "todo", "checkbox", "due"],
@@ -1570,6 +1582,18 @@ function CommandPaletteOpen() {
         shortcut: undefined as string | undefined,
         run: wrapRun("toggle-editor", () => {
           toggleEditorMode();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-outgoing",
+        label: "Outgoing links",
+        icon: <ArrowUpRight size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-outgoing", () => {
+          useVaultStore.getState().setRightTab("outgoing");
+          useVaultStore.getState().setRightOpen(true);
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),
