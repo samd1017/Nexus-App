@@ -14,6 +14,7 @@ import {
   type BasesSession,
   type BasesViewConfig,
 } from "@/lib/vault/note-table";
+import { FORMULA_EXAMPLES, FORMULA_FUNCTIONS } from "@/lib/vault/note-formula";
 import { loadNoteTableConfig, saveNoteTableConfig } from "@/lib/vault/note-table-file";
 import { useVaultStore } from "@/lib/vault/store";
 import {
@@ -44,6 +45,7 @@ export function NoteTable() {
   const [relationName, setRelationName] = useState("related");
   const [linking, setLinking] = useState<{ rowId: string; key: string } | null>(null);
   const [linkQuery, setLinkQuery] = useState("");
+  const [formulaHelp, setFormulaHelp] = useState(false);
   const [hydratingProps, setHydratingProps] = useState(false);
   const [bodyEpoch, setBodyEpoch] = useState(0);
   const ready = useRef(false);
@@ -94,12 +96,17 @@ export function NoteTable() {
         setLinkQuery("");
         return;
       }
+      if (formulaHelp) {
+        e.preventDefault();
+        setFormulaHelp(false);
+        return;
+      }
       e.preventDefault();
       setBasesOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [linking]);
+  }, [linking, formulaHelp]);
 
   const sources = useMemo(
     () =>
@@ -255,7 +262,7 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table and cards with views, formulas, and typed note links. Not Obsidian Bases — no full formula language, and the file is .nexus/note-table.json, not an Obsidian .base file.
+            Built-in table and cards with views, formulas, and typed note links. Not Obsidian Bases — one formula column per view, no list, regex, or link functions, and the file is .nexus/note-table.json, not an Obsidian .base file.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -313,11 +320,27 @@ export function NoteTable() {
         <input
           value={view.formula}
           onChange={(e) => patchView({ formula: e.target.value })}
-          placeholder='Formula, e.g. file.mtime'
-          className="nexus-field h-8 w-44 rounded-md border border-[var(--border)] bg-transparent px-2 font-mono text-[11px]"
+          placeholder='Formula, e.g. file.mtime.relative()'
+          spellCheck={false}
+          aria-label="Formula"
+          aria-invalid={built.formulaParseError ? true : undefined}
+          aria-describedby={built.formulaParseError ? "bases-formula-parse-error" : undefined}
+          className={cn(
+            "nexus-field h-8 min-w-[14rem] flex-1 rounded-md border bg-transparent px-2 font-mono text-[11px]",
+            built.formulaParseError ? "border-[var(--danger)]" : "border-[var(--border)]",
+          )}
           data-testid="bases-formula"
-          title="file.mtime, file.name, a property, a & b, or if(value, then, else)"
         />
+        <button
+          type="button"
+          className={cn("chip-btn", formulaHelp && "is-active")}
+          aria-pressed={formulaHelp}
+          aria-controls="bases-formula-help"
+          data-testid="bases-formula-help-toggle"
+          onClick={() => setFormulaHelp((open) => !open)}
+        >
+          Formula help
+        </button>
         <input
           value={relationName}
           onChange={(e) => setRelationName(e.target.value)}
@@ -344,6 +367,48 @@ export function NoteTable() {
           <X size={13} /> Close
         </button>
       </div>
+      {built.formulaParseError ? (
+        <p
+          id="bases-formula-parse-error"
+          role="alert"
+          className="shrink-0 border-b border-[var(--border)] bg-[var(--danger-dim)] px-3 py-1.5 text-[12px] text-[var(--danger)]"
+          data-testid="bases-formula-parse-error"
+        >
+          Formula error: {built.formulaParseError}
+        </p>
+      ) : null}
+      {formulaHelp ? (
+        <div
+          id="bases-formula-help"
+          className="shrink-0 space-y-2 border-b border-[var(--border)] px-3 py-2 text-[12px]"
+          data-testid="bases-formula-help"
+        >
+          <div className="flex flex-wrap gap-1.5">
+            {FORMULA_EXAMPLES.map((example) => (
+              <button
+                key={example.formula}
+                type="button"
+                className="flex min-h-9 flex-col items-start rounded-md border border-[var(--border)] px-2 py-1 text-left hover:border-[var(--accent)]"
+                data-testid="bases-formula-example"
+                data-formula={example.formula}
+                onClick={() => patchView({ formula: example.formula })}
+              >
+                <span className="font-mono text-[11px]">{example.formula}</span>
+                <span className="text-[11px] text-[var(--text-muted)]">{example.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-[var(--text-muted)]">
+            Values: a property name, note["key with spaces"], file.name, file.path, file.folder, file.ext, file.mtime, "text", numbers, true, false.
+            Operators: + - * / % · &amp; joins text · == != &lt; &gt; &lt;= &gt;= · &amp;&amp; || !. Put spaces around - between names; due-date is one property.
+            Dates: date(x) reads YYYY-MM-DD or [[YYYY-MM-DD]]; add or subtract durations like "7d", "2w", "1M", "1y"; date - date gives days; times are UTC.
+            Format tokens: YYYY MM M MMM MMMM DD D ddd dddd HH mm ss.
+          </p>
+          <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-formula-functions">
+            Functions (also as methods, like status.upper()): {FORMULA_FUNCTIONS.join(", ")}.
+          </p>
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-auto" data-layout={layout}>
         {layout === "cards" ? (
           <div
@@ -425,8 +490,19 @@ export function NoteTable() {
                   );
                 })}
                 {view.formula.trim() ? (
-                  <p className="text-[12px] text-[var(--text-muted)]" data-testid="bases-card-formula">
-                    {row.formula || "—"}
+                  <p
+                    className="truncate text-[12px] text-[var(--text-muted)]"
+                    data-testid="bases-card-formula"
+                    data-formula-error={row.formulaError ?? undefined}
+                    title={row.formulaError ?? row.formula}
+                  >
+                    {row.formulaError ? (
+                      <span className="text-[var(--danger)]" data-testid="bases-formula-error">
+                        ⚠ {row.formulaError}
+                      </span>
+                    ) : (
+                      row.formula || "—"
+                    )}
                   </p>
                 ) : null}
               </div>
@@ -524,8 +600,19 @@ export function NoteTable() {
                   );
                 })}
                 {view.formula.trim() ? (
-                  <td className="max-w-[16rem] truncate px-2 py-1.5" data-formula={row.formula}>
-                    {row.formula}
+                  <td
+                    className="max-w-[16rem] truncate px-2 py-1.5"
+                    data-formula={row.formula}
+                    data-formula-error={row.formulaError ?? undefined}
+                    title={row.formulaError ?? row.formula}
+                  >
+                    {row.formulaError ? (
+                      <span className="text-[var(--danger)]" data-testid="bases-formula-error">
+                        ⚠ {row.formulaError}
+                      </span>
+                    ) : (
+                      row.formula
+                    )}
                   </td>
                 ) : null}
               </tr>
@@ -596,7 +683,7 @@ export function NoteTable() {
             : ""}
         {built.truncated ? " · first 400 notes" : ""}
         {view.formula.trim() ? ` · formula ${view.formula}` : ""}
-        {built.formulaError ? ` · ${built.formulaError}` : ""}
+        {built.formulaError && !built.formulaParseError ? ` · ${built.formulaError}` : ""}
         {readingProperties ? " · reading note properties" : ""}
         {indexFillBusy && visibleMissingIds.length > 0 && !readingProperties
           ? " · properties wait until the index is idle"

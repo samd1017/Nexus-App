@@ -97,6 +97,149 @@ assert.equal(evalNoteFormula(blank, 'if(status, status, "—")').value, "—");
 assert.equal(evalNoteFormula(blank, "if(empty(status), \"none\", status)").value, "none");
 assert.ok(evalNoteFormula(alpha, "file.mtime + 1").error);
 assert.equal(evalNoteFormula(alpha, "file.mtime + 1").value, "");
+assert.match(evalNoteFormula(alpha, "file.mtime + 1").error, /duration like "7d"/);
+
+const NOW = Date.UTC(2026, 9, 1, 12, 0);
+const task = {
+  name: "Ship formulas",
+  path: "Projects/Ship formulas.md",
+  folder: "Projects",
+  mtime: NOW - 3 * 86_400_000,
+  props: { status: "doing", due: "2026-10-08", estimate: "90", priority: "2", tags: "Writing, Work", "due date": "2026-12-25", "start-day": "[[2026-09-28]]", done: "false" },
+};
+const f = (src, row = task) => evalNoteFormula(row, src, NOW);
+const ok = (src, value, row = task) => {
+  const out = f(src, row);
+  assert.equal(out.error, null, `${src} → ${out.error}`);
+  assert.equal(out.value, value, src);
+};
+const bad = (src, pattern, row = task) => {
+  const out = f(src, row);
+  assert.equal(out.value, "", src);
+  assert.ok(out.error, `${src} should fail`);
+  if (pattern) assert.match(out.error, pattern, src);
+};
+// Text
+ok("upper(status)", "DOING");
+ok("status.upper()", "DOING");
+ok("file.name.lower()", "ship formulas");
+ok('trim("  hi  ")', "hi");
+ok('replace(file.name, " ", "-")', "Ship-formulas");
+ok("length(status)", "5");
+ok("status.length", "5");
+ok("slice(file.name, 0, 4)", "Ship");
+ok('contains(lower(tags), "writing")', "true");
+ok('tags.startsWith("Writ")', "true");
+ok('file.name.endsWith("x")', "false");
+ok('status & " / " & file.ext', "doing / md");
+ok('"Due " + due', "Due 2026-10-08");
+ok('note["due date"]', "2026-12-25");
+ok("note.status", "doing");
+// Numbers
+ok("estimate / 60", "1.5");
+ok("round(number(estimate) / 7, 2)", "12.86");
+ok("priority * 3 + 1", "7");
+ok("priority + estimate", "92");
+ok("-priority", "-2");
+ok("estimate % 7", "6");
+ok("floor(7.8) & ceil(7.2) & abs(-3)", "783");
+ok("min(priority, estimate, 5)", "2");
+ok("max(priority, estimate)", "90");
+ok("missing * 2", "");
+bad("status * 2", /“doing” is not a number/);
+bad("estimate / 0", /Division by zero/);
+// Comparisons and logic
+ok('status == "doing"', "true");
+ok('status != "done"', "true");
+ok("priority > 1", "true");
+ok("priority >= 2 && estimate < 100", "true");
+ok("priority > 5 || !done", "true");
+ok('if(status == "done", "Done", status.upper())', "DOING");
+ok('if(priority >= 2, "high")', "high");
+ok('if(priority > 9, "high")', "");
+ok("due > today()", "true");
+ok('due < "2026-10-09"', "true");
+ok("empty(missing)", "true");
+ok("!empty(status)", "true");
+ok('done == false', "true");
+// Dates
+ok("today()", "2026-10-01");
+ok("now()", "2026-10-01 12:00");
+ok("date(due)", "2026-10-08");
+ok('date(due).format("MMM D, YYYY")', "Oct 8, 2026");
+ok('format(date(due), "dddd [the] D")', "Thursday the 8");
+ok('date(due) + "7d"', "2026-10-15");
+ok('date(due) + "1M"', "2026-11-08");
+ok('date(due) - "2w"', "2026-09-24");
+ok('date(due) + "1 year"', "2027-10-08");
+ok("date(due) - today()", "7");
+ok("today() - date(start-day)", "3");
+ok('if(empty(due), "—", date(due) - today())', "7");
+ok("year(due) & \"/\" & month(due) & \"/\" & day(due)", "2026/10/8");
+ok("file.mtime.relative()", "3 days ago");
+ok("date(due).relative()", "in 7 days");
+ok("today().relative()", "today");
+ok('file.mtime.format("YYYY-MM-DD HH:mm")', "2026-09-28 12:00");
+ok("date(missing)", "");
+ok("date(missing).format()", "");
+bad('date("next week")', /not a date/);
+bad('date("2026-02-31")', /not a date/);
+bad("date(due) * 2", /Dates cannot use \*/);
+bad("today() + today()", /cannot be added/);
+// Syntax errors stay honest
+bad("upper(", /closing \)/);
+bad("frobnicate(status)", /frobnicate\(\) is not a formula function/);
+bad("status.frob()", /\.frob\(\) is not a formula function/);
+bad("upper(status, 1)", /upper\(\) takes 1 value/);
+bad("status.upper(1)", /\.upper\(\) takes no values/);
+bad('status = "doing"', /Use == to compare/);
+bad("file.size", /file\. needs name, path, folder, ext, mtime/);
+bad('date(due) + 7d', /Durations are quoted, like "7d"/);
+bad('"open', /end quote/);
+bad("status status", /where it does not fit/);
+bad("if(status)", /two or three parts/);
+
+const { FORMULA_EXAMPLES, FORMULA_FUNCTIONS, compileNoteFormula } = await import("../src/lib/vault/note-formula.ts");
+assert.ok(FORMULA_EXAMPLES.length >= 6);
+for (const example of FORMULA_EXAMPLES) {
+  assert.equal(compileNoteFormula(example.formula).error, null, example.formula);
+}
+for (const name of ["if", "empty", "date", "today", "format", "relative", "upper", "lower", "contains", "replace", "round", "number"]) {
+  assert.ok(FORMULA_FUNCTIONS.includes(name), name);
+}
+
+const formulaNotes = [
+  { id: "x", path: "Tasks/Late.md", name: "Late.md", content: "---\ndue: 2026-09-20\nestimate: 30\n---\n", mtime: NOW },
+  { id: "y", path: "Tasks/Soon.md", name: "Soon.md", content: "---\ndue: 2026-10-03\nestimate: 120\n---\n", mtime: NOW },
+  { id: "z", path: "Tasks/Odd.md", name: "Odd.md", content: "---\ndue: whenever\nestimate: lots\n---\n", mtime: NOW },
+  { id: "w", path: "Tasks/None.md", name: "None.md", content: "No due.\n", mtime: NOW },
+];
+const daysLeft = buildNoteTable(formulaNotes, "", "date(due) - today()", NOW);
+assert.equal(daysLeft.formulaParseError, null);
+assert.match(daysLeft.formulaError, /Formula failed on 1 note: “whenever” is not a date/);
+const byId = Object.fromEntries(daysLeft.rows.map((row) => [row.id, row]));
+assert.equal(byId.x.formula, "-11");
+assert.equal(byId.y.formula, "2");
+assert.equal(byId.w.formula, "");
+assert.equal(byId.w.formulaError, null);
+assert.equal(byId.z.formula, "");
+assert.match(byId.z.formulaError, /not a date/);
+assert.deepEqual(
+  sortNoteRows(daysLeft.rows, "formula", "asc").filter((row) => row.formula).map((row) => row.id),
+  ["x", "y"],
+);
+const hours = buildNoteTable(formulaNotes, "", "estimate / 60", NOW);
+assert.deepEqual(
+  sortNoteRows(hours.rows, "formula", "desc").filter((row) => row.formula).map((row) => row.formula),
+  ["2", "0.5"],
+);
+const broken = buildNoteTable(formulaNotes, "", "upper(", NOW);
+assert.match(broken.formulaParseError, /closing \)/);
+assert.equal(broken.formulaError, broken.formulaParseError);
+assert.ok(broken.rows.every((row) => row.formula === "" && row.formulaError === broken.formulaParseError));
+const none = buildNoteTable(formulaNotes, "", "", NOW);
+assert.equal(none.formulaError, null);
+assert.ok(none.rows.every((row) => row.formulaError === null && row.formula === ""));
 const withFormula = buildNoteTable(
   [{ id: "a", path: "Projects/Alpha.md", name: "Alpha.md", content: "---\nstatus: draft\n---\n", mtime: Date.UTC(2026, 9, 1, 15, 30) }],
   "",
@@ -271,6 +414,12 @@ assert.match(scope, /p\.join\("\.nexus"\)/);
 assert.match(scope, /require_literal_leading_dot/);
 assert.doesNotMatch(table, /No formulas, relations, or extra views/);
 assert.doesNotMatch(table, /Obsidian Bases formulas/);
+assert.doesNotMatch(table, /no full formula language/);
+assert.match(table, /one formula column per view/);
+assert.match(table, /data-testid="bases-formula-error"/);
+assert.match(table, /data-testid="bases-formula-parse-error"/);
+assert.match(table, /data-testid="bases-formula-example"/);
+assert.match(table, /data-formula-error=\{row\.formulaError/);
 assert.doesNotMatch(table, /\.base parity/);
 const editor = readFileSync("src/components/editor/EditorPane.tsx", "utf8");
 assert.match(editor, /data-testid="bases-open"/);

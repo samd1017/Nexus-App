@@ -1,5 +1,11 @@
 import { applyFrontmatter, parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
 import { isCanvasPath } from "@/lib/vault/canvas";
+import {
+  compileNoteFormula,
+  runNoteFormula,
+  type FormulaResult,
+  type FormulaRow,
+} from "@/lib/vault/note-formula";
 
 export type NoteTableSource = {
   id: string;
@@ -20,8 +26,12 @@ export type NoteTableRow = {
   props: Record<string, string>;
   /** Wikilink or note-path values in each property, when the value points at notes. */
   links: Record<string, NoteLink[]>;
-  /** Result of the view formula. Empty when the view has no formula. */
+  /** Result of the view formula. Empty when the view has no formula or it failed. */
   formula: string;
+  /** Why the formula failed for this note, shown in place of a value. */
+  formulaError: string | null;
+  /** Numeric or date result as a number, so the formula column sorts by value. */
+  formulaSort: number | null;
 };
 
 export type BasesViewConfig = {
@@ -233,177 +243,31 @@ export function parseBasesSession(raw: string | null): BasesSession {
   return base;
 }
 
-type FormulaNode =
-  | { kind: "file"; key: "mtime" | "name" | "folder" | "path" }
-  | { kind: "prop"; key: string }
-  | { kind: "text"; value: string }
-  | { kind: "concat"; parts: FormulaNode[] }
-  | { kind: "if"; cond: FormulaNode; yes: FormulaNode; no: FormulaNode }
-  | { kind: "empty"; inner: FormulaNode };
-
-function lexFormula(source: string): { tokens: string[] } | { error: string } {
-  const tokens: string[] = [];
-  let i = 0;
-  while (i < source.length) {
-    const ch = source[i] ?? "";
-    if (/\s/.test(ch)) {
-      i += 1;
-      continue;
-    }
-    if (source.startsWith("file.", i)) {
-      const m = /^file\.(mtime|name|folder|path)/.exec(source.slice(i));
-      if (!m) return { error: "file. needs mtime, name, folder, or path." };
-      tokens.push(m[0]);
-      i += m[0].length;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      let j = i + 1;
-      let value = "";
-      while (j < source.length && source[j] !== ch) {
-        value += source[j];
-        j += 1;
-      }
-      if (source[j] !== ch) return { error: "Formula string is missing an end quote." };
-      tokens.push(JSON.stringify(value));
-      i = j + 1;
-      continue;
-    }
-    if ("&(),".includes(ch)) {
-      tokens.push(ch);
-      i += 1;
-      continue;
-    }
-    const id = /^[A-Za-z_][\w-]*/.exec(source.slice(i));
-    if (id) {
-      tokens.push(id[0]);
-      i += id[0].length;
-      continue;
-    }
-    return { error: `Formula has “${ch}”, which is not supported.` };
-  }
-  return { tokens };
-}
-
-function parseFormulaTokens(
-  tokens: string[],
-  index: number,
-): { node: FormulaNode; next: number } | { error: string } {
-  const token = tokens[index];
-  if (!token) return { error: "Formula is incomplete." };
-  let primary: { node: FormulaNode; next: number } | { error: string };
-  if ((token === "if" || token === "empty") && tokens[index + 1] === "(") {
-    const open = index + 2;
-    if (token === "empty") {
-      const inner = parseFormulaTokens(tokens, open);
-      if ("error" in inner) return inner;
-      if (tokens[inner.next] !== ")") return { error: "empty( needs a closing )." };
-      primary = { node: { kind: "empty", inner: inner.node }, next: inner.next + 1 };
-    } else {
-      const cond = parseFormulaTokens(tokens, open);
-      if ("error" in cond) return cond;
-      if (tokens[cond.next] !== ",") return { error: "if( needs three parts: if(value, then, else)." };
-      const yes = parseFormulaTokens(tokens, cond.next + 1);
-      if ("error" in yes) return yes;
-      if (tokens[yes.next] !== ",") return { error: "if( needs three parts: if(value, then, else)." };
-      const no = parseFormulaTokens(tokens, yes.next + 1);
-      if ("error" in no) return no;
-      if (tokens[no.next] !== ")") return { error: "if( needs a closing )." };
-      primary = { node: { kind: "if", cond: cond.node, yes: yes.node, no: no.node }, next: no.next + 1 };
-    }
-  } else if (token.startsWith('"')) {
-    try {
-      primary = { node: { kind: "text", value: JSON.parse(token) as string }, next: index + 1 };
-    } catch {
-      return { error: "Formula string is not valid." };
-    }
-  } else if (token.startsWith("file.")) {
-    const key = token.slice(5);
-    if (key !== "mtime" && key !== "name" && key !== "folder" && key !== "path") {
-      return { error: "file. needs mtime, name, folder, or path." };
-    }
-    primary = { node: { kind: "file", key }, next: index + 1 };
-  } else if (/^[A-Za-z_][\w-]*$/.test(token)) {
-    primary = { node: { kind: "prop", key: token }, next: index + 1 };
-  } else {
-    return { error: `Formula has “${token}”, which is not supported.` };
-  }
-  if ("error" in primary) return primary;
-  if (tokens[primary.next] !== "&") return primary;
-  const parts: FormulaNode[] = [primary.node];
-  let next = primary.next;
-  while (tokens[next] === "&") {
-    const rest = parseFormulaTokens(tokens, next + 1);
-    if ("error" in rest) return rest;
-    if (rest.node.kind === "concat") parts.push(...rest.node.parts);
-    else parts.push(rest.node);
-    next = rest.next;
-  }
-  return { node: { kind: "concat", parts }, next };
-}
-
-function formulaTruthy(value: string): boolean {
-  const v = value.trim().toLowerCase();
-  return v !== "" && v !== "0" && v !== "false" && v !== "no";
-}
-
-function formatMtime(mtime: number): string {
-  if (!mtime) return "";
-  const d = new Date(mtime);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 16).replace("T", " ");
-}
-
-function evalFormulaNode(
-  node: FormulaNode,
-  row: Pick<NoteTableRow, "name" | "path" | "folder" | "mtime" | "props">,
-): string {
-  if (node.kind === "text") return node.value;
-  if (node.kind === "prop") {
-    if (Object.prototype.hasOwnProperty.call(row.props, node.key)) return row.props[node.key] ?? "";
-    const found = Object.keys(row.props).find((key) => key.toLowerCase() === node.key.toLowerCase());
-    return found ? row.props[found] ?? "" : "";
-  }
-  if (node.kind === "file") {
-    if (node.key === "mtime") return formatMtime(row.mtime);
-    if (node.key === "name") return row.name;
-    if (node.key === "folder") return row.folder;
-    return row.path;
-  }
-  if (node.kind === "concat") return node.parts.map((part) => evalFormulaNode(part, row)).join("");
-  if (node.kind === "empty") return evalFormulaNode(node.inner, row).trim() ? "" : "yes";
-  const cond = evalFormulaNode(node.cond, row);
-  return evalFormulaNode(formulaTruthy(cond) ? node.yes : node.no, row);
-}
-
 /** One formula for every row. An empty formula is not a column. */
-export function evalNoteFormula(
-  row: Pick<NoteTableRow, "name" | "path" | "folder" | "mtime" | "props">,
-  source: string,
-): { value: string; error: string | null } {
-  const trimmed = source.trim();
-  if (!trimmed) return { value: "", error: null };
-  const lexed = lexFormula(trimmed);
-  if ("error" in lexed) return { value: "", error: lexed.error };
-  if (!lexed.tokens.length) return { value: "", error: null };
-  const parsed = parseFormulaTokens(lexed.tokens, 0);
-  if ("error" in parsed) return { value: "", error: parsed.error };
-  if (parsed.next !== lexed.tokens.length) {
-    return { value: "", error: `Formula has “${lexed.tokens[parsed.next]}”, which is not supported.` };
-  }
-  return { value: evalFormulaNode(parsed.node, row), error: null };
+export function evalNoteFormula(row: FormulaRow, source: string, now = Date.now()): FormulaResult {
+  return runNoteFormula(compileNoteFormula(source), row, now);
 }
 
 export function buildNoteTable(
   notes: NoteTableSource[],
   folderPrefix = "",
   formula = "",
-): { rows: NoteTableRow[]; keys: string[]; truncated: boolean; formulaError: string | null } {
+  now = Date.now(),
+): {
+  rows: NoteTableRow[];
+  keys: string[];
+  truncated: boolean;
+  /** Parse error, or a count of notes the formula failed on. */
+  formulaError: string | null;
+  formulaParseError: string | null;
+} {
   const prefix = folderPrefix.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
   const counts = new Map<string, number>();
   const rows: NoteTableRow[] = [];
   let truncated = false;
-  let formulaError: string | null = null;
+  const compiled = compileNoteFormula(formula);
+  let failed = 0;
+  let firstFailure: string | null = null;
   const catalog = notes
     .filter((note) => note.path && !isCanvasPath(note.path))
     .map((note) => ({ id: note.id, path: note.path, name: note.name || note.path }));
@@ -428,20 +292,27 @@ export function buildNoteTable(
       mtime: note.mtime || 0,
       props,
     };
-    const computed = evalNoteFormula(built, formula);
+    const computed = runNoteFormula(compiled, built, now);
     rows.push({
       id: note.id,
       ...built,
       links,
       formula: computed.error ? "" : computed.value,
+      formulaError: computed.error,
+      formulaSort: computed.sort,
     });
-    if (computed.error) formulaError = computed.error;
+    if (computed.error && !compiled.error) {
+      failed += 1;
+      firstFailure ??= computed.error;
+    }
   }
+  const formulaError =
+    compiled.error ?? (failed ? `Formula failed on ${failed} note${failed === 1 ? "" : "s"}: ${firstFailure}` : null);
   const keys = [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, MAX_KEYS)
     .map(([key]) => key);
-  return { rows, keys, truncated, formulaError };
+  return { rows, keys, truncated, formulaError, formulaParseError: compiled.error };
 }
 
 export function filterNoteRows(rows: NoteTableRow[], query: string): NoteTableRow[] {
@@ -485,6 +356,9 @@ export function sortNoteRows(
     return row.props[column] || "";
   };
   return [...rows].sort((a, b) => {
+    if (column === "formula" && a.formulaSort !== null && b.formulaSort !== null) {
+      return (a.formulaSort - b.formulaSort) * sign;
+    }
     const av = value(a);
     const bv = value(b);
     if (!av && bv) return 1;
