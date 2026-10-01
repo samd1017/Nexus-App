@@ -1010,6 +1010,10 @@ export function SettingsPanel() {
                 body={`${formatShortcut("K")} opens search. Prefix ask: or ?  for a grounded answer with citations. ${SEARCH_OPERATOR_HELP} Trash restore is in the sidebar, the delete toast, and ${formatShortcut("K")} trash / is:deleted.`}
               />
               <HelpItem
+                title="Tasks"
+                body="Built-in Tasks lists unchecked - [ ] and * [ ] lines. A 📅 YYYY-MM-DD on the line is the due date. due: frontmatter, recurrence, and Dataview queries are not supported. Open a row to jump to that note. The box marks the line done in the file."
+              />
+              <HelpItem
                 title="Graph"
                 body={`${formatShortcut("G")} always opens the Local graph: this note and the notes it links, even after Folder Map. Folder Map stays one click on the graph bar and opens the 3D vault, where folder spheres open a level. Small vaults still show every note there. Click a node to open it.`}
               />
@@ -1052,7 +1056,7 @@ export function SettingsPanel() {
                   Local-first Markdown notes for humans and agents.
                 </p>
                 <p className="mt-1 text-[12.5px] leading-snug text-[var(--text-secondary)]">
-                  No plugin API in this beta — plain Markdown + built-in query blocks.
+                  No plugin API in this beta — plain Markdown, built-in query blocks, and a Tasks list.
                 </p>
                 <div className="mt-1 text-[12px] text-[var(--text-muted)]">
                   Version {NEXUS_VERSION}

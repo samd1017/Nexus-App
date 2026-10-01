@@ -293,7 +293,8 @@ export type RightTab =
   | "graph"
   | "pulse"
   | "attachments"
-  | "history";
+  | "history"
+  | "tasks";
 export type ToastAction =
   | { label: string; kind: "open-pulse" }
   | { label: string; kind: "restore-trash"; trashPath: string };

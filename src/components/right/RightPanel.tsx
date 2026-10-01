@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Activity, History, Link2, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
+import { Activity, History, Link2, ListChecks, ListTree, Network, Paperclip, Unlink, Hash, Plus, Loader2 } from "lucide-react";
 import { noteBodyFailed, useVaultStore, type RightTab } from "@/lib/vault/store";
 import { getBacklinks } from "@/lib/vault/backlinks";
 import { fetchShellBacklinks, fetchShellKnownNorms, fetchShellMentions } from "@/lib/vault/shell-catalog";
@@ -21,6 +21,7 @@ import { jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { PulseRail } from "@/components/right/PulseRail";
 import { AttachmentsRail } from "@/components/right/AttachmentsRail";
 import { HistoryRail } from "@/components/right/HistoryRail";
+import { TasksRail } from "@/components/right/TasksRail";
 import { ErrorBoundary } from "@/components/chrome/ErrorBoundary";
 import { GraphSlot } from "@/components/graph/GraphSlot";
 import { cn } from "@/lib/utils";
@@ -270,6 +271,7 @@ export function RightPanel() {
     ["pulse", Activity, "Pulse"],
     ["attachments", Paperclip, "Files"],
     ["history", History, "History"],
+    ["tasks", ListChecks, "Tasks"],
   ] as const;
 
   if (graphMode === "fullscreen") {
@@ -680,6 +682,7 @@ export function RightPanel() {
           {tab === "pulse" ? <PulseRail /> : null}
           {tab === "attachments" ? <AttachmentsRail /> : null}
           {tab === "history" ? <HistoryRail /> : null}
+          {tab === "tasks" ? <TasksRail /> : null}
         </div>
       </aside>
     </>

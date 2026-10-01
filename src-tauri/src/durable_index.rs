@@ -897,6 +897,60 @@ pub fn vault_index_search_ops(
     with_shell_conn(&state, &db_path, |conn| run(conn))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskHitDto {
+    note_id: String,
+    path: String,
+    title: String,
+    line: i32,
+    text: String,
+    due: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskPageDto {
+    tasks: Vec<TaskHitDto>,
+    next_rowid: i64,
+    scanned: i64,
+    done: bool,
+}
+
+#[tauri::command(async)]
+pub fn vault_index_task_page(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    after_rowid: Option<i64>,
+    note_budget: Option<i64>,
+) -> Result<TaskPageDto, String> {
+    let after = after_rowid.unwrap_or(0);
+    let budget = note_budget.unwrap_or(crate::task_scan::TASK_PAGE_DEFAULT);
+    let run = |conn: &Connection| {
+        crate::task_scan::scan_task_page(conn, after, budget).map(|page| TaskPageDto {
+            tasks: page
+                .tasks
+                .into_iter()
+                .map(|task| TaskHitDto {
+                    note_id: task.note_id,
+                    path: task.path,
+                    title: task.title,
+                    line: task.line,
+                    text: task.text,
+                    due: task.due,
+                })
+                .collect(),
+            next_rowid: page.next_rowid,
+            scanned: page.scanned,
+            done: page.done,
+        })
+    };
+    if let Some(found) = with_search_reader(&db_path, |conn| run(conn)) {
+        return found;
+    }
+    with_shell_conn(&state, &db_path, |conn| run(conn))
+}
+
 #[tauri::command(async)]
 pub fn vault_index_search(
     state: tauri::State<'_, SharedIndex>,

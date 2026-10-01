@@ -13,6 +13,7 @@ import {
   FolderOpen,
   FolderPlus,
   Network,
+  ListChecks,
   BookOpen,
   Code2,
   Eye,
@@ -1196,6 +1197,17 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "open-tasks",
+          label: "Tasks",
+          keywords: ["tasks", "todo", "checkbox", "due"],
+          icon: <ListChecks size={15} />,
+          run: wrapRun("open-tasks", () => {
+            useVaultStore.getState().setRightTab("tasks");
+            useVaultStore.getState().setRightOpen(true);
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "toggle-graph",
           label: "Open Local graph",
           keywords: ["graph", "fullscreen", "local", "network", "orbit"],
@@ -1558,6 +1570,18 @@ function CommandPaletteOpen() {
         shortcut: undefined as string | undefined,
         run: wrapRun("toggle-editor", () => {
           toggleEditorMode();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-tasks",
+        label: "Tasks",
+        icon: <ListChecks size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-tasks", () => {
+          useVaultStore.getState().setRightTab("tasks");
+          useVaultStore.getState().setRightOpen(true);
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),

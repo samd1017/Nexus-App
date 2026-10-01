@@ -213,7 +213,7 @@ export function WelcomeScreen() {
             className="mt-2 max-w-lg text-[13.5px] leading-relaxed text-[var(--text-secondary)]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 180ms both" }}
           >
-            No plugin API in this beta — plain Markdown + built-in query blocks.
+            No plugin API in this beta — plain Markdown, built-in query blocks, and a Tasks list.
           </p>
 
           <div

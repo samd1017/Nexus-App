@@ -1,4 +1,5 @@
 mod durable_index;
+mod task_scan;
 mod fill_join;
 mod index_fill;
 mod shell_catalog;
@@ -10,7 +11,7 @@ use durable_index::{
     vault_index_list_links,
     vault_index_open,
     vault_index_path, vault_index_rebuild, vault_index_remove, vault_index_search,
-    vault_index_search_ops,
+    vault_index_search_ops, vault_index_task_page,
     vault_index_stats, vault_index_upsert, vault_index_wipe, vault_shell_backlinks,
     vault_shell_children, vault_shell_ego, vault_shell_forget, vault_shell_level,
     vault_shell_broken, vault_shell_known_norms, vault_shell_link_coverage, vault_shell_mentions, vault_shell_mount,
@@ -272,6 +273,7 @@ pub fn run() {
             vault_index_remove,
             vault_index_search,
             vault_index_search_ops,
+            vault_index_task_page,
             vault_index_stats,
             vault_index_list,
             vault_index_list_links,
