@@ -124,6 +124,40 @@ assert.equal(indexedMiss.error, null);
 closeDurableIndex();
 invalidateVaultTagsCache();
 
+const stripped = {
+  w: { id: "w", path: "Research/Writing Probe.md", name: "Writing Probe.md", kind: "note", parentId: "r", mtime: 10 },
+  g2s: { id: "g2s", path: "Research/Graph Overview.md", name: "Graph Overview.md", kind: "note", parentId: "r", mtime: 20 },
+  n: { id: "n", path: "Research/No Graph Tag.md", name: "No Graph Tag.md", kind: "note", parentId: "r", mtime: 30 },
+};
+const tagMapOr = runNexusQuery("LIST FROM #writing OR #graph", stripped, [
+  [stripped.w],
+  [stripped.g2s],
+]);
+assert.equal(tagMapOr.error, null);
+assert.equal(tagMapOr.tagsIncomplete, false);
+assert.deepEqual(tagMapOr.rows.map((r) => r.id).sort(), ["g2s", "w"]);
+assert.ok(!tagMapOr.rows.some((r) => r.id === "n"));
+const tagMapAnd = runNexusQuery("LIST FROM #graph AND #links", stripped, [
+  [stripped.g2s],
+  [stripped.g2s],
+]);
+assert.deepEqual(tagMapAnd.rows.map((r) => r.id), ["g2s"]);
+const tagMapOne = runNexusQuery("LIST FROM #graph", stripped, [[stripped.g2s]]);
+assert.deepEqual(tagMapOne.rows.map((r) => r.id), ["g2s"]);
+const tagMapPartial = runNexusQuery("LIST FROM #writing OR #graph", stripped, [
+  [stripped.w],
+  null,
+]);
+assert.deepEqual(tagMapPartial.rows.map((r) => r.id), ["w"]);
+assert.equal(tagMapPartial.tagsIncomplete, true);
+const tagMapAndBusy = runNexusQuery("LIST FROM #graph AND #links", stripped, [
+  [stripped.g2s],
+  null,
+]);
+assert.equal(tagMapAndBusy.tagsIncomplete, true);
+assert.match(tagMapAndBusy.scanNote, /tag/);
+assert.equal(tagMapAndBusy.rows.length, 0);
+
 const either = runNexusQuery("LIST FROM #writing OR #graph", nodes);
 assert.deepEqual(either.rows.map((r) => r.id).sort(), ["c", "g"]);
 const bothTags = runNexusQuery("LIST FROM #graph AND #links", nodes);
@@ -179,7 +213,12 @@ assert.match(promoted, /LIST path:Research/);
 assert.doesNotMatch(promoted, /<pre>/);
 
 const { readFileSync } = await import("node:fs");
+const tagLoad = readFileSync("src/lib/vault/nexus-query-tags.ts", "utf8");
+assert.match(tagLoad, /getDbPath/);
+assert.match(tagLoad, /fetchShellTagNotes/);
+assert.doesNotMatch(tagLoad, /pages\.some\(\(page\) => page == null\)/);
 const view = readFileSync("src/components/editor/NexusQueryView.tsx", "utf8");
+assert.match(view, /loadTagExtras/);
 assert.match(view, /data-open-note/);
 assert.match(view, /model\.footer/);
 assert.match(view, /setActiveNote/);

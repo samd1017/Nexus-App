@@ -8,8 +8,8 @@ import { markdownToHtml } from "@/lib/markdown/serialize";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
-import { NEXUS_QUERY_CAP, parseNexusQuery, runNexusQuery } from "@/lib/vault/nexus-query";
-import { fetchShellTagNotes } from "@/lib/vault/shell-catalog";
+import { NEXUS_QUERY_CAP, runNexusQuery } from "@/lib/vault/nexus-query";
+import { loadTagExtras } from "@/lib/vault/nexus-query-tags";
 import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle, type VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
@@ -220,39 +220,10 @@ function renderQueries(
   }
 }
 
-async function tagExtrasFor(query: string): Promise<VaultNode[][] | null> {
-  const store = useVaultStore.getState();
-  if (!store.shellCatalog || !store.shellDbPath) return null;
-  const parsed = parseNexusQuery(query);
-  if (parsed.kind !== "ok" || parsed.tags.length === 0) return null;
-  const pages = await Promise.all(
-    parsed.tags.map((tag) => fetchShellTagNotes(store.shellDbPath || "", tag, NEXUS_QUERY_CAP)),
-  );
-  if (pages.some((page) => page == null)) return null;
-  const live = useVaultStore.getState();
-  const missing = pages.flatMap((page) => page ?? []).filter((row) => !live.nodes[row.id]);
-  if (missing.length) live.ingestShellRows(missing);
-  const current = useVaultStore.getState().nodes;
-  return pages.map((page) =>
-    (page ?? []).map((row) => {
-      const existing = current[row.id];
-      if (existing?.kind === "note") return existing;
-      return {
-        id: row.id,
-        path: row.path,
-        name: row.name,
-        kind: "note" as const,
-        parentId: row.parentId ?? null,
-        mtime: row.mtime || 0,
-      };
-    }),
-  );
-}
-
 async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>): Promise<void> {
   for (const el of els) {
     const query = (el.getAttribute("data-query") || "").trim();
-    const extras = await tagExtrasFor(query);
+    const extras = await loadTagExtras(query);
     const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras);
     const bits: string[] = [];
     if (model.help) {
@@ -271,7 +242,10 @@ async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, Vaul
       );
     }
     if (!model.help && !model.error && model.rows.length === 0) {
-      bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-empty">No notes match.</p>`);
+      const empty = model.tagsIncomplete
+        ? model.scanNote || "Couldn't read every tag from the index."
+        : "No notes match.";
+      bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(empty)}</p>`);
     }
     if (model.mode === "table" && model.rows.length) {
       const tags = model.rows.some((r) => r.tags != null);
@@ -301,7 +275,9 @@ async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, Vaul
         `<p class="nexus-query-empty" data-testid="nexus-query-cap">Stopped at ${NEXUS_QUERY_CAP}.</p>`,
       );
     }
-    if (model.scanNote) bits.push(`<p class="nexus-query-empty">${escapeHtml(model.scanNote)}</p>`);
+    if (model.scanNote && model.rows.length > 0) {
+      bits.push(`<p class="nexus-query-empty">${escapeHtml(model.scanNote)}</p>`);
+    }
     bits.push(
       `<p data-testid="nexus-query-footer">${escapeHtml(model.footer)}</p>`,
     );

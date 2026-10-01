@@ -44,6 +44,8 @@ export type NexusQueryModel = {
   scanNote: string | null;
   /** Shown when a requested column is not in the index. */
   fieldNote: string | null;
+  /** A tag_map page failed after retries. Do not treat that as "no notes". */
+  tagsIncomplete?: boolean;
 };
 
 type TagJoin = "or" | "and";
@@ -376,8 +378,11 @@ function collectInFolder(
 export function runNexusQuery(
   source: string,
   nodes: Record<string, VaultNode>,
-  /** Extra notes per tag, same order as the parsed tags. From sqlite tag_map. */
-  tagExtras?: VaultNode[][] | null,
+  /**
+   * One list per parsed tag, from sqlite tag_map.
+   * `null` slot: that page failed. `[]`: the tag has no notes.
+   */
+  tagExtras?: (VaultNode[] | null)[] | null,
 ): NexusQueryModel {
   const footer = NEXUS_QUERY_FOOTER;
   const parsed = parseNexusQuery(source);
@@ -415,6 +420,7 @@ export function runNexusQuery(
 
   let notes: VaultNode[] = [];
   let budgetHit = false;
+  let tagsIncomplete = false;
   if (parsed.path) {
     const folderId = resolveFolder(nodes, parsed.path);
     if (!folderId) {
@@ -433,12 +439,24 @@ export function runNexusQuery(
     notes = collected.notes;
     budgetHit = collected.budgetHit;
   } else if (parsed.tags.length) {
-    notes = joinTaggedNotes(
-      parsed.tags.map((tag, i) =>
-        joinTaggedNotes([notesForTagJoined(nodes, tag), tagExtras?.[i] ?? []], "or"),
-      ),
-      parsed.tagMode,
-    );
+    const failed = parsed.tags.map((_, i) => tagExtras != null && tagExtras[i] == null);
+    tagsIncomplete = failed.some(Boolean);
+    if (parsed.tagMode === "and" && tagsIncomplete) {
+      notes = joinTaggedNotes(
+        parsed.tags.map((tag) => notesForTagJoined(nodes, tag)),
+        "and",
+      );
+    } else {
+      notes = joinTaggedNotes(
+        parsed.tags.map((tag, i) => {
+          const mem = notesForTagJoined(nodes, tag);
+          const extra = tagExtras?.[i];
+          if (extra == null) return mem;
+          return joinTaggedNotes([mem, extra], "or");
+        }),
+        parsed.tagMode,
+      );
+    }
   }
 
   const dir = parsed.sort?.dir === "desc" ? -1 : 1;
@@ -461,7 +479,10 @@ export function runNexusQuery(
     truncated,
     scanNote: budgetHit
       ? `Stopped while reading this folder (${VISIT_BUDGET} files). Narrow with tag:.`
-      : null,
+      : tagsIncomplete && notes.length === 0
+        ? "Couldn't read every tag from the index."
+        : null,
     fieldNote,
+    tagsIncomplete,
   };
 }
