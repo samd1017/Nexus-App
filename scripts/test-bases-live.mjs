@@ -137,7 +137,11 @@ const obs = ok(obsidian);
 assert.equal(obs.outside, true);
 assert.equal(obs.session.views[0].name, "Main");
 assert.ok(obs.notes.some((line) => /stays in the file/.test(line)), obs.notes.join("\n"));
-assert.ok(obs.notes.some((line) => /Nexus shows two views; “Places” stays in the file/.test(line)), obs.notes.join("\n"));
+assert.equal(obs.session.views.length, 3);
+assert.equal(obs.session.views[2].id, "v3");
+assert.equal(obs.session.views[2].name, "Places");
+assert.match(obs.notes.join("\n"), /“Places” is a map view; it opens as a table/);
+assert.doesNotMatch(obs.notes.join("\n"), /two views/);
 assert.ok(!obs.notes.some((line) => /not imported|was left out/.test(line)), obs.notes.join("\n"));
 assert.equal(writeLiveBase({ text: obsidian, session: obs.session }, obs.session, []), obsidian, "no change, no rewrite");
 
@@ -714,6 +718,65 @@ views:
   const exported = parse(exportBaseFile(fresh).text);
   assert.deepEqual(exported.summaries, { Spread: sumDoc.summaries.Spread, "Done share": sumDoc.summaries["Done share"] });
   assert.deepEqual(exported.views[0].summaries, sumDoc.views[0].summaries);
+}
+
+// Every view in the file opens. Adding one appends it; views the session does not list stay put.
+{
+  const third = clone(obs.session);
+  third.activeId = "v3";
+  third.views[2] = { ...third.views[2], query: "cafe" };
+  const text = writeLiveBase({ text: obsidian, session: obs.session }, third, []);
+  assert.match(text, /name: Board # second view comment/, "an unedited view keeps its comment");
+  assert.equal(parse(text).views[2].type, "map", "a map view stays a map");
+  assert.equal(parse(text).views[2].name, "Places");
+  assert.equal(parse(text).nexus.activeView, "v3");
+  assert.equal(parse(text).formulas.third_only, "price + 1", "the map view's formula stays");
+  const back = ok(text);
+  assert.equal(back.outside, false);
+  assert.equal(back.session.activeId, "v3");
+  assert.equal(back.session.views[2].query, "cafe");
+  assert.ok(sameBasesSession(back.session, third));
+  const switched = { ...clone(third), activeId: "all" };
+  const switchedText = writeLiveBase({ text, session: back.session }, switched, []);
+  assert.equal(parse(switchedText).nexus.activeView, undefined);
+  assert.equal(switchedText.slice(0, switchedText.indexOf("nexus:")), text.slice(0, text.indexOf("nexus:")), "switching views rewrites nothing but the nexus block");
+  const added = clone(switched);
+  added.views = [
+    ...added.views,
+    {
+      ...added.views[0],
+      id: "v4",
+      name: "Copy",
+      query: "copy",
+      formulas: [],
+      columns: [],
+      relations: [],
+      summaries: {},
+      groupBy: null,
+    },
+  ];
+  added.activeId = "v4";
+  const addedText = writeLiveBase({ text: switchedText, session: ok(switchedText).session }, added, ["status"]);
+  const addedDoc = parse(addedText);
+  assert.equal(addedDoc.views.length, 4);
+  assert.equal(addedDoc.views[3].name, "Copy");
+  assert.equal(addedDoc.views[2].type, "map");
+  assert.match(addedText, /name: Board # second view comment/);
+  assert.ok(sameBasesSession(ok(addedText).session, added));
+  const shorter = { ...added, views: added.views.slice(0, 2), activeId: "all" };
+  assert.equal(parse(writeLiveBase({ text: addedText, session: ok(addedText).session }, shorter, [])).views.length, 4, "a shorter session does not delete views");
+  const many = `views:\n${Array.from({ length: 25 }, (_, i) => `  - type: table\n    name: V${i + 1}`).join("\n")}\n`;
+  const manyRead = ok(many);
+  assert.equal(manyRead.session.views.length, 24);
+  assert.equal(manyRead.session.views[23].id, "v24");
+  assert.equal(manyRead.session.views[23].name, "V24");
+  assert.match(manyRead.notes.join("\n"), /Nexus shows 24 views; “V25” stays in the file/);
+  const touched = clone(manyRead.session);
+  touched.views[0].query = "q";
+  const touchedDoc = parse(writeLiveBase({ text: many, session: manyRead.session }, touched, []));
+  assert.equal(touchedDoc.views.length, 25);
+  assert.equal(touchedDoc.views[24].name, "V25");
+  assert.equal(ok(writeLiveBase({ text: many, session: manyRead.session }, touched, [])).session.views[0].query, "q");
 }
 
 // Wiring: Bases reads and writes the live file, and the disclosure names it.

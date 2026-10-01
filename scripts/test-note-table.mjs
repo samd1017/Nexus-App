@@ -563,6 +563,22 @@ assert.equal(restored.activeId, "saved");
 assert.equal(restored.views[1].folder, "Projects");
 assert.deepEqual(restored.views[1].formulas, [{ id: "formula", name: "Formula", expr: "file.name" }]);
 assert.equal(restored.views[1].column, "formula:formula");
+const threeSession = parseBasesSession(JSON.stringify({
+  activeId: "v3",
+  views: [
+    { id: "all", name: "All notes" },
+    { id: "saved", name: "Saved view", query: "draft" },
+    { id: "v3", name: "Places", query: "cafe", layout: "cards" },
+    { id: "later", name: "Later" },
+  ],
+}));
+assert.deepEqual(threeSession.views.map((v) => v.id), ["all", "saved", "v3", "v4"]);
+assert.equal(threeSession.activeId, "v3");
+assert.equal(threeSession.views[2].query, "cafe");
+assert.equal(threeSession.views[2].layout, "cards");
+assert.equal(threeSession.views[3].name, "Later");
+assert.equal(parseBasesSession(serializeNoteTableFile(threeSession)).views[3].name, "Later");
+assert.equal(parseBasesSession(serializeNoteTableFile(threeSession)).activeId, "v3");
 const emptyLegacy = parseBasesSession(JSON.stringify({ activeId: "all", views: [{ id: "all", formula: "", column: "formula" }] }));
 assert.deepEqual(emptyLegacy.views[0].formulas, []);
 assert.equal(emptyLegacy.views[0].column, "name");
@@ -848,7 +864,10 @@ assert.match(table, /formula columns/);
 assert.doesNotMatch(table, /no list, regex, or link functions/);
 assert.match(table, /formula columns with list, regex, and link functions/);
 assert.doesNotMatch(table, /no custom summary formulas/);
-assert.match(table, /Not Obsidian Bases — two views, links do not open into files \(no asFile or linksTo\)/);
+assert.doesNotMatch(table, /two views/);
+assert.match(table, /Not Obsidian Bases — links do not open into files \(no asFile or linksTo\)/);
+assert.match(table, /data-testid="bases-add-view"/);
+assert.match(table, /basesViewId\(prev\.views\.length\)/);
 assert.match(table, /summary rows with summary formulas/);
 assert.match(table, /data-testid="bases-summary-formulas-toggle"/);
 assert.match(table, /data-testid="bases-summary-formula-error"/);
@@ -1016,7 +1035,10 @@ assert.doesNotMatch(notesText, /ungrouped/);
 assert.match(notesText, /row limit/);
 assert.match(notesText, /“List” is a list view; it opens as a table/);
 assert.match(notesText, /“or” filter group was not imported/);
-assert.match(notesText, /Nexus keeps two views; “Third” was not imported/);
+assert.equal(imported.session.views.length, 3);
+assert.equal(imported.session.views[2].id, "v3");
+assert.equal(imported.session.views[2].name, "Third");
+assert.doesNotMatch(notesText, /two views|“Third”/);
 const lateRows = buildNoteTable(formulaNotes, open.folder, open.formulas, NOW);
 const lateById = Object.fromEntries(lateRows.rows.map((row) => [row.id, row.formulas]));
 assert.equal(lateById.x.late.value, "late");

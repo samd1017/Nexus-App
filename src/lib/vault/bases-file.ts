@@ -9,8 +9,11 @@ import { compileNoteFormula, compileSummaryFormula } from "@/lib/vault/note-form
 import {
   MAX_FORMULA_COLUMNS,
   MAX_SUMMARY_FORMULAS,
+  MAX_BASE_VIEWS,
+  basesViewId,
   customSummary,
   customSummaryName,
+  emptyBasesView,
   defaultBasesSession,
   formulaColumnId,
   formulaKey,
@@ -268,8 +271,9 @@ export function importBaseFile(text: string): BaseImport {
   };
 
   const sourceKeys: string[][] = [];
-  const views = rawViews.slice(0, 2).map((raw, index): BasesViewConfig => {
-    const fallback = base.views[index] as BasesViewConfig;
+  const shownRaw = rawViews.slice(0, MAX_BASE_VIEWS);
+  const views = shownRaw.map((raw, index): BasesViewConfig => {
+    const fallback = base.views[index] ?? emptyBasesView(basesViewId(index), `View ${index + 1}`);
     const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : fallback.name;
     const type = typeof raw.type === "string" ? raw.type : "table";
     if (type !== "table" && type !== "cards") report(`“${name}” is a ${type} view; it opens as a table.`);
@@ -410,16 +414,17 @@ export function importBaseFile(text: string): BaseImport {
       summaries,
     };
   });
-  if (rawViews.length > 2) {
-    const left = rawViews.slice(2).map((v, i) => (typeof v.name === "string" ? v.name : `View ${i + 3}`));
-    notes.push(`Nexus keeps two views; ${left.map((n) => `“${n}”`).join(", ")} ${left.length === 1 ? "was" : "were"} not imported.`);
+  if (rawViews.length > MAX_BASE_VIEWS) {
+    const left = rawViews.slice(MAX_BASE_VIEWS).map((v, i) => (typeof v.name === "string" && v.name.trim() ? v.name.trim() : `View ${MAX_BASE_VIEWS + i + 1}`));
+    notes.push(`Nexus shows ${MAX_BASE_VIEWS} views; ${left.map((n) => `“${n}”`).join(", ")} ${left.length === 1 ? "was" : "were"} not imported.`);
   }
-  const session: BasesSession = {
-    activeId: "all",
-    views: [views[0] ?? base.views[0], views[1] ?? base.views[1]] as BasesViewConfig[],
-    summaryFormulas,
-  };
-  if (session.views[0]) session.views[0].id = "all";
-  if (session.views[1]) session.views[1].id = "saved";
-  return { session, notes, sourceKeys: [sourceKeys[0] ?? [], sourceKeys[1] ?? []] };
+  while (views.length < 2) {
+    views.push(structuredClone(base.views[views.length] as BasesViewConfig));
+    sourceKeys.push([]);
+  }
+  views.forEach((view, i) => {
+    view.id = basesViewId(i);
+  });
+  const session: BasesSession = { activeId: "all", views, summaryFormulas };
+  return { session, notes, sourceKeys };
 }

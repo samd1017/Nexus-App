@@ -9,8 +9,10 @@ import {
   formulaColumnId,
   formulaKey,
   formulaStatusLine,
+  MAX_BASE_VIEWS,
   MAX_FORMULA_COLUMNS,
   MAX_SUMMARY_FORMULAS,
+  basesViewId,
   customSummary,
   customSummaryName,
   noteTableTitle,
@@ -426,6 +428,27 @@ export function NoteTable() {
         ),
       };
       return next;
+    });
+  };
+
+  const addView = () => {
+    setSession((prev) => {
+      if (prev.views.length >= MAX_BASE_VIEWS) return prev;
+      const current = prev.views.find((item) => item.id === prev.activeId) ?? prev.views[0];
+      const names = new Set(prev.views.map((item) => item.name));
+      let name = `${current.name} copy`;
+      for (let n = 2; names.has(name); n += 1) name = `${current.name} copy ${n}`;
+      const added: BasesViewConfig = {
+        ...current,
+        id: basesViewId(prev.views.length),
+        name,
+        formulas: current.formulas.map((f) => ({ ...f })),
+        columns: [...current.columns],
+        relations: [...(current.relations ?? [])],
+        groupBy: current.groupBy ? { ...current.groupBy } : null,
+        summaries: { ...current.summaries },
+      };
+      return { ...prev, activeId: added.id, views: [...prev.views, added] };
     });
   };
 
@@ -954,7 +977,7 @@ export function NoteTable() {
             {live?.onDisk
               ? `Views live in ${LIVE_BASE_FILE} at the vault root, an Obsidian .base file Nexus saves to and reloads when it changes.`
               : "Views live in a .base kept in browser storage for this vault."}{" "}
-            Not Obsidian Bases — two views, links do not open into files (no asFile or linksTo), and some Obsidian functions are missing (Formula help lists what works); other .base files open only through Import.
+            Not Obsidian Bases — links do not open into files (no asFile or linksTo), and some Obsidian functions are missing (Formula help lists what works); other .base files open only through Import.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -966,6 +989,7 @@ export function NoteTable() {
               data-testid="bases-view"
               data-view={item.id}
               aria-pressed={session.activeId === item.id}
+              title={item.name}
               onClick={() => setSession((prev) => ({ ...prev, activeId: item.id }))}
             >
               {item.name}
@@ -973,6 +997,20 @@ export function NoteTable() {
           ))}
           <button type="button" className="chip-btn" data-testid="bases-save-view" onClick={saveView}>
             Save view
+          </button>
+          <button
+            type="button"
+            className="chip-btn"
+            data-testid="bases-add-view"
+            disabled={session.views.length >= MAX_BASE_VIEWS}
+            title={
+              session.views.length >= MAX_BASE_VIEWS
+                ? `Up to ${MAX_BASE_VIEWS} views; the rest stay in the file`
+                : "Add a view with this view's filters, columns, and formulas"
+            }
+            onClick={addView}
+          >
+            + View
           </button>
         </div>
         <div className="flex items-center gap-1" role="group" aria-label="Layout">

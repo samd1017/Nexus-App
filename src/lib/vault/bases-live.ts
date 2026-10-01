@@ -21,6 +21,7 @@ import {
   summaryFromBase,
 } from "@/lib/vault/bases-file";
 import {
+  basesViewId,
   formulaKey,
   parseBasesSession,
   type BasesSession,
@@ -114,6 +115,7 @@ export function sameBasesSession(a: BasesSession, b: BasesSession): boolean {
   return (
     x.activeId === y.activeId &&
     canonical(x.summaryFormulas) === canonical(y.summaryFormulas) &&
+    x.views.length === y.views.length &&
     x.views.every((view, i) => sameBasesView(view, y.views[i] as BasesViewConfig))
   );
 }
@@ -157,12 +159,11 @@ export function readLiveBase(text: string, label = LIVE_BASE_FILE): LiveRead {
     }
     return next;
   });
+  const withIds = views.map((view, i) => ({ ...view, id: basesViewId(i) }));
+  const wanted = typeof nexus?.activeView === "string" ? nexus.activeView : "all";
   const session = normalizeBasesSession({
-    activeId: nexus?.activeView === "saved" ? "saved" : "all",
-    views: [
-      { ...(views[0] as BasesViewConfig), id: "all" },
-      { ...(views[1] as BasesViewConfig), id: "saved" },
-    ],
+    activeId: withIds.some((view) => view.id === wanted) ? wanted : "all",
+    views: withIds,
     summaryFormulas: imported.session.summaryFormulas,
   });
   return {
@@ -258,7 +259,10 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
   const imported = base ? importBaseFile(base.text) : null;
   const source = imported && !("error" in imported) ? imported : null;
   const fresh = !base || !source;
-  const changed = session.views.map((view, i) => fresh || !sameBasesView(loaded?.views[i] as BasesViewConfig, view));
+  const changed = session.views.map((view, i) => {
+    const prior = loaded?.views[i];
+    return fresh || !prior || !sameBasesView(prior, view);
+  });
   const summariesChanged = fresh || canonical(loaded?.summaryFormulas) !== canonical(session.summaryFormulas);
   if (base && !fresh && !oldExport && !changed.some(Boolean) && !summariesChanged && loaded?.activeId === session.activeId) {
     return base.text;
@@ -280,7 +284,7 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
   });
   const keptRefs = new Set<string>();
   rawViews.forEach((raw, i) => {
-    if (i >= 2 || !changed[i]) for (const key of refsIn(raw)) keptRefs.add(key);
+    if (i >= session.views.length || !changed[i]) for (const key of refsIn(raw)) keptRefs.add(key);
   });
   session.views.forEach((_, i) => {
     if (!changed[i]) return;
@@ -336,7 +340,7 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
   if (pushDown) {
     topFilters = withFolder(root.filters, null);
     rawViews.forEach((raw, i) => {
-      if (i < 2 && changed[i]) return;
+      if (i < session.views.length && changed[i]) return;
       const rec = asRecord(raw);
       if (rec) rawViews[i] = { ...rec, filters: withFolder(rec.filters, shared) };
     });
@@ -448,7 +452,7 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
     return entry;
   });
   const block: Record<string, unknown> = { version: 1 };
-  if (session.activeId === "saved") block.activeView = "saved";
+  if (session.activeId !== "all") block.activeView = session.activeId;
   block.views = entries;
   const tail = stringify({ nexus: block }, { lineWidth: 0 });
   return `${plain.replace(/\s*$/, "\n")}${tail}`;

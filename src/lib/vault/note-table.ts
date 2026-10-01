@@ -93,8 +93,36 @@ export type BasesFormula = { id: string; name: string; expr: string };
 export const MAX_FORMULA_COLUMNS = 8;
 export const FORMULA_COLUMN_PREFIX = "formula:";
 
+/** How many views a file can show. Views past this stay in the file, untouched. */
+export const MAX_BASE_VIEWS = 24;
+
+/** Stable id by position: the first two match the ids older files stored. */
+export function basesViewId(index: number): string {
+  if (index <= 0) return "all";
+  if (index === 1) return "saved";
+  return `v${index + 1}`;
+}
+
+/** A view with nothing set, for a slot the defaults do not cover. */
+export function emptyBasesView(id: string, name: string): BasesViewConfig {
+  return {
+    id,
+    name,
+    query: "",
+    folder: "",
+    column: "name",
+    dir: "asc",
+    formulas: [],
+    columns: [],
+    relations: [],
+    layout: "table",
+    groupBy: null,
+    summaries: {},
+  };
+}
+
 export type BasesViewConfig = {
-  id: "all" | "saved";
+  id: string;
   name: string;
   query: string;
   folder: string;
@@ -117,7 +145,7 @@ export type BasesViewConfig = {
 export const NOTE_TABLE_FILE = ".nexus/note-table.json";
 
 export type BasesSession = {
-  activeId: "all" | "saved";
+  activeId: string;
   views: BasesViewConfig[];
   summaryFormulas: BasesSummaryFormula[];
 };
@@ -451,13 +479,22 @@ export function parseBasesSession(raw: string | null): BasesSession {
   try {
     const parsed = JSON.parse(raw) as Partial<BasesSession> & Partial<BasesViewConfig>;
     if (Array.isArray(parsed.views)) {
-      const all = asView(parsed.views.find((v) => v && v.id === "all") ?? parsed.views[0], base.views[0]);
-      const saved = asView(parsed.views.find((v) => v && v.id === "saved") ?? parsed.views[1], base.views[1]);
-      all.id = "all";
-      saved.id = "saved";
+      const rawList = parsed.views.filter((v) => !!v && typeof v === "object");
+      const allRaw = rawList.find((v) => v.id === "all") ?? rawList[0];
+      const savedRaw = rawList.find((v) => v.id === "saved") ?? (rawList[0] === allRaw ? rawList[1] : rawList[0]);
+      const rest = rawList.filter((v) => v !== allRaw && v !== savedRaw);
+      const ordered = [allRaw, savedRaw, ...rest].filter((v) => !!v).slice(0, MAX_BASE_VIEWS);
+      const views = ordered.map((raw, i) => {
+        const fallback = base.views[i] ?? emptyBasesView(basesViewId(i), `View ${i + 1}`);
+        const view = asView(raw, fallback);
+        view.id = basesViewId(i);
+        return view;
+      });
+      while (views.length < 2) views.push(structuredClone(base.views[views.length] as BasesViewConfig));
+      const wanted = (parsed as { activeId?: unknown }).activeId;
       return {
-        activeId: parsed.activeId === "saved" ? "saved" : "all",
-        views: [all, saved],
+        activeId: typeof wanted === "string" && views.some((view) => view.id === wanted) ? wanted : "all",
+        views,
         summaryFormulas: asSummaryFormulas((parsed as { summaryFormulas?: unknown }).summaryFormulas),
       };
     }
