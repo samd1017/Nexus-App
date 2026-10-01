@@ -262,7 +262,7 @@ async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, Vaul
       const items = model.rows
         .map(
           (r) =>
-            `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span></button></li>`,
+            `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span>${r.link ? `<span>${escapeHtml(r.link)}</span>` : ""}</button></li>`,
         )
         .join("");
       bits.push(`<ul>${items}</ul>`);

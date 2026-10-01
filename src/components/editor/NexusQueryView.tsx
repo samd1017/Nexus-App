@@ -126,8 +126,8 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
               </tr>
             </thead>
             <tbody>
-              {model.rows.map((row) => (
-                <tr key={row.id}>
+              {model.rows.map((row, index) => (
+                <tr key={`${row.id}:${row.link ?? ""}:${index}`}>
                   <td colSpan={2 + row.fields.length} className="p-0">
                     <button
                       type="button"
@@ -157,8 +157,8 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
         ) : null}
         {model.mode === "list" && model.rows.length > 0 ? (
           <ul className="space-y-1">
-            {model.rows.map((row) => (
-              <li key={row.id}>
+            {model.rows.map((row, index) => (
+              <li key={`${row.id}:${row.link ?? ""}:${index}`}>
                 <button
                   type="button"
                   className="flex w-full flex-col items-start rounded-md px-1 py-1 text-left hover:bg-white/[0.04]"
@@ -168,6 +168,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                 >
                   <span className="text-[13px] font-medium">{row.title}</span>
                   <span className="truncate text-[11px] text-[var(--text-muted)]">{row.path}</span>
+                  {row.link ? <span className="truncate text-[11px] text-[var(--text-muted)]">{row.link}</span> : null}
                 </button>
               </li>
             ))}

@@ -3,10 +3,11 @@
  * LIST or TABLE, FROM a folder or tag, WHERE on one field,
  * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
  * one + - * / formula column, tags joined by OR or AND, SORT title|mtime.
- * Not full Dataview: no joins.
+ * FLATTEN file.outlinks is one row per outgoing link. Not a join of two queries.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
+import { extractWikilinks, normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import { extractTagsFromMarkdown, notesForTag } from "@/lib/vault/tags";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { getDurableIndex } from "@/lib/vault/durable-index";
@@ -19,13 +20,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  "Built-in list. Not Dataview — no joins. A TABLE formula is one + - * /.";
+  "Built-in list. Not Dataview — a join is FLATTEN file.outlinks, one row per link. A TABLE formula is one + - * /.";
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. No joins. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks, one row per outgoing link. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -37,8 +38,10 @@ export type NexusQueryRow = {
   tags: string | null;
   /** Set only when the TABLE asked for mtime, which lives on each note. */
   mtime: string | null;
-  /** TABLE columns in the order they were written. Empty for LIST. */
+  /** TABLE columns in the order they were written. Empty for LIST, except a join link. */
   fields: NexusQueryField[];
+  /** Set on a FLATTEN file.outlinks row. The note id still opens the source note. */
+  link: string | null;
 };
 
 export type NexusQueryModel = {
@@ -96,9 +99,10 @@ type Parsed =
       columns: QueryColumn[];
       where: WhereCmp | null;
       sort: QuerySort | null;
+      flattenOutlinks: boolean;
     };
 
-const FILE_META = new Set(["file.name", "file.path", "file.folder", "file.mtime", "file.tags"]);
+const FILE_META = new Set(["file.name", "file.path", "file.folder", "file.mtime", "file.tags", "file.outlinks"]);
 
 function tokenize(source: string): string[] {
   const out: string[] = [];
@@ -120,7 +124,7 @@ function unsupportedDql(token: string): boolean {
     if (!FILE_META.has(head) || !formulaTail) return true;
   }
   if (/choice\s*\(/i.test(token)) return true;
-  if (/^(FLATTEN|GROUP|LIMIT)$/i.test(token)) return true;
+  if (/^(GROUP|LIMIT)$/i.test(token)) return true;
   return false;
 }
 
@@ -139,6 +143,7 @@ export function queryColumnLabel(name: string): string {
   if (key === "file.name") return "Name";
   if (key === "file.folder") return "Folder";
   if (key === "file.path") return "Path";
+  if (key === "file.outlinks") return "Link";
   return name;
 }
 
@@ -149,7 +154,7 @@ function columnParts(token: string): string[] | null {
   return ok ? parts : null;
 }
 
-const CMP_FIELD = "(?:file\\.(?:name|path|folder|mtime|tags)|[A-Za-z_][\\w-]*)";
+const CMP_FIELD = "(?:file\\.(?:name|path|folder|mtime|tags|outlinks)|[A-Za-z_][\\w-]*)";
 const CMP_OP = "(?:>=|<=|!=|=|>|<)";
 
 function opOf(raw: string): WhereOp | null {
@@ -407,9 +412,11 @@ export function parseNexusQuery(source: string): Parsed {
   const columns: QueryColumn[] = [];
   let where: WhereCmp | null = null;
   let sort: QuerySort | null = null;
+  let flattenOutlinks = false;
 
   const addColumn = (col: QueryColumn): string | null => {
     if (head !== "TABLE") return "Columns belong on TABLE. LIST shows the title and the path.";
+    if (col.kind === "field" && col.name.toLowerCase() === "file.outlinks") flattenOutlinks = true;
     const id = col.kind === "field" ? columnKey(col.name) : col.label.toLowerCase();
     const label = col.kind === "field" ? col.name : col.label;
     const taken = columns.some((item) => (item.kind === "field" ? columnKey(item.name) : item.label.toLowerCase()) === id);
@@ -420,6 +427,9 @@ export function parseNexusQuery(source: string): Parsed {
   };
   const addWhere = (cmp: WhereCmp): string | null => {
     if (where) return "Only one WHERE comparison is supported.";
+    if (cmp.field.toLowerCase() === "file.outlinks") {
+      return "FLATTEN file.outlinks lists one row per link. WHERE does not compare that list.";
+    }
     if (cmp.kind === "contains") {
       where = cmp;
       return null;
@@ -512,6 +522,15 @@ export function parseNexusQuery(source: string): Parsed {
       if (err) return { kind: "error", error: err };
       continue;
     }
+    if (upper === "FLATTEN") {
+      const what = (tokens[++i] || "").toLowerCase();
+      if (what !== "file.outlinks") {
+        return { kind: "error", error: "FLATTEN file.outlinks lists one row per outgoing link." };
+      }
+      if (flattenOutlinks) return { kind: "error", error: "Only one FLATTEN file.outlinks is supported." };
+      flattenOutlinks = true;
+      continue;
+    }
     if (upper === "SORT") {
       const keyRaw = (tokens[++i] || "").toLowerCase();
       const key = keyRaw === "file.mtime" ? "mtime" : keyRaw === "file.name" || keyRaw === "name" ? "title" : keyRaw;
@@ -578,6 +597,9 @@ export function parseNexusQuery(source: string): Parsed {
       error: "Add FROM path: or FROM #tag so the list stays on one folder or tag.",
     };
   }
+  if (flattenOutlinks && !columns.some((col) => col.kind === "field" && col.name.toLowerCase() === "file.outlinks")) {
+    columns.push({ kind: "field", name: "file.outlinks" });
+  }
   return {
     kind: "ok",
     mode: head === "LIST" ? "list" : "table",
@@ -587,6 +609,7 @@ export function parseNexusQuery(source: string): Parsed {
     columns,
     where,
     sort,
+    flattenOutlinks,
   };
 }
 
@@ -790,8 +813,48 @@ function formulaText(node: VaultNode, column: Extract<QueryColumn, { kind: "form
   return formatNum(left.n / right.n);
 }
 
-function rowFrom(node: VaultNode, columns: QueryColumn[]): NexusQueryRow {
+function noteLinkIndex(nodes: Record<string, VaultNode>): Map<string, string> {
+  const index = new Map<string, string>();
+  const put = (key: string, id: string) => {
+    if (key && !index.has(key)) index.set(key, id);
+  };
+  for (const node of Object.values(nodes)) {
+    if (node.kind !== "note") continue;
+    put(normalizeLinkTarget(noteTitle(node)), node.id);
+    put(normalizeLinkTarget(node.name), node.id);
+    put(normalizeLinkTarget(node.path.replace(/\.md$/i, "")), node.id);
+    put(normalizeLinkTarget(node.path), node.id);
+  }
+  return index;
+}
+
+/** One label per outgoing note link, in the order written. Same-note headings are not rows. */
+function outgoingJoinLabels(node: VaultNode, nodes: Record<string, VaultNode>, index: Map<string, string>): string[] {
+  if (typeof node.content !== "string") return [];
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const link of extractWikilinks(node.content)) {
+    if (!link.noteTarget) continue;
+    const key = normalizeLinkTarget(link.noteTarget);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const id = index.get(key);
+    const hit = id ? nodes[id] : null;
+    if (hit?.kind === "note") {
+      if (hit.id === node.id) continue;
+      labels.push(noteTitle(hit));
+      continue;
+    }
+    labels.push(link.alias || link.noteTarget);
+  }
+  return labels;
+}
+
+function rowFrom(node: VaultNode, columns: QueryColumn[], link: string | null): NexusQueryRow {
   const fields = columns.map((column) => {
+    if (column.kind === "field" && column.name.toLowerCase() === "file.outlinks") {
+      return { name: column.name, value: link || "—" };
+    }
     if (column.kind === "formula") return { name: column.label, value: formulaText(node, column) || "—" };
     const value = fieldActual(node, column.name);
     return { name: column.name, value: value ? value : "—" };
@@ -805,6 +868,7 @@ function rowFrom(node: VaultNode, columns: QueryColumn[]): NexusQueryRow {
     tags: tags ? tags.value : null,
     mtime: mtime ? mtime.value : null,
     fields,
+    link,
   };
 }
 
@@ -984,15 +1048,33 @@ export function runNexusQuery(
     }
     return noteTitle(a).localeCompare(noteTitle(b)) * dir || a.path.localeCompare(b.path) * dir;
   });
-  const truncated = notes.length > NEXUS_QUERY_CAP;
-  const rows = notes.slice(0, NEXUS_QUERY_CAP).map((n) => rowFrom(n, parsed.columns));
+  let linkUnloaded = 0;
+  let joined: { node: VaultNode; link: string | null }[];
+  if (parsed.flattenOutlinks) {
+    const index = noteLinkIndex(nodes);
+    joined = [];
+    for (const node of notes) {
+      if (typeof node.content !== "string") {
+        linkUnloaded += 1;
+        continue;
+      }
+      for (const label of outgoingJoinLabels(node, nodes, index)) joined.push({ node, link: label });
+    }
+  } else {
+    joined = notes.map((node) => ({ node, link: null }));
+  }
+  const truncated = joined.length > NEXUS_QUERY_CAP;
+  const rows = joined.slice(0, NEXUS_QUERY_CAP).map((item) => rowFrom(item.node, parsed.columns, item.link));
+  if (linkUnloaded) unloaded += linkUnloaded;
   const frontmatterCols = parsed.columns.flatMap((column) => {
     if (column.kind !== "field") return [];
     const key = columnKey(column.name);
     if (key === "tags" || key === "mtime" || key.startsWith("file.")) return [];
     return [column.name];
   });
-  if (unloaded) {
+  if (unloaded && linkUnloaded === unloaded) {
+    fieldNote = `${linkUnloaded} ${linkUnloaded === 1 ? "note is" : "notes are"} not loaded, so ${linkUnloaded === 1 ? "its links were" : "their links were"} left out.`;
+  } else if (unloaded) {
     fieldNote = `${unloaded} ${unloaded === 1 ? "note is" : "notes are"} not loaded, so a field comparison left ${unloaded === 1 ? "it" : "them"} out and empty fields show —.`;
   } else if (rows.length && frontmatterCols.length) {
     const missing = frontmatterCols.filter((name) => rows.every((row) => row.fields.find((field) => field.name === name)?.value === "—"));
@@ -1011,7 +1093,9 @@ export function runNexusQuery(
       ? `Stopped while reading this folder (${VISIT_BUDGET} files). Narrow with tag:.`
       : tagsIncomplete && notes.length === 0
         ? "Couldn't read every tag from the index."
-        : null,
+        : parsed.flattenOutlinks && notes.length > 0 && joined.length === 0 && !linkUnloaded
+          ? "No outgoing links in these notes."
+          : null,
     fieldNote,
     tagsIncomplete,
   };
