@@ -34,10 +34,10 @@ function folder(id, path) {
 
 const nodes = {
   r: folder("r", "Research"),
-  g: { ...note("g", "Research/Graph View.md", "# Graph\n\n#graph #links\n"), parentId: "r" },
-  c: { ...note("c", "Research/Callouts.md", "# Callouts\n\n#writing\n"), parentId: "r" },
+  g: { ...note("g", "Research/Graph View.md", "# Graph\n\n#graph #links\n"), parentId: "r", mtime: 100 },
+  c: { ...note("c", "Research/Callouts.md", "# Callouts\n\n#writing\n"), parentId: "r", mtime: 300 },
   j: folder("j", "Journal"),
-  f: { ...note("f", "Journal/First Light.md", "# First\n"), parentId: "j" },
+  f: { ...note("f", "Journal/First Light.md", "# First\n"), parentId: "j", mtime: Date.UTC(2026, 9, 1, 12, 0) },
 };
 
 const table = runNexusQuery("TABLE path:Research tag:graph", nodes);
@@ -66,12 +66,33 @@ const tagsCol = runNexusQuery("TABLE path:Research tag:graph field:tags", nodes)
 assert.equal(tagsCol.fieldNote, null);
 assert.match(tagsCol.rows[0].tags, /graph/);
 
+const fromPath = runNexusQuery("LIST FROM path:Journal", nodes);
+assert.equal(fromPath.error, null);
+assert.equal(fromPath.rows[0].id, "f");
+const fromQuoted = runNexusQuery('LIST FROM "Journal"', nodes);
+assert.equal(fromQuoted.rows[0].id, "f");
+const either = runNexusQuery("LIST FROM #writing OR #graph", nodes);
+assert.deepEqual(either.rows.map((r) => r.id).sort(), ["c", "g"]);
+const bothTags = runNexusQuery("LIST FROM #graph AND #links", nodes);
+assert.deepEqual(bothTags.rows.map((r) => r.id), ["g"]);
+const byTime = runNexusQuery("TABLE FROM path:Research SORT mtime desc", nodes);
+assert.deepEqual(byTime.rows.map((r) => r.id), ["c", "g"]);
+const byTitle = runNexusQuery("LIST FROM path:Research SORT title desc", nodes);
+assert.equal(byTitle.rows[0].id, "g");
+const modified = runNexusQuery("TABLE FROM path:Journal field:mtime", nodes);
+assert.equal(modified.fieldNote, null);
+assert.match(modified.rows[0].mtime, /2026-10-01 12:00/);
+const ctime = runNexusQuery("TABLE FROM path:Journal field:ctime", nodes);
+assert.match(ctime.fieldNote, /not indexed/);
+assert.equal(ctime.rows[0].mtime, null);
+
 assert.equal(runNexusQuery("LIST path:Missing", nodes).error?.includes("No folder"), true);
 assert.match(runNexusQuery("TABLE file.link FROM #tag", nodes).error, /not Dataview/);
+assert.match(runNexusQuery("LIST FROM #a WHERE date(today)", nodes).error, /not Dataview/);
 assert.equal(parseNexusQuery("").kind, "help");
 assert.match(runNexusQuery("LIST", nodes).error, /path:/);
-assert.match(runNexusQuery("SORT path:Research", nodes).error, /not Dataview/);
-assert.equal(NEXUS_QUERY_DQL.includes("No DQL"), true);
+assert.match(runNexusQuery("SORT path:Research", nodes).error, /Not Dataview/);
+assert.equal(NEXUS_QUERY_DQL.includes("full DQL"), true);
 
 const many = { box: folder("box", "Box") };
 for (let i = 0; i < NEXUS_QUERY_CAP + 5; i++) {
@@ -91,8 +112,12 @@ assert.match(noteList.content, /Not Dataview/);
 const demoTable = runNexusQuery("TABLE path:Research tag:graph", demo.nodes);
 assert.equal(demoTable.rows.length, 1);
 assert.equal(demoTable.rows[0].path, "Research/Graph View.md");
-const demoList = runNexusQuery("LIST path:Journal", demo.nodes);
+const demoOr = runNexusQuery("LIST FROM #writing OR #graph", demo.nodes);
+assert.ok(demoOr.rows.some((r) => r.path === "Research/Graph View.md"));
+assert.ok(demoOr.rows.some((r) => r.path === "Research/Callouts.md"));
+const demoList = runNexusQuery("LIST FROM path:Journal", demo.nodes);
 assert.ok(demoList.rows.some((r) => r.path === "Journal/First Light.md"));
+assert.match(noteList.content, /SORT mtime/);
 
 const html = marked.parse("```nexus-query\nLIST path:Research\n```");
 const promoted = promoteNexusQueryBlocks(html);

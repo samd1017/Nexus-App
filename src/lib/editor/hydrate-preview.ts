@@ -244,11 +244,14 @@ function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>
     }
     if (model.mode === "table" && model.rows.length) {
       const tags = model.rows.some((r) => r.tags != null);
-      const head = `<tr><th>Title</th><th>Path</th>${tags ? "<th>Tags</th>" : ""}</tr>`;
+      const mtime = model.rows.some((r) => r.mtime != null);
+      const extra = tags || mtime;
+      const head = `<tr><th>Title</th><th>Path</th>${tags ? "<th>Tags</th>" : ""}${mtime ? "<th>Modified</th>" : ""}</tr>`;
       const body = model.rows
         .map((r) => {
-          const tagCell = r.tags != null ? `<td>${escapeHtml(r.tags)}</td>` : "";
-          return `<tr><td colspan="${tags ? 3 : 2}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${tagCell ? ` <span>${escapeHtml(r.tags || "")}</span>` : ""}</button></td></tr>`;
+          const tagSpan = r.tags != null ? ` <span>${escapeHtml(r.tags)}</span>` : "";
+          const timeSpan = r.mtime != null ? ` <span>${escapeHtml(r.mtime)}</span>` : "";
+          return `<tr><td colspan="${extra ? 3 : 2}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${tagSpan}${timeSpan}</button></td></tr>`;
         })
         .join("");
       bits.push(`<table>${head}${body}</table>`);

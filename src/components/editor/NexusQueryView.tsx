@@ -92,16 +92,19 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                 {model.rows.some((r) => r.tags != null) ? (
                   <th className="px-1 py-1 font-semibold">Tags</th>
                 ) : null}
+                {model.rows.some((r) => r.mtime != null) ? (
+                  <th className="px-1 py-1 font-semibold">Modified</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
               {model.rows.map((row) => (
                 <tr key={row.id}>
-                  <td colSpan={row.tags != null ? 3 : 2} className="p-0">
+                  <td colSpan={row.tags != null || row.mtime != null ? 3 : 2} className="p-0">
                     <button
                       type="button"
                       className="grid w-full gap-2 px-1 py-1 text-left hover:bg-white/[0.04]"
-                      style={{ gridTemplateColumns: row.tags != null ? "1.2fr 1.4fr 1fr" : "1.2fr 1.6fr" }}
+                      style={{ gridTemplateColumns: row.tags != null || row.mtime != null ? "1.2fr 1.4fr 1fr" : "1.2fr 1.6fr" }}
                       data-testid="nexus-query-row"
                       data-open-note={row.id}
                       onClick={() => openRow(row.id)}
@@ -110,6 +113,9 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                       <span className="truncate text-[11px] text-[var(--text-muted)]">{row.path}</span>
                       {row.tags != null ? (
                         <span className="truncate text-[11px] text-[var(--text-muted)]">{row.tags}</span>
+                      ) : null}
+                      {row.mtime != null ? (
+                        <span className="truncate text-[11px] text-[var(--text-muted)]">{row.mtime}</span>
                       ) : null}
                     </button>
                   </td>

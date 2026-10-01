@@ -161,14 +161,18 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block lists notes in a folder or with a tag. Not Dataview: no DQL, no \`FROM\`, no joins, no formulas.
+A \`\`\`nexus-query\`\`\` block lists notes. Not Dataview: no full DQL, no joins, no formulas. \`FROM path:\` or \`FROM #tag\`, \`OR\` / \`AND\`, and \`SORT title\` or \`SORT mtime\` are the whole language.
 
 \`\`\`nexus-query
-TABLE path:Research tag:graph
+LIST FROM #writing OR #graph
 \`\`\`
 
 \`\`\`nexus-query
-LIST path:Journal
+TABLE FROM path:Research SORT mtime desc
+\`\`\`
+
+\`\`\`nexus-query
+TABLE FROM path:Journal field:mtime
 \`\`\`
 `,
     ),

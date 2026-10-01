@@ -139,7 +139,7 @@ export const SLASH_ITEMS: SlashItem[] = [
       runSlash(ed, range, (c) =>
         c.insertContent({
           type: "nexusQueryBlock",
-          attrs: { query: "LIST path:Research" },
+          attrs: { query: "LIST FROM path:Research" },
         }),
       ),
   },

@@ -1,7 +1,7 @@
 /**
  * Built-in note list for one fenced block.
- * LIST or TABLE, filtered by a folder path and/or a tag.
- * Not Dataview: no DQL, no FROM, no joins, no formulas.
+ * LIST or TABLE, scoped with path:/tag: or FROM, tags joined by OR or AND,
+ * optional SORT title|mtime. Not full Dataview.
  */
 
 import { extractTagsFromMarkdown, notesForTag } from "@/lib/vault/tags";
@@ -15,13 +15,13 @@ export const NEXUS_QUERY_CAP = 100;
 const VISIT_BUDGET = 4000;
 
 export const NEXUS_QUERY_FOOTER =
-  "Built-in list. Not Dataview — no DQL, FROM, joins, or formulas.";
+  "Built-in list. Not Dataview — no full DQL, no joins, no formulas.";
 
 export const NEXUS_QUERY_HELP =
-  "LIST or TABLE, then path: and/or tag:. Example: LIST path:Research tag:graph";
+  "LIST or TABLE. FROM path:Journal or FROM #tag. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc. TABLE field:tags or field:mtime.";
 
 export const NEXUS_QUERY_DQL =
-  "This block is not Dataview. Use LIST or TABLE with path: and tag: only. No DQL, FROM, joins, or formulas.";
+  "This block is not Dataview. No full DQL: no file. joins, no date(), no formulas. Use LIST or TABLE, FROM path: or FROM #tag, OR/AND tags, and SORT title or SORT mtime.";
 
 export type NexusQueryRow = {
   id: string;
@@ -29,6 +29,8 @@ export type NexusQueryRow = {
   path: string;
   /** Set only when the TABLE asked for the indexed tags column. */
   tags: string | null;
+  /** Set only when the TABLE asked for mtime, which lives on each note. */
+  mtime: string | null;
 };
 
 export type NexusQueryModel = {
@@ -44,6 +46,10 @@ export type NexusQueryModel = {
   fieldNote: string | null;
 };
 
+type TagJoin = "or" | "and";
+
+type QuerySort = { key: "title" | "mtime"; dir: "asc" | "desc" };
+
 type Parsed =
   | { kind: "help" }
   | { kind: "error"; error: string }
@@ -51,8 +57,10 @@ type Parsed =
       kind: "ok";
       mode: "list" | "table";
       path: string | null;
-      tag: string | null;
+      tags: string[];
+      tagMode: TagJoin;
       field: string | null;
+      sort: QuerySort | null;
     };
 
 function tokenize(source: string): string[] {
@@ -63,78 +71,157 @@ function tokenize(source: string): string[] {
   return out.filter(Boolean);
 }
 
-function looksLikeDql(tokens: string[]): boolean {
-  for (const token of tokens) {
-    if (/^(FROM|WHERE|SORT|LIMIT|FLATTEN|GROUP)$/i.test(token)) return true;
-    if (/^(file|this)\./i.test(token)) return true;
-    if (token.includes("=")) return true;
-    if (/^GROUP$/i.test(token)) return true;
-  }
+function unsupportedDql(token: string): boolean {
+  if (/^(file|this)\./i.test(token)) return true;
+  if (/date\s*\(/i.test(token)) return true;
+  if (/contains\s*\(/i.test(token)) return true;
+  if (/choice\s*\(/i.test(token)) return true;
+  if (token.includes("=")) return true;
+  if (/^(FLATTEN|GROUP|LIMIT)$/i.test(token)) return true;
   return false;
+}
+
+function readTag(token: string): string | null {
+  const hash = /^#([a-zA-Z][\w/-]*)$/.exec(token);
+  if (hash) return hash[1].toLowerCase();
+  const kv = /^tag:#?([a-zA-Z][\w/-]*)$/i.exec(token);
+  if (kv) return kv[1].toLowerCase();
+  return null;
+}
+
+function cleanPath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+function readPath(token: string): string | null {
+  const kv = /^(?:path|folder):([\s\S]+)$/i.exec(token);
+  if (kv) {
+    const value = kv[1].trim();
+    return value ? cleanPath(value) : null;
+  }
+  if (!token || token.includes(":") || token.startsWith("#")) return null;
+  if (/^(FROM|WHERE|SORT|OR|AND|ASC|DESC|LIST|TABLE)$/i.test(token)) return null;
+  return cleanPath(token);
 }
 
 export function parseNexusQuery(source: string): Parsed {
   const raw = (source || "").trim();
   if (!raw) return { kind: "help" };
   const tokens = tokenize(raw);
-  if (looksLikeDql(tokens)) return { kind: "error", error: NEXUS_QUERY_DQL };
+  if (tokens.some(unsupportedDql)) return { kind: "error", error: NEXUS_QUERY_DQL };
   const head = tokens[0]?.toUpperCase();
   if (head !== "LIST" && head !== "TABLE") {
     return {
       kind: "error",
-      error: `Start with LIST or TABLE. ${NEXUS_QUERY_HELP}`,
+      error: `Start with LIST or TABLE. Not Dataview. ${NEXUS_QUERY_HELP}`,
     };
   }
   let path: string | null = null;
-  let tag: string | null = null;
+  const tags: string[] = [];
+  let tagMode: TagJoin = "or";
+  let sawJoin = false;
   let field: string | null = null;
-  for (const token of tokens.slice(1)) {
-    const hash = /^#([a-zA-Z][\w/-]*)$/.exec(token);
-    if (hash) {
-      if (tag) return { kind: "error", error: "Only one tag: is supported." };
-      tag = hash[1].toLowerCase();
-      continue;
+  let sort: QuerySort | null = null;
+
+  const addTag = (tag: string, joined: TagJoin | null): string | null => {
+    if (tags.includes(tag)) return null;
+    if (tags.length && !joined) return "Put OR or AND between tags.";
+    if (joined) {
+      if (sawJoin && tagMode !== joined) return "Use OR or AND, not both.";
+      tagMode = joined;
+      sawJoin = true;
     }
-    const kv = /^([A-Za-z]+):([\s\S]+)$/.exec(token);
-    if (!kv) {
-      return {
-        kind: "error",
-        error: `Unknown “${token}”. Use path:, tag:, or field:.`,
-      };
-    }
-    const key = kv[1].toLowerCase();
-    const value = kv[2].trim();
-    if (!value) return { kind: "error", error: `${key}: needs a value.` };
-    if (key === "path" || key === "folder") {
-      if (path) return { kind: "error", error: "Only one path: is supported." };
-      path = value.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-      continue;
-    }
-    if (key === "tag") {
-      if (tag) return { kind: "error", error: "Only one tag: is supported." };
-      tag = value.replace(/^#/, "").toLowerCase();
-      continue;
-    }
-    if (key === "field") {
-      if (head !== "TABLE") {
-        return { kind: "error", error: "field: belongs on TABLE, not LIST." };
+    tags.push(tag);
+    return null;
+  };
+
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i] ?? "";
+    const upper = token.toUpperCase();
+    if (upper === "FROM" || upper === "WHERE") {
+      const scope = tokens[++i];
+      if (!scope) return { kind: "error", error: `${upper} needs path: or #tag.` };
+      const tag = readTag(scope);
+      if (tag) {
+        const err = addTag(tag, null);
+        if (err) return { kind: "error", error: err };
+        continue;
       }
+      const nextPath = readPath(scope);
+      if (nextPath) {
+        if (upper === "WHERE") {
+          return { kind: "error", error: "WHERE only filters tags. Use FROM path: for a folder." };
+        }
+        if (path) return { kind: "error", error: "Only one path: is supported." };
+        path = nextPath;
+        continue;
+      }
+      return { kind: "error", error: `${upper} needs path: or #tag, not “${scope}”.` };
+    }
+    if (upper === "OR" || upper === "AND") {
+      const scope = tokens[++i];
+      const tag = scope ? readTag(scope) : null;
+      if (!tag) return { kind: "error", error: `${upper} needs a tag, such as #idea.` };
+      const err = addTag(tag, upper === "OR" ? "or" : "and");
+      if (err) return { kind: "error", error: err };
+      continue;
+    }
+    if (upper === "SORT") {
+      const key = (tokens[++i] || "").toLowerCase();
+      if (key !== "title" && key !== "mtime") {
+        return { kind: "error", error: "SORT title or SORT mtime. asc or desc follows." };
+      }
+      let dir: "asc" | "desc" = "asc";
+      const maybe = tokens[i + 1];
+      if (maybe && /^(asc|desc)$/i.test(maybe)) {
+        dir = maybe.toLowerCase() === "desc" ? "desc" : "asc";
+        i += 1;
+      }
+      if (sort) return { kind: "error", error: "Only one SORT is supported." };
+      sort = { key, dir };
+      continue;
+    }
+    const tag = readTag(token);
+    if (tag) {
+      const err = addTag(tag, null);
+      if (err) return { kind: "error", error: err };
+      continue;
+    }
+    const nextPath = readPath(token);
+    if (nextPath && /^(?:path|folder):/i.test(token)) {
+      if (path) return { kind: "error", error: "Only one path: is supported." };
+      path = nextPath;
+      continue;
+    }
+    const fieldMatch = /^field:([\s\S]+)$/i.exec(token);
+    if (fieldMatch) {
+      if (head !== "TABLE") return { kind: "error", error: "field: belongs on TABLE, not LIST." };
       if (field) return { kind: "error", error: "Only one field: is supported." };
-      field = value.toLowerCase();
+      const value = fieldMatch[1].trim().toLowerCase();
+      if (!value) return { kind: "error", error: "field: needs a value." };
+      field = value;
       continue;
     }
     return {
       kind: "error",
-      error: `Unknown “${key}:”. Use path:, tag:, or field:. ${NEXUS_QUERY_DQL}`,
+      error: `Unknown “${token}”. ${NEXUS_QUERY_HELP}`,
     };
   }
-  if (!path && !tag) {
+  if (!path && tags.length === 0) {
     return {
       kind: "error",
-      error: "Add path: or tag: so the list stays on one folder or tag.",
+      error: "Add FROM path: or FROM #tag so the list stays on one folder or tag.",
     };
   }
-  return { kind: "ok", mode: head === "LIST" ? "list" : "table", path, tag, field };
+  return {
+    kind: "ok",
+    mode: head === "LIST" ? "list" : "table",
+    path,
+    tags,
+    tagMode,
+    field,
+    sort,
+  };
 }
 
 function pathHasPrefix(path: string, prefix: string): boolean {
@@ -154,12 +241,27 @@ function tagsOf(node: VaultNode): string[] {
   return (meta?.tags ?? []).map((t) => t.toLowerCase());
 }
 
-function rowFrom(node: VaultNode, withTags: boolean): NexusQueryRow {
+function formatMtime(mtime: number): string {
+  if (!mtime) return "—";
+  const d = new Date(mtime);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toISOString().slice(0, 16).replace("T", " ");
+}
+
+function hasTags(node: VaultNode, tags: string[], mode: TagJoin): boolean {
+  if (!tags.length) return true;
+  const have = tagsOf(node);
+  if (mode === "and") return tags.every((tag) => have.includes(tag));
+  return tags.some((tag) => have.includes(tag));
+}
+
+function rowFrom(node: VaultNode, field: "tags" | "mtime" | null): NexusQueryRow {
   return {
     id: node.id,
     title: noteTitle(node),
     path: node.path,
-    tags: withTags ? tagsOf(node).join(", ") : null,
+    tags: field === "tags" ? tagsOf(node).join(", ") : null,
+    mtime: field === "mtime" ? formatMtime(node.mtime) : null,
   };
 }
 
@@ -198,7 +300,8 @@ function collectInFolder(
   nodes: Record<string, VaultNode>,
   folderId: string,
   prefix: string,
-  tag: string | null,
+  tags: string[],
+  tagMode: TagJoin,
 ): { notes: VaultNode[]; truncated: boolean; budgetHit: boolean } {
   const idx = ensureVaultIndex(nodes);
   idx.getIdByPath(nodes, prefix);
@@ -222,7 +325,7 @@ function collectInFolder(
       continue;
     }
     if (!pathHasPrefix(node.path, prefix)) continue;
-    if (tag && !tagsOf(node).includes(tag)) continue;
+    if (!hasTags(node, tags, tagMode)) continue;
     notes.push(node);
   }
   return { notes, truncated: false, budgetHit };
@@ -260,9 +363,10 @@ export function runNexusQuery(
   }
 
   let fieldNote: string | null = null;
-  const withTags = parsed.field === "tags";
-  if (parsed.field && parsed.field !== "tags") {
-    fieldNote = `“${parsed.field}” is not indexed. Showing title and path. Indexed column: tags.`;
+  let column: "tags" | "mtime" | null = null;
+  if (parsed.field === "tags" || parsed.field === "mtime") column = parsed.field;
+  else if (parsed.field) {
+    fieldNote = `“${parsed.field}” is not indexed. Showing title and path. Indexed columns: tags, mtime.`;
   }
 
   let notes: VaultNode[] = [];
@@ -281,18 +385,35 @@ export function runNexusQuery(
         fieldNote: null,
       };
     }
-    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tag);
+    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode);
     notes = collected.notes;
     budgetHit = collected.budgetHit;
-  } else if (parsed.tag) {
-    notes = notesForTag(nodes, parsed.tag);
+  } else if (parsed.tagMode === "and" && parsed.tags.length > 1) {
+    notes = notesForTag(nodes, parsed.tags[0] ?? "").filter((n) => hasTags(n, parsed.tags, "and"));
+  } else if (parsed.tags.length === 1) {
+    notes = notesForTag(nodes, parsed.tags[0] ?? "");
+  } else if (parsed.tags.length > 1) {
+    const seen = new Set<string>();
+    for (const tag of parsed.tags) {
+      for (const note of notesForTag(nodes, tag)) {
+        if (seen.has(note.id)) continue;
+        seen.add(note.id);
+        notes.push(note);
+      }
+    }
   }
 
-  if (parsed.path) {
-    notes.sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)) || a.path.localeCompare(b.path));
-  }
+  const dir = parsed.sort?.dir === "desc" ? -1 : 1;
+  const sortKey = parsed.sort?.key ?? "title";
+  notes.sort((a, b) => {
+    if (sortKey === "mtime") {
+      const delta = (a.mtime || 0) - (b.mtime || 0);
+      if (delta) return delta * dir;
+    }
+    return noteTitle(a).localeCompare(noteTitle(b)) * dir || a.path.localeCompare(b.path) * dir;
+  });
   const truncated = notes.length > NEXUS_QUERY_CAP;
-  const rows = notes.slice(0, NEXUS_QUERY_CAP).map((n) => rowFrom(n, withTags));
+  const rows = notes.slice(0, NEXUS_QUERY_CAP).map((n) => rowFrom(n, column));
   return {
     footer,
     help: null,
