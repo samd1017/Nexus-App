@@ -6,17 +6,25 @@ import {
   buildNoteTable,
   filterNoteRows,
   filterRowsByRelation,
+  formulaColumnId,
+  formulaKey,
+  formulaStatusLine,
+  MAX_FORMULA_COLUMNS,
   noteTableTitle,
   parseBasesSession,
   rankLinkChoices,
   sortNoteRows,
   withNoteRelation,
+  type BasesFormula,
   type BasesSession,
   type BasesViewConfig,
 } from "@/lib/vault/note-table";
+import { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } from "@/lib/vault/bases-file";
+import { writeNoteFile } from "@/lib/vault/fs-adapter";
+import { writeDesktopNote } from "@/lib/vault/tauri-adapter";
 import { FORMULA_EXAMPLES, FORMULA_FUNCTIONS } from "@/lib/vault/note-formula";
 import { loadNoteTableConfig, saveNoteTableConfig } from "@/lib/vault/note-table-file";
-import { useVaultStore } from "@/lib/vault/store";
+import { getDesktopRoot, getFsaRoot, useVaultStore } from "@/lib/vault/store";
 import {
   scheduleFillSafeHydrate,
   shouldSkipBackgroundBodyHydrate,
@@ -46,6 +54,14 @@ export function NoteTable() {
   const [linking, setLinking] = useState<{ rowId: string; key: string } | null>(null);
   const [linkQuery, setLinkQuery] = useState("");
   const [formulaHelp, setFormulaHelp] = useState(false);
+  const [focusFormulaId, setFocusFormulaId] = useState<string | null>(null);
+  const [baseNotice, setBaseNotice] = useState<{
+    title: string;
+    lines: string[];
+    tone: "ok" | "error";
+    undo: BasesSession | null;
+  } | null>(null);
+  const baseInput = useRef<HTMLInputElement>(null);
   const [hydratingProps, setHydratingProps] = useState(false);
   const [bodyEpoch, setBodyEpoch] = useState(0);
   const ready = useRef(false);
@@ -127,8 +143,8 @@ export function NoteTable() {
   }, [vaultId]);
 
   const built = useMemo(
-    () => buildNoteTable(sources, view.folder, view.formula),
-    [sources, view.folder, view.formula],
+    () => buildNoteTable(sources, view.folder, view.formulas),
+    [sources, view.folder, view.formulas],
   );
   const shown = useMemo(() => {
     const relations = view.relations ?? [];
@@ -194,7 +210,7 @@ export function NoteTable() {
                 folder: current.folder,
                 column: current.column,
                 dir: current.dir,
-                formula: current.formula,
+                formulas: current.formulas.map((f) => ({ ...f })),
                 columns,
                 relations: current.relations ?? [],
                 layout: current.layout === "cards" ? "cards" : "table",
@@ -253,8 +269,89 @@ export function NoteTable() {
     ["folder", "Folder"],
     ["path", "Path"],
     ...shownKeys.map((key) => [key, key] as [string, string]),
-    ...(view.formula.trim() ? [["formula", "Formula"] as [string, string]] : []),
+    ...view.formulas.map((f) => [formulaColumnId(f.id), f.name || "Formula"] as [string, string]),
   ];
+  const statusById = new Map(built.formulaStatus.map((status) => [status.id, status]));
+  const failureLine = formulaStatusLine(built.formulaStatus);
+
+  const patchFormula = (id: string, partial: Partial<BasesFormula>) => {
+    patchView({ formulas: view.formulas.map((f) => (f.id === id ? { ...f, ...partial } : f)) });
+  };
+  const addFormula = (expr = "", name = "") => {
+    if (view.formulas.length >= MAX_FORMULA_COLUMNS) return;
+    const label = name.trim() || (view.formulas.length ? `Formula ${view.formulas.length + 1}` : "Formula");
+    const id = formulaKey(label, view.formulas.map((f) => f.id));
+    patchView({ formulas: [...view.formulas, { id, name: label, expr }] });
+    setFocusFormulaId(id);
+  };
+  const removeFormula = (id: string) => {
+    patchView({
+      formulas: view.formulas.filter((f) => f.id !== id),
+      ...(view.column === formulaColumnId(id) ? { column: "name", dir: "asc" as const } : {}),
+    });
+  };
+  const applyExample = (expr: string, name: string) => {
+    const last = view.formulas[view.formulas.length - 1];
+    if (last && !last.expr.trim()) {
+      patchFormula(last.id, { expr, name: /^Formula( \d+)?$/.test(last.name) ? name : last.name });
+      setFocusFormulaId(last.id);
+    } else {
+      addFormula(expr, name);
+    }
+  };
+
+  useEffect(() => {
+    if (!focusFormulaId) return;
+    document.querySelector<HTMLInputElement>(`[data-testid="bases-formula"][data-formula-id="${focusFormulaId}"]`)?.focus();
+    setFocusFormulaId(null);
+  }, [focusFormulaId, view.formulas]);
+
+  const importBase = async (file: File) => {
+    if (file.size > 1024 * 1024) {
+      setBaseNotice({ title: `${file.name} is larger than 1 MB, so it was not imported.`, lines: [], tone: "error", undo: null });
+      return;
+    }
+    const result = importBaseFile(await file.text());
+    if ("error" in result) {
+      setBaseNotice({ title: result.error, lines: [], tone: "error", undo: null });
+      return;
+    }
+    const previous = session;
+    setSession(result.session);
+    setBaseNotice({
+      title: `Imported ${file.name} into both views.`,
+      lines: result.notes.length ? result.notes : ["Every view, column, formula, filter, and sort carried over."],
+      tone: "ok",
+      undo: previous,
+    });
+  };
+
+  const exportBase = async () => {
+    const { text, notes } = exportBaseFile(session, built.keys);
+    const desktop = getDesktopRoot();
+    const fsa = desktop ? null : getFsaRoot();
+    try {
+      if (desktop) await writeDesktopNote(desktop, BASE_EXPORT_FILE, text);
+      else if (fsa) await writeNoteFile(fsa, BASE_EXPORT_FILE, text);
+      else {
+        const url = URL.createObjectURL(new Blob([text], { type: "text/yaml" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = BASE_EXPORT_FILE;
+        a.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      setBaseNotice({
+        title: desktop || fsa ? `Exported ${BASE_EXPORT_FILE} to the vault folder.` : `Downloaded ${BASE_EXPORT_FILE}.`,
+        lines: notes,
+        tone: "ok",
+        undo: null,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setBaseNotice({ title: `Couldn't export ${BASE_EXPORT_FILE}: ${message}`, lines: [], tone: "error", undo: null });
+    }
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--bg)]" data-testid="bases-table">
@@ -262,7 +359,7 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table and cards with views, formulas, and typed note links. Not Obsidian Bases — one formula column per view, no list, regex, or link functions, and the file is .nexus/note-table.json, not an Obsidian .base file.
+            Built-in table and cards with views, formula columns, and typed note links. Not Obsidian Bases — two views, no list, regex, or link functions, no group-by or summaries; .base files import and export, but the file is .nexus/note-table.json, not an Obsidian .base file.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -317,20 +414,16 @@ export function NoteTable() {
           className="nexus-field h-8 w-28 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
           data-testid="bases-folder"
         />
-        <input
-          value={view.formula}
-          onChange={(e) => patchView({ formula: e.target.value })}
-          placeholder='Formula, e.g. file.mtime.relative()'
-          spellCheck={false}
-          aria-label="Formula"
-          aria-invalid={built.formulaParseError ? true : undefined}
-          aria-describedby={built.formulaParseError ? "bases-formula-parse-error" : undefined}
-          className={cn(
-            "nexus-field h-8 min-w-[14rem] flex-1 rounded-md border bg-transparent px-2 font-mono text-[11px]",
-            built.formulaParseError ? "border-[var(--danger)]" : "border-[var(--border)]",
-          )}
-          data-testid="bases-formula"
-        />
+        <button
+          type="button"
+          className="chip-btn"
+          data-testid="bases-add-formula"
+          disabled={view.formulas.length >= MAX_FORMULA_COLUMNS}
+          title={`Up to ${MAX_FORMULA_COLUMNS} formula columns per view`}
+          onClick={() => addFormula()}
+        >
+          + Formula
+        </button>
         <button
           type="button"
           className={cn("chip-btn", formulaHelp && "is-active")}
@@ -361,21 +454,139 @@ export function NoteTable() {
         <button
           type="button"
           className="chip-btn"
+          data-testid="bases-import-base"
+          title="Replace both views with the views in an Obsidian .base file"
+          onClick={() => baseInput.current?.click()}
+        >
+          Import .base
+        </button>
+        <input
+          ref={baseInput}
+          type="file"
+          accept=".base,.yaml,.yml"
+          className="hidden"
+          data-testid="bases-import-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void importBase(file);
+          }}
+        />
+        <button
+          type="button"
+          className="chip-btn"
+          data-testid="bases-export-base"
+          title={`Write both views as ${BASE_EXPORT_FILE}`}
+          onClick={() => void exportBase()}
+        >
+          Export .base
+        </button>
+        <button
+          type="button"
+          className="chip-btn"
           data-testid="bases-close"
           onClick={() => setBasesOpen(false)}
         >
           <X size={13} /> Close
         </button>
       </div>
-      {built.formulaParseError ? (
-        <p
-          id="bases-formula-parse-error"
-          role="alert"
-          className="shrink-0 border-b border-[var(--border)] bg-[var(--danger-dim)] px-3 py-1.5 text-[12px] text-[var(--danger)]"
-          data-testid="bases-formula-parse-error"
+      {baseNotice ? (
+        <div
+          role="status"
+          className={cn(
+            "shrink-0 border-b border-[var(--border)] px-3 py-2 text-[12px]",
+            baseNotice.tone === "error" ? "bg-[var(--danger-dim)] text-[var(--danger)]" : "bg-[var(--fill-subtle)]",
+          )}
+          data-testid="bases-base-notice"
         >
-          Formula error: {built.formulaParseError}
-        </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-medium">{baseNotice.title}</p>
+            <div className="flex items-center gap-1">
+              {baseNotice.undo ? (
+                <button
+                  type="button"
+                  className="chip-btn"
+                  data-testid="bases-import-undo"
+                  onClick={() => {
+                    if (baseNotice.undo) setSession(baseNotice.undo);
+                    setBaseNotice(null);
+                  }}
+                >
+                  Undo import
+                </button>
+              ) : null}
+              <button type="button" className="chip-btn" onClick={() => setBaseNotice(null)}>
+                OK
+              </button>
+            </div>
+          </div>
+          {baseNotice.lines.length ? (
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[var(--text-muted)]" data-testid="bases-base-notes">
+              {baseNotice.lines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+      {view.formulas.length ? (
+        <div className="shrink-0 space-y-1 border-b border-[var(--border)] px-3 py-1.5" data-testid="bases-formulas">
+          {view.formulas.map((f, index) => {
+            const parseError = statusById.get(f.id)?.parseError ?? null;
+            const errorId = `bases-formula-error-${f.id}`;
+            return (
+              <div key={f.id} data-testid="bases-formula-row" data-formula-id={f.id}>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={f.name}
+                    onChange={(e) => patchFormula(f.id, { name: e.target.value })}
+                    aria-label={`Formula column ${index + 1} name`}
+                    className="nexus-field h-8 w-32 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+                    data-testid="bases-formula-name"
+                  />
+                  <input
+                    value={f.expr}
+                    onChange={(e) => patchFormula(f.id, { expr: e.target.value })}
+                    placeholder={index ? `e.g. formula.${view.formulas[0]?.id ?? "formula"} & " · " & file.folder` : "e.g. file.mtime.relative()"}
+                    spellCheck={false}
+                    aria-label={`Formula for ${f.name || `column ${index + 1}`}`}
+                    aria-invalid={parseError ? true : undefined}
+                    aria-describedby={parseError ? errorId : undefined}
+                    title={`Columns to the right read this one as formula.${f.id}`}
+                    className={cn(
+                      "nexus-field h-8 min-w-[12rem] flex-1 rounded-md border bg-transparent px-2 font-mono text-[11px]",
+                      parseError ? "border-[var(--danger)]" : "border-[var(--border)]",
+                    )}
+                    data-testid="bases-formula"
+                    data-formula-id={f.id}
+                  />
+                  <code className="hidden shrink-0 text-[10.5px] text-[var(--text-muted)] md:inline" data-testid="bases-formula-key">
+                    formula.{f.id}
+                  </code>
+                  <button
+                    type="button"
+                    className="icon-btn h-8 w-8 shrink-0"
+                    aria-label={`Remove formula column ${f.name || index + 1}`}
+                    data-testid="bases-formula-remove"
+                    onClick={() => removeFormula(f.id)}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                {parseError ? (
+                  <p
+                    id={errorId}
+                    role="alert"
+                    className="mt-0.5 rounded-md bg-[var(--danger-dim)] px-2 py-1 text-[12px] text-[var(--danger)]"
+                    data-testid="bases-formula-parse-error"
+                  >
+                    Formula error in “{f.name || `column ${index + 1}`}”: {parseError}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       ) : null}
       {formulaHelp ? (
         <div
@@ -391,7 +602,8 @@ export function NoteTable() {
                 className="flex min-h-9 flex-col items-start rounded-md border border-[var(--border)] px-2 py-1 text-left hover:border-[var(--accent)]"
                 data-testid="bases-formula-example"
                 data-formula={example.formula}
-                onClick={() => patchView({ formula: example.formula })}
+                title="Add as a formula column"
+                onClick={() => applyExample(example.formula, example.name)}
               >
                 <span className="font-mono text-[11px]">{example.formula}</span>
                 <span className="text-[11px] text-[var(--text-muted)]">{example.label}</span>
@@ -403,6 +615,7 @@ export function NoteTable() {
             Operators: + - * / % · &amp; joins text · == != &lt; &gt; &lt;= &gt;= · &amp;&amp; || !. Put spaces around - between names; due-date is one property.
             Dates: date(x) reads YYYY-MM-DD or [[YYYY-MM-DD]]; add or subtract durations like "7d", "2w", "1M", "1y"; date - date gives days; times are UTC.
             Format tokens: YYYY MM M MMM MMMM DD D ddd dddd HH mm ss.
+            formula.&lt;column&gt; reads a formula column to its left, like formula.due.relative().
           </p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-formula-functions">
             Functions (also as methods, like status.upper()): {FORMULA_FUNCTIONS.join(", ")}.
@@ -489,22 +702,29 @@ export function NoteTable() {
                     </div>
                   );
                 })}
-                {view.formula.trim() ? (
-                  <p
-                    className="truncate text-[12px] text-[var(--text-muted)]"
-                    data-testid="bases-card-formula"
-                    data-formula-error={row.formulaError ?? undefined}
-                    title={row.formulaError ?? row.formula}
-                  >
-                    {row.formulaError ? (
-                      <span className="text-[var(--danger)]" data-testid="bases-formula-error">
-                        ⚠ {row.formulaError}
-                      </span>
-                    ) : (
-                      row.formula || "—"
-                    )}
-                  </p>
-                ) : null}
+                {view.formulas.map((f) => {
+                  const cell = row.formulas[f.id];
+                  if (!cell) return null;
+                  return (
+                    <p
+                      key={f.id}
+                      className="truncate text-[12px] text-[var(--text-muted)]"
+                      data-testid="bases-card-formula"
+                      data-formula-id={f.id}
+                      data-formula-error={cell.error ?? undefined}
+                      title={cell.error ?? cell.value}
+                    >
+                      <span className="text-[10px] uppercase tracking-wide">{f.name || "Formula"}</span>{" "}
+                      {cell.error ? (
+                        <span className="text-[var(--danger)]" data-testid="bases-formula-error">
+                          ⚠ {cell.error}
+                        </span>
+                      ) : (
+                        <span className="text-[var(--text)]">{cell.value || "—"}</span>
+                      )}
+                    </p>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -599,22 +819,27 @@ export function NoteTable() {
                     </td>
                   );
                 })}
-                {view.formula.trim() ? (
-                  <td
-                    className="max-w-[16rem] truncate px-2 py-1.5"
-                    data-formula={row.formula}
-                    data-formula-error={row.formulaError ?? undefined}
-                    title={row.formulaError ?? row.formula}
-                  >
-                    {row.formulaError ? (
-                      <span className="text-[var(--danger)]" data-testid="bases-formula-error">
-                        ⚠ {row.formulaError}
-                      </span>
-                    ) : (
-                      row.formula
-                    )}
-                  </td>
-                ) : null}
+                {view.formulas.map((f) => {
+                  const cell = row.formulas[f.id];
+                  return (
+                    <td
+                      key={f.id}
+                      className="max-w-[16rem] truncate px-2 py-1.5"
+                      data-formula={cell?.value ?? ""}
+                      data-formula-id={f.id}
+                      data-formula-error={cell?.error ?? undefined}
+                      title={cell?.error ?? cell?.value}
+                    >
+                      {cell?.error ? (
+                        <span className="text-[var(--danger)]" data-testid="bases-formula-error">
+                          ⚠ {cell.error}
+                        </span>
+                      ) : (
+                        cell?.value
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -682,8 +907,10 @@ export function NoteTable() {
             ? " · no frontmatter properties in this set"
             : ""}
         {built.truncated ? " · first 400 notes" : ""}
-        {view.formula.trim() ? ` · formula ${view.formula}` : ""}
-        {built.formulaError && !built.formulaParseError ? ` · ${built.formulaError}` : ""}
+        {view.formulas.length
+          ? ` · ${view.formulas.length} formula column${view.formulas.length === 1 ? "" : "s"}`
+          : ""}
+        {failureLine ? ` · ${failureLine}` : ""}
         {readingProperties ? " · reading note properties" : ""}
         {indexFillBusy && visibleMissingIds.length > 0 && !readingProperties
           ? " · properties wait until the index is idle"

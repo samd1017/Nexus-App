@@ -29,6 +29,9 @@ const {
   serializeNoteTableFile,
   sortNoteRows,
   withNoteRelation,
+  formulaColumnId,
+  formulaKey,
+  formulaStatusLine,
   NOTE_TABLE_FILE,
 } = await import("../src/lib/vault/note-table.ts");
 
@@ -214,43 +217,103 @@ const formulaNotes = [
   { id: "z", path: "Tasks/Odd.md", name: "Odd.md", content: "---\ndue: whenever\nestimate: lots\n---\n", mtime: NOW },
   { id: "w", path: "Tasks/None.md", name: "None.md", content: "No due.\n", mtime: NOW },
 ];
-const daysLeft = buildNoteTable(formulaNotes, "", "date(due) - today()", NOW);
-assert.equal(daysLeft.formulaParseError, null);
-assert.match(daysLeft.formulaError, /Formula failed on 1 note: “whenever” is not a date/);
-const byId = Object.fromEntries(daysLeft.rows.map((row) => [row.id, row]));
-assert.equal(byId.x.formula, "-11");
-assert.equal(byId.y.formula, "2");
-assert.equal(byId.w.formula, "");
-assert.equal(byId.w.formulaError, null);
-assert.equal(byId.z.formula, "");
-assert.match(byId.z.formulaError, /not a date/);
+const col = (id, expr, name = id) => ({ id, name, expr });
+const daysLeft = buildNoteTable(formulaNotes, "", [col("days", "date(due) - today()", "Days left")], NOW);
+assert.equal(daysLeft.formulaStatus[0].parseError, null);
+assert.equal(daysLeft.formulaStatus[0].failed, 1);
+assert.match(formulaStatusLine(daysLeft.formulaStatus), /“Days left” failed on 1 note: “whenever” is not a date/);
+const byId = Object.fromEntries(daysLeft.rows.map((row) => [row.id, row.formulas.days]));
+assert.equal(byId.x.value, "-11");
+assert.equal(byId.y.value, "2");
+assert.equal(byId.w.value, "");
+assert.equal(byId.w.error, null);
+assert.equal(byId.z.value, "");
+assert.match(byId.z.error, /not a date/);
 assert.deepEqual(
-  sortNoteRows(daysLeft.rows, "formula", "asc").filter((row) => row.formula).map((row) => row.id),
+  sortNoteRows(daysLeft.rows, "formula:days", "asc").filter((row) => row.formulas.days.value).map((row) => row.id),
   ["x", "y"],
 );
-const hours = buildNoteTable(formulaNotes, "", "estimate / 60", NOW);
+const hours = buildNoteTable(formulaNotes, "", [col("hours", "estimate / 60")], NOW);
 assert.deepEqual(
-  sortNoteRows(hours.rows, "formula", "desc").filter((row) => row.formula).map((row) => row.formula),
+  sortNoteRows(hours.rows, "formula:hours", "desc").filter((row) => row.formulas.hours.value).map((row) => row.formulas.hours.value),
   ["2", "0.5"],
 );
-const broken = buildNoteTable(formulaNotes, "", "upper(", NOW);
-assert.match(broken.formulaParseError, /closing \)/);
-assert.equal(broken.formulaError, broken.formulaParseError);
-assert.ok(broken.rows.every((row) => row.formula === "" && row.formulaError === broken.formulaParseError));
-const none = buildNoteTable(formulaNotes, "", "", NOW);
-assert.equal(none.formulaError, null);
-assert.ok(none.rows.every((row) => row.formulaError === null && row.formula === ""));
+const broken = buildNoteTable(formulaNotes, "", [col("bad", "upper(")], NOW);
+assert.match(broken.formulaStatus[0].parseError, /closing \)/);
+assert.equal(formulaStatusLine(broken.formulaStatus), null);
+assert.ok(broken.rows.every((row) => row.formulas.bad.value === "" && row.formulas.bad.error === broken.formulaStatus[0].parseError));
+const none = buildNoteTable(formulaNotes, "", [col("blank", "")], NOW);
+assert.equal(formulaStatusLine(none.formulaStatus), null);
+assert.ok(none.rows.every((row) => row.formulas.blank.error === null && row.formulas.blank.value === ""));
+assert.deepEqual(buildNoteTable(formulaNotes, "", [], NOW).rows[0].formulas, {});
 const withFormula = buildNoteTable(
   [{ id: "a", path: "Projects/Alpha.md", name: "Alpha.md", content: "---\nstatus: draft\n---\n", mtime: Date.UTC(2026, 9, 1, 15, 30) }],
   "",
-  "file.mtime",
+  [col("formula", "file.mtime")],
 );
-assert.equal(withFormula.formulaError, null);
-assert.equal(withFormula.rows[0].formula, "2026-10-01 15:30");
+assert.equal(withFormula.formulaStatus[0].failed, 0);
+assert.equal(withFormula.rows[0].formulas.formula.value, "2026-10-01 15:30");
+
+// Several formula columns: each runs per note, later columns read earlier ones.
+const multi = buildNoteTable(
+  formulaNotes,
+  "",
+  [
+    col("due_on", "date(due)", "Due on"),
+    col("days", "formula.due_on - today()", "Days left"),
+    col("label", 'if(formula["Days left"] < 0, "late", "ok") & " · " & formula.days', "Label"),
+    col("hours", "estimate / 60", "Hours"),
+    col("ahead", "formula.later", "Ahead"),
+    col("later", "1", "Later"),
+    col("self", "formula.self + 1", "Self"),
+  ],
+  NOW,
+);
+const m = Object.fromEntries(multi.rows.map((row) => [row.id, row.formulas]));
+assert.equal(Object.keys(m.x).length, 7);
+assert.equal(m.x.due_on.value, "2026-09-20");
+assert.equal(m.x.days.value, "-11");
+assert.equal(m.x.label.value, "late · -11");
+assert.equal(m.y.label.value, "ok · 2");
+assert.equal(m.x.hours.value, "0.5");
+assert.equal(m.y.hours.value, "2");
+assert.match(m.x.ahead.error, /formula\.later is not a formula column to the left/);
+assert.equal(m.x.later.value, "1");
+assert.match(m.x.self.error, /formula\.self is not a formula column to the left/);
+assert.match(m.z.due_on.error, /not a date/);
+assert.match(m.z.days.error, /formula\.due_on has an error/);
+assert.match(m.z.label.error, /has an error/);
+assert.ok(m.z.hours.error, "estimate “lots” / 60 should fail on its own column");
+assert.equal(m.z.later.value, "1");
+assert.equal(m.w.days.error, null);
+const statusOf = Object.fromEntries(multi.formulaStatus.map((s) => [s.id, s]));
+assert.equal(statusOf.due_on.failed, 1);
+assert.equal(statusOf.ahead.failed, 4);
+assert.equal(statusOf.later.failed, 0);
+const line = formulaStatusLine(multi.formulaStatus);
+assert.match(line, /“Due on” failed on 1 note/);
+assert.match(line, /“Ahead” failed on 4 notes/);
+assert.doesNotMatch(line, /“Later”/);
+assert.deepEqual(
+  sortNoteRows(multi.rows, "formula:hours", "desc").filter((row) => row.formulas.hours.value).map((row) => row.id),
+  ["y", "x"],
+);
+assert.deepEqual(filterNoteRows(multi.rows, "late ·").map((row) => row.id), ["x"]);
+assert.ok(buildNoteTable(formulaNotes, "", Array.from({ length: 12 }, (_, i) => col(`c${i}`, "1")), NOW).formulaStatus.length === 8);
+assert.match(evalNoteFormula(task, "formula.").error ?? "", /formula\. needs a column name/);
+assert.match(evalNoteFormula(task, "formula[days]").error ?? "", /quoted column name/);
+
+assert.equal(formulaKey("Days left", []), "days_left");
+assert.equal(formulaKey("Days left", ["days_left"]), "days_left_2");
+assert.equal(formulaKey("2nd pass", []), "f_2nd_pass");
+assert.equal(formulaKey("  ", []), "formula");
+assert.equal(formulaKey("Formula", ["FORMULA"]), "formula_2");
+assert.equal(formulaColumnId("days"), "formula:days");
+
 const session = parseBasesSession(null);
 assert.equal(session.views.length, 2);
 assert.equal(session.views[0].name, "All notes");
-assert.equal(session.views[0].formula, "file.mtime");
+assert.deepEqual(session.views[0].formulas, [{ id: "formula", name: "Formula", expr: "file.mtime" }]);
 assert.equal(session.views[1].id, "saved");
 const restored = parseBasesSession(JSON.stringify({
   activeId: "saved",
@@ -261,7 +324,31 @@ const restored = parseBasesSession(JSON.stringify({
 }));
 assert.equal(restored.activeId, "saved");
 assert.equal(restored.views[1].folder, "Projects");
-assert.equal(restored.views[1].formula, "file.name");
+assert.deepEqual(restored.views[1].formulas, [{ id: "formula", name: "Formula", expr: "file.name" }]);
+assert.equal(restored.views[1].column, "formula:formula");
+const emptyLegacy = parseBasesSession(JSON.stringify({ activeId: "all", views: [{ id: "all", formula: "", column: "formula" }] }));
+assert.deepEqual(emptyLegacy.views[0].formulas, []);
+assert.equal(emptyLegacy.views[0].column, "name");
+const messy = parseBasesSession(JSON.stringify({
+  activeId: "all",
+  views: [{
+    id: "all",
+    column: "formula:gone",
+    formulas: [
+      { id: "days", name: "Days", expr: "1" },
+      { id: "days", name: "Days again", expr: "2" },
+      { id: "Bad Id!", name: "  ", expr: 3 },
+      "junk",
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `x${i}`, name: `X${i}`, expr: "1" })),
+    ],
+  }],
+}));
+assert.equal(messy.views[0].column, "name");
+assert.equal(messy.views[0].formulas.length, 8);
+assert.deepEqual(messy.views[0].formulas.slice(0, 3).map((f) => f.id), ["days", "days_2", "formula"]);
+assert.equal(messy.views[0].formulas[2].name, "Formula");
+assert.equal(messy.views[0].formulas[2].expr, "");
+assert.equal(new Set(messy.views[0].formulas.map((f) => f.id)).size, 8);
 const legacy = parseBasesSession(JSON.stringify({ query: "Welcome", folder: "Journal", column: "name", dir: "asc" }));
 assert.equal(legacy.views[0].query, "Welcome");
 assert.equal(legacy.views[0].folder, "Journal");
@@ -343,8 +430,18 @@ for (const target of [
 const file = serializeNoteTableFile({
   activeId: "saved",
   views: [
-    { id: "all", name: "All notes", query: "", folder: "", column: "name", dir: "asc", formula: "file.mtime", columns: [] },
-    { id: "saved", name: "Saved view", query: "draft", folder: "Projects", column: "status", dir: "asc", formula: "file.name", columns: ["status", "related"], relations: ["related"] },
+    { id: "all", name: "All notes", query: "", folder: "", column: "name", dir: "asc", formulas: [col("formula", "file.mtime", "Formula")], columns: [] },
+    {
+      id: "saved",
+      name: "Saved view",
+      query: "draft",
+      folder: "Projects",
+      column: "formula:days",
+      dir: "desc",
+      formulas: [col("due_on", "date(due)", "Due on"), col("days", "formula.due_on - today()", "Days left")],
+      columns: ["status", "related"],
+      relations: ["related"],
+    },
   ],
 });
 assert.equal(NOTE_TABLE_FILE, ".nexus/note-table.json");
@@ -355,7 +452,13 @@ assert.equal(fromFile.activeId, "saved");
 assert.equal(fromFile.views[1].folder, "Projects");
 assert.deepEqual(fromFile.views[1].columns, ["status", "related"]);
 assert.deepEqual(fromFile.views[1].relations, ["related"]);
-assert.equal(fromFile.views[1].formula, "file.name");
+assert.deepEqual(fromFile.views[1].formulas, [col("due_on", "date(due)", "Due on"), col("days", "formula.due_on - today()", "Days left")]);
+assert.equal(fromFile.views[1].column, "formula:days");
+assert.equal(fromFile.views[1].dir, "desc");
+const fileJson = JSON.parse(file);
+assert.equal(fileJson.version, 2);
+assert.equal(fileJson.views[1].formula, "date(due)");
+assert.equal(fileJson.views[1].formulas.length, 2);
 assert.equal(fromFile.views[1].layout, "table");
 const cardsSession = parseBasesSession(JSON.stringify({
   activeId: "saved",
@@ -415,15 +518,179 @@ assert.match(scope, /require_literal_leading_dot/);
 assert.doesNotMatch(table, /No formulas, relations, or extra views/);
 assert.doesNotMatch(table, /Obsidian Bases formulas/);
 assert.doesNotMatch(table, /no full formula language/);
-assert.match(table, /one formula column per view/);
+assert.doesNotMatch(table, /one formula column per view/);
+assert.match(table, /formula columns/);
+assert.match(table, /no list, regex, or link functions, no group-by or summaries/);
+assert.match(table, /\.base files import and export/);
+assert.match(table, /data-testid="bases-add-formula"/);
+assert.match(table, /data-testid="bases-formula-remove"/);
+assert.match(table, /data-testid="bases-import-base"/);
+assert.match(table, /data-testid="bases-export-base"/);
+assert.match(table, /data-testid="bases-import-undo"/);
+assert.match(table, /view\.formulas\.map/);
 assert.match(table, /data-testid="bases-formula-error"/);
 assert.match(table, /data-testid="bases-formula-parse-error"/);
 assert.match(table, /data-testid="bases-formula-example"/);
-assert.match(table, /data-formula-error=\{row\.formulaError/);
+assert.match(table, /data-formula-error=\{cell\.error \?\? undefined\}/);
+assert.match(table, /data-formula-error=\{cell\?\.error \?\? undefined\}/);
 assert.doesNotMatch(table, /\.base parity/);
 const editor = readFileSync("src/components/editor/EditorPane.tsx", "utf8");
 assert.match(editor, /data-testid="bases-open"/);
 const workspace = readFileSync("src/components/layout/Workspace.tsx", "utf8");
 assert.match(workspace, /NoteTable/);
+
+// .base import / export
+const { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } = await import("../src/lib/vault/bases-file.ts");
+const { parse: parseYaml } = await import("yaml");
+assert.equal(BASE_EXPORT_FILE, "Nexus Bases.base");
+const exportSession = {
+  activeId: "all",
+  views: [
+    {
+      id: "all",
+      name: "All notes",
+      query: "",
+      folder: "",
+      column: "formula:days",
+      dir: "desc",
+      formulas: [col("due_on", "date(due)", "Due on"), col("days", "formula.due_on - today()", "Days left"), col("blank", "", "Blank")],
+      columns: [],
+      relations: [],
+      layout: "table",
+    },
+    {
+      id: "saved",
+      name: "Projects",
+      query: "draft",
+      folder: "/Projects/",
+      column: "status",
+      dir: "asc",
+      formulas: [col("days", "1 + 1", "Other days")],
+      columns: ["status"],
+      relations: ["related"],
+      layout: "cards",
+    },
+  ],
+};
+const exported = exportBaseFile(exportSession, ["status", "due"]);
+assert.match(exported.text, /^# Exported from Nexus/);
+const doc = parseYaml(exported.text);
+assert.deepEqual(doc.formulas, { due_on: "date(due)", days: "formula.due_on - today()", days_2: "1 + 1" });
+assert.equal(doc.properties["formula.days"].displayName, "Days left");
+assert.equal(doc.properties["formula.days_2"].displayName, "Other days");
+assert.equal(doc.views.length, 2);
+assert.equal(doc.views[0].type, "table");
+assert.equal(doc.views[0].filters, undefined);
+assert.deepEqual(doc.views[0].order, ["file.name", "status", "due", "formula.due_on", "formula.days"]);
+assert.deepEqual(doc.views[0].sort, [{ property: "formula.days", direction: "DESC" }]);
+assert.equal(doc.views[1].type, "cards");
+assert.equal(doc.views[1].name, "Projects");
+assert.deepEqual(doc.views[1].filters, { and: ['file.inFolder("Projects")'] });
+assert.deepEqual(doc.views[1].order, ["file.name", "status", "related", "formula.days_2"]);
+assert.deepEqual(doc.views[1].sort, [{ property: "status", direction: "ASC" }]);
+assert.equal(exported.notes.length, 1);
+assert.match(exported.notes[0], /“Projects” text filter “draft” has no \.base equivalent/);
+
+const back = importBaseFile(exported.text);
+assert.ok(!("error" in back));
+assert.deepEqual(back.notes, []);
+assert.equal(back.session.activeId, "all");
+assert.deepEqual(back.session.views.map((v) => v.id), ["all", "saved"]);
+assert.deepEqual(back.session.views[0].formulas, [col("due_on", "date(due)", "Due on"), col("days", "formula.due_on - today()", "Days left")]);
+assert.equal(back.session.views[0].column, "formula:days");
+assert.equal(back.session.views[0].dir, "desc");
+assert.deepEqual(back.session.views[0].columns, ["status", "due"]);
+assert.equal(back.session.views[1].folder, "Projects");
+assert.equal(back.session.views[1].layout, "cards");
+assert.deepEqual(back.session.views[1].formulas, [col("days_2", "1 + 1", "Other days")]);
+assert.deepEqual(back.session.views[1].columns, ["status", "related"]);
+assert.equal(back.session.views[1].column, "status");
+const reparsed = parseBasesSession(serializeNoteTableFile(back.session));
+assert.deepEqual(reparsed.views[0].formulas, back.session.views[0].formulas);
+const roundTable = buildNoteTable(formulaNotes, "", back.session.views[0].formulas, NOW);
+assert.equal(roundTable.rows.find((row) => row.id === "x").formulas.days.value, "-11");
+
+const obsidianBase = `
+filters:
+  and:
+    - file.inFolder("Tasks")
+    - 'status != "done"'
+formulas:
+  late: 'if(date(due) < today(), "late", "")'
+  words: 'file.name.split(" ").length'
+properties:
+  formula.late:
+    displayName: Late?
+views:
+  - type: table
+    name: Open tasks
+    order:
+      - file.name
+      - note.status
+      - note["due date"]
+      - file.mtime
+      - file.size
+      - formula.late
+      - formula.words
+      - formula.missing
+    sort:
+      - property: file.mtime
+        direction: DESC
+    groupBy:
+      property: status
+    limit: 20
+  - type: list
+    name: List
+    filters:
+      or:
+        - file.hasTag("x")
+  - type: table
+    name: Third
+`;
+const imported = importBaseFile(obsidianBase);
+assert.ok(!("error" in imported));
+const [open, listView] = imported.session.views;
+assert.equal(open.name, "Open tasks");
+assert.equal(open.folder, "Tasks");
+assert.deepEqual(open.columns, ["status", "due date"]);
+assert.deepEqual(open.formulas.map((f) => [f.id, f.name]), [["file_mtime", "Modified"], ["late", "Late?"], ["words", "words"]]);
+assert.equal(open.column, "formula:file_mtime");
+assert.equal(open.dir, "desc");
+assert.equal(listView.name, "List");
+assert.equal(listView.layout, "table");
+assert.equal(listView.folder, "Tasks");
+const notesText = imported.notes.join("\n");
+assert.match(notesText, /Filter status != "done" was not imported/);
+assert.match(notesText, /Column file\.size has no Nexus equivalent/);
+assert.match(notesText, /Column formula\.missing has no formula in this file/);
+assert.match(notesText, /Formula “words” uses syntax Nexus does not read yet/);
+assert.match(notesText, /groups rows; Nexus shows them ungrouped/);
+assert.match(notesText, /row limit/);
+assert.match(notesText, /“List” is a list view; it opens as a table/);
+assert.match(notesText, /“or” filter group was not imported/);
+assert.match(notesText, /Nexus keeps two views; “Third” was not imported/);
+const lateRows = buildNoteTable(formulaNotes, open.folder, open.formulas, NOW);
+const lateById = Object.fromEntries(lateRows.rows.map((row) => [row.id, row.formulas]));
+assert.equal(lateById.x.late.value, "late");
+assert.equal(lateById.y.late.value, "");
+assert.ok(lateById.x.words.error);
+
+const bare = importBaseFile("formulas:\n  a: '1 + 1'\n  b: 'formula.a * 2'\nviews:\n  - type: cards\n");
+assert.ok(!("error" in bare));
+assert.equal(bare.session.views[0].name, "All notes");
+assert.equal(bare.session.views[0].layout, "cards");
+assert.deepEqual(bare.session.views[0].formulas.map((f) => f.id), ["a", "b"]);
+assert.equal(bare.session.views[1].id, "saved");
+assert.equal(buildNoteTable(formulaNotes, "", bare.session.views[0].formulas, NOW).rows[0].formulas.b.value, "4");
+assert.match(importBaseFile("views: [\n").error, /^Not a readable \.base file/);
+assert.equal(importBaseFile("formulas:\n  a: '1'\n").error, "This .base file has no views to import.");
+assert.equal(importBaseFile("").error, "This .base file has no views to import.");
+assert.equal(importBaseFile("- 1\n- 2\n").error, "This .base file has no views to import.");
+const many = importBaseFile(
+  `formulas:\n${Array.from({ length: 10 }, (_, i) => `  f${i}: '${i}'`).join("\n")}\nviews:\n  - type: table\n    name: Wide\n`,
+);
+assert.equal(many.session.views[0].formulas.length, 8);
+assert.match(many.notes.join("\n"), /Only 8 formula columns fit in a view/);
+assert.match(readFileSync("src/lib/vault/desktop-write-path.ts", "utf8"), /base\)\$\/i/);
 
 console.log("note-table: PASS");

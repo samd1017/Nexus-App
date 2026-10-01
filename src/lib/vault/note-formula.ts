@@ -4,16 +4,21 @@
  * Dates read and print in UTC so a saved view looks the same on every machine.
  */
 
+type DateValue = { kind: "date"; ms: number; dateOnly: boolean };
+type Value = null | string | number | boolean | DateValue;
+/** A computed formula value, kept typed so later columns can do date math on it. */
+export type FormulaValue = Value;
+/** Results of columns to the left, by lowercased column id and name. */
+export type FormulaRefs = Map<string, { value: FormulaValue } | { error: string }>;
+
 export type FormulaRow = {
   name: string;
   path: string;
   folder: string;
   mtime: number;
   props: Record<string, string>;
+  refs?: FormulaRefs;
 };
-
-type DateValue = { kind: "date"; ms: number; dateOnly: boolean };
-type Value = null | string | number | boolean | DateValue;
 
 type Token =
   | { t: "num"; v: number }
@@ -28,12 +33,13 @@ type Node =
   | { k: "lit"; v: Value }
   | { k: "prop"; key: string }
   | { k: "file"; key: FileKey }
+  | { k: "ref"; key: string }
   | { k: "call"; name: string; args: Node[] }
   | { k: "bin"; op: string; a: Node; b: Node }
   | { k: "un"; op: "!" | "-"; a: Node };
 
 export type CompiledFormula = { program: Node | null; error: string | null };
-export type FormulaResult = { value: string; error: string | null; sort: number | null };
+export type FormulaResult = { value: string; error: string | null; sort: number | null; raw: FormulaValue };
 
 class FormulaError extends Error {}
 
@@ -400,14 +406,14 @@ const FUNCTIONS = new Map(FUNCTION_LIST.map((fn) => [fn.name.toLowerCase(), fn])
 /** Function names, in the order the help lists them. */
 export const FORMULA_FUNCTIONS = FUNCTION_LIST.map((fn) => fn.name);
 
-export const FORMULA_EXAMPLES: { formula: string; label: string }[] = [
-  { formula: "file.mtime.relative()", label: "Edited, like “3 days ago”" },
-  { formula: 'date(due).format("MMM D, YYYY")', label: "Format a date property" },
-  { formula: 'if(empty(due), "—", date(due) - today())', label: "Days until due" },
-  { formula: 'date(due) + "7d"', label: "A week after due" },
-  { formula: 'if(status == "done", "Done", status.upper())', label: "Compare and change text" },
-  { formula: 'round(number(estimate) / 60, 1) & " h"', label: "Math on a number property" },
-  { formula: 'if(contains(lower(tags), "writing"), "Writing", file.folder)', label: "Text contains" },
+export const FORMULA_EXAMPLES: { formula: string; label: string; name: string }[] = [
+  { formula: "file.mtime.relative()", label: "Edited, like “3 days ago”", name: "Edited" },
+  { formula: 'date(due).format("MMM D, YYYY")', label: "Format a date property", name: "Due" },
+  { formula: 'if(empty(due), "—", date(due) - today())', label: "Days until due", name: "Days left" },
+  { formula: 'date(due) + "7d"', label: "A week after due", name: "Follow up" },
+  { formula: 'if(status == "done", "Done", status.upper())', label: "Compare and change text", name: "Status" },
+  { formula: 'round(number(estimate) / 60, 1) & " h"', label: "Math on a number property", name: "Hours" },
+  { formula: 'if(contains(lower(tags), "writing"), "Writing", file.folder)', label: "Text contains", name: "Area" },
 ];
 
 function arityMessage(fn: Fn, method: boolean): string {
@@ -551,6 +557,19 @@ class Parser {
       if (key?.t !== "id") throw new FormulaError("note. needs a property name.");
       return { k: "prop", key: key.v };
     }
+    if (word === "formula" && (this.isOp(".") || this.isOp("["))) {
+      const bracket = this.isOp("[");
+      this.i += 1;
+      const key = this.peek();
+      this.i += 1;
+      if (bracket) {
+        if (key?.t !== "str") throw new FormulaError('formula[ needs a quoted column name, like formula["Days left"].');
+        this.expect("]", "formula[ needs a closing ].");
+        return { k: "ref", key: key.v };
+      }
+      if (key?.t !== "id") throw new FormulaError("formula. needs a column name.");
+      return { k: "ref", key: key.v };
+    }
     if (word === "note" && this.isOp("[")) {
       this.i += 1;
       const key = this.peek();
@@ -661,6 +680,12 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
       return node.v;
     case "prop":
       return readProp(row, node.key);
+    case "ref": {
+      const hit = row.refs?.get(node.key.toLowerCase());
+      if (!hit) throw new FormulaError(`formula.${node.key} is not a formula column to the left of this one.`);
+      if ("error" in hit) throw new FormulaError(`formula.${node.key} has an error.`);
+      return hit.value;
+    }
     case "file":
       if (node.key === "mtime") return row.mtime ? { kind: "date", ms: row.mtime, dateOnly: false } : null;
       if (node.key === "ext") {
@@ -739,14 +764,14 @@ export function compileNoteFormula(source: string): CompiledFormula {
 }
 
 export function runNoteFormula(compiled: CompiledFormula, row: FormulaRow, now = Date.now()): FormulaResult {
-  if (compiled.error) return { value: "", error: compiled.error, sort: null };
-  if (!compiled.program) return { value: "", error: null, sort: null };
+  if (compiled.error) return { value: "", error: compiled.error, sort: null, raw: null };
+  if (!compiled.program) return { value: "", error: null, sort: null, raw: null };
   try {
     const v = evalNode(compiled.program, row, { now });
     const sort = typeof v === "number" ? v : isDate(v) ? v.ms : typeof v === "boolean" ? Number(v) : null;
-    return { value: show(v), error: null, sort };
+    return { value: show(v), error: null, sort, raw: v };
   } catch (err) {
-    if (err instanceof FormulaError) return { value: "", error: err.message, sort: null };
+    if (err instanceof FormulaError) return { value: "", error: err.message, sort: null, raw: null };
     throw err;
   }
 }

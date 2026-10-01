@@ -1,5 +1,5 @@
 /** A vault file the desktop writer must overwrite, never mkdir. */
-const DESKTOP_FILE = /\.(md|canvas|json|css)$/i;
+const DESKTOP_FILE = /\.(md|canvas|json|css|base)$/i;
 
 export function isDesktopFileName(name: string): boolean {
   return DESKTOP_FILE.test(name);
