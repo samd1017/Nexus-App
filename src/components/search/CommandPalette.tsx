@@ -3,6 +3,9 @@ import { Command } from "cmdk";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { revealFolderInList, revealInFlight } from "@/lib/chrome/reveal-list";
 import { diskFolderRow, folderForEnter } from "@/lib/search/folder-enter";
+import { paletteEnterOpensNow } from "@/lib/search/palette-enter";
+import { focusEditorPane } from "@/lib/editor/pane-focus";
+import { getFindFocusPane } from "@/lib/editor/find-target";
 import { switcherHits } from "@/lib/search/switcher-order";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
@@ -243,6 +246,26 @@ function topNotesByVisitMtime(
 /** A folder picked in search lands in the list once it is known whether it is empty. */
 function revealSearchedFolder(id: string): void {
   revealFolderInList(id, { settle: useVaultStore.getState().settleFolderForEnter(id) });
+}
+
+/** cmdk runs onSelect from this event and from a real click. */
+const PALETTE_ITEM_SELECT = "cmdk-item-select";
+
+function openPaletteRow(row: HTMLElement): void {
+  const before = useVaultStore.getState().activeNoteId;
+  row.dispatchEvent(new Event(PALETTE_ITEM_SELECT));
+  const st = useVaultStore.getState();
+  const opened = Boolean(row.getAttribute("data-note-id")) || (st.activeNoteId != null && st.activeNoteId !== before);
+  if (!opened || !st.activeNoteId) return;
+  const split = Boolean(st.settings.workspaceSplit && st.secondaryNoteId);
+  focusEditorPane(split ? getFindFocusPane() : "primary");
+}
+
+function focusOpenedHit(): void {
+  const st = useVaultStore.getState();
+  if (!st.activeNoteId) return;
+  const split = Boolean(st.settings.workspaceSplit && st.secondaryNoteId);
+  focusEditorPane(split ? getFindFocusPane() : "primary");
 }
 
 let openedWith: { q: string; at: number } | null = null;
@@ -861,10 +884,14 @@ function CommandPaletteOpen() {
     if (!pending) return;
     pendingFolderEnterRef.current = null;
     window.clearTimeout(pending.timer);
-    const selected = inputRef.current
-      ?.closest("[cmdk-root]")
-      ?.querySelector<HTMLElement>("[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']");
+    const root = inputRef.current?.closest("[cmdk-root]");
+    const selected = root?.querySelector<HTMLElement>(
+      "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
+    );
     selected?.click();
+    if (!selected) {
+      root?.querySelector<HTMLElement>("[data-testid='search-note-hit']")?.click();
+    }
   }, []);
 
   // A paged vault only holds the folders it has shown. When none of them is
@@ -1754,9 +1781,37 @@ function CommandPaletteOpen() {
                 return;
               }
               const root = e.currentTarget.closest("[cmdk-root]");
-              const selected = root?.querySelector(
+              const selected = root?.querySelector<HTMLElement>(
                 "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
               );
+              const top = hits[0];
+              const want = q.trim().toLowerCase();
+              const exactNote = hits.some((h) => h.title.trim().toLowerCase() === want);
+              const enterNow = paletteEnterOpensNow({
+                hasSelection: Boolean(selected),
+                selectedIsFolder: selected?.getAttribute("data-testid") === "search-folder-hit",
+                selectedIsCreate: selected?.getAttribute("data-testid") === "search-create-note",
+                hitCount: hits.length,
+                catalogPending: catalogFolderPending,
+                exactNote,
+                commandMode: isCommandMode,
+                askMode: isAskMode,
+                tagBrowse: isTagBrowse,
+              });
+              if (enterNow === "selected" && selected) {
+                e.preventDefault();
+                e.stopPropagation();
+                openPaletteRow(selected);
+                return;
+              }
+              if (enterNow === "first-hit" && top) {
+                e.preventDefault();
+                e.stopPropagation();
+                setActiveNote(top.noteId);
+                setCommandOpen(false);
+                focusOpenedHit();
+                return;
+              }
               if (selected?.getAttribute("data-testid") === "search-folder-hit") return;
               if (!q || isAskMode || isCommandMode || isTagBrowse) return;
               if (pendingFolderEnterRef.current?.q === q) {
@@ -1764,13 +1819,10 @@ function CommandPaletteOpen() {
                 e.stopPropagation();
                 return;
               }
-              const top = hits[0];
               // A folder found after the list settled may not be selected, so
               // Enter would do nothing and leave search holding the keyboard.
               // A folder named exactly what was typed wins, unless a note is too.
               const found = folderForEnter(folderHits, q);
-              const want = q.trim().toLowerCase();
-              const exactNote = hits.some((h) => h.title.trim().toLowerCase() === want);
               const folder =
                 found && (found.exact ? !exactNote : hits.length === 0 && !selected) ? found : null;
               if (folder) {
@@ -2167,6 +2219,8 @@ function CommandPaletteOpen() {
                 <Command.Item
                   key={h.noteId}
                   value={`note-${h.noteId}-${h.title}`}
+                  data-testid="search-note-hit"
+                  data-note-id={h.noteId}
                   onSelect={() => {
                     setActiveNote(h.noteId);
                     setCommandOpen(false);
@@ -2405,6 +2459,7 @@ function CommandPaletteOpen() {
                   {showCreateNote && emptyStatus !== "miss" ? (
                     <Command.Item
                       value={`create-note-${searchText || q}`}
+                      data-testid="search-create-note"
                       onSelect={() => {
                         createNote(null, searchText || q || "Untitled");
                         setCommandOpen(false);
