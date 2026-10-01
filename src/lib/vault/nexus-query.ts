@@ -1,7 +1,7 @@
 /**
  * Built-in note list for one fenced block.
  * LIST or TABLE, FROM a folder or tag, WHERE on one field,
- * including date() and > < comparisons, TABLE columns from frontmatter,
+ * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
  * tags joined by OR or AND, SORT title|mtime.
  * Not full Dataview: no joins, no formulas.
  */
@@ -22,10 +22,10 @@ export const NEXUS_QUERY_FOOTER =
   "Built-in list. Not Dataview — no joins, no formulas.";
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE due > date(today), or WHERE price > 10. file.mtime >= date(today) - 7d. TABLE status, due or field:mtime. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. file.mtime >= date(today) - 7d. TABLE status, due or field:mtime. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. No joins, no formulas, no contains(). Use LIST or TABLE, FROM path: or FROM #tag, WHERE due > date(today) or WHERE field = "value", and SORT title or SORT mtime.';
+  'This block is not Dataview. No joins, no formulas. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -67,7 +67,9 @@ type WhereValue =
   | { kind: "number"; n: number }
   | { kind: "date"; day: "today" | string; shiftDays: number };
 
-type WhereCmp = { field: string; op: WhereOp; value: WhereValue };
+type WhereCmp =
+  | { kind: "cmp"; field: string; op: WhereOp; value: WhereValue }
+  | { kind: "contains"; field: string; needle: string };
 
 const DAY_MS = 86_400_000;
 
@@ -97,7 +99,6 @@ function tokenize(source: string): string[] {
 
 function unsupportedDql(token: string): boolean {
   if (/^(file|this)\./i.test(token) && !FILE_META.has(token.toLowerCase())) return true;
-  if (/contains\s*\(/i.test(token)) return true;
   if (/choice\s*\(/i.test(token)) return true;
   if (/^(FLATTEN|GROUP|LIMIT)$/i.test(token)) return true;
   return false;
@@ -240,7 +241,43 @@ function parseCmpAt(tokens: string[], at: number): CmpParse | null {
   if (ordered && parsed.value.kind === "text") {
     return { error: '> and < compare a date or a number, such as due > date(today) or price > 10.' };
   }
-  return { cmp: { field, op, value: parsed.value }, end: parsed.end };
+  return { cmp: { kind: "cmp", field, op, value: parsed.value }, end: parsed.end };
+}
+
+const CONTAINS_HINT = 'contains() needs a field and text, such as contains(status, "draft") or contains(file.name, "Graph").';
+
+/** `contains(status, "draft")` may be one token or several. Substring, not a regex. */
+function parseContainsAt(tokens: string[], at: number): CmpParse | null {
+  const first = tokens[at] ?? "";
+  if (!/^contains\(/i.test(first)) return null;
+  let depth = 0;
+  let end = at;
+  const parts: string[] = [];
+  for (let i = at; i < tokens.length; i++) {
+    const token = tokens[i] ?? "";
+    parts.push(token);
+    for (const ch of token) {
+      if (ch === "(") depth += 1;
+      else if (ch === ")") depth -= 1;
+    }
+    end = i;
+    if (depth <= 0) break;
+  }
+  if (depth !== 0) return { error: CONTAINS_HINT };
+  const call = /^contains\(([\s\S]*)\)$/i.exec(parts.join(""));
+  if (!call) return { error: CONTAINS_HINT };
+  const inner = call[1] ?? "";
+  const comma = inner.indexOf(",");
+  if (comma < 0) return { error: CONTAINS_HINT };
+  const field = inner.slice(0, comma).trim();
+  const needle = unquote(inner.slice(comma + 1).trim());
+  if (!field || !new RegExp(`^${CMP_FIELD}$`).test(field)) {
+    return {
+      error: `contains() does not read “${field || "that"}”. Use a frontmatter field, file.name, file.path, file.folder, file.tags, or file.mtime.`,
+    };
+  }
+  if (!needle) return { error: 'contains() needs text to look for, such as contains(status, "draft").' };
+  return { cmp: { kind: "contains", field, needle }, end };
 }
 
 function readTag(token: string): string | null {
@@ -295,6 +332,10 @@ export function parseNexusQuery(source: string): Parsed {
   };
   const addWhere = (cmp: WhereCmp): string | null => {
     if (where) return "Only one WHERE comparison is supported.";
+    if (cmp.kind === "contains") {
+      where = cmp;
+      return null;
+    }
     const key = columnKey(cmp.field);
     if (key === "tags") {
       return `WHERE compares a frontmatter field, such as status = "draft". ${cmp.field} is a column.`;
@@ -323,6 +364,14 @@ export function parseNexusQuery(source: string): Parsed {
     const upper = token.toUpperCase();
     if (upper === "FROM" || upper === "WHERE") {
       if (upper === "WHERE") {
+        const contains = parseContainsAt(tokens, i + 1);
+        if (contains && "error" in contains) return { kind: "error", error: contains.error };
+        if (contains) {
+          const err = addWhere(contains.cmp);
+          if (err) return { kind: "error", error: err };
+          i = contains.end;
+          continue;
+        }
         const cmp = parseCmpAt(tokens, i + 1);
         if (cmp && "error" in cmp) return { kind: "error", error: cmp.error };
         if (cmp) {
@@ -343,7 +392,7 @@ export function parseNexusQuery(source: string): Parsed {
       const nextPath = readPath(scope);
       if (nextPath) {
         if (upper === "WHERE") {
-          return { kind: "error", error: 'WHERE filters a tag or a field, such as due > date(today) or status = "draft". Use FROM path: for a folder.' };
+          return { kind: "error", error: 'WHERE filters a tag or a field, such as contains(file.name, "Graph") or status = "draft". Use FROM path: for a folder.' };
         }
         if (path) return { kind: "error", error: "Only one path: is supported." };
         path = nextPath;
@@ -352,6 +401,14 @@ export function parseNexusQuery(source: string): Parsed {
       return { kind: "error", error: `${upper} needs path: or #tag, not “${scope}”.` };
     }
     if (upper === "OR" || upper === "AND") {
+      const contains = parseContainsAt(tokens, i + 1);
+      if (contains && "error" in contains) return { kind: "error", error: contains.error };
+      if (contains) {
+        const err = addWhere(contains.cmp);
+        if (err) return { kind: "error", error: err };
+        i = contains.end;
+        continue;
+      }
       const cmp = parseCmpAt(tokens, i + 1);
       if (cmp && "error" in cmp) return { kind: "error", error: cmp.error };
       if (cmp) {
@@ -569,6 +626,11 @@ function ordered(left: number, right: number, op: WhereOp): boolean {
 }
 
 function whereMatch(node: VaultNode, where: WhereCmp, now: number): "yes" | "no" | "unloaded" {
+  if (where.kind === "contains") {
+    const actual = fieldActual(node, where.field);
+    if (actual === null) return "unloaded";
+    return actual.includes(where.needle) ? "yes" : "no";
+  }
   const key = columnKey(where.field);
   if (key === "mtime" && where.value.kind !== "text") {
     if (where.value.kind === "date") {
