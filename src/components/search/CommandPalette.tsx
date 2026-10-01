@@ -7,6 +7,7 @@ import { paletteEnterOpensNow } from "@/lib/search/palette-enter";
 import { focusEditorPane } from "@/lib/editor/pane-focus";
 import { getFindFocusPane } from "@/lib/editor/find-target";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
+import { setBasesOpen } from "@/lib/vault/bases-session";
 import { isCanvasPath } from "@/lib/vault/canvas";
 import { switcherHits } from "@/lib/search/switcher-order";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
@@ -17,6 +18,7 @@ import {
   Network,
   ArrowUpRight,
   ListChecks,
+  Table2,
   LayoutGrid,
   BookOpen,
   Code2,
@@ -1277,6 +1279,16 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "open-bases",
+          label: "Bases",
+          keywords: ["bases", "note table", "properties", "frontmatter", "table"],
+          icon: <Table2 size={15} />,
+          run: wrapRun("open-bases", () => {
+            setBasesOpen(true);
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "toggle-graph",
           label: "Open Local graph",
           keywords: ["graph", "fullscreen", "local", "network", "orbit"],
@@ -1700,6 +1712,17 @@ function CommandPaletteOpen() {
         run: wrapRun("open-tasks", () => {
           useVaultStore.getState().setRightTab("tasks");
           useVaultStore.getState().setRightOpen(true);
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-bases",
+        label: "Bases",
+        icon: <Table2 size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-bases", () => {
+          setBasesOpen(true);
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),

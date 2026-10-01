@@ -5,6 +5,7 @@ import {
   Columns2,
   Eye,
   Network,
+  Table2,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -41,6 +42,7 @@ import { formatShortcut } from "@/lib/platform";
 import { FindInNoteBar } from "./FindInNoteBar";
 import { FrontmatterEditor } from "./FrontmatterEditor";
 import { setFindEditorMode, setFindFocusPane, getFindFocusPane } from "@/lib/editor/find-target";
+import { setBasesOpen } from "@/lib/vault/bases-session";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { revealFileList } from "@/lib/chrome/reveal-list";
 import { startFirstNote as startFirstNoteAnywhere } from "@/lib/vault/first-note";
@@ -751,6 +753,16 @@ export function EditorPane({
                     </button>
                   </>
                 )}
+                <button
+                  type="button"
+                  className="chip-btn !border-0 hidden md:inline-flex"
+                  data-testid="bases-open"
+                  title="Note table"
+                  onClick={() => setBasesOpen(true)}
+                >
+                  <Table2 size={13} />
+                  <span className="hidden md:inline">Bases</span>
+                </button>
                 <button
                   type="button"
                   className={cn(
