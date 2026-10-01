@@ -201,7 +201,7 @@ On disk they stay plain text. In **Visual** mode they render as interactive pill
 
 #graph #links
 
-The graph turns [[wikilinks]] into a living map of your thinking.
+The graph opens on **Local**: this note and the notes it links. **Folder Map** is one click away and opens the 3D vault.
 
 ## What you’ll see
 
@@ -218,7 +218,8 @@ The graph turns [[wikilinks]] into a living map of your thinking.
 | Click | Open the note (exits fullscreen) |
 | Drag | Reposition nodes |
 | Scroll | Zoom |
-| **⌘G** | Fullscreen graph |
+| **⌘G** | Fullscreen graph, still on Local |
+| Folder Map | 3D vault map, on the graph bar |
 
 ## Seed network
 

@@ -207,7 +207,7 @@ export function WelcomeScreen() {
             style={{ animation: "welcomeFadeUp 520ms ease-out 140ms both" }}
           >
             Plain Markdown on your machine. Search that cites the source.
-            A graph you can fly. No account.
+            The graph opens on this note. Folder Map is one click away. No account.
           </p>
           <p
             className="mt-2 max-w-lg text-[13.5px] leading-relaxed text-[var(--text-secondary)]"
@@ -463,7 +463,7 @@ export function WelcomeScreen() {
               {
                 icon: Network,
                 title: "See",
-                body: "Spatial graph — neighborhood, then the whole vault.",
+                body: "Local graph of this note. Folder Map opens the 3D vault.",
               },
               {
                 icon: Cloud,

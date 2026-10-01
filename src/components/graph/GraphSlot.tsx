@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { cn } from "@/lib/utils";
 import { usePrefsStore, type GraphSurface } from "@/lib/prefs/preferences";
+import { useVaultStore } from "@/lib/vault/store";
 import { LocalGraph2D } from "@/components/graph/LocalGraph2D";
 
 const GraphView = lazy(async () => {
@@ -42,13 +43,17 @@ function SurfaceButton({
   );
 }
 
-/** Note context opens a flat neighborhood. 3D stays one click away. */
+/** Note context opens a flat neighborhood. Folder Map is one click away. */
 export function GraphSlot({ mode, className }: Props) {
   const surface = usePrefsStore((s) =>
     s.graphSurface === "explore" ? "explore" : "local",
   );
   const updatePrefs = usePrefsStore((s) => s.updatePrefs);
-  const choose = (next: GraphSurface) => updatePrefs({ graphSurface: next });
+  const resetGraphBrowse = useVaultStore((s) => s.resetGraphBrowse);
+  const choose = (next: GraphSurface) => {
+    updatePrefs({ graphSurface: next });
+    if (next === "explore") resetGraphBrowse();
+  };
 
   return (
     <div
@@ -68,12 +73,12 @@ export function GraphSlot({ mode, className }: Props) {
         />
         <SurfaceButton
           active={surface === "explore"}
-          label="3D Explore"
-          testId="graph-explore"
+          label="Folder Map"
+          testId="graph-folder-map"
           onClick={() => choose("explore")}
         />
         <span className="ml-auto truncate pl-2 text-[11px] text-[var(--text-muted)]">
-          {surface === "local" ? "This note and its links" : "3D graph"}
+          {surface === "local" ? "This note and its links" : "3D folder map of the vault"}
         </span>
       </div>
       <div className="min-h-0 flex-1">

@@ -1011,7 +1011,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Graph"
-                body="The graph maps [[wikilinks]] and a folder map for large vaults: folder spheres open a level; notes open and show links near the active note. Small vaults still show every note. Click a node to open it."
+                body="Local is the default: this note and the notes it links. Folder Map is one click away and opens the 3D vault, where folder spheres open a level. Small vaults still show every note there. Click a node to open it."
               />
               <HelpItem
                 title="Cloud"

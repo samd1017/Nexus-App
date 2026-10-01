@@ -39,8 +39,11 @@ assert.equal(DEFAULT_PREFS.graphSurface, "local");
 
 const { readFileSync } = await import("node:fs");
 const slot = readFileSync("src/components/graph/GraphSlot.tsx", "utf8");
-assert.match(slot, /3D Explore/);
+assert.match(slot, /Folder Map/);
+assert.match(slot, /graph-folder-map/);
+assert.match(slot, /resetGraphBrowse/);
 assert.match(slot, /graphSurface === "explore"/);
+assert.doesNotMatch(slot, /3D Explore/);
 const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");
 assert.match(panel, /<GraphSlot mode="panel"/);
 assert.match(panel, /<GraphSlot mode="fullscreen"/);

@@ -178,7 +178,7 @@ export function GraphChrome(props: GraphChromeProps) {
             >
               <ModePill
                 active={props.viewMode === "folder"}
-                label="Map"
+                label="Folder Map"
                 onClick={props.onVaultMap}
               />
               <ModePill
