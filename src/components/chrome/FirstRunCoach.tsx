@@ -130,7 +130,7 @@ export function FirstRunCoach() {
             </div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-secondary)]">
               {mode === "demo"
-                ? "Search the vault. Follow a [[link]]. Open the graph and fly."
+                ? "Search the vault. Follow a [[link]]. The graph opens on this note. Folder Map is one click away."
                 : "Search or ask. Link a heading. Open the graph when you want the neighborhood."}
             </p>
           </div>
