@@ -182,11 +182,13 @@ export function NoteTable() {
     patchView({ relations: [...relations, key], columns: [...new Set([...(view.columns.length ? view.columns : built.keys), key])] });
   };
 
-  const linkNote = (rowId: string, key: string, title: string) => {
-    const node = nodes[rowId];
+  const linkNote = async (rowId: string, key: string, title: string) => {
+    const node = useVaultStore.getState().nodes[rowId];
     if (!node || node.kind !== "note") return;
-    const next = withNoteRelation(node.content ?? "", key, title);
-    updateNoteContent(rowId, next);
+    const loaded = node.content !== undefined ? node.content : await ensureNoteBody(rowId);
+    if (typeof loaded !== "string") return;
+    const next = withNoteRelation(loaded, key, title);
+    updateNoteContent(rowId, next, { source: true });
     setLinking(null);
     setLinkQuery("");
   };

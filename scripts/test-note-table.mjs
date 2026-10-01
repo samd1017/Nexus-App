@@ -156,6 +156,31 @@ const onlyWelcome = filterRowsByRelation(related.rows, "Welcome", ["related"]);
 assert.equal(onlyWelcome.length, 0);
 const onlyBeta = filterRowsByRelation(related.rows, "beta", ["related"]);
 assert.deepEqual(onlyBeta.map((row) => row.id), ["a"]);
+const nonsense = filterRowsByRelation(related.rows, "ZZZ", ["related"]);
+assert.equal(nonsense.length, 0);
+
+const { desktopWriteParent, mkdirTargetForFolder, mkdirTargetForWrite } = await import(
+  "../src/lib/vault/desktop-write-path.ts"
+);
+assert.equal(desktopWriteParent("Projects/Soak-Typed-Link.md"), "Projects");
+assert.equal(desktopWriteParent("Projects/Soak-Typed-Link.md/extra"), "Projects");
+assert.equal(desktopWriteParent("Welcome.md"), "");
+assert.equal(desktopWriteParent(".nexus/note-table.json"), ".nexus");
+assert.equal(mkdirTargetForWrite("Projects/Soak-Typed-Link.md", true), null);
+assert.equal(mkdirTargetForWrite("Projects/Soak-Typed-Link.md", false), "Projects");
+assert.equal(mkdirTargetForWrite("Projects/Soak-Typed-Link.md/extra", false), "Projects");
+assert.equal(mkdirTargetForFolder("Projects/Soak-Typed-Link.md", "file"), null);
+assert.equal(mkdirTargetForFolder("Projects/Soak-Typed-Link.md", "missing"), null);
+assert.equal(mkdirTargetForFolder("Projects", "dir"), null);
+assert.equal(mkdirTargetForFolder("Projects", "missing"), "Projects");
+for (const target of [
+  mkdirTargetForWrite("Projects/Soak-Typed-Link.md", true),
+  mkdirTargetForWrite("Projects/Soak-Typed-Link.md", false),
+  mkdirTargetForWrite("Projects/Soak-Typed-Link.md/extra", false),
+  mkdirTargetForFolder("Projects/Soak-Typed-Link.md", "file"),
+]) {
+  assert.ok(!target || !target.endsWith(".md"));
+}
 const file = serializeNoteTableFile({
   activeId: "saved",
   views: [
@@ -185,6 +210,10 @@ assert.match(table, /not an Obsidian \.base file/);
 assert.match(table, /bases-add-relation/);
 assert.match(table, /bases-relation-filter/);
 assert.match(table, /bases-link-note/);
+assert.match(table, /ensureNoteBody\(rowId\)/);
+assert.match(table, /updateNoteContent\(rowId, next, \{ source: true \}\)/);
+assert.match(readFileSync("src/lib/vault/tauri-adapter.ts", "utf8"), /mkdirTargetForWrite/);
+assert.match(readFileSync("src/lib/vault/tauri-adapter.ts", "utf8"), /destKind === "file"/);
 assert.doesNotMatch(table, /no typed relations/);
 assert.match(table, /bases-relation/);
 assert.match(table, /NOTE_TABLE_FILE|note-table\.json/);

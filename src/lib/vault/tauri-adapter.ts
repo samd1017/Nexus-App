@@ -18,6 +18,11 @@ import {
   type NotePathOp,
 } from "./path-patch";
 import {
+  isDesktopFileRel,
+  mkdirTargetForFolder,
+  mkdirTargetForWrite,
+} from "./desktop-write-path";
+import {
   shouldRetainWatchScan,
   watchPollIntervalMs,
 } from "./watcher";
@@ -419,19 +424,62 @@ export async function scanDesktopSignatures(
   return signatures;
 }
 
+type DesktopStat = { isFile?: boolean; isDirectory?: boolean };
+
+function fsErrorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isFileExistsError(err: unknown): boolean {
+  return /file exists|os error 17|already exists/i.test(fsErrorText(err));
+}
+
+async function statKind(
+  stat: (path: string) => Promise<DesktopStat>,
+  abs: string,
+): Promise<"file" | "dir" | "missing"> {
+  try {
+    const meta = await stat(abs);
+    if (meta.isDirectory) return "dir";
+    if (meta.isFile) return "file";
+    return "missing";
+  } catch {
+    return "missing";
+  }
+}
+
+/**
+ * Create a directory. An existing directory is success. An existing file
+ * is not a directory create — callers overwrite that file instead.
+ */
+async function mkdirDesktopDir(
+  mkdir: (path: string, options?: { recursive?: boolean }) => Promise<void>,
+  stat: (path: string) => Promise<DesktopStat>,
+  abs: string,
+): Promise<void> {
+  const kind = await statKind(stat, abs);
+  if (kind === "dir" || kind === "file") return;
+  try {
+    await mkdir(abs, { recursive: true });
+  } catch (err) {
+    if (!isFileExistsError(err)) throw err;
+    const after = await statKind(stat, abs);
+    if (after === "dir" || after === "file") return;
+    throw err;
+  }
+}
+
 export async function writeDesktopNote(
   root: string,
   relPath: string,
   content: string,
 ): Promise<void> {
-  const { writeTextFile, mkdir } = await import("@tauri-apps/plugin-fs");
-  const parts = relPath.replace(/\\/g, "/").split("/").filter(Boolean);
-  parts.pop();
-  if (parts.length) {
-    const dir = joinRoot(root, parts.join("/"));
-    await mkdir(dir, { recursive: true });
-  }
-  await writeTextFile(joinRoot(root, relPath), content);
+  const { writeTextFile, mkdir, stat } = await import("@tauri-apps/plugin-fs");
+  const dest = joinRoot(root, relPath);
+  const destKind = await statKind(stat, dest);
+  const parent = mkdirTargetForWrite(relPath, destKind === "file");
+  if (parent) await mkdirDesktopDir(mkdir, stat, joinRoot(root, parent));
+  await writeTextFile(dest, content);
 }
 
 /** List soft-deleted notes under `.trash/` (newest first). */
@@ -518,8 +566,11 @@ export async function createDesktopFolder(
   root: string,
   relPath: string,
 ): Promise<void> {
-  const { mkdir } = await import("@tauri-apps/plugin-fs");
-  await mkdir(joinRoot(root, relPath), { recursive: true });
+  const { mkdir, stat } = await import("@tauri-apps/plugin-fs");
+  const abs = joinRoot(root, relPath);
+  const target = mkdirTargetForFolder(relPath, await statKind(stat, abs));
+  if (!target || isDesktopFileRel(target)) return;
+  await mkdirDesktopDir(mkdir, stat, joinRoot(root, target));
 }
 
 export async function deleteDesktopPath(
@@ -967,13 +1018,11 @@ export async function writeDesktopBinary(
   relPath: string,
   data: Uint8Array,
 ): Promise<void> {
-  const { writeFile, mkdir } = await import("@tauri-apps/plugin-fs");
-  const parts = relPath.replace(/\\/g, "/").split("/").filter(Boolean);
-  parts.pop();
-  if (parts.length) {
-    await mkdir(joinRoot(root, parts.join("/")), { recursive: true });
-  }
-  await writeFile(joinRoot(root, relPath), data);
+  const { writeFile, mkdir, stat } = await import("@tauri-apps/plugin-fs");
+  const dest = joinRoot(root, relPath);
+  const parent = mkdirTargetForWrite(relPath, (await statKind(stat, dest)) === "file");
+  if (parent) await mkdirDesktopDir(mkdir, stat, joinRoot(root, parent));
+  await writeFile(dest, data);
 }
 
 export async function readDesktopBinary(
