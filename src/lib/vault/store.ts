@@ -29,8 +29,17 @@ import {
   partializeVaultPersist,
   type ScaleRemount,
 } from "./persist-policy";
+import {
+  closeNoteTab as closeTabList,
+  cycleNoteTab as cycleTabList,
+  openNoteTab,
+  reorderNoteTabs as reorderTabList,
+  settlePaneTabs,
+  tabsEqual,
+} from "./note-tabs";
 import { preferCleanWrite } from "@/lib/markdown/serialize";
 import { flushActiveEditors } from "@/lib/editor/flush";
+import { setFindFocusPane } from "@/lib/editor/find-target";
 import { slugifyTitle } from "@/lib/utils";
 import {
   clearDirectoryHandle,
@@ -291,8 +300,10 @@ export type OpenNoteOpts = {
   heading?: string | null;
   blockId?: string | null;
   pane?: EditorPaneRole | "auto";
-  /** Skip nav-history push (secondary pane / history restore). */
+  /** Skip nav-history push (secondary pane / history restore / tab switch). */
   silent?: boolean;
+  /** Keep the current tab and open this note beside it. */
+  newTab?: boolean;
 };
 
 export type UpdateNoteOpts = {
@@ -326,6 +337,10 @@ export type VaultStore = {
   rootIds: string[];
   activeNoteId: string | null;
   secondaryNoteId: string | null;
+  /** Notes open in the main pane, left to right. Session only. */
+  primaryTabs: string[];
+  /** Notes open in the second pane. Session only. */
+  secondaryTabs: string[];
   pendingJump: NoteJump | null;
   settings: VaultSettings;
   expandedFolders: string[];
@@ -392,6 +407,11 @@ export type VaultStore = {
   toggleWorkspaceSplit: () => void;
   closeSecondaryPane: () => void;
   swapWorkspacePanes: () => void;
+  /** Close one tab. The neighbor becomes active. The last secondary tab closes the split. */
+  closeNoteTab: (pane: EditorPaneRole, id: string) => string | null;
+  reorderNoteTabs: (pane: EditorPaneRole, fromId: string, toId: string) => void;
+  /** Move to the next or previous tab in that pane. Returns the note now showing. */
+  cycleNoteTab: (pane: EditorPaneRole, dir: 1 | -1) => string | null;
   clearPendingJump: () => void;
   restoreNoteRevision: (noteId: string, revId: string) => boolean;
   toggleFolder: (id: string) => void;
@@ -734,6 +754,24 @@ function patchVaultIndex(nodes: Record<string, VaultNode>, dirtyIds: string[]) {
 		idx.sync(nodes);
 	} catch {}
 }
+function stageCommit(s: StageBuf): Partial<VaultStore> {
+	const cur = useVaultStore.getState();
+	const patch: Partial<VaultStore> = {
+		nodes: s.nodes,
+		rootIds: s.rootIds,
+		expandedFolders: s.expandedFolders,
+		dirtyNoteIds: s.dirtyNoteIds,
+		activeNoteId: s.activeNoteId,
+	};
+	if (s.activeNoteId !== cur.activeNoteId) {
+		const opened = s.activeNoteId
+			? openNoteTab(cur.primaryTabs ?? [], cur.activeNoteId, s.activeNoteId, "replace")
+			: { tabs: [] as string[], activeId: null as string | null };
+		patch.activeNoteId = opened.activeId;
+		patch.primaryTabs = opened.tabs;
+	}
+	return patch;
+}
 function scheduleStageFlush(set: (partial: Partial<VaultStore>) => void) {
 	if (stageTimer) return;
 	stageTimer = setTimeout(() => {
@@ -741,13 +779,7 @@ function scheduleStageFlush(set: (partial: Partial<VaultStore>) => void) {
 		const s = stageBuf;
 		stageBuf = null;
 		if (!s) return;
-		set({
-			nodes: s.nodes,
-			rootIds: s.rootIds,
-			expandedFolders: s.expandedFolders,
-			dirtyNoteIds: s.dirtyNoteIds,
-			activeNoteId: s.activeNoteId
-		});
+		set(stageCommit(s));
 	}, CREATE_BATCH_MS);
 }
 function flushStageNow(set: (partial: Partial<VaultStore>) => void) {
@@ -758,13 +790,7 @@ function flushStageNow(set: (partial: Partial<VaultStore>) => void) {
 	const s = stageBuf;
 	stageBuf = null;
 	if (!s) return;
-	set({
-		nodes: s.nodes,
-		rootIds: s.rootIds,
-		expandedFolders: s.expandedFolders,
-		dirtyNoteIds: s.dirtyNoteIds,
-		activeNoteId: s.activeNoteId
-	});
+	set(stageCommit(s));
 }
 /** Cancel module-level vault timers/buffers (close or switch vault). */
 function cancelVaultModuleState(opts?: { keepFill?: boolean }) {
@@ -1867,6 +1893,8 @@ function evictBodiesKeeping(keepIds: Iterable<string>): void {
 	const protectedIds = new Set(keepIds);
 	if (s.activeNoteId) protectedIds.add(s.activeNoteId);
 	if (s.secondaryNoteId) protectedIds.add(s.secondaryNoteId);
+	for (const id of s.primaryTabs ?? []) protectedIds.add(id);
+	for (const id of s.secondaryTabs ?? []) protectedIds.add(id);
 	const victims = pickEvictions(protectedIds).filter((id) => !protectedIds.has(id));
 	if (!victims.length) return;
 	const live = s.nodes;
@@ -1928,6 +1956,25 @@ function recentsForOpenVault(
 function resetAndSeedNav(activeNoteId: string | null) {
 	resetNavHistory();
 	if (activeNoteId) pushNav(activeNoteId);
+	const s = useVaultStore.getState();
+	const note = (id: string | null) => Boolean(id && s.nodes[id]?.kind === "note");
+	const patch: Partial<VaultStore> = {};
+	const primaryLive = (s.primaryTabs ?? []).filter((id) => note(id));
+	if (primaryLive.length === 0) {
+		patch.primaryTabs = note(activeNoteId) ? [activeNoteId as string] : [];
+	} else if (note(activeNoteId) && !primaryLive.includes(activeNoteId as string)) {
+		patch.primaryTabs = openNoteTab(primaryLive, s.activeNoteId, activeNoteId as string, "replace").tabs;
+	} else if (primaryLive.length !== (s.primaryTabs ?? []).length) {
+		patch.primaryTabs = primaryLive;
+	}
+	const split = Boolean(s.settings.workspaceSplit && s.secondaryNoteId);
+	const secondaryLive = (s.secondaryTabs ?? []).filter((id) => note(id));
+	if (!split) {
+		if ((s.secondaryTabs ?? []).length) patch.secondaryTabs = [];
+	} else if (secondaryLive.length === 0) {
+		patch.secondaryTabs = note(s.secondaryNoteId) ? [s.secondaryNoteId as string] : [];
+	}
+	if (Object.keys(patch).length) useVaultStore.setState(patch);
 }
 /** Record open in vault-scoped visits + nav + store MRU list. */
 function recordNoteOpen(
@@ -2361,6 +2408,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	rootIds: [],
 	activeNoteId: null,
 	secondaryNoteId: null,
+	primaryTabs: [],
+	secondaryTabs: [],
 	...SHELL_CATALOG_OFF,
 	shellLiveTick: 0,
 	readingView: false,
@@ -2593,7 +2642,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			vaultPath: "",
 			nodes: {},
 			rootIds: [],
-			activeNoteId: null
+			activeNoteId: null,
+			primaryTabs: [],
+			secondaryTabs: [],
 		});
 	},
 	openDemoVault: () => {
@@ -3466,6 +3517,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			nodes: {},
 			rootIds: [],
 			activeNoteId: null,
+			primaryTabs: [],
+			secondaryTabs: [],
 			recentNoteVisits: [],
 			dirtyNoteIds: [],
 			lastExternalSync: null,
@@ -3492,6 +3545,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const leavingDirty = !!(leavingId && get().dirtyNoteIds.includes(leavingId));
 		if (leavingDirty) flushActiveEditors();
 		const pane = opts?.pane === "secondary" ? "secondary" : "primary";
+		const tabMode = opts?.newTab ? "new" : "replace";
 		const jump: NoteJump | null =
 			id && (opts?.heading || opts?.blockId)
 				? {
@@ -3504,21 +3558,28 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 
 		if (pane === "secondary") {
 			if (!id) {
+				setFindFocusPane("primary");
 				set({
 					secondaryNoteId: null,
+					secondaryTabs: [],
 					pendingJump: null,
 					settings: { ...get().settings, workspaceSplit: false },
 				});
 				return;
 			}
 			const note = get().nodes[id];
-			if (id && note?.kind === "note" && note.content === undefined) {
+			const opened = openNoteTab(get().secondaryTabs ?? [], get().secondaryNoteId, id, tabMode);
+			if (opened.activeId === get().secondaryNoteId && opened.tabs === (get().secondaryTabs ?? []) && !jump) {
+				return;
+			}
+			if (note?.kind === "note" && note.content === undefined) {
 				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) {
 					get().ensureNoteBody(id);
 				}
-			} else if (id) touchBody(id);
+			} else if (note) touchBody(id);
 			set({
-				secondaryNoteId: id,
+				secondaryNoteId: opened.activeId,
+				secondaryTabs: opened.tabs,
 				pendingJump: jump,
 				settings: {
 					...get().settings,
@@ -3527,10 +3588,22 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					lastSecondaryNotePath: note?.path ?? get().settings.lastSecondaryNotePath,
 				},
 			});
+			evictBodiesKeeping([id]);
 			return;
 		}
 
-		if (id === get().activeNoteId) {
+		if (!id) {
+			set({
+				activeNoteId: null,
+				primaryTabs: [],
+				pendingJump: null,
+			});
+			sampleHeap("close");
+			return;
+		}
+
+		const openedPrimary = openNoteTab(get().primaryTabs ?? [], get().activeNoteId, id, tabMode);
+		if (id === get().activeNoteId && openedPrimary.tabs === (get().primaryTabs ?? [])) {
 			if (jump) set({ pendingJump: jump });
 			return;
 		}
@@ -3597,7 +3670,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				? Array.from(new Set([...curExpanded, ...pathExpand]))
 				: null;
 		set({
-			activeNoteId: id,
+			activeNoteId: openedPrimary.activeId,
+			primaryTabs: openedPrimary.tabs,
 			pendingJump: jump,
 			...(nextExpanded ? { expandedFolders: nextExpanded } : {}),
 			recentNoteVisits,
@@ -3621,8 +3695,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	toggleWorkspaceSplit: () => {
 		const cur = get().settings.workspaceSplit;
 		if (cur) {
+			setFindFocusPane("primary");
 			set({
 				secondaryNoteId: null,
+				secondaryTabs: [],
 				pendingJump: null,
 				settings: { ...get().settings, workspaceSplit: false },
 			});
@@ -3651,6 +3727,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const nextNode = next ? get().nodes[next] : null;
 		set({
 			secondaryNoteId: next,
+			secondaryTabs: next ? [next] : [],
 			settings: {
 				...get().settings,
 				workspaceSplit: true,
@@ -3667,8 +3744,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	closeSecondaryPane: () => {
+		setFindFocusPane("primary");
 		set({
 			secondaryNoteId: null,
+			secondaryTabs: [],
 			pendingJump: get().pendingJump?.pane === "secondary" ? null : get().pendingJump,
 			settings: { ...get().settings, workspaceSplit: false },
 		});
@@ -3680,6 +3759,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		set({
 			activeNoteId: b,
 			secondaryNoteId: a,
+			primaryTabs: get().secondaryTabs ?? [],
+			secondaryTabs: get().primaryTabs ?? [],
 			settings: {
 				...get().settings,
 				workspaceSplit: true,
@@ -3687,6 +3768,81 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				lastSecondaryNotePath: (a && get().nodes[a]?.path) || get().settings.lastSecondaryNotePath,
 			},
 		});
+	},
+	closeNoteTab: (pane, id) => {
+		if (pane === "secondary") {
+			const closed = closeTabList(get().secondaryTabs ?? [], get().secondaryNoteId, id);
+			if (!closed.activeId) {
+			setFindFocusPane("primary");
+			set({
+				secondaryNoteId: null,
+				secondaryTabs: [],
+				pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+				settings: { ...get().settings, workspaceSplit: false },
+			});
+			return null;
+		}
+		const note = get().nodes[closed.activeId];
+		set({
+			secondaryNoteId: closed.activeId,
+			secondaryTabs: closed.tabs,
+			pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+				settings: {
+					...get().settings,
+					workspaceSplit: true,
+					lastSecondaryNotePath: note?.path ?? get().settings.lastSecondaryNotePath,
+				},
+			});
+			if (note?.kind === "note" && note.content === undefined) {
+				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) get().ensureNoteBody(closed.activeId);
+			} else if (note) touchBody(closed.activeId);
+			return closed.activeId;
+		}
+		const closed = closeTabList(get().primaryTabs ?? [], get().activeNoteId, id);
+		if (!closed.activeId) {
+			set({
+				activeNoteId: null,
+				primaryTabs: [],
+				pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+				settings: { ...get().settings, lastNotePath: null },
+			});
+			sampleHeap("close");
+			return null;
+		}
+		const note = get().nodes[closed.activeId];
+		set({
+			activeNoteId: closed.activeId,
+			primaryTabs: closed.tabs,
+			pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+			settings: {
+				...get().settings,
+				lastNotePath: note?.path ?? get().settings.lastNotePath,
+			},
+		});
+		if (note?.kind === "note" && note.content === undefined) {
+			if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) get().ensureNoteBody(closed.activeId);
+		} else if (note) {
+			touchBody(closed.activeId);
+			evictBodiesKeeping([closed.activeId]);
+		}
+		return closed.activeId;
+	},
+	reorderNoteTabs: (pane, fromId, toId) => {
+		if (pane === "secondary") {
+			const next = reorderTabList(get().secondaryTabs ?? [], fromId, toId);
+			if (!tabsEqual(next, get().secondaryTabs)) set({ secondaryTabs: next });
+			return;
+		}
+		const next = reorderTabList(get().primaryTabs ?? [], fromId, toId);
+		if (!tabsEqual(next, get().primaryTabs)) set({ primaryTabs: next });
+	},
+	cycleNoteTab: (pane, dir) => {
+		const tabs = pane === "secondary" ? (get().secondaryTabs ?? []) : (get().primaryTabs ?? []);
+		const active = pane === "secondary" ? get().secondaryNoteId : get().activeNoteId;
+		const next = cycleTabList(tabs, active, dir);
+		if (!next || next === active) return next;
+		get().setActiveNote(next, { pane, silent: true });
+		return next;
 	},
 	clearPendingJump: () => set({ pendingJump: null }),
 	restoreNoteRevision: (noteId, revId) => {
@@ -4597,20 +4753,40 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			message: `Moved to trash: ${target.path}`,
 			vaultId: get().vaultId
 		});
-		const nextActive = toDelete.has(get().activeNoteId ?? "")
-			? (get().recentNoteVisits ?? []).find(
-					(nid) => nodes[nid]?.kind === "note",
-				) ??
-				Object.values(nodes).find((n) => n.kind === "note")?.id ??
-				null
-			: get().activeNoteId;
+		const activeGone = toDelete.has(get().activeNoteId ?? "");
+		let primaryTabs = (get().primaryTabs ?? []).filter((nid) => !toDelete.has(nid));
+		let nextActive = get().activeNoteId;
+		if (activeGone) {
+			const closed = closeTabList(get().primaryTabs ?? [], get().activeNoteId, get().activeNoteId ?? "");
+			primaryTabs = closed.tabs.filter((nid) => !toDelete.has(nid));
+			nextActive = closed.activeId && !toDelete.has(closed.activeId) ? closed.activeId : null;
+			if (!nextActive) {
+				nextActive =
+					(get().recentNoteVisits ?? []).find((nid) => nodes[nid]?.kind === "note") ??
+					Object.values(nodes).find((n) => n.kind === "note")?.id ??
+					null;
+				if (nextActive && !primaryTabs.includes(nextActive)) primaryTabs = [...primaryTabs, nextActive];
+			}
+		}
 		const droppedSecondary = toDelete.has(get().secondaryNoteId ?? "");
-		const nextSecondary = droppedSecondary ? null : get().secondaryNoteId;
+		let secondaryTabs = (get().secondaryTabs ?? []).filter((nid) => !toDelete.has(nid));
+		let nextSecondary = get().secondaryNoteId;
+		if (droppedSecondary) {
+			const closed = closeTabList(get().secondaryTabs ?? [], get().secondaryNoteId, get().secondaryNoteId ?? "");
+			secondaryTabs = closed.tabs.filter((nid) => !toDelete.has(nid));
+			nextSecondary = closed.activeId && !toDelete.has(closed.activeId) ? closed.activeId : null;
+		}
+		if (!nextSecondary) {
+			secondaryTabs = [];
+			if (get().settings.workspaceSplit) setFindFocusPane("primary");
+		}
 		set({
 			nodes,
 			rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
 			activeNoteId: nextActive,
+			primaryTabs,
 			secondaryNoteId: nextSecondary,
+			secondaryTabs,
 			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
 			dirtyNoteIds: get().dirtyNoteIds.filter((x) => !toDelete.has(x)),
 			trashTick: get().trashTick + 1,
@@ -5358,11 +5534,45 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}, BURST_WINDOW_MS);
 		}
 		const nextToast = conflictToast ? conflictToast : shouldToast && burstCount < BURST_MIN_COUNT ? "Vault updated from disk" : get().toast;
+		const mapOpenTabs = (tabs: string[]) => {
+			const out: string[] = [];
+			const seen = new Set<string>();
+			for (const tid of tabs) {
+				const path = prev[tid]?.path;
+				const nid =
+					nodes[tid]?.kind === "note" ? tid : path ? pathToNewId.get(path) ?? null : null;
+				if (!nid || seen.has(nid) || nodes[nid]?.kind !== "note") continue;
+				seen.add(nid);
+				out.push(nid);
+			}
+			return out;
+		};
+		let primaryTabs = mapOpenTabs(get().primaryTabs ?? []);
+		if (nextActive && nodes[nextActive]?.kind === "note" && !primaryTabs.includes(nextActive)) {
+			primaryTabs = openNoteTab(primaryTabs, null, nextActive, "new").tabs;
+		}
+		if (!nextActive) primaryTabs = [];
+		let nextSecondary = get().secondaryNoteId;
+		if (nextSecondary && nodes[nextSecondary]?.kind !== "note") {
+			const secPath = prev[nextSecondary]?.path;
+			const nid = secPath ? pathToNewId.get(secPath) ?? null : null;
+			nextSecondary = nid && nodes[nid]?.kind === "note" ? nid : null;
+		}
+		let secondaryTabs = nextSecondary ? mapOpenTabs(get().secondaryTabs ?? []) : [];
+		if (nextSecondary && !secondaryTabs.includes(nextSecondary)) {
+			secondaryTabs = openNoteTab(secondaryTabs, null, nextSecondary, "new").tabs;
+		}
 		set({
 			nodes,
 			rootIds: nextRootIds,
 			lastExternalSync: now,
 			activeNoteId: nextActive,
+			primaryTabs,
+			secondaryNoteId: nextSecondary,
+			secondaryTabs,
+			...(get().settings.workspaceSplit && !nextSecondary
+				? { settings: { ...get().settings, workspaceSplit: false } }
+				: {}),
 			dirtyNoteIds: remappedDirty,
 			toast: nextToast,
 			toastAction: nextToast === get().toast ? get().toastAction : null,
@@ -5991,6 +6201,7 @@ export const useVaultStore = create(
 			if (!secondary) {
 				useVaultStore.setState({
 					secondaryNoteId: null,
+					secondaryTabs: [],
 					settings: { ...s.settings, workspaceSplit: false },
 				});
 				return;
@@ -6002,6 +6213,79 @@ export const useVaultStore = create(
 	},
 })
 ) as unknown as import("zustand").UseBoundStore<import("zustand").StoreApi<VaultStore>>;
+
+/** Keep each pane's strip on the note that is actually open. */
+let noteTabSettle = false;
+useVaultStore.subscribe((state, prev) => {
+	if (noteTabSettle || !prev) return;
+	const prevTabsP = prev.primaryTabs ?? [];
+	const prevTabsS = prev.secondaryTabs ?? [];
+	const nextTabsP = state.primaryTabs ?? [];
+	const nextTabsS = state.secondaryTabs ?? [];
+	const same =
+		state.nodes === prev.nodes &&
+		state.activeNoteId === prev.activeNoteId &&
+		state.secondaryNoteId === prev.secondaryNoteId &&
+		nextTabsP === prevTabsP &&
+		nextTabsS === prevTabsS &&
+		state.settings.workspaceSplit === prev.settings.workspaceSplit;
+	if (same) return;
+	const alive = (id: string, active: string | null) => {
+		const n = state.nodes[id];
+		if (n?.kind === "note") return true;
+		if (n) return false;
+		return active != null && id === active;
+	};
+	const primary = settlePaneTabs({
+		prevTabs: prevTabsP,
+		prevActive: prev.activeNoteId,
+		nextTabs: nextTabsP,
+		nextActive: state.activeNoteId,
+		tabsTouched: nextTabsP !== prevTabsP,
+		alive: (id) => alive(id, state.activeNoteId),
+	});
+	const splitOff = !state.settings.workspaceSplit && !state.secondaryNoteId;
+	const secondary = splitOff
+		? { tabs: [] as string[], activeId: null as string | null }
+		: settlePaneTabs({
+				prevTabs: prevTabsS,
+				prevActive: prev.secondaryNoteId,
+				nextTabs: nextTabsS,
+				nextActive: state.secondaryNoteId,
+				tabsTouched: nextTabsS !== prevTabsS,
+				alive: (id) => alive(id, state.secondaryNoteId),
+			});
+	const patch: Partial<VaultStore> = {};
+	if (!tabsEqual(primary.tabs, nextTabsP) || primary.activeId !== state.activeNoteId) {
+		patch.primaryTabs = primary.tabs;
+		patch.activeNoteId = primary.activeId;
+	}
+	if (!tabsEqual(secondary.tabs, nextTabsS) || secondary.activeId !== state.secondaryNoteId) {
+		patch.secondaryTabs = secondary.tabs;
+		if (secondary.activeId !== state.secondaryNoteId) patch.secondaryNoteId = secondary.activeId;
+		if (!secondary.activeId && state.settings.workspaceSplit) {
+			patch.settings = { ...state.settings, workspaceSplit: false };
+			setFindFocusPane("primary");
+		}
+	}
+	if (!patch.primaryTabs && !patch.secondaryTabs && patch.activeNoteId === undefined && patch.secondaryNoteId === undefined && !patch.settings) {
+		return;
+	}
+	noteTabSettle = true;
+	try {
+		useVaultStore.setState(patch);
+		const live = useVaultStore.getState();
+		for (const id of [patch.activeNoteId, patch.secondaryNoteId]) {
+			if (!id) continue;
+			const n = live.nodes[id];
+			if (n?.kind === "note" && n.content === undefined) {
+				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) void live.ensureNoteBody(id);
+			}
+		}
+	} finally {
+		noteTabSettle = false;
+	}
+});
 
 /** DEV-only probe for Playwright / stress harnesses — not shipped to production. */
 if (import.meta.env.DEV && typeof window !== "undefined") {

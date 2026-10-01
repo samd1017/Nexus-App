@@ -23,6 +23,18 @@ import {
   type HotkeyId,
 } from "@/lib/prefs/hotkeys";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
+import { getFindFocusPane } from "@/lib/editor/find-target";
+import { focusEditorPane } from "@/lib/editor/pane-focus";
+
+/** Obsidian next/prev tab. Ctrl+Tab is reserved in some browsers; PageDown is the same chord. */
+function tabCycleDir(e: KeyboardEvent): 1 | -1 | null {
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod || e.altKey) return null;
+  if (e.key === "Tab") return e.shiftKey ? -1 : 1;
+  if (e.key === "PageDown" && !e.shiftKey) return 1;
+  if (e.key === "PageUp" && !e.shiftKey) return -1;
+  return null;
+}
 
 /** True if key matches letter (layout-safe: prefer e.code). */
 function isModLetter(e: KeyboardEvent, letter: string): boolean {
@@ -162,6 +174,25 @@ function runHotkey(id: HotkeyId): boolean {
 export function KeyboardShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const cycleDir = tabCycleDir(e);
+      if (
+        cycleDir &&
+        !e.isComposing &&
+        document.documentElement.dataset.nexusHotkeyCapture !== "1" &&
+        !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
+      ) {
+        const store = useVaultStore.getState();
+        const prefs = usePrefsStore.getState();
+        if (!store.commandOpen && !prefs.settingsOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          const split = Boolean(store.settings.workspaceSplit && store.secondaryNoteId);
+          const pane = split ? getFindFocusPane() : "primary";
+          store.cycleNoteTab(pane, cycleDir);
+          focusEditorPane(pane);
+          return;
+        }
+      }
       // Hold-repeat floods notes; IME composition should not fire chords
       if (e.repeat || e.isComposing || e.defaultPrevented) return;
       if (document.documentElement.dataset.nexusHotkeyCapture === "1") return;

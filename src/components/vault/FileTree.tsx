@@ -18,6 +18,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useVaultStore } from "@/lib/vault/store";
+import { noteOpenGesture } from "@/lib/vault/note-tabs";
+import { getFindFocusPane } from "@/lib/editor/find-target";
+import { isMacOS } from "@/lib/platform";
 import { vaultIndex } from "@/lib/vault/indexes";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
@@ -127,6 +130,21 @@ function resolveDropFromPoint(
   return null;
 }
 
+function openListedNote(
+  id: string,
+  e?: { altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; button?: number },
+) {
+  const gesture = noteOpenGesture(e ?? {}, { mac: isMacOS() });
+  const store = useVaultStore.getState();
+  if (gesture === "secondary") {
+    store.openNoteInPane("secondary", id);
+    return;
+  }
+  const split = Boolean(store.settings.workspaceSplit && store.secondaryNoteId);
+  const pane = split ? getFindFocusPane() : "primary";
+  store.setActiveNote(id, { pane, newTab: gesture === "new" });
+}
+
 function dropTargetsEqual(a: DropTarget, b: DropTarget): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -189,7 +207,6 @@ const TreeRow = memo(function TreeRow({
     }
     return false;
   });
-  const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const renameNode = useVaultStore((s) => s.renameNode);
 
   const renaming = renamingId === nodeId;
@@ -296,12 +313,7 @@ const TreeRow = memo(function TreeRow({
       onToggleFolder(node.id);
       return;
     }
-    if (e?.altKey || (e?.metaKey && e?.shiftKey)) {
-      useVaultStore.getState().openNoteInPane?.("secondary", node.id);
-      closeDrawersIfNarrow();
-      return;
-    }
-    setActiveNote(node.id);
+    openListedNote(node.id, e);
     closeDrawersIfNarrow();
   };
 
@@ -364,6 +376,11 @@ const TreeRow = memo(function TreeRow({
         onFocusRow?.(node.id);
         // Primary open path is pointerup (see FileTree endDrag). Click is
         // fallback for keyboard / synthetic activation when no drag session.
+        openNote(e);
+      }}
+      onAuxClick={(e) => {
+        if (e.button !== 1 || node.kind !== "note") return;
+        onFocusRow?.(node.id);
         openNote(e);
       }}
       onDoubleClick={(e) => {
@@ -544,7 +561,6 @@ export const FileTree = memo(function FileTree() {
   const createFolder = useVaultStore((s) => s.createFolder);
   const requestDelete = useVaultStore((s) => s.requestDelete);
   const toggleFolder = useVaultStore((s) => s.toggleFolder);
-  const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -1230,7 +1246,7 @@ export const FileTree = memo(function FileTree() {
           }
           toggleFolderReveal(node.id);
         } else {
-          setActiveNote(node.id);
+          openListedNote(node.id);
           closeDrawersIfNarrow();
         }
         return;
@@ -1251,7 +1267,6 @@ export const FileTree = memo(function FileTree() {
       renamingId,
       focusedIndex,
       toggleFolderReveal,
-      setActiveNote,
       showMore,
       virtualizer,
       setCtx,
@@ -1439,11 +1454,7 @@ export const FileTree = memo(function FileTree() {
           // Alt-click (or Cmd-Shift-click) parks the note in the second pane.
           // The row's click handler says the same thing, but pointerup owns
           // the open and used to ignore those modifiers.
-          if (e.altKey || (e.metaKey && e.shiftKey)) {
-            useVaultStore.getState().openNoteInPane?.("secondary", s.id);
-          } else {
-            useVaultStore.getState().setActiveNote(s.id);
-          }
+          openListedNote(s.id, e);
         }
         return;
       }
@@ -1874,7 +1885,7 @@ export const FileTree = memo(function FileTree() {
                       icon={<FileText size={13} />}
                       label="Open"
                       onClick={() => {
-                        setActiveNote(ctxNode.id);
+                        openListedNote(ctxNode.id);
                         setCtx(null);
                       }}
                     />

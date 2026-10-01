@@ -16,10 +16,14 @@ import {
   handleVisualPaste,
 } from "@/lib/editor/paste-import";
 import {
+  getFindFocusPane,
   registerVisualFindAdapter,
   setFindFocusPane,
   type FindMatch,
 } from "@/lib/editor/find-target";
+import { rememberPaneScroll, recallPaneScroll } from "@/lib/editor/pane-scroll";
+import { noteOpenGesture } from "@/lib/vault/note-tabs";
+import { isMacOS } from "@/lib/platform";
 import { findMatchesInPmDoc } from "@/lib/editor/find-pm";
 import { FindHighlight } from "@/lib/editor/find-highlight";
 import { HighlightMark } from "@/lib/editor/highlight-mark";
@@ -104,7 +108,12 @@ function lostSpecialMarkdown(prev: string, next: string): boolean {
   return false;
 }
 
-function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) {
+function openWikilinkTarget(
+  target: string,
+  event?: Event,
+  hostNoteId?: string,
+  editorPane: "primary" | "secondary" = "primary",
+) {
   const state = useVaultStore.getState();
   // Persist current editor first so graph/backlinks update immediately
   try {
@@ -113,10 +122,9 @@ function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) 
     /* ignore */
   }
   const ev = event as MouseEvent | undefined;
-  const pane =
-    ev && (ev.altKey || (ev.metaKey && ev.shiftKey))
-      ? ("secondary" as const)
-      : ("primary" as const);
+  const gesture = noteOpenGesture(ev ?? {}, { mac: isMacOS() });
+  const split = Boolean(state.settings.workspaceSplit && state.secondaryNoteId);
+  const pane = gesture === "secondary" ? "secondary" : editorPane || (split ? getFindFocusPane() : "primary");
   const activateNote = (id: string, jump: LinkJump) => {
     const live = useVaultStore.getState();
     const noteCount = ensureVaultIndex(live.nodes).noteCount;
@@ -124,7 +132,7 @@ function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) 
     if (shouldUseFolderGraph(noteCount) && pane !== "secondary") {
       live.enterGraphEgo?.({ returnPath: live.graphBrowsePath || "" });
     }
-    live.setActiveNote(id, jump);
+    live.setActiveNote(id, { ...jump, pane, newTab: gesture === "new" });
   };
   void openWikilink(target, {
     hostId: hostNoteId || state.activeNoteId,
@@ -300,6 +308,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const baselineMd = useRef(upgradeSparseDailySkeleton(content || ""));
   const lastWrittenRef = useRef(baselineMd.current);
   const noteIdRef = useRef(noteId);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef(content);
   // Bumps so a note switch does not apply a stale setContent.
   const contentApplyGen = useRef(0);
@@ -610,7 +619,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         TableCell,
         Wikilink.configure({
           onOpen: (target, event) =>
-            openWikilinkTarget(target, event, noteIdRef.current),
+            openWikilinkTarget(target, event, noteIdRef.current, pane),
         }),
         HighlightMark,
         Callout,
@@ -938,6 +947,19 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   // Turn leftover empty `-` Focus/Later bullets into tasks, then sync.
   // Keep one TipTap instance across notes — remounting @45k is a 0.7–1.1s hitch.
   useEffect(() => {
+    const previousNoteId = noteIdRef.current;
+    const switchedNote = previousNoteId !== noteId;
+    if (switchedNote && scrollRef.current && previousNoteId) {
+      rememberPaneScroll(pane, previousNoteId, scrollRef.current.scrollTop);
+    }
+    const restoreScroll = () => {
+      if (!switchedNote) return;
+      const port = scrollRef.current;
+      if (!port) return;
+      const path = useVaultStore.getState().nodes[noteId]?.path;
+      if (writeFocusPending(path)) return;
+      port.scrollTop = recallPaneScroll(pane, noteId);
+    };
     if (noteIdRef.current !== noteId && editor && !editor.isDestroyed) {
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
@@ -965,15 +987,24 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       userEdited.current = false;
       updateNoteContent(noteId, incoming, { source: true });
     }
-    if (!editor || editor.isDestroyed) return;
+    if (!editor || editor.isDestroyed) {
+      restoreScroll();
+      return;
+    }
     if (userEdited.current) {
       const external =
         incoming !== lastWrittenRef.current &&
         !isOnlySerializationNoise(incoming, lastWrittenRef.current);
-      if (!external) return;
+      if (!external) {
+        restoreScroll();
+        return;
+      }
       userEdited.current = false;
     }
-    if (isOnlySerializationNoise(baselineMd.current, incoming)) return;
+    if (isOnlySerializationNoise(baselineMd.current, incoming)) {
+      restoreScroll();
+      return;
+    }
     applying.current = true;
     baselineMd.current = incoming;
     lastWrittenRef.current = incoming;
@@ -1000,9 +1031,10 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         paintEditorExtras(editor);
         applying.current = false;
         writeHeldText(editor, pathAtApply, refillPending);
+        restoreScroll();
       });
     });
-  }, [editor, content, noteId, updateNoteContent, commit]);
+  }, [editor, content, noteId, pane, updateNoteContent, commit, refillPending]);
 
   // Morning autofocus: today's daily with empty Focus bullet — once per note open
   useEffect(() => {
@@ -1212,7 +1244,10 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       }}
     >
       <EditorToolbar editor={editor} />
-      <div className="editor-scrollport relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6">
+      <div
+        ref={scrollRef}
+        className="editor-scrollport relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6"
+      >
         <div className={cn("mx-auto max-w-[720px]", isDaily && "daily-visual")}>
           <EditorContent editor={editor} />
         </div>

@@ -22,6 +22,7 @@ import {
 import { useVaultStore, getBreadcrumbTrail, noteFileIsMissing, wroteHereRecently } from "@/lib/vault/store";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
+import { NoteTabBar } from "./NoteTabBar";
 import { VisualEditor } from "./VisualEditor";
 import { SourceEditor } from "./SourceEditor";
 import { SourcePreview } from "./SourcePreview";
@@ -83,6 +84,9 @@ export function EditorPane({
   const [findReplace, setFindReplace] = useState(false);
   const resolvedId = useVaultStore((s) =>
     pane === "secondary" ? (noteId ?? s.secondaryNoteId) : (noteId ?? s.activeNoteId),
+  );
+  const openTabs = useVaultStore((s) =>
+    (pane === "secondary" ? s.secondaryTabs : s.primaryTabs) ?? [],
   );
   const note = useVaultStore((s) =>
     resolvedId ? (s.nodes[resolvedId] ?? null) : null,
@@ -215,9 +219,8 @@ export function EditorPane({
             setHydrateError(true);
             return;
           }
+          useVaultStore.getState().closeNoteTab(isSecondary ? "secondary" : "primary", id);
           useVaultStore.setState({
-            activeNoteId: null,
-            settings: { ...st.settings, lastNotePath: null },
             toast: `${path} is not on disk anymore. Pick a note in the list.`,
           });
           revealFileList((tree) => {
@@ -287,12 +290,48 @@ export function EditorPane({
   }, [isSecondary, noteCount, startFirstNote]);
 
   if (!note || note.kind !== "note") {
+    if (openTabs.length > 0 && resolvedId && openTabs.includes(resolvedId)) {
+      return (
+        <div
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
+          data-editor-pane={pane}
+          data-testid="nexus-editor"
+          data-body-loading="true"
+          role="status"
+          aria-live="polite"
+        >
+          <NoteTabBar pane={pane} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
+            <p className="text-[14px] text-[var(--text-secondary)]">Loading note…</p>
+          </div>
+        </div>
+      );
+    }
+    if (openTabs.length > 0) {
+      return (
+        <div
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
+          data-editor-pane={pane}
+          data-editor-empty="note"
+        >
+          <NoteTabBar pane={pane} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
+            <h2 className="text-[22px] font-semibold tracking-tight">No file is open</h2>
+            <p className="mt-2 max-w-sm text-[14px] text-[var(--text-secondary)]">
+              Choose an open note, or close the tab.
+            </p>
+          </div>
+        </div>
+      );
+    }
     if (isSecondary) {
       return (
         <div
-          className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)] px-6 text-center"
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
           data-editor-pane="secondary"
         >
+          <NoteTabBar pane="secondary" />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <p className="text-[14px] text-[var(--text-secondary)]">
             Open a second note
           </p>
@@ -306,13 +345,16 @@ export function EditorPane({
           >
             Close pane
           </button>
+          </div>
         </div>
       );
     }
     const emptyVault = noteCount === 0;
     return (
+      <div className="flex h-full min-w-0 flex-1 flex-col" data-editor-pane={pane}>
+        <NoteTabBar pane={pane} />
       <div
-        className="fade-in flex h-full min-w-0 flex-1 flex-col items-center justify-center px-8 text-center"
+        className="fade-in flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center"
         data-editor-empty={emptyVault ? "vault" : "note"}
       >
         <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] text-[var(--accent)] shadow-[0_0_40px_rgba(0,200,255,0.12)]">
@@ -399,6 +441,7 @@ export function EditorPane({
           )}
         </div>
       </div>
+      </div>
     );
   }
 
@@ -407,10 +450,13 @@ export function EditorPane({
     if (hydrateError) {
       return (
         <div
-          className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)] px-6 text-center"
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
           data-active-note={note.id}
+          data-editor-pane={pane}
           data-body-error="true"
         >
+          <NoteTabBar pane={pane} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <AlertCircle
             size={28}
             className="mb-3 text-[var(--danger)]"
@@ -441,19 +487,20 @@ export function EditorPane({
               type="button"
               className="ghost-btn"
               onClick={() => {
-                useVaultStore.setState({ activeNoteId: null });
+                useVaultStore.getState().closeNoteTab(pane, note.id);
                 revealFileList((tree) => tree.focus({ preventScroll: true }));
               }}
             >
               Back to the list
             </button>
           </div>
+          </div>
         </div>
       );
     }
     return (
       <div
-        className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)]"
+        className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
         data-active-note={note.id}
         data-editor-pane={pane}
         data-testid="nexus-editor"
@@ -461,6 +508,8 @@ export function EditorPane({
         role="status"
         aria-live="polite"
       >
+        <NoteTabBar pane={pane} />
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
         <Loader2
           size={28}
           className="mb-3 animate-spin text-[var(--accent)]"
@@ -468,6 +517,7 @@ export function EditorPane({
         />
         <p className="text-[14px] text-[var(--text-secondary)]">Loading note…</p>
         <p className="mt-1 text-[12px] text-[var(--text-muted)]">{note.path}</p>
+        </div>
       </div>
     );
   }
@@ -487,6 +537,7 @@ export function EditorPane({
       data-testid="nexus-editor"
       onPointerDownCapture={() => setFindFocusPane(pane)}
     >
+      <NoteTabBar pane={pane} />
       <div className="nexus-editor-head flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
         <div className="nexus-editor-title min-w-0 flex-1">
           {/* Parent path only — note title lives in NoteTitleInput (avoids Untitled / Untitled) */}
@@ -775,7 +826,7 @@ export function EditorPane({
             className="nexus-reading-view flex min-h-0 flex-1 flex-col"
             data-reading-view="true"
           >
-            <SourcePreview content={body} noteId={note.id} reading />
+            <SourcePreview content={body} noteId={note.id} reading pane={pane} />
           </div>
         ) : editorMode === "visual" && canvasNote ? (
           <CanvasBoard noteId={note.id} content={body} />
@@ -795,7 +846,7 @@ export function EditorPane({
               <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Live preview
               </div>
-              <SourcePreview content={previewBody} noteId={note.id} />
+              <SourcePreview content={previewBody} noteId={note.id} pane={pane} />
             </div>
           </div>
         ) : (

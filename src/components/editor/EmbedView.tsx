@@ -3,6 +3,8 @@ import type { NodeViewProps } from "@tiptap/react";
 import { FileText } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
+import { noteOpenGesture } from "@/lib/vault/note-tabs";
+import { isMacOS } from "@/lib/platform";
 import { noteTitle } from "@/lib/vault/types";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { catalogLinkTarget, readEmbedBody } from "@/lib/editor/open-wikilink";
@@ -130,12 +132,16 @@ export function EmbedView({ node, editor }: NodeViewProps) {
     }
   }, [sliced.body, isSelfFull]);
 
-  const openTarget = (pane?: "primary" | "secondary") => {
+  const openTarget = (e: { altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; button?: number; currentTarget?: EventTarget | null }) => {
     if (!note) return;
+    const gesture = noteOpenGesture(e, { mac: isMacOS() });
+    const host = (e.currentTarget as HTMLElement | null)?.closest?.("[data-editor-pane]");
+    const editorPane = host?.getAttribute("data-editor-pane") === "secondary" ? "secondary" : "primary";
     setActiveNote(note.id, {
       heading: parts.heading,
       blockId: parts.blockId,
-      pane,
+      pane: gesture === "secondary" ? "secondary" : editorPane,
+      newTab: gesture === "new",
     });
   };
 
@@ -153,7 +159,12 @@ export function EmbedView({ node, editor }: NodeViewProps) {
           <button
             type="button"
             className="min-w-0 truncate font-medium text-[var(--text-primary)] hover:underline"
-            onClick={(e) => openTarget(e.altKey ? "secondary" : "primary")}
+            onClick={(e) => openTarget(e)}
+            onAuxClick={(e) => {
+              if (e.button !== 1) return;
+              e.preventDefault();
+              openTarget(e);
+            }}
           >
             {noteTitle(note)}
             {sliceLabel ? (

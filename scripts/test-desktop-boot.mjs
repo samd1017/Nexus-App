@@ -1959,7 +1959,7 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(scSrc.includes("with_time_budget(conn, budget, || resolve_link_id(conn, &norm))"), true);
   const paneSrc = readFileSync(new URL("../src/components/editor/EditorPane.tsx", import.meta.url), "utf8");
   assert.equal(paneSrc.includes('data-reading-view="true"'), true);
-  assert.equal(paneSrc.includes("<SourcePreview content={body} noteId={note.id} reading />"), true);
+  assert.equal(paneSrc.includes("<SourcePreview content={body} noteId={note.id} reading pane={pane} />"), true);
   assert.equal(paneSrc.includes('title={`Reading view (${formatShortcut("E")})`}'), true);
   const storeSrc3 = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");
   assert.equal(storeSrc3.includes("if (get().readingView) set({ readingView: false });"), true, "a created note opens for writing");

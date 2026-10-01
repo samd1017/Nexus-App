@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { normalizeLineEndings } from "@/lib/markdown/purity";
 import { registerSourceFlush } from "@/lib/editor/flush";
+import { rememberPaneScroll, recallPaneScroll } from "@/lib/editor/pane-scroll";
+import { writeFocusPending } from "@/lib/editor/write-intent";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   buildSuggestItems,
@@ -246,6 +248,9 @@ export function SourceEditor({
       useVaultStore.getState().nodes[noteId]?.content ?? content ?? "",
     );
     const noteChanged = noteIdRef.current !== noteId;
+    if (noteChanged && taRef.current && noteIdRef.current) {
+      rememberPaneScroll(pane, noteIdRef.current, taRef.current.scrollTop);
+    }
     if (noteChanged) {
       noteIdRef.current = noteId;
       dirtyRef.current = false;
@@ -254,6 +259,14 @@ export function SourceEditor({
       valueRef.current = live;
       emitLive(live);
       setSuggestOpen(false);
+      const restoreId = noteId;
+      window.requestAnimationFrame(() => {
+        const ta = taRef.current;
+        if (!ta || noteIdRef.current !== restoreId) return;
+        const path = useVaultStore.getState().nodes[restoreId]?.path;
+        if (writeFocusPending(path)) return;
+        ta.scrollTop = recallPaneScroll(pane, restoreId);
+      });
       return;
     }
     if (dirtyRef.current) {
@@ -265,7 +278,7 @@ export function SourceEditor({
     setValue(live);
     valueRef.current = live;
     emitLive(live);
-  }, [noteId, content, emitLive]);
+  }, [noteId, content, emitLive, pane]);
 
   // Morning autofocus: today's daily + empty Focus — once per note open
   useEffect(() => {
