@@ -61,7 +61,7 @@ assert.match(board, /data-testid="canvas-empty"/);
 assert.match(board, /data-testid="canvas-add-note"/);
 assert.match(board, /data-testid="canvas-open-note"/);
 assert.match(board, /serializeCanvas/);
-assert.match(board, /Not full Obsidian Canvas/);
+assert.match(board, /Still missing: live note embeds/);
 const pane = readFileSync("src/components/editor/EditorPane.tsx", "utf8");
 assert.match(pane, /isCanvasNote\(body, note\.path\)/);
 assert.match(pane, /canvasNote \? \(\s*<CanvasBoard/);
