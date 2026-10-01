@@ -8,6 +8,7 @@ import {
   type FormulaRefs,
   type FormulaResult,
   type FormulaRow,
+  type FormulaValue,
 } from "@/lib/vault/note-formula";
 import { extractTagsFromMarkdown } from "@/lib/vault/tags";
 
@@ -45,6 +46,8 @@ export type FormulaCell = {
   kind: "empty" | "text" | "number" | "date" | "boolean";
   /** Set when the value is a note link or a list of only note links, so the cell can open them. */
   links?: NoteLink[];
+  /** The typed result, so summary formulas see dates, lists, and links rather than text. */
+  raw?: FormulaValue;
 };
 
 export const SUMMARY_KIND_IDS = [
@@ -65,6 +68,21 @@ export const SUMMARY_KIND_IDS = [
   "unchecked",
 ] as const;
 export type SummaryKind = (typeof SUMMARY_KIND_IDS)[number];
+
+export const CUSTOM_SUMMARY_PREFIX = "custom:";
+/** A built-in summary, or `custom:<name>` for a summary formula. */
+export type SummaryChoice = SummaryKind | `custom:${string}`;
+/** A summary formula: `values` is the column's values in each group. Shared by both views, like a .base file. */
+export type BasesSummaryFormula = { name: string; expr: string };
+export const MAX_SUMMARY_FORMULAS = 12;
+
+export function customSummary(name: string): SummaryChoice {
+  return `${CUSTOM_SUMMARY_PREFIX}${name}`;
+}
+
+export function customSummaryName(choice: SummaryChoice): string | null {
+  return choice.startsWith(CUSTOM_SUMMARY_PREFIX) ? choice.slice(CUSTOM_SUMMARY_PREFIX.length) : null;
+}
 
 /** Rows grouped by one column's value; `column` uses the same ids as sort. */
 export type BasesGroupBy = { column: string; dir: "asc" | "desc" };
@@ -92,7 +110,7 @@ export type BasesViewConfig = {
   layout: "table" | "cards";
   groupBy: BasesGroupBy | null;
   /** One summary per column id, shown under each group and under the whole view. */
-  summaries: Record<string, SummaryKind>;
+  summaries: Record<string, SummaryChoice>;
 };
 
 /** Vault file for the saved table. Not an Obsidian .base file. */
@@ -101,6 +119,7 @@ export const NOTE_TABLE_FILE = ".nexus/note-table.json";
 export type BasesSession = {
   activeId: "all" | "saved";
   views: BasesViewConfig[];
+  summaryFormulas: BasesSummaryFormula[];
 };
 
 const MAX_ROWS = 400;
@@ -250,6 +269,7 @@ export function defaultBasesSession(): BasesSession {
         summaries: {},
       },
     ],
+    summaryFormulas: [],
   };
 }
 
@@ -343,11 +363,46 @@ export function asSummaryKind(raw: unknown): SummaryKind | null {
   return typeof raw === "string" && (SUMMARY_KIND_IDS as readonly string[]).includes(raw) ? (raw as SummaryKind) : null;
 }
 
-function asSummaries(raw: unknown, formulas: BasesFormula[]): Record<string, SummaryKind> {
-  const out: Record<string, SummaryKind> = {};
+/** A built-in kind, or `custom:<name>` with a name; a name with no formula shows that error in its cell. */
+export function asSummaryChoice(raw: unknown): SummaryChoice | null {
+  const kind = asSummaryKind(raw);
+  if (kind) return kind;
+  if (typeof raw !== "string" || !raw.startsWith(CUSTOM_SUMMARY_PREFIX)) return null;
+  const name = raw.slice(CUSTOM_SUMMARY_PREFIX.length).trim();
+  return name ? customSummary(name) : null;
+}
+
+/** Names are trimmed, unique, and never a built-in summary's name, so `.base` reads them back the same. */
+export function summaryFormulaNameProblem(name: string, others: string[]): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "Name the summary formula.";
+  if (trimmed.length > 60) return "Keep the name under 60 characters.";
+  if ((SUMMARY_KIND_IDS as readonly string[]).includes(trimmed.toLowerCase().replace(/[\s_-]+/g, ""))) {
+    return `“${trimmed}” is a built-in summary; pick another name.`;
+  }
+  if (others.some((other) => other.trim().toLowerCase() === trimmed.toLowerCase())) return `Another summary formula is named “${trimmed}”.`;
+  return null;
+}
+
+export function asSummaryFormulas(raw: unknown): BasesSummaryFormula[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BasesSummaryFormula[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_SUMMARY_FORMULAS) break;
+    if (!item || typeof item !== "object") continue;
+    const row = item as Partial<BasesSummaryFormula>;
+    const name = typeof row.name === "string" ? row.name.trim() : "";
+    if (!name || out.some((f) => f.name.toLowerCase() === name.toLowerCase())) continue;
+    out.push({ name: name.slice(0, 60), expr: typeof row.expr === "string" ? row.expr : "" });
+  }
+  return out;
+}
+
+function asSummaries(raw: unknown, formulas: BasesFormula[]): Record<string, SummaryChoice> {
+  const out: Record<string, SummaryChoice> = {};
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
   for (const [column, kind] of Object.entries(raw as Record<string, unknown>)) {
-    const valid = asSummaryKind(kind);
+    const valid = asSummaryChoice(kind);
     if (valid && isViewColumn(column, formulas)) out[column] = valid;
   }
   return out;
@@ -403,6 +458,7 @@ export function parseBasesSession(raw: string | null): BasesSession {
       return {
         activeId: parsed.activeId === "saved" ? "saved" : "all",
         views: [all, saved],
+        summaryFormulas: asSummaryFormulas((parsed as { summaryFormulas?: unknown }).summaryFormulas),
       };
     }
     if (typeof parsed.query === "string" || typeof parsed.folder === "string") {
@@ -615,6 +671,7 @@ export function buildNoteTable(
         error: computed.error,
         sort: computed.sort,
         kind: cellKind(computed),
+        raw: computed.error ? null : computed.raw,
         ...(cellLinkList ? { links: cellLinkList } : {}),
       };
       const entry = computed.error ? { error: computed.error } : { value: computed.raw };

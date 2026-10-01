@@ -3,11 +3,21 @@
  * Summaries read the rows on screen (after filters, up to the table's row cap).
  */
 
-import { parseFormulaDate } from "@/lib/vault/note-formula";
+import {
+  compileSummaryFormula,
+  formulaPropValue,
+  parseFormulaDate,
+  runSummaryFormula,
+  type CompiledFormula,
+  type FormulaValue,
+} from "@/lib/vault/note-formula";
 import {
   FORMULA_COLUMN_PREFIX,
+  customSummaryName,
   type BasesGroupBy,
+  type BasesSummaryFormula,
   type NoteTableRow,
+  type SummaryChoice,
   type SummaryKind,
 } from "@/lib/vault/note-table";
 
@@ -33,8 +43,8 @@ export const SUMMARY_KINDS: { id: SummaryKind; label: string; needs: Needs }[] =
 
 const KIND_BY_ID = new Map(SUMMARY_KINDS.map((kind) => [kind.id, kind]));
 
-export function summaryLabel(kind: SummaryKind): string {
-  return KIND_BY_ID.get(kind)?.label ?? kind;
+export function summaryLabel(choice: SummaryChoice): string {
+  return customSummaryName(choice) ?? KIND_BY_ID.get(choice as SummaryKind)?.label ?? choice;
 }
 
 export type ColumnCell = {
@@ -106,7 +116,63 @@ export type SummaryResult = {
   text: string;
   /** Tooltip: how many notes fed the number, or why there is none. */
   detail: string;
+  /** A summary formula that did not parse or failed on these values. */
+  error?: string;
 };
+
+/**
+ * What a summary formula sees as `values`: one item per note, typed as
+ * formulas read the column. A note without the property, or whose formula
+ * failed, gives null, so `values.length` counts notes.
+ */
+export function summaryValues(rows: NoteTableRow[], column: string): FormulaValue[] {
+  return rows.map((row): FormulaValue => {
+    if (column === "name") return row.name;
+    if (column === "folder") return row.folder;
+    if (column === "path") return row.path;
+    if (column.startsWith(FORMULA_COLUMN_PREFIX)) {
+      const cell = row.formulas[column.slice(FORMULA_COLUMN_PREFIX.length)];
+      return !cell || cell.error ? null : (cell.raw ?? null);
+    }
+    return formulaPropValue(row.props[column]);
+  });
+}
+
+const compiledSummaries = new Map<string, CompiledFormula>();
+
+function compiledSummary(expr: string): CompiledFormula {
+  let hit = compiledSummaries.get(expr);
+  if (!hit) {
+    if (compiledSummaries.size > 200) compiledSummaries.clear();
+    hit = compileSummaryFormula(expr);
+    compiledSummaries.set(expr, hit);
+  }
+  return hit;
+}
+
+function customSummary(
+  rows: NoteTableRow[],
+  column: string,
+  name: string,
+  formulas: BasesSummaryFormula[],
+  now: number,
+): SummaryResult {
+  const formula = formulas.find((f) => f.name === name);
+  if (!formula) {
+    const error = `No summary formula is named “${name}”.`;
+    return { text: "Error", detail: error, error };
+  }
+  const compiled = compiledSummary(formula.expr);
+  if (compiled.error) return { text: "Error", detail: `“${name}”: ${compiled.error}`, error: compiled.error };
+  const failed = column.startsWith(FORMULA_COLUMN_PREFIX)
+    ? rows.filter((row) => row.formulas[column.slice(FORMULA_COLUMN_PREFIX.length)]?.error).length
+    : 0;
+  const errorNote = failed ? `; ${plural(failed, "note")} with a formula error ${failed === 1 ? "counts" : "count"} as empty` : "";
+  const result = runSummaryFormula(compiled, summaryValues(rows, column), now);
+  if (result.error) return { text: "Error", detail: `“${name}”: ${result.error}`, error: result.error };
+  if (result.value === "") return { text: "—", detail: `“${name}” gave no value for ${plural(rows.length, "note")}${errorNote}` };
+  return { text: result.value, detail: `“${name}” over ${plural(rows.length, "note")}${errorNote}` };
+}
 
 function round(n: number, places: number): number {
   const f = 10 ** places;
@@ -121,7 +187,16 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-export function summarize(rows: NoteTableRow[], column: string, kind: SummaryKind): SummaryResult {
+export function summarize(
+  rows: NoteTableRow[],
+  column: string,
+  choice: SummaryChoice,
+  formulas: BasesSummaryFormula[] = [],
+  now = Date.now(),
+): SummaryResult {
+  const custom = customSummaryName(choice);
+  if (custom !== null) return customSummary(rows, column, custom, formulas, now);
+  const kind = choice as SummaryKind;
   const cells = rows.map((row) => columnCell(row, column));
   const total = cells.length;
   const errors = cells.filter((cell) => cell.error).length;

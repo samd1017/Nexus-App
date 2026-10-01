@@ -40,7 +40,7 @@ type Token =
 
 const FILE_KEYS = ["name", "path", "folder", "ext", "mtime", "links", "backlinks", "tags"] as const;
 type FileKey = (typeof FILE_KEYS)[number];
-type Local = "value" | "index" | "acc";
+type Local = "value" | "index" | "acc" | "values";
 
 type Node =
   | { k: "lit"; v: Value }
@@ -519,7 +519,8 @@ function relative(d: DateValue, now: number): string {
 }
 
 type Scope = { value: Value; index: number; acc?: Value };
-type Ctx = { now: number; row: FormulaRow; scope: Scope[] };
+/** `values` is set only for summary formulas: one item per note in the group. */
+type Ctx = { now: number; row: FormulaRow; scope: Scope[]; values?: Value[] };
 type FnGroup = "logic" | "text" | "number" | "date" | "list" | "regex" | "link" | "file";
 type Fn = {
   name: string;
@@ -576,6 +577,32 @@ function sortList(list: Value[]): Value[] {
     if (isBlank(b)) return -1;
     return order(a, b) ?? 0;
   });
+}
+
+/** Numbers in a list (or several values); text, dates, and blanks are skipped. */
+function numbersIn(args: Value[]): number[] {
+  return flatten(args)
+    .map((v) => numeric(v))
+    .filter((n): n is number => n !== null);
+}
+
+/** Smallest or largest: dates when every value is a date, else numbers. */
+function extreme(args: Value[], sign: 1 | -1): Value {
+  const items = flatten(args).filter((v) => !isBlank(v));
+  if (!items.length) return null;
+  const dates = items.map((v) => (numeric(v) === null ? dateOf(v) : null));
+  if (dates.every((d): d is DateValue => d !== null)) {
+    return dates.reduce((best, d) => ((d.ms - best.ms) * sign > 0 ? d : best));
+  }
+  const nums = items.map((a) => needNumber(a)).filter((n): n is number => n !== null);
+  return sign > 0 ? Math.max(...nums) : Math.min(...nums);
+}
+
+function median(nums: number[]): number | null {
+  if (!nums.length) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? (sorted[mid] as number) : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
 }
 
 function optionalText(v: Value | undefined): string | null {
@@ -674,24 +701,44 @@ const FUNCTION_LIST: Fn[] = [
   { name: "floor", min: 1, max: 1, group: "number", run: num(Math.floor) },
   { name: "ceil", min: 1, max: 1, group: "number", run: num(Math.ceil) },
   { name: "abs", min: 1, max: 1, group: "number", run: num(Math.abs) },
+  { name: "min", min: 1, max: 32, group: "number", run: (args) => extreme(args, -1) },
+  { name: "max", min: 1, max: 32, group: "number", run: (args) => extreme(args, 1) },
+  { name: "sum", min: 1, max: 32, group: "number", run: (args) => numbersIn(args).reduce((acc, n) => acc + n, 0) },
   {
-    name: "min",
+    name: "mean",
     min: 1,
     max: 32,
     group: "number",
     run: (args) => {
-      const nums = flatten(args).map((a) => needNumber(a)).filter((n): n is number => n !== null);
-      return nums.length ? Math.min(...nums) : null;
+      const nums = numbersIn(args);
+      return nums.length ? nums.reduce((acc, n) => acc + n, 0) / nums.length : null;
+    },
+  },
+  { name: "median", min: 1, max: 32, group: "number", run: (args) => median(numbersIn(args)) },
+  {
+    name: "stddev",
+    min: 1,
+    max: 32,
+    group: "number",
+    run: (args) => {
+      const nums = numbersIn(args);
+      if (!nums.length) return null;
+      const mean = nums.reduce((acc, n) => acc + n, 0) / nums.length;
+      return Math.sqrt(nums.reduce((acc, n) => acc + (n - mean) ** 2, 0) / nums.length);
     },
   },
   {
-    name: "max",
-    min: 1,
-    max: 32,
+    name: "toFixed",
+    min: 2,
+    max: 2,
     group: "number",
-    run: (args) => {
-      const nums = flatten(args).map((a) => needNumber(a)).filter((n): n is number => n !== null);
-      return nums.length ? Math.max(...nums) : null;
+    run: ([v, d]) => {
+      const n = needNumber(v ?? null);
+      const digits = needNumber(d ?? null) ?? 0;
+      if (!Number.isInteger(digits) || digits < 0 || digits > 20) {
+        throw new FormulaError("toFixed() keeps 0 to 20 decimal places, like price.toFixed(2).");
+      }
+      return n === null ? null : n.toFixed(digits);
     },
   },
   { name: "date", min: 1, max: 1, group: "date", run: ([v]) => toDate(v ?? null) },
@@ -742,7 +789,11 @@ const FUNCTION_LIST: Fn[] = [
     min: 1,
     max: 2,
     group: "list",
-    run: ([v, sep]) => listOf(v ?? null).map(show).join(sep === undefined ? ", " : needText(sep, "join()")),
+    run: ([v, sep]) =>
+      listOf(v ?? null)
+        .map(show)
+        .filter((item) => item !== "")
+        .join(sep === undefined ? ", " : needText(sep, "join()")),
   },
   { name: "sort", min: 1, max: 1, group: "list", run: ([v]) => sortList(listOf(v ?? null)) },
   {
@@ -914,11 +965,17 @@ function arityMessage(fn: Fn, method: boolean, file = false): string {
   return `${label} takes ${span} value${span === "1" ? "" : "s"}.`;
 }
 
+const SUMMARY_ONLY_VALUES = "A summary formula reads values, the column's values in each group";
+
 class Parser {
   private i = 0;
   /** Inside filter/map/reduce, value, index, and acc name the current item. */
   private lambda = 0;
-  constructor(private readonly toks: Token[]) {}
+  /** A summary formula runs once per group: it reads `values`, not one note's fields. */
+  constructor(
+    private readonly toks: Token[],
+    private readonly summary = false,
+  ) {}
 
   private peek(offset = 0): Token | undefined {
     return this.toks[this.i + offset];
@@ -1070,6 +1127,13 @@ class Parser {
       return { k: "call", name: fn.name, args };
     }
     if (this.lambda > 0 && (word === "value" || word === "index" || word === "acc")) return { k: "local", name: word };
+    if (this.summary) {
+      if (word === "values") return { k: "local", name: "values" };
+      if (word === "file" || word === "formula" || word === "note") {
+        throw new FormulaError(`${SUMMARY_ONLY_VALUES}; ${word}. reads one note, and a summary runs once per group.`);
+      }
+      throw new FormulaError(`${SUMMARY_ONLY_VALUES}, not the property “${word}”. Pick the column, then use values, like values.filter(value == "done").length.`);
+    }
     if (word === "file" && this.isOp(".")) {
       this.i += 1;
       const key = this.peek();
@@ -1264,6 +1328,10 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
       if (node.key === "tags") return [...(row.tags?.() ?? [])];
       return row[node.key];
     case "local": {
+      if (node.name === "values") {
+        if (!ctx.values) throw new FormulaError("values only works in a summary formula.");
+        return ctx.values;
+      }
       const top = ctx.scope[ctx.scope.length - 1];
       if (!top) throw new FormulaError(`${node.name} only works inside filter(), map(), or reduce().`);
       if (node.name === "acc") {
@@ -1370,13 +1438,13 @@ export function parseFormulaDate(raw: string): number | null {
 }
 
 /** Parse once per view; an empty formula compiles to no program. */
-export function compileNoteFormula(source: string): CompiledFormula {
+export function compileNoteFormula(source: string, summary = false): CompiledFormula {
   const trimmed = source.trim();
   if (!trimmed) return { program: null, error: null };
   try {
     const tokens = lex(trimmed);
     if (!tokens.length) return { program: null, error: null };
-    return { program: new Parser(tokens).parse(), error: null };
+    return { program: new Parser(tokens, summary).parse(), error: null };
   } catch (err) {
     if (err instanceof FormulaError) return { program: null, error: err.message };
     throw err;
@@ -1395,3 +1463,39 @@ export function runNoteFormula(compiled: CompiledFormula, row: FormulaRow, now =
     throw err;
   }
 }
+
+/** A summary formula: reads `values` (one item per note in the group) instead of a note. */
+export function compileSummaryFormula(source: string): CompiledFormula {
+  const compiled = compileNoteFormula(source, true);
+  if (!compiled.error && !compiled.program) return { program: null, error: "Summary formula is empty." };
+  return compiled;
+}
+
+const NO_NOTE: FormulaRow = { name: "", path: "", folder: "", mtime: 0, props: {} };
+
+export function runSummaryFormula(compiled: CompiledFormula, values: FormulaValue[], now = Date.now()): FormulaResult {
+  if (compiled.error) return { value: "", error: compiled.error, sort: null, raw: null };
+  if (!compiled.program) return { value: "", error: null, sort: null, raw: null };
+  try {
+    const v = evalNode(compiled.program, NO_NOTE, { now, row: NO_NOTE, scope: [], values });
+    if (typeof v === "number" && !Number.isFinite(v)) throw new FormulaError("The summary did not produce a number.");
+    const sort = typeof v === "number" ? v : isDate(v) ? v.ms : typeof v === "boolean" ? Number(v) : null;
+    return { value: show(v), error: null, sort, raw: v };
+  } catch (err) {
+    if (err instanceof FormulaError) return { value: "", error: err.message, sort: null, raw: null };
+    throw err;
+  }
+}
+
+/** A frontmatter value typed the way formulas read it: lists, links, or text. */
+export function formulaPropValue(raw: string | undefined): FormulaValue {
+  return raw === undefined ? null : typedProp(raw);
+}
+
+export const SUMMARY_FORMULA_EXAMPLES: { formula: string; label: string; name: string }[] = [
+  { formula: "values.mean().round(2)", label: "Average, 2 decimals", name: "Mean" },
+  { formula: "values.filter(!value.isEmpty()).length / values.length", label: "Share of notes with a value", name: "Filled share" },
+  { formula: 'values.filter(value == "done").length', label: "Count one value", name: "Done" },
+  { formula: "values.unique().join(\", \")", label: "Every different value", name: "Values" },
+  { formula: "values.max() - values.min()", label: "Spread: numbers, or days between dates", name: "Spread" },
+];

@@ -513,6 +513,209 @@ const edit = (session, patch) => {
   assert.equal(vault.file, obsidian);
 }
 
+// Summary formulas live in the file's top-level summaries:, shared by both views.
+{
+  // A file the previous build wrote (no summaries:) still reads as Nexus's own: its sync hashes did not move.
+  const previous = `# Nexus Bases live views. Nexus saves every change here and reloads edits made in other apps.
+# The nexus: block keeps Nexus-only settings (text filter, link columns, Count summaries).
+
+views:
+  - type: table
+    name: All notes
+    order:
+      - file.name
+      - status
+      - formula.formula
+    sort:
+      - property: file.name
+        direction: ASC
+    summaries:
+      status: Filled
+  - type: table
+    name: Saved view
+    order:
+      - file.name
+      - status
+      - related
+      - formula.formula_2
+    sort:
+      - property: file.name
+        direction: ASC
+formulas:
+  formula: file.mtime
+  formula_2: if(status, status, "—")
+properties:
+  formula.formula:
+    displayName: Formula
+  formula.formula_2:
+    displayName: Formula
+nexus:
+  version: 1
+  views:
+    - name: All notes
+      sync: 2af331c4
+      query: x
+      columns: []
+      summaries:
+        name: count
+        status: filled
+    - name: Saved view
+      sync: 8c8e02a2
+      formulas:
+        - id: formula
+          name: Formula
+          expr: if(status, status, "—")
+      columns: []
+      relations:
+        - related
+`;
+  const prevRead = ok(previous);
+  assert.equal(prevRead.outside, false, "older files keep their sync");
+  assert.deepEqual(prevRead.session.summaryFormulas, []);
+  assert.deepEqual(prevRead.session.views[0].summaries, { name: "count", status: "filled" });
+  assert.equal(writeLiveBase({ text: previous, session: prevRead.session }, prevRead.session, ["status"]), previous);
+
+  // Fresh write and read back.
+  const fresh = defaultBasesSession();
+  fresh.summaryFormulas = [
+    { name: "Spread", expr: "values.max() - values.min()" },
+    { name: "Done share", expr: 'values.filter(value == "done").length / values.length' },
+    { name: "Draft", expr: "" },
+  ];
+  fresh.views[0].summaries = { status: "custom:Done share", name: "count", "formula:formula": "custom:Spread" };
+  fresh.views[1].summaries = { status: "custom:Spread" };
+  const sumTrip = roundTrip(fresh, ["status"]);
+  const sumDoc = parse(sumTrip.text);
+  assert.deepEqual(sumDoc.summaries, {
+    Spread: "values.max() - values.min()",
+    "Done share": 'values.filter(value == "done").length / values.length',
+    Draft: "",
+  }, "an empty formula stays so the name survives a reload");
+  assert.deepEqual(sumDoc.views[0].summaries, { status: "Done share", "formula.formula": "Spread" });
+  assert.deepEqual(sumDoc.views[1].summaries, { status: "Spread" });
+  assert.deepEqual(sumTrip.read.session.summaryFormulas, fresh.summaryFormulas);
+  assert.equal(sumTrip.read.session.views[0].summaries.name, "count", "count still rides in the nexus block");
+  const noSums = writeLiveBase({ text: sumTrip.text, session: sumTrip.read.session }, { ...clone(sumTrip.read.session), summaryFormulas: [] }, ["status"]);
+  assert.equal(parse(noSums).summaries, undefined, "removing every formula removes summaries:");
+
+  // Merging into a file another app wrote.
+  const theirs = `# Team base
+summaries:
+  # how many are done
+  doubled: "values.length * 2" # keep me
+  listy: [1, 2]
+views:
+  - type: table
+    name: Main # main view
+    order: [file.name, status, price]
+    summaries:
+      price: doubled
+      status: Filled
+  - type: table
+    name: Other
+    order: [file.name]
+  - type: map
+    name: Places
+    summaries:
+      price: doubled
+`;
+  const theirRead = ok(theirs);
+  assert.equal(theirRead.outside, true);
+  assert.deepEqual(theirRead.session.summaryFormulas, [{ name: "doubled", expr: "values.length * 2" }]);
+  assert.deepEqual(theirRead.session.views[0].summaries, { price: "custom:doubled", status: "filled" });
+  assert.ok(theirRead.notes.some((line) => /Summary formula “listy” is not text and was skipped/.test(line)), theirRead.notes.join("\n"));
+  const theirBase = { text: theirs, session: theirRead.session };
+  assert.equal(writeLiveBase(theirBase, theirRead.session, []), theirs, "no change, no rewrite");
+
+  // Adding a formula touches summaries: only; views and comments stay byte for byte.
+  const added = clone(theirRead.session);
+  added.summaryFormulas.push({ name: "Spread", expr: "values.max() - values.min()" });
+  const addedText = writeLiveBase(theirBase, added, []);
+  const addedDoc = parse(addedText);
+  assert.deepEqual(addedDoc.summaries, { doubled: "values.length * 2", listy: [1, 2], Spread: "values.max() - values.min()" });
+  assert.match(addedText, /^# Team base/);
+  assert.match(addedText, /# how many are done\n {2}doubled: "values\.length \* 2" # keep me/);
+  assert.match(addedText, /name: Main # main view/);
+  assert.equal(addedText.slice(addedText.indexOf("views:"), addedText.indexOf("nexus:")), theirs.slice(theirs.indexOf("views:")));
+  const addedRead = ok(addedText);
+  assert.equal(addedRead.outside, false, "the write re-syncs every view against the new summaries:");
+  assert.ok(sameBasesSession(addedRead.session, added));
+
+  // Editing one expression edits that entry in place.
+  const edited = clone(added);
+  edited.summaryFormulas[0].expr = "values.length * 3";
+  const editedText = writeLiveBase({ text: addedText, session: addedRead.session }, edited, []);
+  assert.match(editedText, /# how many are done\n {2}doubled: "values\.length \* 3" # keep me/);
+  assert.equal(parse(editedText).summaries.Spread, "values.max() - values.min()");
+  assert.ok(sameBasesSession(ok(editedText).session, edited));
+
+  // Using a formula on a column writes its name under the view.
+  const used = clone(edited);
+  used.views[1].summaries = { name: "custom:Spread" };
+  const usedText = writeLiveBase({ text: editedText, session: ok(editedText).session }, used, []);
+  assert.deepEqual(parse(usedText).views[1].summaries, { "file.name": "Spread" });
+  assert.ok(sameBasesSession(ok(usedText).session, used));
+
+  // Renaming moves both the entry and the views that use it; the third view keeps its own reference.
+  const renamed = clone(used);
+  renamed.summaryFormulas[0].name = "Twice";
+  renamed.views[0].summaries = { ...renamed.views[0].summaries, price: "custom:Twice" };
+  const renamedText = writeLiveBase({ text: usedText, session: ok(usedText).session }, renamed, []);
+  const renamedDoc = parse(renamedText);
+  assert.deepEqual(Object.keys(renamedDoc.summaries), ["Twice", "listy", "Spread"], "a rename keeps the entry in place");
+  assert.match(renamedText, /# how many are done\n {2}Twice: "values\.length \* 3" # keep me/);
+  assert.equal(renamedDoc.views[0].summaries.price, "Twice");
+  assert.equal(renamedDoc.views[2].summaries.price, "doubled", "views Nexus does not show are left as written");
+  assert.ok(sameBasesSession(ok(renamedText).session, renamed));
+
+  // Removing a formula and clearing its use drops the entry and the view's reference; foreign entries stay.
+  const removed = clone(used);
+  removed.summaryFormulas = removed.summaryFormulas.filter((f) => f.name !== "doubled");
+  removed.views[0].summaries = { status: "filled" };
+  const removedText = writeLiveBase({ text: usedText, session: ok(usedText).session }, removed, []);
+  const removedDoc = parse(removedText);
+  assert.deepEqual(removedDoc.summaries, { listy: [1, 2], Spread: "values.max() - values.min()" });
+  assert.deepEqual(removedDoc.views[0].summaries, { status: "Filled" }, "a cleared summary formula is not kept as foreign");
+  assert.ok(sameBasesSession(ok(removedText).session, removed));
+  const allGone = clone(removed);
+  allGone.summaryFormulas = [];
+  allGone.views[1].summaries = {};
+  const allGoneDoc = parse(writeLiveBase({ text: removedText, session: ok(removedText).session }, allGone, []));
+  assert.deepEqual(allGoneDoc.summaries, { listy: [1, 2] }, "entries Nexus did not import are never removed");
+
+  // An outside edit to summaries: is read on the next load and marks the views as edited elsewhere.
+  const outsideEdit = addedText.replace('doubled: "values.length * 2"', 'doubled: "values.length * 4"');
+  const outsideRead = ok(outsideEdit);
+  assert.equal(outsideRead.outside, true);
+  assert.equal(outsideRead.session.summaryFormulas[0].expr, "values.length * 4");
+  assert.ok(!sameBasesSession(outsideRead.session, added), "the queue sees summary formula edits as a change");
+
+  // Formulas past the cap stay in the file through edits.
+  const many = `summaries:\n${Array.from({ length: 13 }, (_, i) => `  F${i}: values.length`).join("\n")}\nviews:\n  - type: table\n    name: A\n`;
+  const manyRead = ok(many);
+  assert.equal(manyRead.session.summaryFormulas.length, 12);
+  const fewer = clone(manyRead.session);
+  fewer.summaryFormulas = fewer.summaryFormulas.slice(1);
+  const fewerDoc = parse(writeLiveBase({ text: many, session: manyRead.session }, fewer, []));
+  assert.ok(!("F0" in fewerDoc.summaries));
+  assert.equal(fewerDoc.summaries.F12, "values.length", "the 13th, never imported, is kept");
+
+  // A summaries: that is not a map is replaced only once Nexus has formulas to write there.
+  const badMap = "summaries: [a, b]\nviews:\n  - type: table\n    name: A\n";
+  const badRead = ok(badMap);
+  assert.equal(writeLiveBase({ text: badMap, session: badRead.session }, badRead.session, []), badMap);
+  const badNext = clone(badRead.session);
+  badNext.views[0].query = "x";
+  assert.deepEqual(parse(writeLiveBase({ text: badMap, session: badRead.session }, badNext, [])).summaries, ["a", "b"]);
+  badNext.summaryFormulas = [{ name: "N", expr: "values.length" }];
+  assert.deepEqual(parse(writeLiveBase({ text: badMap, session: badRead.session }, badNext, [])).summaries, { N: "values.length" });
+
+  // Export carries the same summaries: as the live file.
+  const exported = parse(exportBaseFile(fresh).text);
+  assert.deepEqual(exported.summaries, { Spread: sumDoc.summaries.Spread, "Done share": sumDoc.summaries["Done share"] });
+  assert.deepEqual(exported.views[0].summaries, sumDoc.views[0].summaries);
+}
+
 // Wiring: Bases reads and writes the live file, and the disclosure names it.
 const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
 assert.match(table, /liveBasesSync\(\)/);

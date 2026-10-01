@@ -6,7 +6,7 @@
  * under a top-level `nexus:` block that other apps can ignore.
  */
 
-import { Document, parse, parseDocument, stringify } from "yaml";
+import { Document, isMap, isScalar, parse, parseDocument, stringify } from "yaml";
 import {
   FILE_FORMULAS,
   FILE_SORT,
@@ -89,6 +89,7 @@ function viewSync(root: Record<string, unknown>, index: number): string {
     formulas: root.formulas ?? null,
     properties: root.properties ?? null,
     filters: root.filters ?? null,
+    summaries: root.summaries,
   });
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i += 1) {
@@ -110,7 +111,11 @@ export function sameBasesView(a: BasesViewConfig, b: BasesViewConfig): boolean {
 export function sameBasesSession(a: BasesSession, b: BasesSession): boolean {
   const x = normalizeBasesSession(a);
   const y = normalizeBasesSession(b);
-  return x.activeId === y.activeId && x.views.every((view, i) => sameBasesView(view, y.views[i] as BasesViewConfig));
+  return (
+    x.activeId === y.activeId &&
+    canonical(x.summaryFormulas) === canonical(y.summaryFormulas) &&
+    x.views.every((view, i) => sameBasesView(view, y.views[i] as BasesViewConfig))
+  );
 }
 
 /** Import wording, restated for a file Nexus keeps rather than copies from. */
@@ -158,6 +163,7 @@ export function readLiveBase(text: string, label = LIVE_BASE_FILE): LiveRead {
       { ...(views[0] as BasesViewConfig), id: "all" },
       { ...(views[1] as BasesViewConfig), id: "saved" },
     ],
+    summaryFormulas: imported.session.summaryFormulas,
   });
   return {
     ok: true,
@@ -220,13 +226,16 @@ function foreignOrder(order: unknown, owned: string[]): string[] {
   });
 }
 
-/** Summary entries Nexus does not read: custom summary formulas and ones under unreadable columns. */
-function foreignSummaries(node: unknown): Record<string, unknown> {
+/**
+ * Summary entries Nexus does not read: names that are neither built in nor one of
+ * `customNames` (the file's summary formulas), and ones under unreadable columns.
+ */
+function foreignSummaries(node: unknown, customNames: ReadonlySet<string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [prop, value] of Object.entries(asRecord(node) ?? {})) {
-    const builtIn = typeof value === "string" && summaryFromBase(value) !== null;
+    const read = typeof value === "string" && (customNames.has(value.trim()) || summaryFromBase(value) !== null);
     const unreadable = prop.startsWith("file.") && !(prop in FILE_FORMULAS) && !Object.values(FILE_SORT).includes(prop);
-    if (!builtIn || unreadable) out[prop] = value;
+    if (!read || unreadable) out[prop] = value;
   }
   return out;
 }
@@ -250,7 +259,12 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
   const source = imported && !("error" in imported) ? imported : null;
   const fresh = !base || !source;
   const changed = session.views.map((view, i) => fresh || !sameBasesView(loaded?.views[i] as BasesViewConfig, view));
-  if (base && !fresh && !oldExport && !changed.some(Boolean) && loaded?.activeId === session.activeId) return base.text;
+  const summariesChanged = fresh || canonical(loaded?.summaryFormulas) !== canonical(session.summaryFormulas);
+  if (base && !fresh && !oldExport && !changed.some(Boolean) && !summariesChanged && loaded?.activeId === session.activeId) {
+    return base.text;
+  }
+  const summaryNames = new Set(session.summaryFormulas.map((f) => f.name));
+  const readNames = new Set([...summaryNames, ...(source?.session.summaryFormulas ?? []).map((f) => f.name)]);
 
   const doc: Document = fresh ? new Document({}) : parseDocument(stripOldExportHeader(base.text));
   const root = asRecord(doc.toJS()) ?? {};
@@ -273,7 +287,7 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
     for (const entry of foreignOrder(asRecord(rawViews[i])?.order, source?.sourceKeys[i] ?? [])) {
       if (entry.startsWith("formula.")) keptRefs.add(entry.slice(8));
     }
-    for (const key of refsIn(foreignSummaries(asRecord(rawViews[i])?.summaries))) keptRefs.add(key);
+    for (const key of refsIn(foreignSummaries(asRecord(rawViews[i])?.summaries, readNames))) keptRefs.add(key);
   });
   for (const key of refsIn(root.summaries)) keptRefs.add(key);
   for (const key of refsIn(root.filters)) keptRefs.add(key);
@@ -333,7 +347,7 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
     if (!changed[i]) return;
     const prior = loaded?.views[i] ?? null;
     const old = fresh ? null : asRecord(rawViews[i]);
-    const node = baseViewNode(view, detectedKeys, (f) => keyOf.get(`${i}:${f.id}`), []);
+    const node = baseViewNode(view, detectedKeys, (f) => keyOf.get(`${i}:${f.id}`), [], summaryNames);
     if (!old) {
       nodes[i] = node;
       return;
@@ -356,7 +370,10 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
     }
     if (!prior || !sameFormulas || canonical(prior.groupBy) !== canonical(view.groupBy)) setOrDelete(out, "groupBy", node.groupBy);
     if (!prior || !sameFormulas || canonical(prior.summaries) !== canonical(view.summaries)) {
-      setOrDelete(out, "summaries", { ...foreignSummaries(old.summaries), ...((node.summaries as Record<string, unknown>) ?? {}) });
+      setOrDelete(out, "summaries", {
+        ...foreignSummaries(old.summaries, readNames),
+        ...((node.summaries as Record<string, unknown>) ?? {}),
+      });
     }
     nodes[i] = out;
   });
@@ -377,13 +394,47 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
     if (canonical(oldProps[key]) !== canonical(value)) doc.setIn(["properties", key], doc.createNode(value));
   }
   if (!Object.keys(properties).length) doc.delete("properties");
+  if (summariesChanged) {
+    // Entries Nexus did not import (not text, past the cap) stay; only names it knew can be removed.
+    const rawKey = new Map<string, string>();
+    for (const key of Object.keys(asRecord(root.summaries) ?? {})) if (!rawKey.has(key.trim())) rawKey.set(key.trim(), key);
+    const oldExpr = asRecord(root.summaries) ?? {};
+    if (root.summaries != null && !asRecord(root.summaries) && session.summaryFormulas.length) {
+      doc.set("summaries", doc.createNode({}));
+    }
+    const before = loaded?.summaryFormulas ?? [];
+    const beforeNames = new Set(before.map((f) => f.name));
+    // A name swapped at the same place in the list is a rename: the entry keeps its spot and comments.
+    const map = doc.get("summaries", true);
+    session.summaryFormulas.forEach((f, i) => {
+      const old = before[i];
+      const key = old ? rawKey.get(old.name) : undefined;
+      if (!old || key === undefined || beforeNames.has(f.name) || summaryNames.has(old.name) || rawKey.has(f.name)) return;
+      const pair = isMap(map) ? map.items.find((item) => isScalar(item.key) && item.key.value === key) : undefined;
+      if (!pair || !isScalar(pair.key)) return;
+      pair.key.value = f.name;
+      oldExpr[f.name] = oldExpr[key];
+      rawKey.delete(old.name);
+      rawKey.set(f.name, f.name);
+    });
+    for (const f of before) {
+      const key = rawKey.get(f.name);
+      if (key !== undefined && !summaryNames.has(f.name)) doc.deleteIn(["summaries", key]);
+    }
+    for (const f of session.summaryFormulas) {
+      const key = rawKey.get(f.name) ?? f.name;
+      const was = oldExpr[key];
+      if (!((typeof was === "string" || typeof was === "number") && String(was) === f.expr)) doc.setIn(["summaries", key], f.expr);
+    }
+    if (!Object.keys(asRecord(asRecord(doc.toJS())?.summaries) ?? {}).length) doc.delete("summaries");
+  }
   if (pushDown) {
     if (topFilters === undefined) doc.delete("filters");
     else doc.set("filters", doc.createNode(topFilters));
   }
 
   doc.delete("nexus");
-  const body = doc.toString({ lineWidth: 0 });
+  const body = doc.toString({ lineWidth: 0, flowCollectionPadding: false });
   const plain = fresh || oldExport ? `${LIVE_HEADER}\n\n${body}` : body;
   const readBack = importBaseFile(plain);
   const written = asRecord(parse(plain)) ?? {};

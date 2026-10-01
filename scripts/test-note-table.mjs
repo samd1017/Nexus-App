@@ -847,7 +847,17 @@ assert.doesNotMatch(table, /one formula column per view/);
 assert.match(table, /formula columns/);
 assert.doesNotMatch(table, /no list, regex, or link functions/);
 assert.match(table, /formula columns with list, regex, and link functions/);
-assert.match(table, /two views, no custom summary formulas, links do not open into files \(no asFile or linksTo\)/);
+assert.doesNotMatch(table, /no custom summary formulas/);
+assert.match(table, /Not Obsidian Bases — two views, links do not open into files \(no asFile or linksTo\)/);
+assert.match(table, /summary rows with summary formulas/);
+assert.match(table, /data-testid="bases-summary-formulas-toggle"/);
+assert.match(table, /data-testid="bases-summary-formula-error"/);
+assert.match(table, /data-testid="bases-summary-formula-name-error"/);
+assert.match(table, /data-summary-error=/);
+assert.match(table, /<optgroup label="Summary formulas">/);
+assert.match(table, /SUMMARY_FORMULA_EXAMPLES\.map/);
+assert.match(table, /data-testid="bases-formula-summaries"/);
+assert.match(table, /summarize\(rows, column, kind, summaryFormulas\)/);
 assert.match(table, /some Obsidian functions are missing/);
 assert.match(table, /data-testid="bases-formula-link"/);
 assert.match(table, /data-testid="bases-formula-lists"/);
@@ -1254,16 +1264,221 @@ views:
 `);
 const [og, oc] = obsidianGroups.session.views;
 assert.deepEqual(og.groupBy, { column: "status", dir: "desc" });
-assert.deepEqual(og.summaries, { price: "average", "formula:total": "stddev" });
+assert.deepEqual(og.summaries, { price: "average", "formula:total": "stddev", qty: "custom:doubled" });
 assert.deepEqual(oc.groupBy, { column: "folder", dir: "asc" });
 assert.deepEqual(oc.summaries, {});
+assert.deepEqual(obsidianGroups.session.summaryFormulas, [{ name: "doubled", expr: "values.reduce(acc + value, 0) * 2" }]);
 const ogNotes = obsidianGroups.notes.join("\n");
-assert.match(ogNotes, /Custom summary formulas \(doubled\) were not imported/);
-assert.match(ogNotes, /“Grouped” summary doubled on note\.qty is not a built-in summary/);
+assert.doesNotMatch(ogNotes, /Custom summary formulas|doubled/);
 assert.match(ogNotes, /“Grouped” summary on file\.mtime did not carry over/);
 assert.match(ogNotes, /“By folder” summary on file\.size did not carry over/);
 const badGroup = importBaseFile("views:\n  - type: table\n    groupBy:\n      property: file.size\n");
 assert.equal(badGroup.session.views[0].groupBy, null);
 assert.match(badGroup.notes.join("\n"), /groups by file\.size, which did not carry over/);
+
+// Summary formulas: `values` is one column's values in a group.
+const { compileSummaryFormula, runSummaryFormula, SUMMARY_FORMULA_EXAMPLES } = await import("../src/lib/vault/note-formula.ts");
+const {
+  summaryFormulaNameProblem,
+  customSummary,
+  customSummaryName,
+  MAX_SUMMARY_FORMULAS,
+} = await import("../src/lib/vault/note-table.ts");
+const { summaryValues, summaryLabel } = await import("../src/lib/vault/bases-groups.ts");
+const runSum = (expr, values) => runSummaryFormula(compileSummaryFormula(expr), values, NOW);
+assert.equal(compileSummaryFormula("").error, "Summary formula is empty.");
+assert.equal(compileSummaryFormula("   ").error, "Summary formula is empty.");
+assert.match(compileSummaryFormula("status").error, /not the property “status”\. Pick the column, then use values/);
+assert.match(compileSummaryFormula("file.name").error, /file\. reads one note, and a summary runs once per group/);
+assert.match(compileSummaryFormula("formula.tax").error, /formula\. reads one note/);
+assert.match(compileSummaryFormula('note["x"]').error, /note\. reads one note/);
+assert.equal(compileSummaryFormula("values.filter(value > 2).length").error, null, "value inside a lambda is the item");
+assert.equal(compileSummaryFormula("values.reduce(acc + value, 0)").error, null);
+assert.equal(
+  evalNoteFormula({ ...alpha, props: { values: "3" } }, "values").value,
+  "3",
+  "a column formula still reads a property named values",
+);
+assert.match(evalNoteFormula(alpha, "values.length").error ?? "", /^$|./);
+for (const example of SUMMARY_FORMULA_EXAMPLES) {
+  assert.equal(compileSummaryFormula(example.formula).error, null, example.formula);
+  assert.equal(summaryFormulaNameProblem(example.name, []), null, example.name);
+}
+assert.equal(runSum("values.mean().round(3)", ["1", "2", null, "x", "4"]).value, "2.333", "mean skips blanks and text");
+assert.equal(runSum("values.sum()", [1, 2.5, null]).value, "3.5");
+assert.equal(runSum("values.median()", [5, 1, 3, 2]).value, "2.5");
+assert.equal(runSum("values.stddev().toFixed(2)", [2, 4, 4, 4, 5, 5, 7, 9]).value, "2.00");
+assert.equal(runSum("values.length", [null, null]).value, "2", "length counts notes, values or not");
+assert.equal(runSum("values.filter(!value.isEmpty()).length", [null, "", "a"]).value, "1");
+assert.equal(runSum("values.unique().join(\", \")", ["b", null, "a", "b"]).value, "b, a", "join skips the blanks");
+assert.equal(runSum("values.max() - values.min()", ["2026-09-20", "2026-08-15", null]).value, "36");
+assert.equal(runSum("values.min()", ["2026-09-20", "2026-08-15"]).value, "2026-08-15", "min of dates is a date");
+assert.match(runSum("values.min()", ["2026-09-20", "soon"]).error, /number/, "dates mixed with text are not guessed at");
+// An empty group: what each formula gives for no values.
+assert.equal(runSum("values.length", []).value, "0");
+assert.equal(runSum("values.sum()", []).value, "0");
+assert.equal(runSum("values.mean()", []).value, "", "no mean of nothing");
+assert.equal(runSum("values.max()", []).value, "");
+assert.equal(runSum("values.unique().join(\", \")", []).value, "");
+assert.match(runSum("values.length / values.filter(value == 1).length", [2]).error ?? "", /number|zero/i, "no Infinity or NaN cells");
+assert.equal(customSummary("Spread"), "custom:Spread");
+assert.equal(customSummaryName("custom:Spread"), "Spread");
+assert.equal(customSummaryName("sum"), null);
+assert.equal(summaryLabel("custom:Spread"), "Spread");
+assert.equal(summaryLabel("average"), "Average");
+assert.equal(MAX_SUMMARY_FORMULAS, 12);
+assert.match(summaryFormulaNameProblem("", []), /Name the summary formula/);
+assert.match(summaryFormulaNameProblem("Average", []), /“Average” is a built-in summary/);
+assert.match(summaryFormulaNameProblem("std dev", []), /built-in summary/);
+assert.match(summaryFormulaNameProblem(" spread ", ["Spread"]), /Another summary formula is named “spread”/);
+assert.match(summaryFormulaNameProblem("x".repeat(61), []), /under 60/);
+assert.equal(summaryFormulaNameProblem("Spread", ["Mean"]), null);
+
+// What `values` holds: typed props, formula results, null for missing or failed.
+assert.deepEqual(summaryValues(shopRows, "price"), ["3", "4.5", "12", "lots", "2"], "as a column formula reads them");
+assert.equal(
+  evalNoteFormula({ ...alpha, props: { price: "3" } }, "price > 2").value,
+  runSum("values.filter(value > 2).length", ["3"]).value === "1" ? "true" : "mismatch",
+  "a summary compares values the way a column formula compares the property",
+);
+assert.deepEqual(summaryValues(shopRows, "status"), ["open", "done", "open", null, "open"]);
+assert.deepEqual(summaryValues(shopRows, "name"), shopRows.map((r) => r.name));
+assert.deepEqual(summaryValues(shopRows, "folder"), ["Shop", "Shop", "Shop", "Shop", "Home"]);
+assert.equal(summaryValues(shopRows, "formula:tax")[3], null, "a failed formula gives null");
+assert.ok(Math.abs(summaryValues(shopRows, "formula:tax")[0] - 0.3) < 1e-9);
+assert.equal(summaryValues(shopRows, "formula:when")[0].ms, Date.UTC(2026, 8, 1));
+assert.deepEqual(summaryValues(shopRows, "missing"), [null, null, null, null, null]);
+
+const shopFormulas = [
+  { name: "Spread", expr: "values.max() - values.min()" },
+  { name: "Mean", expr: "values.mean().round(2)" },
+  { name: "Open", expr: 'values.filter(value == "open").length' },
+  { name: "Broken", expr: "values.mean(" },
+  { name: "Empty", expr: "" },
+  { name: "Nothing", expr: "values.filter(value == 99)[0]" },
+];
+const customRun = (rows, column, name) => summarize(rows, column, `custom:${name}`, shopFormulas, NOW);
+const pricedRows = shopRows.filter((row) => row.id !== "p4");
+assert.equal(customRun(pricedRows, "price", "Spread").text, "10");
+assert.equal(customRun(pricedRows, "price", "Spread").error, undefined);
+assert.match(customRun(pricedRows, "price", "Spread").detail, /^“Spread” over 4 notes$/);
+const textPrice = customRun(shopRows, "price", "Spread");
+assert.equal(textPrice.text, "Error", "max/min stay strict about text, as in column formulas");
+assert.match(textPrice.detail, /^“Spread”: .*lots/);
+assert.equal(customRun(shopRows, "bought", "Spread").text, "36", "dates give days");
+assert.equal(customRun(shopRows, "formula:tax", "Mean").text, "0.54");
+assert.match(customRun(shopRows, "formula:tax", "Mean").detail, /1 note with a formula error counts as empty/);
+assert.equal(customRun(shopRows, "status", "Open").text, "3");
+// Per group, the same formula runs over that group's rows only.
+assert.deepEqual(byStatusGroup.map((g) => customRun(g.rows, "price", "Mean").text), ["4.5", "5.67", "—"]);
+assert.match(customRun(byStatusGroup[2].rows, "price", "Mean").detail, /gave no value for 1 note$/);
+assert.equal(customRun(byStatusGroup[0].rows, "status", "Open").text, "0");
+assert.equal(customRun([], "price", "Open").text, "0", "no rows: values is empty, not an error");
+assert.equal(customRun([], "price", "Mean").text, "—");
+const brokenSum = customRun(shopRows, "price", "Broken");
+assert.equal(brokenSum.text, "Error");
+assert.ok(brokenSum.error);
+assert.match(brokenSum.detail, /^“Broken”: /);
+assert.equal(customRun(shopRows, "price", "Empty").error, "Summary formula is empty.");
+assert.equal(customRun(shopRows, "price", "Nothing").text, "—");
+const missingSum = customRun(shopRows, "price", "Gone");
+assert.equal(missingSum.text, "Error");
+assert.equal(missingSum.error, "No summary formula is named “Gone”.");
+assert.equal(customRun(pricedRows, "price", "Spread").text, sum("price", "range").text, "Spread agrees with Range on numbers");
+assert.equal(summarize(shopRows, "price", "sum", shopFormulas).text, "21.5", "built-in kinds ignore summary formulas");
+const runtimeSum = summarize(shopRows, "status", "custom:Bad", [{ name: "Bad", expr: "values.sum() / 0" }], NOW);
+assert.equal(runtimeSum.text, "Error");
+
+// Sessions keep summary formulas; bad entries are dropped.
+const withFormulas = parseBasesSession(JSON.stringify({
+  activeId: "all",
+  views: [{ id: "all", summaries: { price: "custom:Spread", status: "custom:  ", name: "custom:Gone" } }, { id: "saved" }],
+  summaryFormulas: [
+    { name: " Spread ", expr: "values.max() - values.min()" },
+    { name: "spread", expr: "1" },
+    { name: "", expr: "1" },
+    { name: "NoExpr" },
+    "junk",
+    ...Array.from({ length: 14 }, (_, i) => ({ name: `F${i}`, expr: "values.length" })),
+  ],
+}));
+assert.deepEqual(withFormulas.views[0].summaries, { price: "custom:Spread", name: "custom:Gone" });
+assert.equal(withFormulas.summaryFormulas.length, 12);
+assert.deepEqual(withFormulas.summaryFormulas[0], { name: "Spread", expr: "values.max() - values.min()" });
+assert.ok(!withFormulas.summaryFormulas.some((f) => f.name === "spread"), "names are unique ignoring case");
+assert.deepEqual(parseBasesSession(null).summaryFormulas, []);
+
+// .base round trip: top-level summaries plus view references.
+const sumSession = {
+  activeId: "all",
+  views: [
+    {
+      ...grouped.views[0],
+      name: "Shop",
+      column: "name",
+      dir: "asc",
+      columns: ["status", "price"],
+      relations: [],
+      layout: "table",
+      summaries: { price: "custom:Spread", "formula:tax": "custom:Mean", status: "filled", folder: "custom:Gone" },
+    },
+    { ...grouped.views[1], summaries: { name: "custom:Mean" } },
+  ],
+  summaryFormulas: [
+    { name: "Spread", expr: "values.max() - values.min()" },
+    { name: "Mean", expr: "values.mean().round(2)" },
+    { name: "Draft", expr: "" },
+  ],
+};
+const sumExport = exportBaseFile(sumSession);
+const sumDoc = parseYaml(sumExport.text);
+assert.deepEqual(sumDoc.summaries, { Spread: "values.max() - values.min()", Mean: "values.mean().round(2)" });
+assert.deepEqual(sumDoc.views[0].summaries, { price: "Spread", "formula.tax": "Mean", status: "Filled" });
+assert.deepEqual(sumDoc.views[1].summaries, { "file.name": "Mean" });
+const sumNotes = sumExport.notes.join("\n");
+assert.match(sumNotes, /Summary formula “Draft” is empty and was left out/);
+assert.match(sumNotes, /“Shop” summary on file\.folder uses “Gone”, which has no formula, so it was left out/);
+const sumBack = importBaseFile(sumExport.text);
+assert.deepEqual(sumBack.session.summaryFormulas, sumSession.summaryFormulas.slice(0, 2));
+assert.deepEqual(sumBack.session.views[0].summaries, { price: "custom:Spread", "formula:tax": "custom:Mean", status: "filled" });
+assert.deepEqual(sumBack.session.views[1].summaries, { name: "custom:Mean" });
+assert.doesNotMatch(sumBack.notes.join("\n"), /summary|Summary/);
+assert.deepEqual(exportBaseFile(parseBasesSession(null)).text.match(/^summaries:/m), null, "no summaries: block without formulas");
+
+// Import: what can and cannot come in, said plainly.
+const sumImport = importBaseFile(`
+summaries:
+  Ratio: 'values.filter(value).length / values.length'
+  Average: 'values.length'
+  Weird: 'values.mean('
+  Listy: [1, 2]
+  Num: 42
+views:
+  - type: table
+    name: S
+    order: [file.name, note.done, note.price]
+    summaries:
+      note.done: Ratio
+      note.price: Average
+      file.name: Num
+      note.qty: Missing
+`);
+assert.deepEqual(sumImport.session.summaryFormulas.map((f) => f.name), ["Ratio", "Average", "Weird", "Num"]);
+assert.equal(sumImport.session.summaryFormulas[3].expr, "42");
+assert.deepEqual(sumImport.session.views[0].summaries, { done: "custom:Ratio", price: "custom:Average", name: "custom:Num" });
+const sumImportNotes = sumImport.notes.join("\n");
+assert.match(sumImportNotes, /Summary formula “Listy” is not text and was skipped/);
+assert.match(sumImportNotes, /Summary formula “Weird” does not run in Nexus yet \(.+\); its cells show that error/);
+assert.match(sumImportNotes, /Summary formula “Average” has a built-in summary's name; views that pick “Average” use the formula/);
+assert.match(sumImportNotes, /“S” summary Missing on note\.qty is not a built-in summary or a summary formula in this file; it was left out/);
+const cappedSum = importBaseFile(
+  `summaries:\n${Array.from({ length: 13 }, (_, i) => `  F${i}: values.length`).join("\n")}\nviews:\n  - type: table\n    name: A\n`,
+);
+assert.equal(cappedSum.session.summaryFormulas.length, 12);
+assert.match(cappedSum.notes.join("\n"), /Nexus keeps 12 summary formulas; “F12” was not imported/);
+assert.match(
+  importBaseFile("summaries: [a, b]\nviews:\n  - type: table\n    name: A\n").notes.join("\n"),
+  /The file's summaries are not name: formula pairs and were skipped/,
+);
 
 console.log("note-table: PASS");

@@ -5,15 +5,20 @@
  */
 
 import { parse, stringify } from "yaml";
-import { compileNoteFormula } from "@/lib/vault/note-formula";
+import { compileNoteFormula, compileSummaryFormula } from "@/lib/vault/note-formula";
 import {
   MAX_FORMULA_COLUMNS,
+  MAX_SUMMARY_FORMULAS,
+  customSummary,
+  customSummaryName,
   defaultBasesSession,
   formulaColumnId,
   formulaKey,
   type BasesFormula,
   type BasesSession,
+  type BasesSummaryFormula,
   type BasesViewConfig,
+  type SummaryChoice,
   type SummaryKind,
 } from "@/lib/vault/note-table";
 
@@ -86,12 +91,16 @@ export function normalFolder(folder: string): string {
   return folder.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 }
 
-/** One Obsidian view for a Nexus view. `keyFor` names each formula's key in the file's `formulas`. */
+/**
+ * One Obsidian view for a Nexus view. `keyFor` names each formula's key in the
+ * file's `formulas`; `summaryNames` are the summary formulas the file defines.
+ */
 export function baseViewNode(
   view: BasesViewConfig,
   detectedKeys: string[],
   keyFor: (f: BasesFormula) => string | undefined,
   notes: string[],
+  summaryNames: ReadonlySet<string> | null = null,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { type: view.layout === "cards" ? "cards" : "table", name: view.name };
   const folder = normalFolder(view.folder);
@@ -113,10 +122,16 @@ export function baseViewNode(
     out.groupBy = { property: propertyFor(view.groupBy.column), direction: view.groupBy.dir === "desc" ? "DESC" : "ASC" };
   }
   const summaries: Record<string, string> = {};
-  for (const [column, kind] of Object.entries(view.summaries ?? {})) {
-    const name = BASE_SUMMARY_NAME[kind];
+  for (const [column, choice] of Object.entries(view.summaries ?? {})) {
+    const custom = customSummaryName(choice);
+    if (custom !== null) {
+      if (!summaryNames || summaryNames.has(custom)) summaries[propertyFor(column)] = custom;
+      else notes.push(`“${view.name}” summary on ${propertyFor(column)} uses “${custom}”, which has no formula, so it was left out.`);
+      continue;
+    }
+    const name = BASE_SUMMARY_NAME[choice as SummaryKind];
     if (name) summaries[propertyFor(column)] = name;
-    else notes.push(`“${view.name}” ${kind} summary on ${propertyFor(column)} has no .base equivalent and was left out.`);
+    else notes.push(`“${view.name}” ${choice} summary on ${propertyFor(column)} has no .base equivalent and was left out.`);
   }
   if (Object.keys(summaries).length) out.summaries = summaries;
   if (view.query.trim()) {
@@ -147,14 +162,21 @@ export function exportBaseFile(
       properties[`formula.${key}`] = { displayName: f.name };
     }
   }
+  const summaryFormulas: Record<string, string> = {};
+  for (const f of session.summaryFormulas ?? []) {
+    if (f.expr.trim()) summaryFormulas[f.name] = f.expr;
+    else notes.push(`Summary formula “${f.name}” is empty and was left out.`);
+  }
+  const summaryNames = new Set(Object.keys(summaryFormulas));
   const views = session.views.map((view) =>
-    baseViewNode(view, detectedKeys, (f) => exportKey.get(`${view.id}:${f.id}`), notes),
+    baseViewNode(view, detectedKeys, (f) => exportKey.get(`${view.id}:${f.id}`), notes, summaryNames),
   );
   const doc: Record<string, unknown> = {};
   if (Object.keys(formulas).length) {
     doc.formulas = formulas;
     doc.properties = properties;
   }
+  if (summaryNames.size) doc.summaries = summaryFormulas;
   doc.views = views;
   return { text: `${EXPORT_HEADER}\n${stringify(doc, { lineWidth: 0 })}`, notes };
 }
@@ -218,9 +240,25 @@ export function importBaseFile(text: string): BaseImport {
     return typeof named === "string" && named.trim() ? named.trim() : key;
   };
   const topFilters = filterAtoms(root.filters, notes);
-  if (asRecord(root.summaries) && Object.keys(asRecord(root.summaries) ?? {}).length) {
-    notes.push(`Custom summary formulas (${Object.keys(asRecord(root.summaries) ?? {}).join(", ")}) were not imported; Nexus has built-in summaries only.`);
+  const summaryFormulas: BasesSummaryFormula[] = [];
+  if (root.summaries != null && !asRecord(root.summaries)) notes.push("The file's summaries are not name: formula pairs and were skipped.");
+  for (const [rawName, value] of Object.entries(asRecord(root.summaries) ?? {})) {
+    const name = rawName.trim();
+    if (typeof value !== "string" && typeof value !== "number") {
+      notes.push(`Summary formula “${name}” is not text and was skipped.`);
+    } else if (summaryFormulas.length >= MAX_SUMMARY_FORMULAS) {
+      notes.push(`Nexus keeps ${MAX_SUMMARY_FORMULAS} summary formulas; “${name}” was not imported.`);
+    } else if (name) {
+      const expr = String(value);
+      summaryFormulas.push({ name, expr });
+      const compiled = compileSummaryFormula(expr);
+      if (compiled.error) notes.push(`Summary formula “${name}” does not run in Nexus yet (${compiled.error}); its cells show that error.`);
+      if (summaryFromBase(name) !== null) {
+        notes.push(`Summary formula “${name}” has a built-in summary's name; views that pick “${name}” use the formula.`);
+      }
+    }
   }
+  const customNames = new Set(summaryFormulas.map((f) => f.name));
   const reported = new Set<string>();
   const report = (line: string) => {
     if (!reported.has(line)) {
@@ -346,13 +384,15 @@ export function importBaseFile(text: string): BaseImport {
       if (found) groupBy = { column: found, dir: String(rawGroup.direction).toUpperCase() === "DESC" ? "desc" : "asc" };
       else report(`“${name}” groups by ${prop || "an unnamed property"}, which did not carry over; it shows ungrouped.`);
     }
-    const summaries: Record<string, SummaryKind> = {};
+    const summaries: Record<string, SummaryChoice> = {};
     for (const [prop, value] of Object.entries(asRecord(raw.summaries) ?? {})) {
-      const kind = typeof value === "string" ? summaryFromBase(value) : null;
+      const text = typeof value === "string" ? value.trim() : "";
+      const choice: SummaryChoice | null = customNames.has(text) ? customSummary(text) : text ? summaryFromBase(text) : null;
       const found = columnFor(prop);
-      if (!kind) report(`“${name}” summary ${String(value)} on ${prop} is not a built-in summary; it was left out.`);
-      else if (!found) report(`“${name}” summary on ${prop} did not carry over.`);
-      else summaries[found] = kind;
+      if (!choice) {
+        report(`“${name}” summary ${String(value)} on ${prop} is not a built-in summary or a summary formula in this file; it was left out.`);
+      } else if (!found) report(`“${name}” summary on ${prop} did not carry over.`);
+      else summaries[found] = choice;
     }
     if (raw.limit !== undefined) report(`“${name}” has a row limit; Nexus shows up to 400 notes.`);
     return {
@@ -377,6 +417,7 @@ export function importBaseFile(text: string): BaseImport {
   const session: BasesSession = {
     activeId: "all",
     views: [views[0] ?? base.views[0], views[1] ?? base.views[1]] as BasesViewConfig[],
+    summaryFormulas,
   };
   if (session.views[0]) session.views[0].id = "all";
   if (session.views[1]) session.views[1].id = "saved";

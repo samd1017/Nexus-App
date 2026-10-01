@@ -10,18 +10,23 @@ import {
   formulaKey,
   formulaStatusLine,
   MAX_FORMULA_COLUMNS,
+  MAX_SUMMARY_FORMULAS,
+  customSummary,
+  customSummaryName,
   noteTableTitle,
   defaultBasesSession,
   parseBasesSession,
   rankLinkChoices,
   sortNoteRows,
+  summaryFormulaNameProblem,
   withNoteRelation,
   type BasesFormula,
   type BasesSession,
+  type BasesSummaryFormula,
   type BasesViewConfig,
   type FormulaCell,
   type NoteTableRow,
-  type SummaryKind,
+  type SummaryChoice,
 } from "@/lib/vault/note-table";
 import { groupNoteRows, summarize, summaryKindsFor, summaryLabel, type NoteGroup } from "@/lib/vault/bases-groups";
 import { BASE_EXPORT_FILE, exportBaseFile } from "@/lib/vault/bases-file";
@@ -30,7 +35,12 @@ import { sentence, type LiveCheck, type LiveOpen, type LiveSave } from "@/lib/va
 import { liveBasesSync } from "@/lib/vault/bases-live-storage";
 import { writeNoteFile } from "@/lib/vault/fs-adapter";
 import { writeDesktopNote } from "@/lib/vault/tauri-adapter";
-import { FORMULA_EXAMPLES, FORMULA_FUNCTION_GROUPS } from "@/lib/vault/note-formula";
+import {
+  FORMULA_EXAMPLES,
+  FORMULA_FUNCTION_GROUPS,
+  SUMMARY_FORMULA_EXAMPLES,
+  compileSummaryFormula,
+} from "@/lib/vault/note-formula";
 import { getDesktopRoot, getFsaRoot, useVaultStore } from "@/lib/vault/store";
 import {
   scheduleFillSafeHydrate,
@@ -72,6 +82,9 @@ export function NoteTable() {
   const [linkQuery, setLinkQuery] = useState("");
   const [formulaHelp, setFormulaHelp] = useState(false);
   const [focusFormulaId, setFocusFormulaId] = useState<string | null>(null);
+  const [summaryPanel, setSummaryPanel] = useState(false);
+  const [summaryDraft, setSummaryDraft] = useState<{ at: number; name: string } | null>(null);
+  const [focusSummaryAt, setFocusSummaryAt] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [baseNotice, setBaseNotice] = useState<BaseNotice | null>(null);
   const [liveState, setLiveState] = useState<"ok" | "failed" | "blocked">("ok");
@@ -301,12 +314,18 @@ export function NoteTable() {
         setFormulaHelp(false);
         return;
       }
+      if (summaryPanel) {
+        e.preventDefault();
+        setSummaryPanel(false);
+        setSummaryDraft(null);
+        return;
+      }
       e.preventDefault();
       setBasesOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [linking, formulaHelp]);
+  }, [linking, formulaHelp, summaryPanel]);
 
   const sources = useMemo(
     () =>
@@ -386,6 +405,7 @@ export function NoteTable() {
     setSession((prev) => {
       const current = prev.views.find((item) => item.id === prev.activeId) ?? prev.views[0];
       const next: BasesSession = {
+        ...prev,
         activeId: "saved",
         views: prev.views.map((item) =>
           item.id === "saved"
@@ -498,25 +518,95 @@ export function NoteTable() {
     setCollapsed(new Set());
   }, [groupColumn, view.id]);
   const summaryEntries = Object.entries(view.summaries).filter(([id]) => columns.some(([column]) => column === id));
-  const setSummary = (column: string, kind: SummaryKind | null) => {
+  const summaryFormulas = session.summaryFormulas;
+  const setSummary = (column: string, kind: SummaryChoice | null) => {
     const { [column]: _old, ...rest } = view.summaries;
     patchView({ summaries: kind ? { ...rest, [column]: kind } : rest });
   };
   const summaryCell = (rows: NoteTableRow[], column: string) => {
     const kind = view.summaries[column];
     if (!kind) return null;
-    const result = summarize(rows, column, kind);
+    const result = summarize(rows, column, kind, summaryFormulas);
     return (
-      <span data-testid="bases-summary-value" data-column={column} data-summary={kind} title={result.detail}>
+      <span
+        data-testid="bases-summary-value"
+        data-column={column}
+        data-summary={kind}
+        data-summary-error={result.error ? "true" : undefined}
+        title={result.detail}
+      >
         <span className="text-[var(--text-muted)]">{summaryLabel(kind)}</span>{" "}
-        <span className="font-medium text-[var(--text)]">{result.text}</span>
+        <span className={cn("font-medium", result.error ? "text-[var(--danger)]" : "text-[var(--text)]")}>{result.text}</span>
       </span>
     );
   };
   const summaryLine = (rows: NoteTableRow[]) =>
     summaryEntries
-      .map(([column, kind]) => `${columnLabel(column)} ${summaryLabel(kind).toLowerCase()} ${summarize(rows, column, kind).text}`)
+      .map(([column, kind]) => {
+        const custom = customSummaryName(kind);
+        const label = custom ?? summaryLabel(kind).toLowerCase();
+        return `${columnLabel(column)} ${label} ${summarize(rows, column, kind, summaryFormulas).text}`;
+      })
       .join(" · ");
+
+  /** Every view's summaries with `from` renamed to `to`, or dropped when `to` is null. */
+  const withSummaryRef = (views: BasesViewConfig[], from: string, to: string | null): BasesViewConfig[] =>
+    views.map((item) => {
+      const old = customSummary(from);
+      if (!Object.values(item.summaries).includes(old)) return item;
+      const summaries: Record<string, SummaryChoice> = {};
+      for (const [column, choice] of Object.entries(item.summaries)) {
+        if (choice !== old) summaries[column] = choice;
+        else if (to !== null) summaries[column] = customSummary(to);
+      }
+      return { ...item, summaries };
+    });
+  const addSummaryFormula = (expr = "", name = "") => {
+    if (summaryFormulas.length >= MAX_SUMMARY_FORMULAS) return;
+    const names = summaryFormulas.map((f) => f.name);
+    let label = name.trim() || "Summary";
+    for (let n = 2; summaryFormulaNameProblem(label, names); n += 1) label = `${name.trim() || "Summary"} ${n}`;
+    setSession((prev) => ({ ...prev, summaryFormulas: [...prev.summaryFormulas, { name: label, expr }] }));
+    setSummaryPanel(true);
+    setFocusSummaryAt(summaryFormulas.length);
+  };
+  const patchSummaryExpr = (at: number, expr: string) => {
+    setSession((prev) => ({
+      ...prev,
+      summaryFormulas: prev.summaryFormulas.map((f, i) => (i === at ? { ...f, expr } : f)),
+    }));
+  };
+  const commitSummaryName = () => {
+    if (!summaryDraft) return;
+    const { at, name } = summaryDraft;
+    const formula = summaryFormulas[at];
+    if (!formula) {
+      setSummaryDraft(null);
+      return;
+    }
+    const others = summaryFormulas.filter((_, i) => i !== at).map((f) => f.name);
+    if (summaryFormulaNameProblem(name, others)) return;
+    const next = name.trim();
+    setSummaryDraft(null);
+    if (next === formula.name) return;
+    setSession((prev) => ({
+      ...prev,
+      views: withSummaryRef(prev.views, formula.name, next),
+      summaryFormulas: prev.summaryFormulas.map((f, i) => (i === at ? { ...f, name: next } : f)),
+    }));
+  };
+  const removeSummaryFormula = (at: number) => {
+    const formula = summaryFormulas[at];
+    if (!formula) return;
+    setSummaryDraft(null);
+    setSession((prev) => ({
+      ...prev,
+      views: withSummaryRef(prev.views, formula.name, null),
+      summaryFormulas: prev.summaryFormulas.filter((_, i) => i !== at),
+    }));
+  };
+  const summaryUses = (name: string): number =>
+    session.views.reduce((n, item) => n + Object.values(item.summaries).filter((choice) => choice === customSummary(name)).length, 0);
   const groupHeader = (group: NoteGroup) => {
     const open = !collapsed.has(group.key);
     return (
@@ -579,6 +669,12 @@ export function NoteTable() {
     document.querySelector<HTMLInputElement>(`[data-testid="bases-formula"][data-formula-id="${focusFormulaId}"]`)?.focus();
     setFocusFormulaId(null);
   }, [focusFormulaId, view.formulas]);
+
+  useEffect(() => {
+    if (focusSummaryAt === null) return;
+    document.querySelector<HTMLInputElement>(`[data-testid="bases-summary-formula"][data-at="${focusSummaryAt}"]`)?.focus();
+    setFocusSummaryAt(null);
+  }, [focusSummaryAt, session.summaryFormulas]);
 
   const importBase = async (file: File) => {
     if (file.size > 1024 * 1024) {
@@ -854,11 +950,11 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table and cards with views, formula columns with list, regex, and link functions, group-by, summary rows, and typed note links.{" "}
+            Built-in table and cards with views, formula columns with list, regex, and link functions, group-by, summary rows with summary formulas, and typed note links.{" "}
             {live?.onDisk
               ? `Views live in ${LIVE_BASE_FILE} at the vault root, an Obsidian .base file Nexus saves to and reloads when it changes.`
               : "Views live in a .base kept in browser storage for this vault."}{" "}
-            Not Obsidian Bases — two views, no custom summary formulas, links do not open into files (no asFile or linksTo), and some Obsidian functions are missing (Formula help lists what works); other .base files open only through Import.
+            Not Obsidian Bases — two views, links do not open into files (no asFile or linksTo), and some Obsidian functions are missing (Formula help lists what works); other .base files open only through Import.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -961,6 +1057,20 @@ export function NoteTable() {
           onClick={() => setFormulaHelp((open) => !open)}
         >
           Formula help
+        </button>
+        <button
+          type="button"
+          className={cn("chip-btn", summaryPanel && "is-active")}
+          aria-pressed={summaryPanel}
+          aria-controls="bases-summary-formulas"
+          data-testid="bases-summary-formulas-toggle"
+          title="Summary formulas run once per group over the column's values; pick one in a column's Summary menu"
+          onClick={() => {
+            setSummaryPanel((open) => !open);
+            setSummaryDraft(null);
+          }}
+        >
+          Summary formulas{summaryFormulas.length ? ` · ${summaryFormulas.length}` : ""}
         </button>
         <input
           value={relationName}
@@ -1135,6 +1245,124 @@ export function NoteTable() {
           })}
         </div>
       ) : null}
+      {summaryPanel ? (
+        <div
+          id="bases-summary-formulas"
+          className="shrink-0 space-y-1 border-b border-[var(--border)] px-3 py-1.5 text-[12px]"
+          data-testid="bases-summary-formulas"
+        >
+          <p className="text-[11px] text-[var(--text-muted)]">
+            A summary formula runs once per group, and once for all notes, over the column you pick it for. values is that
+            column's values, one per note, with null for a note that has none; values.length counts the notes. Both views share
+            these, like summaries: in a .base file.
+          </p>
+          {summaryFormulas.map((f, at) => {
+            const draft = summaryDraft?.at === at ? summaryDraft.name : null;
+            const nameProblem =
+              draft === null ? null : summaryFormulaNameProblem(draft, summaryFormulas.filter((_, i) => i !== at).map((o) => o.name));
+            const exprError = f.expr.trim() ? compileSummaryFormula(f.expr).error : null;
+            const uses = summaryUses(f.name);
+            const errorId = `bases-summary-formula-error-${at}`;
+            return (
+              <div key={at} data-testid="bases-summary-formula-row" data-name={f.name}>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={draft ?? f.name}
+                    onChange={(e) => setSummaryDraft({ at, name: e.target.value })}
+                    onBlur={commitSummaryName}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitSummaryName();
+                      if (e.key === "Escape" && draft !== null) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSummaryDraft(null);
+                      }
+                    }}
+                    aria-label={`Summary formula ${at + 1} name`}
+                    aria-invalid={nameProblem ? true : undefined}
+                    className={cn(
+                      "nexus-field h-8 w-32 rounded-md border bg-transparent px-2 text-[12px]",
+                      nameProblem ? "border-[var(--danger)]" : "border-[var(--border)]",
+                    )}
+                    data-testid="bases-summary-formula-name"
+                    data-at={at}
+                  />
+                  <input
+                    value={f.expr}
+                    onChange={(e) => patchSummaryExpr(at, e.target.value)}
+                    placeholder="e.g. values.mean().round(2)"
+                    spellCheck={false}
+                    aria-label={`Summary formula for ${f.name}`}
+                    aria-invalid={exprError ? true : undefined}
+                    aria-describedby={exprError ? errorId : undefined}
+                    className={cn(
+                      "nexus-field h-8 min-w-[12rem] flex-1 rounded-md border bg-transparent px-2 font-mono text-[11px]",
+                      exprError ? "border-[var(--danger)]" : "border-[var(--border)]",
+                    )}
+                    data-testid="bases-summary-formula"
+                    data-at={at}
+                  />
+                  <span className="hidden shrink-0 text-[10.5px] text-[var(--text-muted)] md:inline" data-testid="bases-summary-formula-uses">
+                    {uses ? `used by ${uses} column${uses === 1 ? "" : "s"}` : "not used yet"}
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-btn h-8 w-8 shrink-0"
+                    aria-label={`Remove summary formula ${f.name}`}
+                    title={uses ? "Removing it also clears the summaries that use it" : undefined}
+                    data-testid="bases-summary-formula-remove"
+                    onClick={() => removeSummaryFormula(at)}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                {nameProblem ? (
+                  <p role="alert" className="mt-0.5 text-[12px] text-[var(--danger)]" data-testid="bases-summary-formula-name-error">
+                    {nameProblem}
+                  </p>
+                ) : null}
+                {exprError ? (
+                  <p
+                    id={errorId}
+                    role="alert"
+                    className="mt-0.5 rounded-md bg-[var(--danger-dim)] px-2 py-1 text-[12px] text-[var(--danger)]"
+                    data-testid="bases-summary-formula-error"
+                  >
+                    Summary formula error in “{f.name}”: {exprError}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              className="chip-btn"
+              data-testid="bases-add-summary-formula"
+              disabled={summaryFormulas.length >= MAX_SUMMARY_FORMULAS}
+              title={`Up to ${MAX_SUMMARY_FORMULAS} summary formulas`}
+              onClick={() => addSummaryFormula()}
+            >
+              + Summary formula
+            </button>
+            {SUMMARY_FORMULA_EXAMPLES.map((example) => (
+              <button
+                key={example.formula}
+                type="button"
+                className="flex min-h-9 flex-col items-start rounded-md border border-[var(--border)] px-2 py-1 text-left hover:border-[var(--accent)] disabled:opacity-50"
+                data-testid="bases-summary-formula-example"
+                data-formula={example.formula}
+                disabled={summaryFormulas.length >= MAX_SUMMARY_FORMULAS}
+                title="Add as a summary formula"
+                onClick={() => addSummaryFormula(example.formula, example.name)}
+              >
+                <span className="font-mono text-[11px]">{example.formula}</span>
+                <span className="text-[11px] text-[var(--text-muted)]">{example.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {formulaHelp ? (
         <div
           id="bases-formula-help"
@@ -1171,6 +1399,11 @@ export function NoteTable() {
             Regex: status.matches(/^draft/i); replace and split take a regex too, and replace(/(\d+)/g, "#$1") uses groups.
             Links: a property made of [[links]] is a link, and equals the note's title or path. link("Note") makes one;
             links that point at a note open it from the cell. file.backlinks lists loaded notes that link here.
+          </p>
+          <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-formula-summaries">
+            Summary formulas (the Summary formulas button) use the same functions on values, the list of one column's values in a
+            group: values.mean().round(2), values.filter(value == "done").length, values.max() - values.min(). They cannot read
+            file., formula., or a property by name; pick the column in its Summary menu instead.
           </p>
           <div className="space-y-0.5 text-[11px] text-[var(--text-muted)]" data-testid="bases-formula-functions">
             <p>Functions also work as methods, like status.upper() or tags.join(" · ").</p>
@@ -1257,14 +1490,16 @@ export function NoteTable() {
               <tr data-testid="bases-summary-row" className="border-t border-[var(--border)] text-[11px]">
                 {columns.map(([id, label]) => {
                   const kind = view.summaries[id] ?? null;
-                  const offered = summaryKindsFor(shown, id);
-                  const options = kind && !offered.includes(kind) ? [...offered, kind] : offered;
+                  const offered: SummaryChoice[] = summaryKindsFor(shown, id);
+                  const custom = summaryFormulas.map((f) => customSummary(f.name));
+                  const options = kind && customSummaryName(kind) === null && !offered.includes(kind) ? [...offered, kind] : offered;
+                  const customOptions = kind && customSummaryName(kind) !== null && !custom.includes(kind) ? [...custom, kind] : custom;
                   return (
                     <td key={id} className="px-2 py-1 align-top">
                       <div className="flex items-center gap-1">
                         <select
                           value={kind ?? ""}
-                          onChange={(e) => setSummary(id, (e.target.value || null) as SummaryKind | null)}
+                          onChange={(e) => setSummary(id, (e.target.value || null) as SummaryChoice | null)}
                           aria-label={`Summary for ${label}`}
                           className="nexus-field h-7 max-w-[7rem] rounded border border-[var(--border)] bg-transparent px-1 text-[11px] text-[var(--text-muted)]"
                           data-testid="bases-summary-select"
@@ -1276,6 +1511,15 @@ export function NoteTable() {
                               {summaryLabel(option)}
                             </option>
                           ))}
+                          {customOptions.length ? (
+                            <optgroup label="Summary formulas">
+                              {customOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {summaryLabel(option)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
                         </select>
                         {kind ? summaryCell(shown, id) : null}
                       </div>
