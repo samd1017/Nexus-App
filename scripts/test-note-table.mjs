@@ -693,4 +693,56 @@ assert.equal(many.session.views[0].formulas.length, 8);
 assert.match(many.notes.join("\n"), /Only 8 formula columns fit in a view/);
 assert.match(readFileSync("src/lib/vault/desktop-write-path.ts", "utf8"), /base\)\$\/i/);
 
+const clash = exportBaseFile({
+  activeId: "all",
+  views: [
+    { ...exportSession.views[0], formulas: [col("a", "1", "A")], column: "name" },
+    { ...exportSession.views[1], query: "", formulas: [col("a", "2", "A two"), col("b", 'formula.a + formula["A two"]', "B")], column: "formula:b" },
+  ],
+});
+const clashDoc = parseYaml(clash.text);
+assert.deepEqual(clashDoc.formulas, { a: "1", a_2: "2", b: "formula.a_2 + formula.a_2" });
+assert.deepEqual(clashDoc.views[1].order.slice(-2), ["formula.a_2", "formula.b"]);
+assert.deepEqual(clashDoc.views[1].sort, [{ property: "formula.b", direction: "ASC" }]);
+const clashBack = importBaseFile(clash.text);
+assert.equal(buildNoteTable(formulaNotes, "", clashBack.session.views[1].formulas, NOW).rows[0].formulas.b.value, "4");
+
+const tangled = importBaseFile(`formulas:
+  a: 'formula.b + 1'
+  b: '2'
+  c: 'formula.hidden * 2'
+  hidden: '5'
+  total: 'formula["Base price"] * 2'
+  price: '10'
+  loop1: 'formula.loop2'
+  loop2: 'formula.loop1'
+properties:
+  formula.price:
+    displayName: Base price
+views:
+  - type: table
+    name: Ordered
+    order: [file.name, formula.a, formula.b, formula.c, formula.total, formula.price]
+  - type: table
+    name: Loop
+    order: [formula.loop1]
+`);
+const [ordered, loop] = tangled.session.views;
+assert.deepEqual(ordered.formulas.map((f) => f.id), ["b", "a", "hidden", "c", "price", "total"]);
+assert.equal(ordered.formulas.find((f) => f.id === "total").expr, "formula.price * 2");
+const tangledRow = buildNoteTable(formulaNotes, "", ordered.formulas, NOW).rows[0].formulas;
+assert.deepEqual(
+  Object.fromEntries(Object.entries(tangledRow).map(([id, cell]) => [id, cell.error ?? cell.value])),
+  { b: "2", a: "3", hidden: "5", c: "10", price: "10", total: "20" },
+);
+const tangledNotes = tangled.notes.join("\n");
+assert.match(tangledNotes, /“c” reads formula\.hidden, so “hidden” was added as a column/);
+assert.match(tangledNotes, /“Ordered” formula columns were reordered/);
+assert.match(tangledNotes, /Formula loop between “loop2”, “loop1”; those columns show an error/);
+assert.deepEqual(loop.formulas.map((f) => f.id), ["loop2", "loop1"]);
+const loopRow = buildNoteTable(formulaNotes, "", loop.formulas, NOW).rows[0].formulas;
+assert.match(loopRow.loop2.error, /formula\.loop1 is not a formula column to the left/);
+assert.match(loopRow.loop1.error, /formula\.loop2 has an error/);
+assert.doesNotMatch(importBaseFile(exported.text).notes.join("\n"), /reordered|added as a column|loop/);
+
 console.log("note-table: PASS");

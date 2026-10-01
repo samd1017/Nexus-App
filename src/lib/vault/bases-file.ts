@@ -29,6 +29,23 @@ const FILE_FORMULAS: Record<string, { name: string; expr: string }> = {
   "file.ext": { name: "Extension", expr: "file.ext" },
 };
 
+type Picked = { key: string; name: string; expr: string };
+
+const FORMULA_REF = /\bformula\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*(["'])((?:(?!\2).)*)\2\s*\])/g;
+
+/** `formula.x` and `formula["x"]` targets in an expression, in order. */
+function formulaRefs(expr: string): string[] {
+  return [...expr.matchAll(FORMULA_REF)].map((m) => m[1] ?? m[3] ?? "").filter(Boolean);
+}
+
+/** Rewrites each formula reference that `to` maps to `formula.<key>`; others stay as written. */
+function rewriteFormulaRefs(expr: string, to: (ref: string) => string | null): string {
+  return expr.replace(FORMULA_REF, (match, dot?: string, _q?: string, bracket?: string) => {
+    const key = to(dot ?? bracket ?? "");
+    return key ? `formula.${key}` : match;
+  });
+}
+
 function folderFilter(folder: string): string {
   return `file.inFolder(${JSON.stringify(folder)})`;
 }
@@ -42,11 +59,15 @@ export function exportBaseFile(
   const notes: string[] = [];
   const exportKey = new Map<string, string>();
   for (const view of session.views) {
+    const local = new Map<string, string>();
     for (const f of view.formulas) {
       if (!f.expr.trim()) continue;
+      const expr = rewriteFormulaRefs(f.expr, (ref) => local.get(ref.toLowerCase()) ?? null);
       let key = f.id;
-      if (key in formulas && formulas[key] !== f.expr) key = formulaKey(f.id, Object.keys(formulas));
-      formulas[key] = f.expr;
+      if (key in formulas && formulas[key] !== expr) key = formulaKey(f.id, Object.keys(formulas));
+      formulas[key] = expr;
+      local.set(f.id.toLowerCase(), key);
+      if (!local.has(f.name.toLowerCase())) local.set(f.name.toLowerCase(), key);
       exportKey.set(`${view.id}:${f.id}`, key);
       properties[`formula.${key}`] = { displayName: f.name };
     }
@@ -159,18 +180,9 @@ export function importBaseFile(text: string): BaseImport {
       else report(`Filter ${expr} was not imported; Nexus filters by folder.`);
     }
     const order = Array.isArray(raw.order) ? raw.order.filter((e): e is string => typeof e === "string") : null;
-    const formulas: BasesFormula[] = [];
-    const formulaIdFor = new Map<string, string>();
-    const addFormula = (sourceKey: string, nameText: string, expr: string) => {
-      if (formulas.length >= MAX_FORMULA_COLUMNS) {
-        report(`Only ${MAX_FORMULA_COLUMNS} formula columns fit in a view; “${nameText}” was left out.`);
-        return;
-      }
-      const id = formulaKey(sourceKey, formulas.map((f) => f.id));
-      formulaIdFor.set(sourceKey, id);
-      formulas.push({ id, name: nameText, expr });
-      const compiled = compileNoteFormula(expr);
-      if (compiled.error) report(`Formula “${nameText}” uses syntax Nexus does not read yet (${compiled.error}); it shows that error in its column.`);
+    const picked: Picked[] = [];
+    const pick = (key: string, nameText: string, expr: string) => {
+      if (!picked.some((p) => p.key === key)) picked.push({ key, name: nameText, expr });
     };
     const columns: string[] = [];
     const entries = order ?? ["file.name", ...[...sourceFormulas.keys()].map((k) => `formula.${k}`)];
@@ -179,16 +191,68 @@ export function importBaseFile(text: string): BaseImport {
         const key = entry.slice(8);
         const expr = sourceFormulas.get(key);
         if (expr === undefined) report(`Column ${entry} has no formula in this file.`);
-        else if (!formulaIdFor.has(key)) addFormula(key, displayName(key), expr);
+        else pick(key, displayName(key), expr);
       } else if (entry.startsWith("file.")) {
         if (entry in FILE_SORT || Object.values(FILE_SORT).includes(entry)) continue;
         const asFormula = FILE_FORMULAS[entry];
-        if (asFormula) addFormula(entry.replace(".", "_"), asFormula.name, asFormula.expr);
+        if (asFormula) pick(entry.replace(".", "_"), asFormula.name, asFormula.expr);
         else report(`Column ${entry} has no Nexus equivalent and was left out.`);
       } else {
         const key = propertyId(entry);
         if (key && !columns.includes(key)) columns.push(key);
       }
+    }
+    const resolveRef = (ref: string): string | null => {
+      if (sourceFormulas.has(ref)) return ref;
+      return [...sourceFormulas.keys()].find((key) => displayName(key) === ref) ?? null;
+    };
+    const depsOf = (p: Picked) =>
+      formulaRefs(p.expr)
+        .map(resolveRef)
+        .filter((key): key is string => key !== null);
+    for (let i = 0; i < picked.length; ) {
+      const p = picked[i] as Picked;
+      const missing = depsOf(p).find((key) => !picked.some((q) => q.key === key));
+      if (missing === undefined) {
+        i += 1;
+        continue;
+      }
+      picked.splice(i, 0, { key: missing, name: displayName(missing), expr: sourceFormulas.get(missing) as string });
+      report(`“${p.name}” reads formula.${missing}, so “${displayName(missing)}” was added as a column.`);
+    }
+    const placed: Picked[] = [];
+    let rest = [...picked];
+    while (rest.length) {
+      const next = rest.find((p) => depsOf(p).every((key) => placed.some((q) => q.key === key)));
+      if (!next) {
+        report(`Formula loop between ${rest.map((p) => `“${p.name}”`).join(", ")}; those columns show an error.`);
+        placed.push(...rest);
+        break;
+      }
+      placed.push(next);
+      rest = rest.filter((p) => p !== next);
+    }
+    if (placed.some((p, i) => p !== picked[i])) {
+      report(`“${name}” formula columns were reordered so each sits right of the columns it reads.`);
+    }
+    const formulas: BasesFormula[] = [];
+    const formulaIdFor = new Map<string, string>();
+    for (const p of placed) {
+      if (formulas.length >= MAX_FORMULA_COLUMNS) {
+        report(`Only ${MAX_FORMULA_COLUMNS} formula columns fit in a view; “${p.name}” was left out.`);
+        continue;
+      }
+      const id = formulaKey(p.key, formulas.map((f) => f.id));
+      formulaIdFor.set(p.key, id);
+      formulas.push({ id, name: p.name, expr: p.expr });
+    }
+    for (const f of formulas) {
+      f.expr = rewriteFormulaRefs(f.expr, (ref) => {
+        const key = resolveRef(ref);
+        return key ? formulaIdFor.get(key) ?? null : null;
+      });
+      const compiled = compileNoteFormula(f.expr);
+      if (compiled.error) report(`Formula “${f.name}” uses syntax Nexus does not read yet (${compiled.error}); it shows that error in its column.`);
     }
     let column = "name";
     let dir: "asc" | "desc" = "asc";

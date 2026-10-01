@@ -910,7 +910,7 @@ export function NoteTable() {
         {view.formulas.length
           ? ` · ${view.formulas.length} formula column${view.formulas.length === 1 ? "" : "s"}`
           : ""}
-        {failureLine ? ` · ${failureLine}` : ""}
+        {failureLine ? ` · ${failureLine.replace(/\.$/, "")}` : ""}
         {readingProperties ? " · reading note properties" : ""}
         {indexFillBusy && visibleMissingIds.length > 0 && !readingProperties
           ? " · properties wait until the index is idle"
