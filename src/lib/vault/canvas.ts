@@ -346,6 +346,55 @@ export function toObsidianCanvas(doc: CanvasDoc): {
   };
 }
 
+/** Wrap the selected non-frame cards. Returns null when fewer than two can be framed. */
+export function frameAroundCards(
+  cards: CanvasCard[],
+  ids: string[],
+  frameId: string,
+): CanvasCard[] | null {
+  const picked = ids
+    .map((id) => cards.find((c) => c.id === id))
+    .filter((c): c is CanvasCard => !!c && c.kind !== "group");
+  if (picked.length < 2) return null;
+  const pad = 28;
+  const group: CanvasCard = {
+    id: frameId,
+    kind: "group",
+    text: "Frame",
+    x: Math.min(...picked.map((c) => c.x)) - pad,
+    y: Math.min(...picked.map((c) => c.y)) - pad,
+    w: Math.max(...picked.map((c) => c.x + c.w)) - Math.min(...picked.map((c) => c.x)) + pad * 2,
+    h: Math.max(...picked.map((c) => c.y + c.h)) - Math.min(...picked.map((c) => c.y)) + pad * 2,
+    color: "6",
+  };
+  return [group, ...cards];
+}
+
+/** Link the first two selected cards. Returns null when they are already linked or fewer than two. */
+export function edgeBetweenSelected(
+  doc: CanvasDoc,
+  ids: string[],
+  edgeId: string,
+): CanvasEdge | null {
+  const picked = ids
+    .map((id) => doc.cards.find((c) => c.id === id))
+    .filter((c): c is CanvasCard => !!c && c.kind !== "group");
+  const a = picked[0];
+  const b = picked[1];
+  if (!a || !b) return null;
+  const exists = doc.edges.some(
+    (edge) =>
+      (edge.from === a.id && edge.to === b.id) || (edge.from === b.id && edge.to === a.id),
+  );
+  if (exists) return null;
+  return { id: edgeId, from: a.id, to: b.id, fromSide: "right", toSide: "left" };
+}
+
+/** Drop one edge. Cards stay. */
+export function withoutEdge(doc: CanvasDoc, edgeId: string): CanvasDoc {
+  return { ...doc, edges: doc.edges.filter((edge) => edge.id !== edgeId) };
+}
+
 export function cardAnchor(card: CanvasCard, side: CanvasSide = "right"): { x: number; y: number } {
   if (side === "left") return { x: card.x, y: card.y + card.h / 2 };
   if (side === "top") return { x: card.x + card.w / 2, y: card.y };

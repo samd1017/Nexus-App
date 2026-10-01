@@ -313,7 +313,14 @@ export function AppShell() {
         if (vaultHasNoNotes()) startFirstNote();
         else useVaultStore.getState().createNote(focusedEmptyFolderId(), "Untitled");
       },
-      toggleGraph: () => toggleGraphForViewport(),
+      toggleGraph: () => {
+        // Native Cmd/Ctrl+G is a menu accelerator. The board keeps that chord.
+        if (document.querySelector('.nexus-canvas[data-canvas-focus="1"]')) {
+          window.dispatchEvent(new CustomEvent("nexus-canvas-frame"));
+          return;
+        }
+        toggleGraphForViewport();
+      },
       toggleSource: () => useVaultStore.getState().toggleReadingView(),
     }).then((fn) => {
       un = fn;

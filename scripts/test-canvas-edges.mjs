@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { parseCanvasDoc, serializeCanvas } = await import("../src/lib/vault/canvas.ts");
+const { parseCanvasDoc, serializeCanvas, frameAroundCards, edgeBetweenSelected, withoutEdge, toObsidianCanvas } = await import("../src/lib/vault/canvas.ts");
 
 const doc = {
   cards: [
@@ -58,16 +58,47 @@ assert.equal(fromFile.edges[0].from, "a");
 assert.equal(fromFile.edges[0].to, "b");
 assert.equal(fromFile.cards.find((c) => c.kind === "group")?.text, "Frame");
 const board = readFileSync("src/components/canvas/CanvasBoard.tsx", "utf8");
+const css = readFileSync("src/styles.css", "utf8");
+const keys = readFileSync("src/components/chrome/KeyboardShortcuts.tsx", "utf8");
+const shell = readFileSync("src/components/layout/AppShell.tsx", "utf8");
+const pair = [
+  { id: "a", x: 0, y: 0, w: 200, h: 80, kind: "text", text: "A" },
+  { id: "b", x: 300, y: 0, w: 200, h: 80, kind: "text", text: "B" },
+];
+const framed = frameAroundCards(pair, ["a", "b"], "frame1");
+assert.ok(framed);
+assert.equal(framed[0].kind, "group");
+assert.equal(framed[0].text, "Frame");
+const framedFile = serializeCanvas("", { cards: framed, edges: [], cam: { x: 0, y: 0, k: 1 } }, "Board.canvas");
+assert.equal(JSON.parse(framedFile).nodes.find((n) => n.id === "frame1").type, "group");
+const linked = edgeBetweenSelected({ cards: pair, edges: [], cam: { x: 0, y: 0, k: 1 } }, ["a", "b"], "edge1");
+assert.equal(linked.from, "a");
+assert.equal(linked.to, "b");
+const withEdge = { cards: pair, edges: [linked], cam: { x: 0, y: 0, k: 1 } };
+assert.equal(toObsidianCanvas(withEdge).edges[0].fromNode, "a");
+const dropped = withoutEdge(withEdge, "edge1");
+assert.equal(dropped.edges.length, 0);
+assert.equal(dropped.cards.length, 2);
+assert.equal(frameAroundCards(pair, ["a"], "x"), null);
+
+assert.match(board, /data-testid="canvas-edge-hit"/);
+assert.match(board, /data-testid="canvas-edge-select"/);
+assert.match(board, /data-testid="canvas-edge-delete"/);
+assert.match(board, /e\.key === "Delete" \|\| e\.key === "Backspace"/);
+assert.match(board, /if \(selectedEdge\) \{\s*e\.preventDefault\(\);\s*removeEdge\(selectedEdge\);/s);
+assert.match(board, /nexus-canvas-frame/);
+assert.match(css, /\.nexus-canvas-edge-hit \{[^}]*width: 44px;/s);
 assert.match(board, /data-testid="canvas-connect"/);
 assert.match(board, /data-testid="canvas-frame"/);
 assert.match(board, /data-canvas-focus/);
 assert.match(board, /Shift-click or Ctrl-click/);
 assert.match(board, /Still missing: live note embeds/);
 assert.doesNotMatch(board, /Not full Obsidian Canvas/);
-const css = readFileSync("src/styles.css", "utf8");
 assert.match(css, /\.nexus-canvas-port \{[^}]*width: 44px;/s);
-const keys = readFileSync("src/components/chrome/KeyboardShortcuts.tsx", "utf8");
 assert.match(keys, /nexus-canvas\[data-canvas-focus="1"\]/);
+assert.match(keys, /isDeleteChord\) \{[\s\S]*?nexus-canvas\[data-canvas-focus="1"\]/);
 assert.doesNotMatch(keys, /data-canvas-card].is-selected"\)\.length >= 2/);
+assert.match(shell, /nexus-canvas\[data-canvas-focus="1"\]/);
+assert.match(shell, /nexus-canvas-frame/);
 
 console.log("canvas-edges: PASS");

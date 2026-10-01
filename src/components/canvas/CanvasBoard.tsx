@@ -40,8 +40,10 @@ import {
   cardAnchor,
   cardAtPoint,
   distributeCards,
+  edgeBetweenSelected,
   edgePath,
   fitCamera,
+  frameAroundCards,
   idsMovedWith,
   nearestSide,
   newCardId,
@@ -50,6 +52,7 @@ import {
   sendToBack,
   reflowEdges,
   snapToGrid,
+  withoutEdge,
   toObsidianCanvas,
   vacantPoint,
   serializeCanvas,
@@ -275,48 +278,23 @@ export function CanvasBoard({ noteId, content }: Props) {
     return card.id;
   };
 
+  const frameAt = useRef(0);
   const frameIds = (ids: string[]) => {
-    const cards = ids
-      .map((id) => docRef.current.cards.find((x) => x.id === id))
-      .filter((c): c is CanvasCard => c != null && c.kind !== "group");
-    if (cards.length < 2) return;
-    const pad = 28;
-    const group: CanvasCard = {
-      id: newCardId(),
-      kind: "group",
-      text: "Frame",
-      x: Math.min(...cards.map((c) => c.x)) - pad,
-      y: Math.min(...cards.map((c) => c.y)) - pad,
-      w: Math.max(...cards.map((c) => c.x + c.w)) - Math.min(...cards.map((c) => c.x)) + pad * 2,
-      h: Math.max(...cards.map((c) => c.y + c.h)) - Math.min(...cards.map((c) => c.y)) + pad * 2,
-      color: "6",
-    };
-    const next = { ...docRef.current, cards: [group, ...docRef.current.cards] };
+    const cards = frameAroundCards(docRef.current.cards, ids, newCardId());
+    if (!cards) return;
+    const now = performance.now();
+    if (now - frameAt.current < 150) return;
+    frameAt.current = now;
+    const frameId = cards[0]?.id;
+    const next = { ...docRef.current, cards };
     commit(next);
     persist(next);
-    setSelected([group.id, ...ids]);
+    if (frameId) setSelected([frameId, ...ids]);
   };
 
   const connectSelected = () => {
-    const cards = selected
-      .map((id) => docRef.current.cards.find((c) => c.id === id))
-      .filter((c): c is CanvasCard => c != null && c.kind !== "group");
-    if (cards.length < 2) return;
-    const a = cards[0];
-    const b = cards[1];
-    if (!a || !b) return;
-    const exists = docRef.current.edges.some(
-      (edge) =>
-        (edge.from === a.id && edge.to === b.id) || (edge.from === b.id && edge.to === a.id),
-    );
-    if (exists) return;
-    const edge: CanvasEdge = {
-      id: newCardId(),
-      from: a.id,
-      to: b.id,
-      fromSide: "right",
-      toSide: "left",
-    };
+    const edge = edgeBetweenSelected(docRef.current, selected, newCardId());
+    if (!edge) return;
     const next = { ...docRef.current, edges: [...docRef.current.edges, edge] };
     commit(next);
     persist(next);
@@ -452,7 +430,9 @@ export function CanvasBoard({ noteId, content }: Props) {
   };
 
   const removeEdge = (id: string) => {
-    commit({ ...docRef.current, edges: docRef.current.edges.filter((e) => e.id !== id) });
+    const next = withoutEdge(docRef.current, id);
+    commit(next);
+    persist(next);
     setSelectedEdge(null);
     setEdgeLabelId(null);
     setMenu(null);
@@ -758,11 +738,14 @@ export function CanvasBoard({ noteId, content }: Props) {
     const onUp = (e: KeyboardEvent) => {
       if (e.key === " ") spaceRef.current = false;
     };
+    const onFrame = () => frameIds(selected);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onUp);
+    window.addEventListener("nexus-canvas-frame", onFrame);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onUp);
+      window.removeEventListener("nexus-canvas-frame", onFrame);
     };
   });
 
@@ -881,7 +864,7 @@ export function CanvasBoard({ noteId, content }: Props) {
   return (
     <div
       className="nexus-canvas relative flex min-h-0 flex-1 flex-col"
-      data-canvas-focus="0"
+      data-canvas-focus="1"
       onPointerDownCapture={(e) => e.currentTarget.setAttribute("data-canvas-focus", "1")}
     >
       <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
@@ -947,6 +930,36 @@ export function CanvasBoard({ noteId, content }: Props) {
         >
           <Square size={13} /> Frame
         </button>
+        {doc.edges.map((edge, index) => (
+          <button
+            key={edge.id}
+            type="button"
+            data-testid="canvas-edge-select"
+            data-edge-id={edge.id}
+            className={cn("chip-btn", selectedEdge === edge.id && "is-active")}
+            title="Select this link, then Delete"
+            onClick={() => {
+              setSelected([]);
+              setSelectedEdge(edge.id);
+            }}
+          >
+            Link {index + 1}
+          </button>
+        ))}
+        {doc.edges.length ? (
+          <button
+            type="button"
+            data-testid="canvas-edge-delete"
+            className="chip-btn"
+            title="Delete the selected link"
+            disabled={!selectedEdge}
+            onClick={() => {
+              if (selectedEdge) removeEdge(selectedEdge);
+            }}
+          >
+            Delete link
+          </button>
+        ) : null}
         <button type="button" className="chip-btn" title="Undo" disabled={!undoRef.current.length} onClick={undo}>
           <Undo2 size={13} />
         </button>
@@ -1536,6 +1549,36 @@ export function CanvasBoard({ noteId, content }: Props) {
                 </div>
               );
             })}
+          {doc.edges.map((edge) => {
+            const from = cardById(edge.from);
+            const to = cardById(edge.to);
+            if (!from || !to) return null;
+            const a = cardAnchor(from, edge.fromSide || "right");
+            const b = cardAnchor(to, edge.toSide || "left");
+            const midX = (a.x + b.x) / 2;
+            const midY = (a.y + b.y) / 2;
+            const k = doc.cam.k || 1;
+            const hit = 44 / k;
+            return (
+              <button
+                key={`hit-${edge.id}`}
+                type="button"
+                data-testid="canvas-edge-hit"
+                data-canvas-edge
+                data-edge-id={edge.id}
+                aria-label="Select link"
+                className={cn("nexus-canvas-edge-hit", selectedEdge === edge.id && "is-selected")}
+                style={{ left: midX - hit / 2, top: midY - hit / 2, width: hit, height: hit }}
+                onPointerDown={(ev) => {
+                  ev.stopPropagation();
+                  ev.preventDefault();
+                  setSelected([]);
+                  setSelectedEdge(edge.id);
+                  setMenu(null);
+                }}
+              />
+            );
+          })}
           {marquee ? (
             <div
               className="pointer-events-none absolute border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]"

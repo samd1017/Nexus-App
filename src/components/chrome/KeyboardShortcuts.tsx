@@ -201,6 +201,20 @@ export function KeyboardShortcuts() {
       const store = useVaultStore.getState();
       const prefs = usePrefsStore.getState();
 
+      // The board owns Ctrl/Cmd+G while it is focused. Local graph does not.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "g" &&
+        document.querySelector('.nexus-canvas[data-canvas-focus="1"]')
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        window.dispatchEvent(new CustomEvent("nexus-canvas-frame"));
+        return;
+      }
+
       // Desktop SSOT: native menu accelerators own factory chords unless remapped.
       const remapped = prefs.hotkeyOverrides ?? {};
       const matched = matchHotkey(e, remapped);
@@ -413,6 +427,8 @@ export function KeyboardShortcuts() {
         (e.key === "Backspace" &&
           (isAppleModPlatform() ? e.metaKey : mod));
       if (isDeleteChord) {
+        // The open board deletes a selected link or card. It must not trash the file.
+        if (document.querySelector('.nexus-canvas[data-canvas-focus="1"]')) return;
         const t = e.target as HTMLElement | null;
         const tag = t?.tagName?.toLowerCase();
         const editable =
