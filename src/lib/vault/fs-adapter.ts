@@ -633,6 +633,35 @@ export async function pickVaultFolder(): Promise<FileSystemDirectoryHandle | nul
   }
 }
 
+/**
+ * Text files with `ext` directly inside `relDir` (hidden names skipped).
+ * Files over `maxBytes` come back with `text: null`. A missing folder is empty.
+ */
+export async function readFsaTextFilesIn(
+  root: FileSystemDirectoryHandle,
+  relDir: string,
+  ext: string,
+  maxBytes: number,
+): Promise<Array<{ name: string; text: string | null; size: number; error?: string }>> {
+  let dir: FileSystemDirectoryHandle;
+  try {
+    dir = await getDirAtPath(root, relDir, false);
+  } catch {
+    return [];
+  }
+  const out: Array<{ name: string; text: string | null; size: number; error?: string }> = [];
+  for await (const [name, handle] of dir.entries()) {
+    if (handle.kind !== "file" || name.startsWith(".") || !name.toLowerCase().endsWith(ext)) continue;
+    try {
+      const file = await (handle as FileSystemFileHandle).getFile();
+      out.push({ name, size: file.size, text: file.size > maxBytes ? null : await file.text() });
+    } catch (err) {
+      out.push({ name, size: 0, text: null, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return out;
+}
+
 /** List soft-deleted notes under `.trash/` (newest first). */
 export async function listFsaTrash(
   root: FileSystemDirectoryHandle,

@@ -41,7 +41,11 @@ function RootDocument() {
       <head>
         <HeadContent />
       </head>
-      <body className="bg-[var(--bg-deepest,#050507)] text-[var(--text-primary,#f2f2f7)]">
+      {/* applyPrefsToDom adds theme-dark / theme-light before hydration. */}
+      <body
+        className="bg-[var(--bg-deepest,#050507)] text-[var(--text-primary,#f2f2f7)]"
+        suppressHydrationWarning
+      >
         {/* No AuthProvider — core experience is fully offline, zero accounts */}
         <Outlet />
         <Scripts />

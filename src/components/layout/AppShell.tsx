@@ -15,6 +15,7 @@ import { QuickSwitcher } from "@/components/search/QuickSwitcher";
 import { setSwitcherOpen, toggleQuickSwitcher } from "@/lib/search/switcher-session";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
 import { installKeyboardFocusRings } from "@/lib/chrome/focus-ring";
+import { useVaultCssSnippets } from "@/lib/appearance/snippets";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
@@ -237,6 +238,7 @@ export function AppShell() {
   }, [bootstrap]);
 
   useEffect(() => installKeyboardFocusRings(document), []);
+  useVaultCssSnippets();
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;

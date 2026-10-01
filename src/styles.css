@@ -117,6 +117,50 @@
     --success-dim: color-mix(in srgb, var(--success) 12%, transparent);
   }
 
+  /* Premium themes ride on dark / light so every light override still applies.
+     --graph-void is left alone: themes recolor chrome, not the 3D graph. */
+  :root[data-theme-variant="midnight"] {
+    color-scheme: dark;
+    --bg-deepest: #070a14;
+    --bg-primary: #0c1120;
+    --bg-secondary: #111829;
+    --bg-elevated: #172036;
+    --border: rgba(148, 170, 255, 0.1);
+    --border-strong: #26304a;
+    --text-primary: #e8ecfa;
+    --text-secondary: #a7b0cc;
+    --text-muted: #8f99b8;
+    --glass-bg: rgba(12, 17, 32, 0.74);
+    --panel-solid: #0e1424;
+    --fill-subtle: rgba(148, 170, 255, 0.04);
+    --fill-hover: rgba(148, 170, 255, 0.07);
+    --titlebar-bg: rgba(7, 10, 20, 0.94);
+    --code-inline: rgba(148, 170, 255, 0.08);
+    --switch-off: rgba(148, 170, 255, 0.22);
+  }
+
+  :root[data-theme-variant="paper"] {
+    color-scheme: light;
+    --bg-deepest: #ece4d4;
+    --bg-primary: #f6f0e4;
+    --bg-secondary: #fbf7ef;
+    --bg-elevated: #fffcf6;
+    --border: rgba(74, 56, 30, 0.12);
+    --border-strong: #d8ccb5;
+    --text-primary: #2a2219;
+    --text-secondary: #5a4d3c;
+    --text-muted: #6e6150;
+    --glass-bg: rgba(251, 247, 239, 0.84);
+    --shadow-panel: 0 4px 20px rgba(74, 56, 30, 0.08);
+    --overlay: rgba(42, 34, 25, 0.4);
+    --panel-solid: #fbf7ef;
+    --fill-subtle: rgba(74, 56, 30, 0.04);
+    --fill-hover: rgba(74, 56, 30, 0.07);
+    --titlebar-bg: rgba(246, 240, 228, 0.94);
+    --code-inline: rgba(74, 56, 30, 0.07);
+    --switch-off: #cdbfa6;
+  }
+
   [data-theme="light"] .glass-elevated,
   [data-theme="light"] .glass-panel {
     background: var(--glass-bg);

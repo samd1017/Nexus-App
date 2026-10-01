@@ -130,6 +130,13 @@ pub fn grant_plugin_fs_scope(app: &AppHandle, root: &str) -> Result<(), String> 
             Ok(()) => granted = true,
             Err(e) => last_err = Some(e.to_string()),
         }
+        // Obsidian CSS snippets only; the rest of `.obsidian` stays out of scope.
+        let snippets = p.join(".obsidian").join("snippets");
+        for recursive in [false, true] {
+            if let Err(e) = scope.allow_directory(&snippets, recursive) {
+                last_err = Some(e.to_string());
+            }
+        }
     }
     if granted {
         return Ok(());

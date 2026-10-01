@@ -1,5 +1,4 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { flushSync } from "react-dom";
 import { Settings, X, Cloud, RotateCcw } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import {
@@ -11,7 +10,6 @@ import {
   type AccentPreset,
   type Density,
   type PhysicsIntensity,
-  type ThemeMode,
 } from "@/lib/prefs/preferences";
 import {
   HOTKEY_LABELS,
@@ -29,6 +27,7 @@ import {
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { ConfirmDialog } from "@/components/chrome/ConfirmDialog";
+import { CssSnippetsSettings, ThemePicker } from "@/components/settings/AppearanceThemes";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
 import { memoryLine } from "@/lib/settings/memory-copy";
 import { useVaultStore } from "@/lib/vault/store";
@@ -473,7 +472,7 @@ export function SettingsPanel() {
               data-settings-lead="appearance"
               className="text-[15px] font-semibold leading-snug text-white"
             >
-              Color, theme, and density apply as soon as you pick them.
+              Color, theme, snippets, and density apply as soon as you pick them.
             </p>
             <Label className="mt-4">Accent color</Label>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -547,18 +546,8 @@ export function SettingsPanel() {
             </div>
 
             <Label className="mt-5">Theme</Label>
-            <Segmented
-              className="mt-2"
-              value={prefs.theme ?? "dark"}
-              options={[
-                { value: "dark", label: "Dark" },
-                { value: "light", label: "Light" },
-                { value: "system", label: "System" },
-              ]}
-              onChange={(v) => {
-                flushSync(() => updatePrefs({ theme: v as ThemeMode }));
-              }}
-            />
+            <ThemePicker />
+            <CssSnippetsSettings open={open} />
 
             <Label className="mt-5">Interface density</Label>
             <Segmented

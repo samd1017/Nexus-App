@@ -520,6 +520,39 @@ export async function listDesktopTrash(
 }
 
 /**
+ * Text files with `ext` directly inside `relDir` (hidden names skipped).
+ * Files over `maxBytes` come back with `text: null` and are not read.
+ * A missing folder is an empty list.
+ */
+export async function readDesktopTextFilesIn(
+  root: string,
+  relDir: string,
+  ext: string,
+  maxBytes: number,
+): Promise<Array<{ name: string; text: string | null; size: number; error?: string }>> {
+  const { readDir, readTextFile, stat } = await import("@tauri-apps/plugin-fs");
+  let entries;
+  try {
+    entries = await readDir(joinRoot(root, relDir));
+  } catch {
+    return [];
+  }
+  const out: Array<{ name: string; text: string | null; size: number; error?: string }> = [];
+  for (const e of entries) {
+    if (!e.name || e.isDirectory || e.name.startsWith(".")) continue;
+    if (!e.name.toLowerCase().endsWith(ext)) continue;
+    const full = joinRoot(root, pathJoin(relDir, e.name));
+    try {
+      const size = Number((await stat(full)).size) || 0;
+      out.push({ name: e.name, size, text: size > maxBytes ? null : await readTextFile(full) });
+    } catch (err) {
+      out.push({ name: e.name, size: 0, text: null, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return out;
+}
+
+/**
  * The folder at `relPath`, when it is on disk. The catalog learns folders from
  * the notes inside them, so an empty folder is only found here.
  */

@@ -48,11 +48,13 @@ import {
   X,
   Pin,
   Paperclip,
+  Palette,
 } from "lucide-react";
 import { getDesktopRoot, useVaultStore } from "@/lib/vault/store";
 import { statDesktopFolder } from "@/lib/vault/tauri-adapter";
 import { deskNodeId } from "@/lib/vault/desk-node-id";
-import { usePrefsStore } from "@/lib/prefs/preferences";
+import { THEME_CHOICES, usePrefsStore } from "@/lib/prefs/preferences";
+import { useCssSnippetStore } from "@/lib/appearance/snippets";
 import {
   searchWithBackend as searchVault,
   searchWithBackendAsync,
@@ -1347,6 +1349,29 @@ function CommandPaletteOpen() {
           shortcut: formatShortcut(","),
           run: wrapRun("settings", () => {
             usePrefsStore.getState().setSettingsOpen(true);
+            setCommandOpen(false);
+          }),
+        },
+        ...THEME_CHOICES.map((choice) => ({
+          id: `theme-${choice.id}`,
+          label: `Theme: ${choice.label}`,
+          keywords: ["theme", "appearance", "color", "dark", "light", choice.label.toLowerCase()],
+          icon: <Palette size={15} />,
+          run: wrapRun(`theme-${choice.id}`, () => {
+            usePrefsStore.getState().updatePrefs({ theme: choice.id });
+            setToast(`Theme: ${choice.label}`);
+            setCommandOpen(false);
+          }),
+        })),
+        {
+          id: "snippets-off",
+          label: "Turn off CSS snippets",
+          keywords: ["css", "snippets", "appearance", "theme", "reset", "safe"],
+          icon: <Palette size={15} />,
+          run: wrapRun("snippets-off", () => {
+            const on = useCssSnippetStore.getState().enabled.length;
+            useCssSnippetStore.getState().disableAll();
+            setToast(on ? "CSS snippets off" : "No CSS snippets were on");
             setCommandOpen(false);
           }),
         },
