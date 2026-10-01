@@ -38,7 +38,31 @@ export type FormulaCell = {
   error: string | null;
   /** Numeric or date result as a number, so the column sorts by value. */
   sort: number | null;
+  /** What `sort` means, so summaries know a date from a number. */
+  kind: "empty" | "text" | "number" | "date" | "boolean";
 };
+
+export const SUMMARY_KIND_IDS = [
+  "count",
+  "filled",
+  "empty",
+  "unique",
+  "sum",
+  "average",
+  "median",
+  "min",
+  "max",
+  "range",
+  "stddev",
+  "earliest",
+  "latest",
+  "checked",
+  "unchecked",
+] as const;
+export type SummaryKind = (typeof SUMMARY_KIND_IDS)[number];
+
+/** Rows grouped by one column's value; `column` uses the same ids as sort. */
+export type BasesGroupBy = { column: string; dir: "asc" | "desc" };
 
 /** A formula column. `id` is stable across renames; `formula.<id>` reads it. */
 export type BasesFormula = { id: string; name: string; expr: string };
@@ -61,6 +85,9 @@ export type BasesViewConfig = {
   relations: string[];
   /** Table spreadsheet or note cards. Same filters either way. */
   layout: "table" | "cards";
+  groupBy: BasesGroupBy | null;
+  /** One summary per column id, shown under each group and under the whole view. */
+  summaries: Record<string, SummaryKind>;
 };
 
 /** Vault file for the saved table. Not an Obsidian .base file. */
@@ -173,6 +200,8 @@ export function defaultBasesSession(): BasesSession {
         columns: [],
         relations: [],
         layout: "table",
+        groupBy: null,
+        summaries: {},
       },
       {
         id: "saved",
@@ -185,6 +214,8 @@ export function defaultBasesSession(): BasesSession {
         columns: [],
         relations: ["related"],
         layout: "table",
+        groupBy: null,
+        summaries: {},
       },
     ],
   };
@@ -257,7 +288,37 @@ function asView(raw: unknown, fallback: BasesViewConfig): BasesViewConfig {
       ? row.relations.filter((key): key is string => typeof key === "string" && /^[A-Za-z_][\w-]*$/.test(key))
       : fallback.relations,
     layout: row.layout === "cards" ? "cards" : "table",
+    groupBy: asGroupBy(row.groupBy, formulas),
+    summaries: asSummaries(row.summaries, formulas),
   };
+}
+
+/** A column id the view can still show: built-ins, any property key, or one of its formulas. */
+export function isViewColumn(column: string, formulas: BasesFormula[]): boolean {
+  if (!column.trim()) return false;
+  if (column.startsWith(FORMULA_COLUMN_PREFIX)) return formulas.some((f) => formulaColumnId(f.id) === column);
+  return true;
+}
+
+function asGroupBy(raw: unknown, formulas: BasesFormula[]): BasesGroupBy | null {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw as Partial<BasesGroupBy>;
+  if (typeof g.column !== "string" || !isViewColumn(g.column, formulas)) return null;
+  return { column: g.column, dir: g.dir === "desc" ? "desc" : "asc" };
+}
+
+export function asSummaryKind(raw: unknown): SummaryKind | null {
+  return typeof raw === "string" && (SUMMARY_KIND_IDS as readonly string[]).includes(raw) ? (raw as SummaryKind) : null;
+}
+
+function asSummaries(raw: unknown, formulas: BasesFormula[]): Record<string, SummaryKind> {
+  const out: Record<string, SummaryKind> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [column, kind] of Object.entries(raw as Record<string, unknown>)) {
+    const valid = asSummaryKind(kind);
+    if (valid && isViewColumn(column, formulas)) out[column] = valid;
+  }
+  return out;
 }
 
 /** Write one note-link onto a frontmatter property. Other fields and the body stay. */
@@ -330,6 +391,15 @@ export function formulaStatusLine(status: FormulaColumnStatus[]): string | null 
     .join(" · ");
 }
 
+function cellKind(result: FormulaResult): FormulaCell["kind"] {
+  const raw = result.raw;
+  if (result.error || raw === null || raw === "") return "empty";
+  if (typeof raw === "number") return "number";
+  if (typeof raw === "boolean") return "boolean";
+  if (typeof raw === "object") return "date";
+  return "text";
+}
+
 export function buildNoteTable(
   notes: NoteTableSource[],
   folderPrefix = "",
@@ -381,7 +451,12 @@ export function buildNoteTable(
     const cells: Record<string, FormulaCell> = {};
     columns.forEach(({ f, compiled }, index) => {
       const computed = runNoteFormula(compiled, { ...built, refs }, now);
-      cells[f.id] = { value: computed.error ? "" : computed.value, error: computed.error, sort: computed.sort };
+      cells[f.id] = {
+        value: computed.error ? "" : computed.value,
+        error: computed.error,
+        sort: computed.sort,
+        kind: cellKind(computed),
+      };
       const entry = computed.error ? { error: computed.error } : { value: computed.raw };
       refs.set(f.id.toLowerCase(), entry);
       if (!refs.has(f.name.toLowerCase())) refs.set(f.name.toLowerCase(), entry);

@@ -749,6 +749,11 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
   }
 }
 
+/** Milliseconds for a YYYY-MM-DD (or [[YYYY-MM-DD]], or ISO date-time) value, else null. */
+export function parseFormulaDate(raw: string): number | null {
+  return parseDate(raw)?.ms ?? null;
+}
+
 /** Parse once per view; an empty formula compiles to no program. */
 export function compileNoteFormula(source: string): CompiledFormula {
   const trimmed = source.trim();

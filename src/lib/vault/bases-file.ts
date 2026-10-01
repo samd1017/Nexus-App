@@ -14,6 +14,7 @@ import {
   type BasesFormula,
   type BasesSession,
   type BasesViewConfig,
+  type SummaryKind,
 } from "@/lib/vault/note-table";
 
 export const BASE_EXPORT_FILE = "Nexus Bases.base";
@@ -44,6 +45,34 @@ function rewriteFormulaRefs(expr: string, to: (ref: string) => string | null): s
     const key = to(dot ?? bracket ?? "");
     return key ? `formula.${key}` : match;
   });
+}
+
+/** Obsidian's built-in summary names. Count is Nexus-only. */
+const BASE_SUMMARY_NAME: Record<SummaryKind, string | null> = {
+  count: null,
+  filled: "Filled",
+  empty: "Empty",
+  unique: "Unique",
+  sum: "Sum",
+  average: "Average",
+  median: "Median",
+  min: "Min",
+  max: "Max",
+  range: "Range",
+  stddev: "Stddev",
+  earliest: "Earliest",
+  latest: "Latest",
+  checked: "Checked",
+  unchecked: "Unchecked",
+};
+
+function summaryFromBase(name: string): SummaryKind | null {
+  const lower = name.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (lower === "count") return "count";
+  const hit = (Object.entries(BASE_SUMMARY_NAME) as [SummaryKind, string | null][]).find(
+    ([, base]) => base?.toLowerCase() === lower,
+  );
+  return hit ? hit[0] : null;
 }
 
 function folderFilter(folder: string): string {
@@ -82,12 +111,21 @@ export function exportBaseFile(
       .filter((key): key is string => Boolean(key))
       .map((key) => `formula.${key}`);
     out.order = ["file.name", ...props, ...formulaOrder];
-    const direction = view.dir === "desc" ? "DESC" : "ASC";
-    const sortFormula = view.formulas.find((f) => formulaColumnId(f.id) === view.column);
-    const property = sortFormula
-      ? `formula.${exportKey.get(`${view.id}:${sortFormula.id}`) ?? sortFormula.id}`
-      : FILE_SORT[view.column] ?? view.column;
-    out.sort = [{ property, direction }];
+    const propertyFor = (column: string): string => {
+      const f = view.formulas.find((item) => formulaColumnId(item.id) === column);
+      return f ? `formula.${exportKey.get(`${view.id}:${f.id}`) ?? f.id}` : FILE_SORT[column] ?? column;
+    };
+    out.sort = [{ property: propertyFor(view.column), direction: view.dir === "desc" ? "DESC" : "ASC" }];
+    if (view.groupBy) {
+      out.groupBy = { property: propertyFor(view.groupBy.column), direction: view.groupBy.dir === "desc" ? "DESC" : "ASC" };
+    }
+    const summaries: Record<string, string> = {};
+    for (const [column, kind] of Object.entries(view.summaries ?? {})) {
+      const name = BASE_SUMMARY_NAME[kind];
+      if (name) summaries[propertyFor(column)] = name;
+      else notes.push(`“${view.name}” ${kind} summary on ${propertyFor(column)} has no .base equivalent and was left out.`);
+    }
+    if (Object.keys(summaries).length) out.summaries = summaries;
     if (view.query.trim()) {
       notes.push(`“${view.name}” text filter “${view.query.trim()}” has no .base equivalent and was left out.`);
     }
@@ -159,6 +197,9 @@ export function importBaseFile(text: string): BaseImport {
     return typeof named === "string" && named.trim() ? named.trim() : key;
   };
   const topFilters = filterAtoms(root.filters, notes);
+  if (asRecord(root.summaries) && Object.keys(asRecord(root.summaries) ?? {}).length) {
+    notes.push(`Custom summary formulas (${Object.keys(asRecord(root.summaries) ?? {}).join(", ")}) were not imported; Nexus has built-in summaries only.`);
+  }
   const reported = new Set<string>();
   const report = (line: string) => {
     if (!reported.has(line)) {
@@ -254,21 +295,42 @@ export function importBaseFile(text: string): BaseImport {
       const compiled = compileNoteFormula(f.expr);
       if (compiled.error) report(`Formula “${f.name}” uses syntax Nexus does not read yet (${compiled.error}); it shows that error in its column.`);
     }
+    const columnFor = (prop: string): string | null => {
+      const fileCol = Object.entries(FILE_SORT).find(([, id]) => id === prop)?.[0];
+      if (fileCol) return fileCol;
+      const formulaSource = prop.startsWith("formula.") ? prop.slice(8) : prop in FILE_FORMULAS ? prop.replace(".", "_") : null;
+      if (formulaSource !== null) {
+        const id = formulaIdFor.get(formulaSource);
+        return id ? formulaColumnId(id) : null;
+      }
+      if (prop.startsWith("file.")) return null;
+      return propertyId(prop) || null;
+    };
     let column = "name";
     let dir: "asc" | "desc" = "asc";
     const sort = Array.isArray(raw.sort) ? asRecord(raw.sort[0]) : null;
     if (sort && typeof sort.property === "string") {
-      const prop = sort.property;
       dir = String(sort.direction).toUpperCase() === "DESC" ? "desc" : "asc";
-      const fileCol = Object.entries(FILE_SORT).find(([, id]) => id === prop)?.[0];
-      const formulaSource = prop.startsWith("formula.") ? prop.slice(8) : prop in FILE_FORMULAS ? prop.replace(".", "_") : null;
-      if (fileCol) column = fileCol;
-      else if (formulaSource !== null && formulaIdFor.has(formulaSource)) {
-        column = formulaColumnId(formulaIdFor.get(formulaSource) as string);
-      } else if (!prop.startsWith("formula.") && !prop.startsWith("file.")) column = propertyId(prop);
-      else report(`“${name}” sorts by ${prop}, which did not carry over; it sorts by name.`);
+      const found = columnFor(sort.property);
+      if (found) column = found;
+      else report(`“${name}” sorts by ${sort.property}, which did not carry over; it sorts by name.`);
     }
-    if (raw.groupBy !== undefined) report(`“${name}” groups rows; Nexus shows them ungrouped.`);
+    let groupBy: BasesViewConfig["groupBy"] = null;
+    const rawGroup = typeof raw.groupBy === "string" ? { property: raw.groupBy } : asRecord(raw.groupBy);
+    if (rawGroup) {
+      const prop = typeof rawGroup.property === "string" ? rawGroup.property : "";
+      const found = prop ? columnFor(prop) : null;
+      if (found) groupBy = { column: found, dir: String(rawGroup.direction).toUpperCase() === "DESC" ? "desc" : "asc" };
+      else report(`“${name}” groups by ${prop || "an unnamed property"}, which did not carry over; it shows ungrouped.`);
+    }
+    const summaries: Record<string, SummaryKind> = {};
+    for (const [prop, value] of Object.entries(asRecord(raw.summaries) ?? {})) {
+      const kind = typeof value === "string" ? summaryFromBase(value) : null;
+      const found = columnFor(prop);
+      if (!kind) report(`“${name}” summary ${String(value)} on ${prop} is not a built-in summary; it was left out.`);
+      else if (!found) report(`“${name}” summary on ${prop} did not carry over.`);
+      else summaries[found] = kind;
+    }
     if (raw.limit !== undefined) report(`“${name}” has a row limit; Nexus shows up to 400 notes.`);
     return {
       id: fallback.id,
@@ -281,6 +343,8 @@ export function importBaseFile(text: string): BaseImport {
       columns,
       relations: [],
       layout: type === "cards" ? "cards" : "table",
+      groupBy,
+      summaries,
     };
   });
   if (rawViews.length > 2) {

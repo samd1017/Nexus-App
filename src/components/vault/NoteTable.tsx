@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { setBasesOpen } from "@/lib/vault/bases-session";
 import {
   basesPropertiesReading,
@@ -18,7 +18,10 @@ import {
   type BasesFormula,
   type BasesSession,
   type BasesViewConfig,
+  type NoteTableRow,
+  type SummaryKind,
 } from "@/lib/vault/note-table";
+import { groupNoteRows, summarize, summaryKindsFor, summaryLabel, type NoteGroup } from "@/lib/vault/bases-groups";
 import { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } from "@/lib/vault/bases-file";
 import { writeNoteFile } from "@/lib/vault/fs-adapter";
 import { writeDesktopNote } from "@/lib/vault/tauri-adapter";
@@ -55,6 +58,7 @@ export function NoteTable() {
   const [linkQuery, setLinkQuery] = useState("");
   const [formulaHelp, setFormulaHelp] = useState(false);
   const [focusFormulaId, setFocusFormulaId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [baseNotice, setBaseNotice] = useState<{
     title: string;
     lines: string[];
@@ -214,6 +218,8 @@ export function NoteTable() {
                 columns,
                 relations: current.relations ?? [],
                 layout: current.layout === "cards" ? "cards" : "table",
+                groupBy: current.groupBy ? { ...current.groupBy } : null,
+                summaries: { ...current.summaries },
               }
             : item,
         ),
@@ -271,8 +277,64 @@ export function NoteTable() {
     ...shownKeys.map((key) => [key, key] as [string, string]),
     ...view.formulas.map((f) => [formulaColumnId(f.id), f.name || "Formula"] as [string, string]),
   ];
+  const groupChoices = [
+    ...columns.filter(([id]) => id !== "name" && id !== "path"),
+    ...(view.groupBy && !columns.some(([id]) => id === view.groupBy?.column) ? [[view.groupBy.column, view.groupBy.column] as [string, string]] : []),
+  ];
   const statusById = new Map(built.formulaStatus.map((status) => [status.id, status]));
   const failureLine = formulaStatusLine(built.formulaStatus);
+  const columnLabel = (id: string) => columns.find(([column]) => column === id)?.[1] ?? id;
+  const groups = useMemo(() => (view.groupBy ? groupNoteRows(shown, view.groupBy) : null), [shown, view.groupBy]);
+  const groupColumn = view.groupBy?.column ?? null;
+  useEffect(() => {
+    setCollapsed(new Set());
+  }, [groupColumn, view.id]);
+  const summaryEntries = Object.entries(view.summaries).filter(([id]) => columns.some(([column]) => column === id));
+  const setSummary = (column: string, kind: SummaryKind | null) => {
+    const { [column]: _old, ...rest } = view.summaries;
+    patchView({ summaries: kind ? { ...rest, [column]: kind } : rest });
+  };
+  const summaryCell = (rows: NoteTableRow[], column: string) => {
+    const kind = view.summaries[column];
+    if (!kind) return null;
+    const result = summarize(rows, column, kind);
+    return (
+      <span data-testid="bases-summary-value" data-column={column} data-summary={kind} title={result.detail}>
+        <span className="text-[var(--text-muted)]">{summaryLabel(kind)}</span>{" "}
+        <span className="font-medium text-[var(--text)]">{result.text}</span>
+      </span>
+    );
+  };
+  const summaryLine = (rows: NoteTableRow[]) =>
+    summaryEntries
+      .map(([column, kind]) => `${columnLabel(column)} ${summaryLabel(kind).toLowerCase()} ${summarize(rows, column, kind).text}`)
+      .join(" · ");
+  const groupHeader = (group: NoteGroup) => {
+    const open = !collapsed.has(group.key);
+    return (
+      <button
+        type="button"
+        aria-expanded={open}
+        className="flex min-h-8 items-center gap-1 text-left text-[12px] font-semibold hover:text-[var(--accent)]"
+        data-testid="bases-group-toggle"
+        onClick={() =>
+          setCollapsed((prev) => {
+            const next = new Set(prev);
+            if (next.has(group.key)) next.delete(group.key);
+            else next.add(group.key);
+            return next;
+          })
+        }
+      >
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span className="text-[var(--text-muted)]">{columnLabel(groupColumn ?? "")}:</span>
+        <span data-testid="bases-group-label">{group.label}</span>
+        <span className="font-normal text-[var(--text-muted)]" data-testid="bases-group-count">
+          · {group.rows.length} note{group.rows.length === 1 ? "" : "s"}
+        </span>
+      </button>
+    );
+  };
 
   const patchFormula = (id: string, partial: Partial<BasesFormula>) => {
     patchView({ formulas: view.formulas.map((f) => (f.id === id ? { ...f, ...partial } : f)) });
@@ -285,9 +347,13 @@ export function NoteTable() {
     setFocusFormulaId(id);
   };
   const removeFormula = (id: string) => {
+    const column = formulaColumnId(id);
+    const { [column]: _dropped, ...summaries } = view.summaries;
     patchView({
       formulas: view.formulas.filter((f) => f.id !== id),
-      ...(view.column === formulaColumnId(id) ? { column: "name", dir: "asc" as const } : {}),
+      summaries,
+      ...(view.groupBy?.column === column ? { groupBy: null } : {}),
+      ...(view.column === column ? { column: "name", dir: "asc" as const } : {}),
     });
   };
   const applyExample = (expr: string, name: string) => {
@@ -353,13 +419,207 @@ export function NoteTable() {
     }
   };
 
+  const renderCard = (row: NoteTableRow) => (
+    <div
+      key={row.id}
+      role="button"
+      tabIndex={0}
+      data-testid="bases-card"
+      data-note-id={row.id}
+      data-path={row.path}
+      className="flex cursor-pointer flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      onClick={() => openNote(row.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.target === e.currentTarget) {
+          e.preventDefault();
+          openNote(row.id);
+        }
+      }}
+    >
+      <h3 className="text-[14px] font-semibold">{row.name}</h3>
+      <p className="truncate text-[11px] text-[var(--text-muted)]">{row.folder || row.path}</p>
+      {shownKeys.map((key) => {
+        const links = row.links[key] || [];
+        return (
+          <div key={key} data-prop={key} className="flex flex-wrap items-center gap-1 text-[12px]">
+            <span className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{key}</span>
+            {links.length
+              ? links.map((link) => {
+                  if (!link.id) return <span key={link.title}>{link.title}</span>;
+                  const noteId = link.id;
+                  return (
+                    <button
+                      key={noteId}
+                      type="button"
+                      className="text-[var(--accent)] hover:underline"
+                      data-testid="bases-relation"
+                      data-note-id={noteId}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openNote(noteId);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.stopPropagation();
+                      }}
+                    >
+                      {link.title}
+                    </button>
+                  );
+                })
+              : relations.includes(key)
+                ? null
+                : (
+                  <span>{row.props[key] || "—"}</span>
+                )}
+            {relations.includes(key) ? (
+              <button
+                type="button"
+                className="inline-flex min-h-9 min-w-[4.5rem] items-center justify-center rounded-md border border-[var(--border)] px-3 text-[13px]"
+                data-testid="bases-link-note"
+                data-row-id={row.id}
+                data-relation={key}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLinking({ rowId: row.id, key });
+                  setLinkQuery("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.stopPropagation();
+                }}
+              >
+                Link
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+      {view.formulas.map((f) => {
+        const cell = row.formulas[f.id];
+        if (!cell) return null;
+        return (
+          <p
+            key={f.id}
+            className="truncate text-[12px] text-[var(--text-muted)]"
+            data-testid="bases-card-formula"
+            data-formula-id={f.id}
+            data-formula-error={cell.error ?? undefined}
+            title={cell.error ?? cell.value}
+          >
+            <span className="text-[10px] uppercase tracking-wide">{f.name || "Formula"}</span>{" "}
+            {cell.error ? (
+              <span className="text-[var(--danger)]" data-testid="bases-formula-error">
+                ⚠ {cell.error}
+              </span>
+            ) : (
+              <span className="text-[var(--text)]">{cell.value || "—"}</span>
+            )}
+          </p>
+        );
+      })}
+    </div>
+  );
+
+  const renderRow = (row: NoteTableRow) => (
+      <tr
+        key={row.id}
+        data-testid="bases-row"
+        data-note-id={row.id}
+        data-path={row.path}
+        className="border-b border-[var(--border)] hover:bg-white/[0.04]"
+      >
+        <td className="max-w-[16rem] truncate px-2 py-1.5 font-medium">
+          <button
+            type="button"
+            className="max-w-full truncate text-left hover:text-[var(--accent)]"
+            data-testid="bases-open-note"
+            onClick={() => {
+              setActiveNote(row.id);
+              setBasesOpen(false);
+            }}
+          >
+            {row.name}
+          </button>
+        </td>
+        <td className="max-w-[12rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.folder || "—"}</td>
+        <td className="max-w-[18rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.path}</td>
+        {shownKeys.map((key) => {
+          const links = row.links[key] || [];
+          return (
+            <td key={key} className="max-w-[16rem] truncate px-2 py-1.5" data-prop={key}>
+              {links.length
+                ? links.map((link) =>
+                    link.id ? (
+                      <button
+                        key={link.id}
+                        type="button"
+                        className="mr-1 text-[var(--accent)] hover:underline"
+                        data-testid="bases-relation"
+                        data-note-id={link.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveNote(link.id);
+                          setBasesOpen(false);
+                        }}
+                      >
+                        {link.title}
+                      </button>
+                    ) : (
+                      <span key={link.title}>{link.title}</span>
+                    ),
+                  )
+                : relations.includes(key)
+                  ? null
+                  : row.props[key] || ""}
+              {relations.includes(key) ? (
+                <button
+                  type="button"
+                  className="ml-1 inline-flex min-h-9 min-w-[4.5rem] items-center justify-center rounded-md border border-[var(--border)] px-3 text-[13px] text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                  data-testid="bases-link-note"
+                  data-row-id={row.id}
+                  data-relation={key}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLinking({ rowId: row.id, key });
+                    setLinkQuery("");
+                  }}
+                >
+                  Link
+                </button>
+              ) : null}
+            </td>
+          );
+        })}
+        {view.formulas.map((f) => {
+          const cell = row.formulas[f.id];
+          return (
+            <td
+              key={f.id}
+              className="max-w-[16rem] truncate px-2 py-1.5"
+              data-formula={cell?.value ?? ""}
+              data-formula-id={f.id}
+              data-formula-error={cell?.error ?? undefined}
+              title={cell?.error ?? cell?.value}
+            >
+              {cell?.error ? (
+                <span className="text-[var(--danger)]" data-testid="bases-formula-error">
+                  ⚠ {cell.error}
+                </span>
+              ) : (
+                cell?.value
+              )}
+            </td>
+          );
+        })}
+      </tr>
+  );
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--bg)]" data-testid="bases-table">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-2">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table and cards with views, formula columns, and typed note links. Not Obsidian Bases — two views, no list, regex, or link functions, no group-by or summaries; .base files import and export, but the file is .nexus/note-table.json, not an Obsidian .base file.
+            Built-in table and cards with views, formula columns, group-by, summary rows, and typed note links. Not Obsidian Bases — two views, no list, regex, or link functions, no custom summary formulas; .base files import and export, but the file is .nexus/note-table.json, not an Obsidian .base file.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -424,6 +684,35 @@ export function NoteTable() {
         >
           + Formula
         </button>
+        <label className="flex items-center gap-1 text-[12px]">
+          <span className="text-[var(--text-muted)]">Group</span>
+          <select
+            value={view.groupBy?.column ?? ""}
+            onChange={(e) =>
+              patchView({ groupBy: e.target.value ? { column: e.target.value, dir: view.groupBy?.dir ?? "asc" } : null })
+            }
+            className="nexus-field h-8 max-w-[9rem] rounded-md border border-[var(--border)] bg-transparent px-1.5 text-[12px]"
+            data-testid="bases-group-by"
+          >
+            <option value="">None</option>
+            {groupChoices.map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {view.groupBy ? (
+          <button
+            type="button"
+            className="chip-btn"
+            data-testid="bases-group-dir"
+            aria-label={view.groupBy.dir === "asc" ? "Groups ascending" : "Groups descending"}
+            onClick={() => patchView({ groupBy: { ...view.groupBy!, dir: view.groupBy!.dir === "asc" ? "desc" : "asc" } })}
+          >
+            {view.groupBy.dir === "asc" ? "Groups ↑" : "Groups ↓"}
+          </button>
+        ) : null}
         <button
           type="button"
           className={cn("chip-btn", formulaHelp && "is-active")}
@@ -624,109 +913,30 @@ export function NoteTable() {
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto" data-layout={layout}>
         {layout === "cards" ? (
-          <div
-            className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 p-3"
-            data-testid="bases-cards"
-          >
-            {shown.map((row) => (
-              <div
-                key={row.id}
-                role="button"
-                tabIndex={0}
-                data-testid="bases-card"
-                data-note-id={row.id}
-                data-path={row.path}
-                className="flex cursor-pointer flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                onClick={() => openNote(row.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && e.target === e.currentTarget) {
-                    e.preventDefault();
-                    openNote(row.id);
-                  }
-                }}
-              >
-                <h3 className="text-[14px] font-semibold">{row.name}</h3>
-                <p className="truncate text-[11px] text-[var(--text-muted)]">{row.folder || row.path}</p>
-                {shownKeys.map((key) => {
-                  const links = row.links[key] || [];
-                  return (
-                    <div key={key} data-prop={key} className="flex flex-wrap items-center gap-1 text-[12px]">
-                      <span className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{key}</span>
-                      {links.length
-                        ? links.map((link) => {
-                            if (!link.id) return <span key={link.title}>{link.title}</span>;
-                            const noteId = link.id;
-                            return (
-                              <button
-                                key={noteId}
-                                type="button"
-                                className="text-[var(--accent)] hover:underline"
-                                data-testid="bases-relation"
-                                data-note-id={noteId}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openNote(noteId);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") e.stopPropagation();
-                                }}
-                              >
-                                {link.title}
-                              </button>
-                            );
-                          })
-                        : relations.includes(key)
-                          ? null
-                          : (
-                            <span>{row.props[key] || "—"}</span>
-                          )}
-                      {relations.includes(key) ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-9 min-w-[4.5rem] items-center justify-center rounded-md border border-[var(--border)] px-3 text-[13px]"
-                          data-testid="bases-link-note"
-                          data-row-id={row.id}
-                          data-relation={key}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLinking({ rowId: row.id, key });
-                            setLinkQuery("");
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.stopPropagation();
-                          }}
-                        >
-                          Link
-                        </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                {view.formulas.map((f) => {
-                  const cell = row.formulas[f.id];
-                  if (!cell) return null;
-                  return (
-                    <p
-                      key={f.id}
-                      className="truncate text-[12px] text-[var(--text-muted)]"
-                      data-testid="bases-card-formula"
-                      data-formula-id={f.id}
-                      data-formula-error={cell.error ?? undefined}
-                      title={cell.error ?? cell.value}
-                    >
-                      <span className="text-[10px] uppercase tracking-wide">{f.name || "Formula"}</span>{" "}
-                      {cell.error ? (
-                        <span className="text-[var(--danger)]" data-testid="bases-formula-error">
-                          ⚠ {cell.error}
-                        </span>
-                      ) : (
-                        <span className="text-[var(--text)]">{cell.value || "—"}</span>
-                      )}
-                    </p>
-                  );
-                })}
-              </div>
-            ))}
+          <div className="space-y-4 p-3" data-testid="bases-cards">
+            {groups
+              ? groups.map((group) => (
+                  <section key={group.key} data-testid="bases-card-group" data-group={group.key}>
+                    {groupHeader(group)}
+                    {summaryEntries.length ? (
+                      <p className="mb-2 text-[11.5px] text-[var(--text-muted)]" data-testid="bases-card-group-summary">
+                        {summaryLine(group.rows)}
+                      </p>
+                    ) : null}
+                    {collapsed.has(group.key) ? null : (
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">{group.rows.map(renderCard)}</div>
+                    )}
+                  </section>
+                ))
+              : (
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">{shown.map(renderCard)}</div>
+                )}
+            {summaryEntries.length && shown.length ? (
+              <p className="border-t border-[var(--border)] pt-2 text-[11.5px] text-[var(--text-muted)]" data-testid="bases-card-summary">
+                {groups ? "All groups · " : ""}
+                {summaryLine(shown)}
+              </p>
+            ) : null}
           </div>
         ) : (
         <table className="w-full border-collapse text-left text-[12px]">
@@ -749,100 +959,61 @@ export function NoteTable() {
             </tr>
           </thead>
           <tbody>
-            {shown.map((row) => (
-              <tr
-                key={row.id}
-                data-testid="bases-row"
-                data-note-id={row.id}
-                data-path={row.path}
-                className="border-b border-[var(--border)] hover:bg-white/[0.04]"
-              >
-                <td className="max-w-[16rem] truncate px-2 py-1.5 font-medium">
-                  <button
-                    type="button"
-                    className="max-w-full truncate text-left hover:text-[var(--accent)]"
-                    data-testid="bases-open-note"
-                    onClick={() => {
-                      setActiveNote(row.id);
-                      setBasesOpen(false);
-                    }}
-                  >
-                    {row.name}
-                  </button>
-                </td>
-                <td className="max-w-[12rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.folder || "—"}</td>
-                <td className="max-w-[18rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.path}</td>
-                {shownKeys.map((key) => {
-                  const links = row.links[key] || [];
+            {groups
+              ? groups.map((group) => (
+                  <Fragment key={group.key}>
+                    <tr data-testid="bases-group" data-group={group.key} className="border-b border-[var(--border)] bg-[var(--fill-subtle)]">
+                      <td colSpan={columns.length} className="px-2 py-1">
+                        {groupHeader(group)}
+                      </td>
+                    </tr>
+                    {collapsed.has(group.key) ? null : group.rows.map(renderRow)}
+                    {summaryEntries.length ? (
+                      <tr data-testid="bases-group-summary" data-group={group.key} className="border-b border-[var(--border)] text-[11px] text-[var(--text-muted)]">
+                        {columns.map(([id]) => (
+                          <td key={id} className="px-2 py-1">
+                            {summaryCell(group.rows, id)}
+                          </td>
+                        ))}
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                ))
+              : shown.map(renderRow)}
+          </tbody>
+          {shown.length ? (
+            <tfoot className="sticky bottom-0 bg-[var(--panel-solid)]">
+              <tr data-testid="bases-summary-row" className="border-t border-[var(--border)] text-[11px]">
+                {columns.map(([id, label]) => {
+                  const kind = view.summaries[id] ?? null;
+                  const offered = summaryKindsFor(shown, id);
+                  const options = kind && !offered.includes(kind) ? [...offered, kind] : offered;
                   return (
-                    <td key={key} className="max-w-[16rem] truncate px-2 py-1.5" data-prop={key}>
-                      {links.length
-                        ? links.map((link) =>
-                            link.id ? (
-                              <button
-                                key={link.id}
-                                type="button"
-                                className="mr-1 text-[var(--accent)] hover:underline"
-                                data-testid="bases-relation"
-                                data-note-id={link.id}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveNote(link.id);
-                                  setBasesOpen(false);
-                                }}
-                              >
-                                {link.title}
-                              </button>
-                            ) : (
-                              <span key={link.title}>{link.title}</span>
-                            ),
-                          )
-                        : relations.includes(key)
-                          ? null
-                          : row.props[key] || ""}
-                      {relations.includes(key) ? (
-                        <button
-                          type="button"
-                          className="ml-1 inline-flex min-h-9 min-w-[4.5rem] items-center justify-center rounded-md border border-[var(--border)] px-3 text-[13px] text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                          data-testid="bases-link-note"
-                          data-row-id={row.id}
-                          data-relation={key}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLinking({ rowId: row.id, key });
-                            setLinkQuery("");
-                          }}
+                    <td key={id} className="px-2 py-1 align-top">
+                      <div className="flex items-center gap-1">
+                        <select
+                          value={kind ?? ""}
+                          onChange={(e) => setSummary(id, (e.target.value || null) as SummaryKind | null)}
+                          aria-label={`Summary for ${label}`}
+                          className="nexus-field h-7 max-w-[7rem] rounded border border-[var(--border)] bg-transparent px-1 text-[11px] text-[var(--text-muted)]"
+                          data-testid="bases-summary-select"
+                          data-column={id}
                         >
-                          Link
-                        </button>
-                      ) : null}
-                    </td>
-                  );
-                })}
-                {view.formulas.map((f) => {
-                  const cell = row.formulas[f.id];
-                  return (
-                    <td
-                      key={f.id}
-                      className="max-w-[16rem] truncate px-2 py-1.5"
-                      data-formula={cell?.value ?? ""}
-                      data-formula-id={f.id}
-                      data-formula-error={cell?.error ?? undefined}
-                      title={cell?.error ?? cell?.value}
-                    >
-                      {cell?.error ? (
-                        <span className="text-[var(--danger)]" data-testid="bases-formula-error">
-                          ⚠ {cell.error}
-                        </span>
-                      ) : (
-                        cell?.value
-                      )}
+                          <option value="">{kind ? "No summary" : "Summary"}</option>
+                          {options.map((option) => (
+                            <option key={option} value={option}>
+                              {summaryLabel(option)}
+                            </option>
+                          ))}
+                        </select>
+                        {kind ? summaryCell(shown, id) : null}
+                      </div>
                     </td>
                   );
                 })}
               </tr>
-            ))}
-          </tbody>
+            </tfoot>
+          ) : null}
         </table>
         )}
         {shown.length === 0 ? (
@@ -911,6 +1082,7 @@ export function NoteTable() {
           ? ` · ${view.formulas.length} formula column${view.formulas.length === 1 ? "" : "s"}`
           : ""}
         {failureLine ? ` · ${failureLine.replace(/\.$/, "")}` : ""}
+        {groups ? ` · grouped by ${columnLabel(groupColumn ?? "")}, ${groups.length} group${groups.length === 1 ? "" : "s"}` : ""}
         {readingProperties ? " · reading note properties" : ""}
         {indexFillBusy && visibleMissingIds.length > 0 && !readingProperties
           ? " · properties wait until the index is idle"

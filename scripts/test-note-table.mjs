@@ -520,7 +520,13 @@ assert.doesNotMatch(table, /Obsidian Bases formulas/);
 assert.doesNotMatch(table, /no full formula language/);
 assert.doesNotMatch(table, /one formula column per view/);
 assert.match(table, /formula columns/);
-assert.match(table, /no list, regex, or link functions, no group-by or summaries/);
+assert.match(table, /no list, regex, or link functions, no custom summary formulas/);
+assert.doesNotMatch(table, /no group-by or summaries/);
+assert.match(table, /group-by, summary rows/);
+assert.match(table, /data-testid="bases-group-by"/);
+assert.match(table, /data-testid="bases-summary-select"/);
+assert.match(table, /data-testid="bases-group"/);
+assert.match(table, /data-testid="bases-card-group"/);
 assert.match(table, /\.base files import and export/);
 assert.match(table, /data-testid="bases-add-formula"/);
 assert.match(table, /data-testid="bases-formula-remove"/);
@@ -664,7 +670,8 @@ assert.match(notesText, /Filter status != "done" was not imported/);
 assert.match(notesText, /Column file\.size has no Nexus equivalent/);
 assert.match(notesText, /Column formula\.missing has no formula in this file/);
 assert.match(notesText, /Formula “words” uses syntax Nexus does not read yet/);
-assert.match(notesText, /groups rows; Nexus shows them ungrouped/);
+assert.deepEqual(open.groupBy, { column: "status", dir: "asc" });
+assert.doesNotMatch(notesText, /ungrouped/);
 assert.match(notesText, /row limit/);
 assert.match(notesText, /“List” is a list view; it opens as a table/);
 assert.match(notesText, /“or” filter group was not imported/);
@@ -744,5 +751,151 @@ const loopRow = buildNoteTable(formulaNotes, "", loop.formulas, NOW).rows[0].for
 assert.match(loopRow.loop2.error, /formula\.loop1 is not a formula column to the left/);
 assert.match(loopRow.loop1.error, /formula\.loop2 has an error/);
 assert.doesNotMatch(importBaseFile(exported.text).notes.join("\n"), /reordered|added as a column|loop/);
+
+// Group-by and summaries
+const { groupNoteRows, summarize, summaryKindsFor, columnCell, EMPTY_GROUP_LABEL, ERROR_GROUP_LABEL } = await import(
+  "../src/lib/vault/bases-groups.ts"
+);
+const shop = [
+  { id: "p1", path: "Shop/Apples.md", name: "Apples.md", content: "---\nstatus: open\nprice: 3\nbought: 2026-09-01\ndone: false\n---\n", mtime: NOW },
+  { id: "p2", path: "Shop/Bread.md", name: "Bread.md", content: "---\nstatus: done\nprice: 4.5\nbought: 2026-09-20\ndone: true\n---\n", mtime: NOW },
+  { id: "p3", path: "Shop/Cheese.md", name: "Cheese.md", content: "---\nstatus: open\nprice: 12\nbought: 2026-08-15\ndone: true\n---\n", mtime: NOW },
+  { id: "p4", path: "Shop/Dates.md", name: "Dates.md", content: "---\nprice: lots\n---\n", mtime: NOW },
+  { id: "p5", path: "Home/Eggs.md", name: "Eggs.md", content: "---\nstatus: open\nprice: 2\n---\n", mtime: NOW },
+];
+const shopTable = buildNoteTable(shop, "", [col("tax", "number(price) * 0.1", "Tax"), col("when", "date(bought)", "When")], NOW);
+const shopRows = sortNoteRows(shopTable.rows, "name", "asc");
+const byStatusGroup = groupNoteRows(shopRows, { column: "status", dir: "asc" });
+assert.deepEqual(byStatusGroup.map((g) => [g.label, g.rows.map((r) => r.id)]), [
+  ["done", ["p2"]],
+  ["open", ["p1", "p3", "p5"]],
+  [EMPTY_GROUP_LABEL, ["p4"]],
+]);
+assert.deepEqual(groupNoteRows(shopRows, { column: "status", dir: "desc" }).map((g) => g.label), ["open", "done", EMPTY_GROUP_LABEL]);
+assert.deepEqual(groupNoteRows(shopRows, { column: "price", dir: "asc" }).map((g) => g.label), ["2", "3", "4.5", "12", "lots"]);
+assert.deepEqual(groupNoteRows(shopRows, { column: "folder", dir: "asc" }).map((g) => [g.label, g.rows.length]), [["Home", 1], ["Shop", 4]]);
+const taxGroups = groupNoteRows(shopRows, { column: "formula:tax", dir: "asc" });
+assert.equal(taxGroups[taxGroups.length - 1].label, ERROR_GROUP_LABEL);
+assert.deepEqual(taxGroups[taxGroups.length - 1].rows.map((r) => r.id), ["p4"]);
+const whenGroups = groupNoteRows(shopRows, { column: "formula:when", dir: "asc" });
+assert.deepEqual(whenGroups.map((g) => g.label), ["2026-08-15", "2026-09-01", "2026-09-20", EMPTY_GROUP_LABEL]);
+assert.equal(columnCell(shopRows[0], "formula:when").date, Date.UTC(2026, 8, 1));
+assert.ok(Math.abs(columnCell(shopRows[0], "formula:tax").num - 0.3) < 1e-9);
+
+const sum = (column, kind, rows = shopRows) => summarize(rows, column, kind);
+assert.equal(sum("price", "sum").text, "21.5");
+assert.match(sum("price", "sum").detail, /Of 4 numbers; 1 notes have none/);
+assert.equal(sum("price", "average").text, "5.375");
+assert.equal(sum("price", "median").text, "3.75");
+assert.equal(sum("price", "min").text, "2");
+assert.equal(sum("price", "max").text, "12");
+assert.equal(sum("price", "range").text, "10");
+assert.equal(sum("price", "stddev").text, "3.9271");
+assert.equal(sum("price", "count").text, "5");
+assert.equal(sum("status", "filled").text, "4");
+assert.equal(sum("status", "empty").text, "1");
+assert.equal(sum("status", "unique").text, "2");
+assert.equal(sum("status", "sum").text, "—");
+assert.match(sum("status", "sum").detail, /No numbers/);
+assert.equal(sum("bought", "earliest").text, "2026-08-15");
+assert.equal(sum("bought", "latest").text, "2026-09-20");
+assert.equal(sum("bought", "range").text, "36 days");
+assert.equal(sum("formula:when", "latest").text, "2026-09-20");
+assert.equal(sum("done", "checked").text, "2");
+assert.equal(sum("done", "unchecked").text, "1");
+assert.equal(sum("name", "checked").text, "—");
+assert.equal(sum("formula:tax", "sum").text, "2.15");
+assert.match(sum("formula:tax", "sum").detail, /1 note with an error left out/);
+assert.equal(sum("formula:tax", "filled").text, "4");
+assert.equal(sum("formula:tax", "empty").text, "0");
+const openGroup = byStatusGroup.find((g) => g.label === "open");
+assert.equal(summarize(openGroup.rows, "price", "sum").text, "17");
+assert.equal(summarize([], "price", "sum").text, "—");
+assert.equal(summarize([], "price", "count").text, "0");
+assert.deepEqual(summaryKindsFor(shopRows, "status"), ["count", "filled", "empty", "unique"]);
+assert.ok(summaryKindsFor(shopRows, "price").includes("sum"));
+assert.ok(!summaryKindsFor(shopRows, "price").includes("earliest"));
+assert.ok(summaryKindsFor(shopRows, "bought").includes("earliest"));
+assert.ok(summaryKindsFor(shopRows, "done").includes("checked"));
+assert.ok(summaryKindsFor(shopRows, "formula:when").includes("latest"));
+
+const grouped = parseBasesSession(JSON.stringify({
+  activeId: "all",
+  views: [
+    {
+      id: "all",
+      formulas: [col("tax", "1")],
+      groupBy: { column: "status", dir: "desc" },
+      summaries: { price: "sum", "formula:tax": "average", "formula:gone": "sum", status: "bogus", name: "count" },
+    },
+    { id: "saved", groupBy: { column: "formula:gone" } },
+  ],
+}));
+assert.deepEqual(grouped.views[0].groupBy, { column: "status", dir: "desc" });
+assert.deepEqual(grouped.views[0].summaries, { price: "sum", "formula:tax": "average", name: "count" });
+assert.equal(grouped.views[1].groupBy, null);
+assert.deepEqual(grouped.views[1].summaries, {});
+assert.deepEqual(parseBasesSession(null).views[0].groupBy, null);
+assert.deepEqual(parseBasesSession(null).views[0].summaries, {});
+const groupedFile = JSON.parse(serializeNoteTableFile(grouped));
+assert.deepEqual(groupedFile.views[0].groupBy, { column: "status", dir: "desc" });
+assert.equal(groupedFile.views[0].summaries.price, "sum");
+assert.deepEqual(parseBasesSession(serializeNoteTableFile(grouped)).views[0], grouped.views[0]);
+
+const groupExport = exportBaseFile({
+  activeId: "all",
+  views: [
+    { ...grouped.views[0], name: "Shop", column: "name", dir: "asc", columns: ["status", "price"], relations: [], layout: "table" },
+    { ...grouped.views[1], groupBy: { column: "formula:formula", dir: "asc" }, summaries: { folder: "unique" } },
+  ],
+});
+const groupDoc = parseYaml(groupExport.text);
+assert.deepEqual(groupDoc.views[0].groupBy, { property: "status", direction: "DESC" });
+assert.deepEqual(groupDoc.views[0].summaries, { price: "Sum", "formula.tax": "Average" });
+assert.match(groupExport.notes.join("\n"), /“Shop” count summary on file\.name has no \.base equivalent/);
+assert.deepEqual(groupDoc.views[1].groupBy, { property: "formula.formula", direction: "ASC" });
+assert.deepEqual(groupDoc.views[1].summaries, { "file.folder": "Unique" });
+const groupBack = importBaseFile(groupExport.text);
+assert.deepEqual(groupBack.session.views[0].groupBy, { column: "status", dir: "desc" });
+assert.deepEqual(groupBack.session.views[0].summaries, { price: "sum", "formula:tax": "average" });
+assert.deepEqual(groupBack.session.views[1].groupBy, { column: "formula:formula", dir: "asc" });
+assert.deepEqual(groupBack.session.views[1].summaries, { folder: "unique" });
+
+const obsidianGroups = importBaseFile(`
+formulas:
+  total: 'number(price) * 2'
+summaries:
+  doubled: 'values.reduce(acc + value, 0) * 2'
+views:
+  - type: table
+    name: Grouped
+    order: [file.name, note.price, formula.total]
+    groupBy:
+      property: note.status
+      direction: DESC
+    summaries:
+      note.price: Average
+      formula.total: stddev
+      file.mtime: Latest
+      note.qty: doubled
+  - type: cards
+    name: By folder
+    groupBy: file.folder
+    summaries:
+      file.size: Sum
+`);
+const [og, oc] = obsidianGroups.session.views;
+assert.deepEqual(og.groupBy, { column: "status", dir: "desc" });
+assert.deepEqual(og.summaries, { price: "average", "formula:total": "stddev" });
+assert.deepEqual(oc.groupBy, { column: "folder", dir: "asc" });
+assert.deepEqual(oc.summaries, {});
+const ogNotes = obsidianGroups.notes.join("\n");
+assert.match(ogNotes, /Custom summary formulas \(doubled\) were not imported/);
+assert.match(ogNotes, /“Grouped” summary doubled on note\.qty is not a built-in summary/);
+assert.match(ogNotes, /“Grouped” summary on file\.mtime did not carry over/);
+assert.match(ogNotes, /“By folder” summary on file\.size did not carry over/);
+const badGroup = importBaseFile("views:\n  - type: table\n    groupBy:\n      property: file.size\n");
+assert.equal(badGroup.session.views[0].groupBy, null);
+assert.match(badGroup.notes.join("\n"), /groups by file\.size, which did not carry over/);
 
 console.log("note-table: PASS");
