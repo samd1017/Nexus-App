@@ -1289,6 +1289,20 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "open-graph-overview",
+          label: "Graph overview",
+          keywords: ["graph", "overview", "vault", "folder", "tag", "filters"],
+          icon: <Network size={15} />,
+          run: wrapRun("open-graph-overview", () => {
+            usePrefsStore.getState().updatePrefs({ graphSurface: "overview" });
+            const store = useVaultStore.getState();
+            store.setRightOpen(true);
+            store.setRightTab("graph");
+            store.setGraphMode("fullscreen");
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "toggle-graph",
           label: "Open Local graph",
           keywords: ["graph", "fullscreen", "local", "network", "orbit"],
@@ -1723,6 +1737,21 @@ function CommandPaletteOpen() {
         shortcut: undefined as string | undefined,
         run: wrapRun("open-bases", () => {
           setBasesOpen(true);
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-graph-overview",
+        label: "Graph overview",
+        icon: <Network size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-graph-overview", () => {
+          usePrefsStore.getState().updatePrefs({ graphSurface: "overview" });
+          const store = useVaultStore.getState();
+          store.setRightOpen(true);
+          store.setRightTab("graph");
+          store.setGraphMode("fullscreen");
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),

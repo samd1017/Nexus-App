@@ -31,3 +31,24 @@ export function layoutLocalRing(
   });
   return points;
 }
+
+/** Even grid for a vault overview. No center and no force simulation. */
+export function layoutOverviewGrid(
+  nodes: { id: string; title: string }[],
+  gapX = 92,
+  gapY = 64,
+): { id: string; title: string; x: number; y: number }[] {
+  const count = nodes.length;
+  if (!count) return [];
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+  return nodes.map((node, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    return {
+      ...node,
+      x: (col - (cols - 1) / 2) * gapX,
+      y: (row - (rows - 1) / 2) * gapY,
+    };
+  });
+}

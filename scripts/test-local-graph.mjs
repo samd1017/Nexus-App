@@ -39,6 +39,7 @@ assert.equal(DEFAULT_PREFS.graphSurface, "local");
 
 const { surfaceForGraphHotkey } = await import("../src/lib/layout/graph-hotkey.ts");
 assert.equal(surfaceForGraphHotkey("explore"), "local");
+assert.equal(surfaceForGraphHotkey("overview"), "local");
 assert.equal(surfaceForGraphHotkey("local"), "local");
 assert.equal(surfaceForGraphHotkey(null), "local");
 

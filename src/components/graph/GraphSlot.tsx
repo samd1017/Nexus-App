@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { usePrefsStore, type GraphSurface } from "@/lib/prefs/preferences";
 import { useVaultStore } from "@/lib/vault/store";
 import { LocalGraph2D } from "@/components/graph/LocalGraph2D";
+import { OverviewGraph } from "@/components/graph/OverviewGraph";
 
 const GraphView = lazy(async () => {
   const m = await import("@/components/graph/GraphView");
@@ -46,7 +47,7 @@ function SurfaceButton({
 /** Note context opens a flat neighborhood. Folder Map is one click away. */
 export function GraphSlot({ mode, className }: Props) {
   const surface = usePrefsStore((s) =>
-    s.graphSurface === "explore" ? "explore" : "local",
+    s.graphSurface === "explore" ? "explore" : s.graphSurface === "overview" ? "overview" : "local",
   );
   const updatePrefs = usePrefsStore((s) => s.updatePrefs);
   const resetGraphBrowse = useVaultStore((s) => s.resetGraphBrowse);
@@ -77,12 +78,24 @@ export function GraphSlot({ mode, className }: Props) {
           testId="graph-folder-map"
           onClick={() => choose("explore")}
         />
+        <SurfaceButton
+          active={surface === "overview"}
+          label="Overview"
+          testId="graph-overview-tab"
+          onClick={() => choose("overview")}
+        />
         <span className="ml-auto truncate pl-2 text-[11px] text-[var(--text-muted)]">
-          {surface === "local" ? "This note and its links" : "3D folder map of the vault"}
+          {surface === "local"
+            ? "This note and its links"
+            : surface === "overview"
+              ? "Whole vault"
+              : "3D folder map of the vault"}
         </span>
       </div>
       <div className="min-h-0 flex-1">
-        {surface === "explore" ? (
+        {surface === "overview" ? (
+          <OverviewGraph className="h-full min-h-0" />
+        ) : surface === "explore" ? (
           <Suspense
             fallback={
               <div className="flex h-full min-h-[220px] items-center justify-center text-[12px] text-[var(--text-muted)]">
