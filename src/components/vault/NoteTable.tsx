@@ -4,8 +4,10 @@ import { setBasesOpen } from "@/lib/vault/bases-session";
 import {
   buildNoteTable,
   filterNoteRows,
+  filterRowsByRelation,
   parseBasesSession,
   sortNoteRows,
+  withNoteRelation,
   type BasesSession,
   type BasesViewConfig,
 } from "@/lib/vault/note-table";
@@ -32,8 +34,13 @@ export function NoteTable() {
   const nodes = useVaultStore((s) => s.nodes);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [session, setSession] = useState<BasesSession>(readSession);
+  const [relationQuery, setRelationQuery] = useState("");
+  const [relationName, setRelationName] = useState("related");
+  const [linking, setLinking] = useState<{ rowId: string; key: string } | null>(null);
+  const [linkQuery, setLinkQuery] = useState("");
   const ready = useRef(false);
   const view = session.views.find((item) => item.id === session.activeId) ?? session.views[0];
 
@@ -123,10 +130,11 @@ export function NoteTable() {
     () => buildNoteTable(sources, view.folder, view.formula),
     [sources, view.folder, view.formula],
   );
-  const shown = useMemo(
-    () => sortNoteRows(filterNoteRows(built.rows, view.query), view.column, view.dir),
-    [built.rows, view.query, view.column, view.dir],
-  );
+  const shown = useMemo(() => {
+    const relations = view.relations ?? [];
+    const filtered = filterRowsByRelation(filterNoteRows(built.rows, view.query), relationQuery, relations.length ? relations : built.keys);
+    return sortNoteRows(filtered, view.column, view.dir);
+  }, [built.rows, built.keys, view.query, view.column, view.dir, view.relations, relationQuery]);
 
   const sortBy = (column: string) => {
     patchView({
@@ -151,6 +159,7 @@ export function NoteTable() {
                 dir: current.dir,
                 formula: current.formula,
                 columns,
+                relations: current.relations ?? [],
               }
             : item,
         ),
@@ -160,10 +169,27 @@ export function NoteTable() {
     });
   };
 
+  const relations = view.relations ?? [];
   const propKeys = view.columns.length
-    ? view.columns.filter((key) => built.keys.includes(key))
+    ? view.columns.filter((key) => built.keys.includes(key) || relations.includes(key))
     : built.keys;
-  const shownKeys = propKeys.length ? propKeys : built.keys;
+  const shownKeys = [...new Set([...(propKeys.length ? propKeys : built.keys), ...relations])];
+
+  const addRelationField = () => {
+    const key = relationName.trim();
+    if (!/^[A-Za-z_][\w-]*$/.test(key)) return;
+    if (relations.includes(key)) return;
+    patchView({ relations: [...relations, key], columns: [...new Set([...(view.columns.length ? view.columns : built.keys), key])] });
+  };
+
+  const linkNote = (rowId: string, key: string, title: string) => {
+    const node = nodes[rowId];
+    if (!node || node.kind !== "note") return;
+    const next = withNoteRelation(node.content ?? "", key, title);
+    updateNoteContent(rowId, next);
+    setLinking(null);
+    setLinkQuery("");
+  };
 
   const columns = [
     ["name", "Name"],
@@ -179,7 +205,7 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table with two views, formulas, and note links. Not Obsidian Bases — no typed relations, no Obsidian .base files.
+            Built-in table with views, formulas, and typed note links. Not Obsidian Bases — no cards view, no full formula language, and the file is .nexus/note-table.json, not an Obsidian .base file.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -221,6 +247,23 @@ export function NoteTable() {
           className="nexus-field h-8 w-44 rounded-md border border-[var(--border)] bg-transparent px-2 font-mono text-[11px]"
           data-testid="bases-formula"
           title="file.mtime, file.name, a property, a & b, or if(value, then, else)"
+        />
+        <input
+          value={relationName}
+          onChange={(e) => setRelationName(e.target.value)}
+          placeholder="Relation field"
+          className="nexus-field h-8 w-28 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+          data-testid="bases-relation-field"
+        />
+        <button type="button" className="chip-btn" data-testid="bases-add-relation" onClick={addRelationField}>
+          Note link
+        </button>
+        <input
+          value={relationQuery}
+          onChange={(e) => setRelationQuery(e.target.value)}
+          placeholder="Filter linked note"
+          className="nexus-field h-8 w-32 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+          data-testid="bases-relation-filter"
         />
         <button
           type="button"
@@ -292,7 +335,25 @@ export function NoteTable() {
                               <span key={link.title}>{link.title}</span>
                             ),
                           )
-                        : row.props[key] || ""}
+                        : relations.includes(key)
+                          ? null
+                          : row.props[key] || ""}
+                      {relations.includes(key) ? (
+                        <button
+                          type="button"
+                          className="text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)]"
+                          data-testid="bases-link-note"
+                          data-row-id={row.id}
+                          data-relation={key}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLinking({ rowId: row.id, key });
+                            setLinkQuery("");
+                          }}
+                        >
+                          Link
+                        </button>
+                      ) : null}
                     </td>
                   );
                 })}
@@ -308,6 +369,41 @@ export function NoteTable() {
         {shown.length === 0 ? (
           <p className="px-3 py-6 text-[12px] text-[var(--text-muted)]">No notes match.</p>
         ) : null}
+        {linking ? (
+          <div className="border-t border-[var(--border)] px-3 py-2" data-testid="bases-link-picker">
+            <input
+              autoFocus
+              value={linkQuery}
+              onChange={(e) => setLinkQuery(e.target.value)}
+              placeholder="Link a note…"
+              className="nexus-field mb-1 h-8 w-full rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+              data-testid="bases-link-query"
+            />
+            <ul className="max-h-32 overflow-y-auto">
+              {sources
+                .filter((note) => !note.path.toLowerCase().endsWith(".canvas"))
+                .filter((note) => {
+                  const q = linkQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  return note.name.toLowerCase().includes(q) || note.path.toLowerCase().includes(q);
+                })
+                .slice(0, 8)
+                .map((note) => (
+                  <li key={note.id}>
+                    <button
+                      type="button"
+                      className="w-full truncate px-1 py-1 text-left text-[12px] hover:bg-white/[0.05]"
+                      data-testid="bases-link-choice"
+                      data-note-id={note.id}
+                      onClick={() => linkNote(linking.rowId, linking.key, note.name.replace(/\.md$/i, ""))}
+                    >
+                      {note.name.replace(/\.md$/i, "")}
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
       <p className="shrink-0 border-t border-[var(--border)] px-3 py-1.5 text-[11px] text-[var(--text-muted)]">
         {shown.length} note{shown.length === 1 ? "" : "s"}
@@ -317,7 +413,7 @@ export function NoteTable() {
         {built.formulaError ? ` · ${built.formulaError}` : ""}
         {missingKey && !indexFillBusy ? " · reading note properties" : ""}
         {indexFillBusy ? " · properties wait until the index is idle" : ""}
-        . Saved view is stored in .nexus/note-table.json. Not an Obsidian .base file.
+        . Typed note links save as [[Title]] in the note. .nexus/note-table.json is not an Obsidian .base file.
       </p>
     </div>
   );

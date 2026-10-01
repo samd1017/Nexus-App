@@ -20,11 +20,13 @@ const {
   buildNoteTable,
   evalNoteFormula,
   filterNoteRows,
+  filterRowsByRelation,
   parseBasesSession,
   relationTargets,
   resolveNoteLink,
   serializeNoteTableFile,
   sortNoteRows,
+  withNoteRelation,
   NOTE_TABLE_FILE,
 } = await import("../src/lib/vault/note-table.ts");
 
@@ -142,11 +144,23 @@ const related = buildNoteTable([
 assert.equal(related.rows.find((row) => row.id === "a")?.links.related?.[0]?.id, "b");
 assert.equal(related.rows.find((row) => row.id === "a")?.links.related?.[0]?.title, "Beta");
 assert.equal(related.rows.find((row) => row.id === "a")?.links.status, undefined);
+const linked = withNoteRelation("# Alpha\n", "related", "Welcome");
+assert.match(linked, /related: \[\[Welcome\]\]/);
+assert.match(linked, /# Alpha/);
+const again = withNoteRelation(linked, "related", "Welcome");
+assert.equal(again.match(/\[\[Welcome\]\]/g).length, 1);
+const also = withNoteRelation(linked, "related", "Beta");
+assert.match(also, /\[\[Welcome\]\]/);
+assert.match(also, /\[\[Beta\]\]/);
+const onlyWelcome = filterRowsByRelation(related.rows, "Welcome", ["related"]);
+assert.equal(onlyWelcome.length, 0);
+const onlyBeta = filterRowsByRelation(related.rows, "beta", ["related"]);
+assert.deepEqual(onlyBeta.map((row) => row.id), ["a"]);
 const file = serializeNoteTableFile({
   activeId: "saved",
   views: [
     { id: "all", name: "All notes", query: "", folder: "", column: "name", dir: "asc", formula: "file.mtime", columns: [] },
-    { id: "saved", name: "Saved view", query: "draft", folder: "Projects", column: "status", dir: "asc", formula: "file.name", columns: ["status", "related"] },
+    { id: "saved", name: "Saved view", query: "draft", folder: "Projects", column: "status", dir: "asc", formula: "file.name", columns: ["status", "related"], relations: ["related"] },
   ],
 });
 assert.equal(NOTE_TABLE_FILE, ".nexus/note-table.json");
@@ -156,6 +170,7 @@ const fromFile = parseBasesSession(file);
 assert.equal(fromFile.activeId, "saved");
 assert.equal(fromFile.views[1].folder, "Projects");
 assert.deepEqual(fromFile.views[1].columns, ["status", "related"]);
+assert.deepEqual(fromFile.views[1].relations, ["related"]);
 assert.equal(fromFile.views[1].formula, "file.name");
 
 const { readFileSync } = await import("node:fs");
@@ -165,7 +180,12 @@ assert.match(palette, /note table/);
 assert.match(palette, /setBasesOpen\(true\)/);
 const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
 assert.match(table, /Not Obsidian Bases/);
-assert.match(table, /no typed relations, no Obsidian \.base files/);
+assert.match(table, /typed note links/);
+assert.match(table, /not an Obsidian \.base file/);
+assert.match(table, /bases-add-relation/);
+assert.match(table, /bases-relation-filter/);
+assert.match(table, /bases-link-note/);
+assert.doesNotMatch(table, /no typed relations/);
 assert.match(table, /bases-relation/);
 assert.match(table, /NOTE_TABLE_FILE|note-table\.json/);
 assert.match(table, /data-testid="bases-row"/);
@@ -175,7 +195,6 @@ assert.match(table, /data-testid="bases-view"/);
 assert.match(table, /data-testid="bases-formula"/);
 assert.match(table, /data-testid="bases-save-view"/);
 assert.match(table, /setActiveNote\(row\.id\)/);
-assert.match(table, /Not an Obsidian \.base file/);
 assert.match(readFileSync("src/lib/vault/note-table-file.ts", "utf8"), /NOTE_TABLE_FILE/);
 assert.match(readFileSync("src/lib/vault/note-table-file.ts", "utf8"), /could not write/);
 const scope = readFileSync("src-tauri/src/vault_scope.rs", "utf8");

@@ -1,4 +1,4 @@
-import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
+import { applyFrontmatter, parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
 import { isCanvasPath } from "@/lib/vault/canvas";
 
 export type NoteTableSource = {
@@ -34,6 +34,8 @@ export type BasesViewConfig = {
   formula: string;
   /** Property columns to keep. Empty means every detected key. */
   columns: string[];
+  /** Frontmatter keys stored as note links ([[Title]]). */
+  relations: string[];
 };
 
 /** Vault file for the saved table. Not an Obsidian .base file. */
@@ -113,6 +115,7 @@ export function defaultBasesSession(): BasesSession {
         dir: "asc",
         formula: "file.mtime",
         columns: [],
+        relations: [],
       },
       {
         id: "saved",
@@ -123,6 +126,7 @@ export function defaultBasesSession(): BasesSession {
         dir: "asc",
         formula: 'if(status, status, "—")',
         columns: [],
+        relations: ["related"],
       },
     ],
   };
@@ -141,7 +145,25 @@ function asView(raw: unknown, fallback: BasesViewConfig): BasesViewConfig {
     columns: Array.isArray(row.columns)
       ? row.columns.filter((key): key is string => typeof key === "string" && key.trim().length > 0)
       : fallback.columns,
+    relations: Array.isArray(row.relations)
+      ? row.relations.filter((key): key is string => typeof key === "string" && /^[A-Za-z_][\w-]*$/.test(key))
+      : fallback.relations,
   };
+}
+
+/** Write one note-link onto a frontmatter property. Other fields and the body stay. */
+export function withNoteRelation(content: string, key: string, title: string): string {
+  const name = title.trim();
+  if (!/^[A-Za-z_][\w-]*$/.test(key) || !name) return content;
+  const { yaml } = splitFrontmatter(content || "");
+  const fields = yaml ? parseFrontmatterFields(yaml) : [];
+  const current = fields.find((field) => field.key === key)?.value ?? "";
+  const titles = relationTargets(current).map((target) => target.split("/").pop() || target);
+  if (!titles.some((item) => item.toLowerCase() === name.toLowerCase())) titles.push(name);
+  const value = titles.map((item) => `[[${item}]]`).join(" ");
+  const next = fields.filter((field) => field.key !== key);
+  next.push({ key, value });
+  return applyFrontmatter(content || "", next);
 }
 
 export function serializeNoteTableFile(session: BasesSession): string {
@@ -402,6 +424,15 @@ export function filterNoteRows(rows: NoteTableRow[], query: string): NoteTableRo
     }
     return false;
   });
+}
+
+/** Keep rows whose typed relation columns link a note matching the query. */
+export function filterRowsByRelation(rows: NoteTableRow[], query: string, keys: string[]): NoteTableRow[] {
+  const q = query.trim().toLowerCase();
+  if (!q || !keys.length) return rows;
+  return rows.filter((row) =>
+    keys.some((key) => (row.links[key] || []).some((link) => link.title.toLowerCase().includes(q))),
+  );
 }
 
 export function sortNoteRows(
