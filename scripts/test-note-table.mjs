@@ -395,6 +395,12 @@ L('file.inFolder("Reviews")', "true");
 L('file.inFolder("reviews/")', "true");
 L('file.inFolder("Rev")', "false");
 L("file.asLink()", "Weekly review");
+L('link("Ada").asFile()', "");
+L('link("Ada").linksTo(file.asLink())', "false");
+LB("asFile()", /asFile\(\) takes 1 value/);
+LB('"Ada".asFile()', /asFile\(\) needs a link/);
+LB("link(\"Ada\").asFile", /asFile\(\) needs \(\)/);
+LB("link(\"Ada\").linksTo", /linksTo\(\) needs a file/);
 L('file.asLink("this")', "this");
 L("file.asLink() == link(\"Weekly review\")", "true");
 ok("file.links.length", "0");
@@ -427,6 +433,7 @@ for (const name of ["list", "filter", "map", "reduce", "join", "sort", "unique",
   const { FORMULA_FUNCTION_GROUPS } = await import("../src/lib/vault/note-formula.ts");
   const groups = Object.fromEntries(FORMULA_FUNCTION_GROUPS.map((g) => [g.group, g.names]));
   assert.ok(groups.list.includes("filter") && groups.regex.includes("matches") && groups.link.includes("link"));
+  assert.ok(groups.link.includes("asFile") && groups.link.includes("linksTo"));
   assert.deepEqual(groups.file, ["file.hasLink", "file.hasTag", "file.hasProperty", "file.inFolder", "file.asLink"]);
   const listed = FORMULA_FUNCTION_GROUPS.flatMap((g) => g.names);
   assert.equal(new Set(listed).size, listed.length);
@@ -716,6 +723,65 @@ assert.equal(stray.rows.find((row) => row.id === "hub2").formulas.back.value, "S
 // Links to missing notes still show, but do not open anything
 const ghost = buildNoteTable([{ id: "g", path: "G.md", name: "G.md", content: "[[Nowhere]]", mtime: NOW }], "", [col("out", "file.links")], NOW);
 assert.deepEqual(ghost.rows[0].formulas.out.links, [{ id: null, title: "Nowhere" }]);
+// asFile resolves a link to a vault note and is clickable; linksTo reads that note's outlinks
+const resolved = buildNoteTable(
+  linkVault,
+  "",
+  [
+    col("file", 'link("Ada").asFile()'),
+    col("path", 'link("People/Ada").asFile()'),
+    col("self", "file.asLink().asFile()"),
+    col("toHub", 'link("Ada").linksTo("Hub")'),
+    col("toSelf", 'link("Ada").linksTo(file.asLink())'),
+    col("chain", 'link("Ada").asFile().linksTo("Hub")'),
+    col("missing", 'link("Nope").asFile()'),
+    col("ghostFile", 'link("Nowhere").asFile()'),
+  ],
+  NOW,
+);
+const resolvedMore = buildNoteTable(
+  linkVault,
+  "",
+  [
+    col("lazyFile", 'link("Lazy").asFile()'),
+    col("lazyTo", 'link("Lazy").linksTo("Hub")'),
+    col("heading", 'link("Projects/Spec#Scope").asFile()'),
+    col("eq", 'link("Ada").asFile() == "Ada"'),
+    col("specTo", 'link("Spec").linksTo("Ada")'),
+  ],
+  NOW,
+);
+const got = (id, column) =>
+  (resolved.rows.find((row) => row.id === id).formulas[column] ??
+    resolvedMore.rows.find((row) => row.id === id).formulas[column]);
+assert.equal(got("hub", "file").value, "Ada");
+assert.equal(got("hub", "file").kind, "text");
+assert.deepEqual(got("hub", "file").links, [{ id: "ada", title: "Ada" }]);
+assert.deepEqual(got("spec", "file").links, [{ id: "ada", title: "Ada" }]);
+assert.deepEqual(got("hub", "path").links, [{ id: "ada", title: "Ada" }]);
+assert.equal(got("hub", "self").value, "Hub");
+assert.deepEqual(got("hub", "self").links, [{ id: "hub", title: "Hub" }]);
+assert.equal(got("spec", "self").value, "Spec");
+assert.deepEqual(got("spec", "self").links, [{ id: "spec", title: "Spec" }]);
+assert.equal(got("hub", "toHub").value, "true");
+assert.equal(got("hub", "toHub").kind, "boolean");
+assert.equal(got("hub", "toHub").links, undefined);
+assert.equal(got("spec", "toHub").value, "true");
+assert.equal(got("hub", "toSelf").value, "true");
+assert.equal(got("spec", "toSelf").value, "true");
+assert.equal(got("ada", "toSelf").value, "false");
+assert.equal(got("hub", "chain").value, "true");
+assert.equal(got("hub", "missing").value, "");
+assert.equal(got("hub", "missing").kind, "empty");
+assert.equal(got("hub", "missing").links, undefined);
+assert.equal(got("hub", "ghostFile").links, undefined);
+assert.equal(got("hub", "lazyFile").value, "Lazy");
+assert.deepEqual(got("hub", "lazyFile").links, [{ id: "lazy", title: "Lazy" }]);
+assert.equal(got("hub", "lazyTo").value, "false");
+assert.equal(got("hub", "heading").value, "Spec");
+assert.deepEqual(got("hub", "heading").links, [{ id: "spec", title: "Spec" }]);
+assert.equal(got("hub", "eq").value, "true");
+assert.equal(got("hub", "specTo").value, "false");
 // Group and summarize a list formula by its text
 const { groupNoteRows: groupLinkRows, summarize: summarizeLinks } = await import("../src/lib/vault/bases-groups.ts");
 assert.deepEqual(
@@ -865,7 +931,8 @@ assert.doesNotMatch(table, /no list, regex, or link functions/);
 assert.match(table, /formula columns with list, regex, and link functions/);
 assert.doesNotMatch(table, /no custom summary formulas/);
 assert.doesNotMatch(table, /two views/);
-assert.match(table, /Not Obsidian Bases — links do not open into files \(no asFile or linksTo\)/);
+assert.match(table, /link\.asFile\(\) opens that note, and link\.linksTo\(\) checks its links/);
+assert.doesNotMatch(table, /no asFile or linksTo/);
 assert.match(table, /data-testid="bases-add-view"/);
 assert.match(table, /basesViewId\(prev\.views\.length\)/);
 assert.match(table, /summary rows with summary formulas/);
@@ -877,7 +944,7 @@ assert.match(table, /<optgroup label="Summary formulas">/);
 assert.match(table, /SUMMARY_FORMULA_EXAMPLES\.map/);
 assert.match(table, /data-testid="bases-formula-summaries"/);
 assert.match(table, /summarize\(rows, column, kind, summaryFormulas\)/);
-assert.match(table, /some Obsidian functions are missing/);
+assert.match(table, /Some Obsidian functions are missing/);
 assert.match(table, /data-testid="bases-formula-link"/);
 assert.match(table, /data-testid="bases-formula-lists"/);
 assert.match(table, /FORMULA_FUNCTION_GROUPS\.map/);

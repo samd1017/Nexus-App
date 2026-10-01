@@ -567,10 +567,16 @@ function noteLinkResolver(catalog: { id: string; path: string; name: string }[])
 
 function cellLinks(raw: FormulaResult["raw"], resolve: LinkResolver): NoteLink[] | undefined {
   const items = Array.isArray(raw) ? raw : raw === null ? [] : [raw];
-  if (!items.length) return undefined;
+  const present = items.filter((item) => item !== null && item !== "");
+  if (!present.length) return undefined;
   const links: NoteLink[] = [];
-  for (const item of items) {
-    if (typeof item !== "object" || item === null || Array.isArray(item) || item.kind !== "link") return undefined;
+  for (const item of present) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return undefined;
+    if (item.kind === "file") {
+      links.push({ id: item.id, title: item.name || item.target });
+      continue;
+    }
+    if (item.kind !== "link") return undefined;
     const noteTarget = parseWikilinkInner(item.target).noteTarget;
     const hit = resolve(noteTarget || item.target);
     links.push({ id: hit.id, title: item.display || (hit.id ? hit.title : item.target) });
@@ -693,12 +699,28 @@ export function buildNoteTable(
     const refs: FormulaRefs = new Map();
     const cells: Record<string, FormulaCell> = {};
     let tags: string[] | null = null;
+    const fileAt = (target: string) => {
+      const noteTarget = parseWikilinkInner(target).noteTarget || target;
+      const hit = resolve(noteTarget);
+      if (!hit.id) return null;
+      const source = notes.find((item) => item.id === hit.id);
+      const path = (source?.path ?? noteTarget).replace(/\\/g, "/").replace(/\.md$/i, "");
+      return { kind: "file" as const, id: hit.id, target: path, name: hit.title };
+    };
     const formulaRow: FormulaRow = {
       ...built,
       refs,
       outlinks: () => outlinksOf(note),
       backlinks: () => backlinksOf(note.id),
       tags: () => (tags ??= noteTags(note.content || "", props)),
+      fileAt,
+      linksAt: (target) => {
+        const file = fileAt(target);
+        if (!file) return null;
+        const source = notes.find((item) => item.id === file.id);
+        if (!source || typeof source.content !== "string") return null;
+        return outlinksOf(source);
+      },
     };
     columns.forEach(({ f, compiled }, index) => {
       const computed = runNoteFormula(compiled, formulaRow, now);

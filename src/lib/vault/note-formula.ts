@@ -1,7 +1,7 @@
 /**
  * Formula language for the Bases note table. One expression per view,
  * evaluated per note. Values are text, numbers, true/false, dates, lists,
- * note links, and regexes.
+ * note links, files a link opens, and regexes.
  * Dates read and print in UTC so a saved view looks the same on every machine.
  */
 
@@ -9,8 +9,9 @@ import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 
 type DateValue = { kind: "date"; ms: number; dateOnly: boolean };
 type LinkValue = { kind: "link"; target: string; display: string | null };
+type FileValue = { kind: "file"; id: string; target: string; name: string };
 type RegexValue = { kind: "regex"; source: string; flags: string };
-type Value = null | string | number | boolean | DateValue | LinkValue | RegexValue | Value[];
+type Value = null | string | number | boolean | DateValue | LinkValue | FileValue | RegexValue | Value[];
 /** A computed formula value, kept typed so later columns can do date math on it. */
 export type FormulaValue = Value;
 /** Results of columns to the left, by lowercased column id and name. */
@@ -29,6 +30,10 @@ export type FormulaRow = {
   outlinks?: () => FormulaLink[];
   backlinks?: () => FormulaLink[];
   tags?: () => string[];
+  /** The note a link names, or null when that path is not in the vault. */
+  fileAt?: (target: string) => FileValue | null;
+  /** Outgoing links of that note, or null when its body is not loaded. */
+  linksAt?: (target: string) => FormulaLink[] | null;
 };
 
 type Token =
@@ -175,6 +180,16 @@ function isLink(v: Value): v is LinkValue {
   return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "link";
 }
 
+function isFile(v: Value): v is FileValue {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "file";
+}
+
+function linkTargetOf(v: Value): string | null {
+  if (isLink(v) || isFile(v)) return v.target;
+  if (typeof v === "string" && v.trim()) return v;
+  return null;
+}
+
 function isRegex(v: Value): v is RegexValue {
   return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "regex";
 }
@@ -287,13 +302,14 @@ function show(v: Value): string {
   if (typeof v === "number") return String(Math.round(v * 10_000) / 10_000);
   if (Array.isArray(v)) return v.map(show).filter((s) => s !== "").join(", ");
   if (v.kind === "link") return v.display || linkLabel(v.target);
+  if (v.kind === "file") return v.name || linkLabel(v.target);
   if (v.kind === "regex") return `/${v.source}/${v.flags}`;
   return formatDate(v, v.dateOnly ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm");
 }
 
 function quote(v: Value): string {
   if (Array.isArray(v)) return `[${v.map(quote).join(", ")}]`;
-  if (isLink(v)) return `[[${v.target}]]`;
+  if (isLink(v) || isFile(v)) return `[[${v.target}]]`;
   return typeof v === "string" ? `“${v}”` : show(v);
 }
 
@@ -853,6 +869,38 @@ const FUNCTION_LIST: Fn[] = [
       return makeLink(target, display);
     },
   },
+  {
+    name: "asFile",
+    min: 1,
+    max: 1,
+    group: "link",
+    run: ([v], ctx) => {
+      const target = v ?? null;
+      if (!isLink(target) && !isFile(target)) {
+        if (target === null || target === "") return null;
+        throw new FormulaError('asFile() needs a link, like link("Note").asFile().');
+      }
+      return ctx.row.fileAt?.(target.target) ?? null;
+    },
+  },
+  {
+    name: "linksTo",
+    min: 2,
+    max: 2,
+    group: "link",
+    run: ([v, other], ctx) => {
+      const target = v ?? null;
+      if (!isLink(target) && !isFile(target)) {
+        if (target === null || target === "") return false;
+        throw new FormulaError('linksTo() needs a link, like link("Note").linksTo(file.asLink()).');
+      }
+      const want = linkTargetOf(other ?? null);
+      if (!want) return false;
+      const links = ctx.row.linksAt?.(target.target);
+      if (!links) return false;
+      return links.some((link) => sameNote(link.target, want));
+    },
+  },
 ];
 
 /** `file.<name>(…)`: questions about the note this row is. */
@@ -950,6 +998,7 @@ export const FORMULA_EXAMPLES: { formula: string; label: string; name: string }[
   { formula: 'round(number(estimate) / 60, 1) & " h"', label: "Math on a number property", name: "Hours" },
   { formula: 'if(contains(lower(tags), "writing"), "Writing", file.folder)', label: "Text contains", name: "Area" },
   { formula: "file.backlinks", label: "Links: notes that link here", name: "Backlinks" },
+  { formula: "file.asLink().asFile()", label: "This note, opened as a file", name: "This file" },
   { formula: 'file.links.filter(!value.matches(/^\\d{4}-/)).slice(0, 3)', label: "List + regex: first 3 links, no dailies", name: "Links" },
   { formula: 'file.tags.map("#" & value).join(" ")', label: "List: every tag", name: "Tags" },
 ];
@@ -1074,6 +1123,13 @@ class Parser {
       this.i += 1;
       const fn = FUNCTIONS.get(t.v.toLowerCase());
       if (!fn || fn.name === "if" || fn.max === 0) throw new FormulaError(`.${t.v}() is not a formula function.`);
+      if ((fn.name === "asFile" || fn.name === "linksTo") && !this.isOp("(")) {
+        throw new FormulaError(
+          fn.name === "asFile"
+            ? 'asFile() needs (), like link("Note").asFile().'
+            : 'linksTo() needs a file, like link("Note").linksTo(file.asLink()).',
+        );
+      }
       const lambda = LAMBDA_FUNCTIONS.has(fn.name);
       if (lambda && !this.isOp("(")) throw new FormulaError(arityMessage(fn, true));
       const args = [node, ...(this.isOp("(") ? this.callArgs(`.${fn.name}(`, lambda ? 0 : undefined) : [])];
@@ -1199,8 +1255,8 @@ function equals(a: Value, b: Value): boolean {
     const db = dateOf(b);
     return !!da && !!db && da.ms === db.ms;
   }
-  if (isLink(a)) return linkMatches(a, b);
-  if (isLink(b)) return linkMatches(b, a);
+  if (isLink(a) || isFile(a)) return linkTargetOf(b) !== null && sameNote((a as LinkValue | FileValue).target, linkTargetOf(b) as string);
+  if (isLink(b) || isFile(b)) return linkTargetOf(a) !== null && sameNote((b as LinkValue | FileValue).target, linkTargetOf(a) as string);
   const na = numeric(a);
   const nb = numeric(b);
   if (na !== null && nb !== null) return na === nb;
