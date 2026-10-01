@@ -604,7 +604,7 @@ export function diskCopyIsOurs(path: string, diskBody: string | undefined): bool
 }
 const failedBodyIds = new Set<string>();
 
-function isMissingFileError(e: unknown): boolean {
+export function isMissingFileError(e: unknown): boolean {
 	const msg = (e instanceof Error ? `${e.name} ${e.message}` : String(e ?? "")).toLowerCase();
 	return (
 		msg.includes("notfounderror") ||

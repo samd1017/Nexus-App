@@ -11,6 +11,7 @@ import {
   formulaStatusLine,
   MAX_FORMULA_COLUMNS,
   noteTableTitle,
+  defaultBasesSession,
   parseBasesSession,
   rankLinkChoices,
   sortNoteRows,
@@ -23,11 +24,13 @@ import {
   type SummaryKind,
 } from "@/lib/vault/note-table";
 import { groupNoteRows, summarize, summaryKindsFor, summaryLabel, type NoteGroup } from "@/lib/vault/bases-groups";
-import { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } from "@/lib/vault/bases-file";
+import { BASE_EXPORT_FILE, exportBaseFile } from "@/lib/vault/bases-file";
+import { LIVE_BASE_BACKUP, LIVE_BASE_FILE, readLiveBase, sameBasesSession, type LiveBase } from "@/lib/vault/bases-live";
+import { sentence, type LiveCheck, type LiveOpen, type LiveSave } from "@/lib/vault/bases-live-sync";
+import { liveBasesSync } from "@/lib/vault/bases-live-storage";
 import { writeNoteFile } from "@/lib/vault/fs-adapter";
 import { writeDesktopNote } from "@/lib/vault/tauri-adapter";
 import { FORMULA_EXAMPLES, FORMULA_FUNCTION_GROUPS } from "@/lib/vault/note-formula";
-import { loadNoteTableConfig, saveNoteTableConfig } from "@/lib/vault/note-table-file";
 import { getDesktopRoot, getFsaRoot, useVaultStore } from "@/lib/vault/store";
 import {
   scheduleFillSafeHydrate,
@@ -45,6 +48,16 @@ function readSession(): BasesSession {
   }
 }
 
+type BaseUndo = { session: BasesSession; label: string; kind: "import" | "external"; base?: LiveBase | null };
+
+type BaseNotice = {
+  title: string;
+  lines: string[];
+  tone: "ok" | "error";
+  undo: BaseUndo | null;
+  blocked?: { replaceable: boolean };
+};
+
 export function NoteTable() {
   const vaultId = useVaultStore((s) => s.vaultId);
   const nodes = useVaultStore((s) => s.nodes);
@@ -60,16 +73,18 @@ export function NoteTable() {
   const [formulaHelp, setFormulaHelp] = useState(false);
   const [focusFormulaId, setFocusFormulaId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const [baseNotice, setBaseNotice] = useState<{
-    title: string;
-    lines: string[];
-    tone: "ok" | "error";
-    undo: BasesSession | null;
-  } | null>(null);
+  const [baseNotice, setBaseNotice] = useState<BaseNotice | null>(null);
+  const [liveState, setLiveState] = useState<"ok" | "failed" | "blocked">("ok");
   const baseInput = useRef<HTMLInputElement>(null);
   const [hydratingProps, setHydratingProps] = useState(false);
   const [bodyEpoch, setBodyEpoch] = useState(0);
   const ready = useRef(false);
+  const live = useMemo(() => liveBasesSync(), [vaultId]);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const keysRef = useRef<string[]>([]);
+  const pendingSave = useRef(false);
+  const saveFailed = useRef(false);
   const triedPropertyIds = useRef(new Set<string>());
   const view = session.views.find((item) => item.id === session.activeId) ?? session.views[0];
 
@@ -80,18 +95,144 @@ export function NoteTable() {
     }));
   };
 
+  const liveName = live?.sync.storage.name ?? LIVE_BASE_FILE;
+  const keepMine = (session: BasesSession): BaseUndo => ({ session, label: "Keep my version", kind: "external" });
+
+  const onSaved = (attempted: BasesSession) => (result: LiveSave) => {
+    if (result.kind === "saved" || result.kind === "unchanged") {
+      saveFailed.current = false;
+      setLiveState("ok");
+    } else if (result.kind === "blocked") {
+      setLiveState("blocked");
+    } else if (result.kind === "failed") {
+      console.error(`[nexus] could not write ${LIVE_BASE_FILE}: ${result.message}`);
+      if (!saveFailed.current) useVaultStore.getState().setToast(`Couldn't save views to ${LIVE_BASE_FILE}. Nexus keeps trying.`);
+      saveFailed.current = true;
+      setLiveState("failed");
+    } else if (result.kind === "conflict") {
+      setLiveState("ok");
+      setSession(result.session);
+      setBaseNotice({
+        title: `${sentence(liveName)} changed outside Nexus before your last change saved, so Nexus loaded the file.`,
+        lines: result.notes,
+        tone: "ok",
+        undo: keepMine(attempted),
+      });
+    }
+  };
+
+  const persist = (next: BasesSession) => {
+    if (!live) return;
+    void live.sync.save(next, keysRef.current).then(onSaved(next));
+  };
+
+  const blockedNotice = (reason: string, replaceable: boolean): BaseNotice => ({
+    title: `${reason.replace(/[.:\s]*$/, ".")} Nexus won't save views until it can.`,
+    lines: replaceable
+      ? [
+          `Fix the file and press Retry, or replace it with the views shown here; the unreadable file is copied to ${
+            live?.onDisk ? LIVE_BASE_BACKUP : "browser storage"
+          } first.`,
+        ]
+      : [],
+    tone: "error",
+    undo: null,
+    blocked: { replaceable },
+  });
+
+  const onChecked = (result: LiveCheck) => {
+    if (result.kind === "blocked") {
+      setLiveState("blocked");
+      setBaseNotice(blockedNotice(result.reason, result.replaceable));
+    } else if (result.kind === "missing") {
+      setLiveState("ok");
+      setBaseNotice({
+        title: `${sentence(liveName)} was deleted outside Nexus. Nexus writes it again on your next change.`,
+        lines: [],
+        tone: "ok",
+        undo: null,
+      });
+    } else if (result.kind === "changed") {
+      setLiveState("ok");
+      const previous = sessionRef.current;
+      if (sameBasesSession(result.session, previous)) {
+        if (result.wasBlocked) setBaseNotice(null);
+        return;
+      }
+      setSession(result.session);
+      setBaseNotice({
+        title: result.wasBlocked
+          ? `${sentence(liveName)} can be read again, so Nexus loaded it.`
+          : `${sentence(liveName)} changed outside Nexus, so Nexus loaded it.`,
+        lines: result.notes,
+        tone: "ok",
+        undo: keepMine(previous),
+      });
+    }
+  };
+
+  const onOpened = (result: LiveOpen) => {
+    const backup = live?.sync.storage.legacyWhere ?? "";
+    if (result.kind === "new") {
+      setSession(defaultBasesSession());
+    } else if (result.kind === "legacy-unreadable") {
+      setSession(defaultBasesSession());
+      setBaseNotice({
+        title: `${sentence(backup)} could not be read, so Nexus started with default views and left it alone.`,
+        lines: [],
+        tone: "error",
+        undo: null,
+      });
+    } else if (result.kind === "blocked") {
+      setLiveState("blocked");
+      setBaseNotice(blockedNotice(result.reason, result.replaceable));
+    } else if (result.kind === "loaded") {
+      setSession(result.session);
+      if (result.notes.length) {
+        setBaseNotice({
+          title: `${sentence(liveName)} was edited outside Nexus; some of it shows differently here.`,
+          lines: result.notes,
+          tone: "ok",
+          undo: null,
+        });
+      }
+    } else {
+      setSession(result.session);
+      const where = live?.onDisk ? `${LIVE_BASE_FILE} at the vault root` : "a .base kept in browser storage";
+      const title =
+        result.from === "legacy"
+          ? `Your views now live in ${where}. ${sentence(backup)} was left as a backup; Nexus no longer reads it.`
+          : result.usedLegacy
+            ? `${LIVE_BASE_FILE} was an export from an older Nexus. It now holds your live views from ${backup}, which was left as a backup.`
+            : `${LIVE_BASE_FILE} was an export from an older Nexus. Nexus now saves your views to it directly.`;
+      setBaseNotice({
+        title: result.saveError ? `${title} Saving it failed (${result.saveError}); Nexus tries again on your next change.` : title,
+        lines: result.notes,
+        tone: result.saveError ? "error" : "ok",
+        undo: result.undo ? { session: result.undo, label: "Use the export's views", kind: "external" } : null,
+      });
+    }
+  };
+
   useEffect(() => {
     let cancel = false;
     ready.current = false;
-    void loadNoteTableConfig(vaultId).then((loaded) => {
+    saveFailed.current = false;
+    setLiveState("ok");
+    if (!live) {
+      ready.current = true;
+      return;
+    }
+    void live.sync.open().then((result) => {
       if (cancel) return;
-      if (loaded) setSession(loaded);
+      live.sync.seen();
+      onOpened(result);
       ready.current = true;
     });
     return () => {
       cancel = true;
     };
-  }, [vaultId]);
+  }, [live]);
 
   useEffect(() => {
     try {
@@ -99,12 +240,50 @@ export function NoteTable() {
     } catch {
       /* ignore */
     }
-    if (!ready.current) return;
+    if (!ready.current || !live) return;
+    pendingSave.current = true;
     const timer = window.setTimeout(() => {
-      void saveNoteTableConfig(vaultId, session);
+      pendingSave.current = false;
+      persist(session);
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [session, vaultId]);
+  }, [session, live]);
+
+  useEffect(
+    () => () => {
+      if (live && ready.current && pendingSave.current) {
+        pendingSave.current = false;
+        void live.sync.save(sessionRef.current, keysRef.current);
+      }
+    },
+    [live],
+  );
+
+  useEffect(() => {
+    if (!live) return;
+    let busy = false;
+    const tick = () => {
+      if (busy || !ready.current || document.visibilityState === "hidden") return;
+      busy = true;
+      void live.sync
+        .check()
+        .then((result) => {
+          onChecked(result);
+          if (saveFailed.current && result.kind === "same") persist(sessionRef.current);
+        })
+        .finally(() => {
+          busy = false;
+        });
+    };
+    const timer = window.setInterval(tick, 2000);
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [live]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -151,6 +330,7 @@ export function NoteTable() {
     () => buildNoteTable(sources, view.folder, view.formulas),
     [sources, view.folder, view.formulas],
   );
+  keysRef.current = built.keys;
   const shown = useMemo(() => {
     const relations = view.relations ?? [];
     const filtered = filterRowsByRelation(filterNoteRows(built.rows, view.query), relationQuery, relations.length ? relations : built.keys);
@@ -225,7 +405,6 @@ export function NoteTable() {
             : item,
         ),
       };
-      void saveNoteTableConfig(vaultId, next);
       return next;
     });
   };
@@ -406,18 +585,40 @@ export function NoteTable() {
       setBaseNotice({ title: `${file.name} is larger than 1 MB, so it was not imported.`, lines: [], tone: "error", undo: null });
       return;
     }
-    const result = importBaseFile(await file.text());
-    if ("error" in result) {
+    const text = await file.text();
+    const result = readLiveBase(text, file.name);
+    if (!result.ok) {
       setBaseNotice({ title: result.error, lines: [], tone: "error", undo: null });
       return;
     }
     const previous = session;
+    const previousBase = live?.sync.template() ?? null;
+    live?.sync.adopt({ text, session: result.session });
     setSession(result.session);
     setBaseNotice({
-      title: `Imported ${file.name} into both views.`,
+      title: live?.onDisk ? `Imported ${file.name}; ${LIVE_BASE_FILE} now holds its views.` : `Imported ${file.name} into both views.`,
       lines: result.notes.length ? result.notes : ["Every view, column, formula, filter, and sort carried over."],
       tone: "ok",
-      undo: previous,
+      undo: { session: previous, base: previousBase, label: "Undo import", kind: "import" },
+    });
+  };
+
+  const replaceLive = () => {
+    if (!live) return;
+    void live.sync.replace(sessionRef.current, keysRef.current).then((result) => {
+      if (result.kind === "saved") {
+        setLiveState("ok");
+        setBaseNotice({
+          title: `Replaced ${liveName} with these views.`,
+          lines: [`The unreadable file was copied to ${live.onDisk ? LIVE_BASE_BACKUP : "browser storage"}.`],
+          tone: "ok",
+          undo: null,
+        });
+      } else if (result.kind === "failed") {
+        setBaseNotice({ title: result.message, lines: [], tone: "error", undo: null, blocked: { replaceable: true } });
+      } else {
+        onSaved(sessionRef.current)(result);
+      }
     });
   };
 
@@ -437,7 +638,10 @@ export function NoteTable() {
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
       setBaseNotice({
-        title: desktop || fsa ? `Exported ${BASE_EXPORT_FILE} to the vault folder.` : `Downloaded ${BASE_EXPORT_FILE}.`,
+        title:
+          desktop || fsa
+            ? `Exported a copy to ${BASE_EXPORT_FILE}. Nexus keeps saving your views to ${LIVE_BASE_FILE}.`
+            : `Downloaded ${BASE_EXPORT_FILE}.`,
         lines: notes,
         tone: "ok",
         undo: null,
@@ -650,7 +854,11 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table and cards with views, formula columns with list, regex, and link functions, group-by, summary rows, and typed note links. Not Obsidian Bases — two views, no custom summary formulas, links do not open into files (no asFile or linksTo), and some Obsidian functions are missing (Formula help lists what works); .base files import and export, but the file is .nexus/note-table.json, not an Obsidian .base file.
+            Built-in table and cards with views, formula columns with list, regex, and link functions, group-by, summary rows, and typed note links.{" "}
+            {live?.onDisk
+              ? `Views live in ${LIVE_BASE_FILE} at the vault root, an Obsidian .base file Nexus saves to and reloads when it changes.`
+              : "Views live in a .base kept in browser storage for this vault."}{" "}
+            Not Obsidian Bases — two views, no custom summary formulas, links do not open into files (no asFile or linksTo), and some Obsidian functions are missing (Formula help lists what works); other .base files open only through Import.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -796,7 +1004,7 @@ export function NoteTable() {
           type="button"
           className="chip-btn"
           data-testid="bases-export-base"
-          title={`Write both views as ${BASE_EXPORT_FILE}`}
+          title={`Write a copy of both views as ${BASE_EXPORT_FILE}`}
           onClick={() => void exportBase()}
         >
           Export .base
@@ -827,12 +1035,31 @@ export function NoteTable() {
                   type="button"
                   className="chip-btn"
                   data-testid="bases-import-undo"
+                  data-undo={baseNotice.undo.kind}
                   onClick={() => {
-                    if (baseNotice.undo) setSession(baseNotice.undo);
+                    const undo = baseNotice.undo;
+                    if (!undo) return;
+                    if (undo.base !== undefined) live?.sync.adopt(undo.base);
+                    setSession(undo.session);
                     setBaseNotice(null);
                   }}
                 >
-                  Undo import
+                  {baseNotice.undo.label}
+                </button>
+              ) : null}
+              {baseNotice.blocked ? (
+                <button
+                  type="button"
+                  className="chip-btn"
+                  data-testid="bases-live-retry"
+                  onClick={() => void live?.sync.check().then(onChecked)}
+                >
+                  Retry
+                </button>
+              ) : null}
+              {baseNotice.blocked?.replaceable ? (
+                <button type="button" className="chip-btn" data-testid="bases-live-replace" onClick={replaceLive}>
+                  Replace with these views
                 </button>
               ) : null}
               <button type="button" className="chip-btn" onClick={() => setBaseNotice(null)}>
@@ -1131,7 +1358,10 @@ export function NoteTable() {
         {indexFillBusy && visibleMissingIds.length > 0 && !readingProperties
           ? " · properties wait until the index is idle"
           : ""}
-        . Typed note links save as [[Title]] in the note. .nexus/note-table.json is not an Obsidian .base file.
+        {liveState === "failed" ? ` · views not saved yet, Nexus keeps trying` : ""}
+        {liveState === "blocked" ? ` · views not saving until ${liveName} can be read` : ""}
+        . Typed note links save as [[Title]] in the note.{" "}
+        {live?.onDisk ? `Views save to ${LIVE_BASE_FILE}.` : "Views save in browser storage."}
       </p>
     </div>
   );

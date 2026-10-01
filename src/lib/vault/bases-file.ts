@@ -1,7 +1,7 @@
 /**
- * Obsidian-shaped `.base` import and export for the note table.
- * The live file stays `.nexus/note-table.json`; a `.base` file is a copy
- * going in or out, and anything that does not carry over is listed.
+ * Obsidian-shaped `.base` reading and writing for the note table.
+ * Import and export are one-off copies; `bases-live.ts` keeps the vault's
+ * live `.base` file in sync. Anything that does not carry over is listed.
  */
 
 import { parse, stringify } from "yaml";
@@ -17,15 +17,15 @@ import {
   type SummaryKind,
 } from "@/lib/vault/note-table";
 
-export const BASE_EXPORT_FILE = "Nexus Bases.base";
+export const BASE_EXPORT_FILE = "Nexus Bases export.base";
 
 const EXPORT_HEADER = [
-  "# Exported from Nexus. Nexus keeps editing .nexus/note-table.json; export again after changes.",
+  "# Exported from Nexus as a copy. Nexus keeps its live views in Nexus Bases.base; edits here load only through Import .base.",
   "# Formulas use Nexus syntax, which mostly matches Obsidian Bases; check any that error there.",
 ].join("\n");
 
-const FILE_SORT: Record<string, string> = { name: "file.name", folder: "file.folder", path: "file.path" };
-const FILE_FORMULAS: Record<string, { name: string; expr: string }> = {
+export const FILE_SORT: Record<string, string> = { name: "file.name", folder: "file.folder", path: "file.path" };
+export const FILE_FORMULAS: Record<string, { name: string; expr: string }> = {
   "file.mtime": { name: "Modified", expr: "file.mtime" },
   "file.ext": { name: "Extension", expr: "file.ext" },
   "file.tags": { name: "Tags", expr: "file.tags" },
@@ -38,12 +38,12 @@ type Picked = { key: string; name: string; expr: string };
 const FORMULA_REF = /\bformula\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*(["'])((?:(?!\2).)*)\2\s*\])/g;
 
 /** `formula.x` and `formula["x"]` targets in an expression, in order. */
-function formulaRefs(expr: string): string[] {
+export function formulaRefs(expr: string): string[] {
   return [...expr.matchAll(FORMULA_REF)].map((m) => m[1] ?? m[3] ?? "").filter(Boolean);
 }
 
 /** Rewrites each formula reference that `to` maps to `formula.<key>`; others stay as written. */
-function rewriteFormulaRefs(expr: string, to: (ref: string) => string | null): string {
+export function rewriteFormulaRefs(expr: string, to: (ref: string) => string | null): string {
   return expr.replace(FORMULA_REF, (match, dot?: string, _q?: string, bracket?: string) => {
     const key = to(dot ?? bracket ?? "");
     return key ? `formula.${key}` : match;
@@ -51,7 +51,7 @@ function rewriteFormulaRefs(expr: string, to: (ref: string) => string | null): s
 }
 
 /** Obsidian's built-in summary names. Count is Nexus-only. */
-const BASE_SUMMARY_NAME: Record<SummaryKind, string | null> = {
+export const BASE_SUMMARY_NAME: Record<SummaryKind, string | null> = {
   count: null,
   filled: "Filled",
   empty: "Empty",
@@ -69,7 +69,7 @@ const BASE_SUMMARY_NAME: Record<SummaryKind, string | null> = {
   unchecked: "Unchecked",
 };
 
-function summaryFromBase(name: string): SummaryKind | null {
+export function summaryFromBase(name: string): SummaryKind | null {
   const lower = name.trim().toLowerCase().replace(/[\s_-]+/g, "");
   if (lower === "count") return "count";
   const hit = (Object.entries(BASE_SUMMARY_NAME) as [SummaryKind, string | null][]).find(
@@ -78,8 +78,51 @@ function summaryFromBase(name: string): SummaryKind | null {
   return hit ? hit[0] : null;
 }
 
-function folderFilter(folder: string): string {
+export function folderFilter(folder: string): string {
   return `file.inFolder(${JSON.stringify(folder)})`;
+}
+
+export function normalFolder(folder: string): string {
+  return folder.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+/** One Obsidian view for a Nexus view. `keyFor` names each formula's key in the file's `formulas`. */
+export function baseViewNode(
+  view: BasesViewConfig,
+  detectedKeys: string[],
+  keyFor: (f: BasesFormula) => string | undefined,
+  notes: string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { type: view.layout === "cards" ? "cards" : "table", name: view.name };
+  const folder = normalFolder(view.folder);
+  if (folder) out.filters = { and: [folderFilter(folder)] };
+  const props = [...new Set([...(view.columns.length ? view.columns : detectedKeys), ...(view.relations ?? [])])];
+  const formulaOrder = view.formulas
+    .map(keyFor)
+    .filter((key): key is string => Boolean(key))
+    .map((key) => `formula.${key}`);
+  const propertyFor = (column: string): string => {
+    const f = view.formulas.find((item) => formulaColumnId(item.id) === column);
+    return f ? `formula.${keyFor(f) ?? f.id}` : FILE_SORT[column] ?? column;
+  };
+  // Obsidian shows a summary only under a column in `order`; Nexus always shows folder and path.
+  const summarizedFile = ["folder", "path"].filter((column) => view.summaries?.[column]).map((column) => FILE_SORT[column]);
+  out.order = ["file.name", ...summarizedFile, ...props, ...formulaOrder];
+  out.sort = [{ property: propertyFor(view.column), direction: view.dir === "desc" ? "DESC" : "ASC" }];
+  if (view.groupBy) {
+    out.groupBy = { property: propertyFor(view.groupBy.column), direction: view.groupBy.dir === "desc" ? "DESC" : "ASC" };
+  }
+  const summaries: Record<string, string> = {};
+  for (const [column, kind] of Object.entries(view.summaries ?? {})) {
+    const name = BASE_SUMMARY_NAME[kind];
+    if (name) summaries[propertyFor(column)] = name;
+    else notes.push(`“${view.name}” ${kind} summary on ${propertyFor(column)} has no .base equivalent and was left out.`);
+  }
+  if (Object.keys(summaries).length) out.summaries = summaries;
+  if (view.query.trim()) {
+    notes.push(`“${view.name}” text filter “${view.query.trim()}” has no .base equivalent and was left out.`);
+  }
+  return out;
 }
 
 export function exportBaseFile(
@@ -104,38 +147,9 @@ export function exportBaseFile(
       properties[`formula.${key}`] = { displayName: f.name };
     }
   }
-  const views = session.views.map((view) => {
-    const out: Record<string, unknown> = { type: view.layout === "cards" ? "cards" : "table", name: view.name };
-    const folder = view.folder.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-    if (folder) out.filters = { and: [folderFilter(folder)] };
-    const props = [...new Set([...(view.columns.length ? view.columns : detectedKeys), ...(view.relations ?? [])])];
-    const formulaOrder = view.formulas
-      .map((f) => exportKey.get(`${view.id}:${f.id}`))
-      .filter((key): key is string => Boolean(key))
-      .map((key) => `formula.${key}`);
-    const propertyFor = (column: string): string => {
-      const f = view.formulas.find((item) => formulaColumnId(item.id) === column);
-      return f ? `formula.${exportKey.get(`${view.id}:${f.id}`) ?? f.id}` : FILE_SORT[column] ?? column;
-    };
-    // Obsidian shows a summary only under a column in `order`; Nexus always shows folder and path.
-    const summarizedFile = ["folder", "path"].filter((column) => view.summaries?.[column]).map((column) => FILE_SORT[column]);
-    out.order = ["file.name", ...summarizedFile, ...props, ...formulaOrder];
-    out.sort = [{ property: propertyFor(view.column), direction: view.dir === "desc" ? "DESC" : "ASC" }];
-    if (view.groupBy) {
-      out.groupBy = { property: propertyFor(view.groupBy.column), direction: view.groupBy.dir === "desc" ? "DESC" : "ASC" };
-    }
-    const summaries: Record<string, string> = {};
-    for (const [column, kind] of Object.entries(view.summaries ?? {})) {
-      const name = BASE_SUMMARY_NAME[kind];
-      if (name) summaries[propertyFor(column)] = name;
-      else notes.push(`“${view.name}” ${kind} summary on ${propertyFor(column)} has no .base equivalent and was left out.`);
-    }
-    if (Object.keys(summaries).length) out.summaries = summaries;
-    if (view.query.trim()) {
-      notes.push(`“${view.name}” text filter “${view.query.trim()}” has no .base equivalent and was left out.`);
-    }
-    return out;
-  });
+  const views = session.views.map((view) =>
+    baseViewNode(view, detectedKeys, (f) => exportKey.get(`${view.id}:${f.id}`), notes),
+  );
   const doc: Record<string, unknown> = {};
   if (Object.keys(formulas).length) {
     doc.formulas = formulas;
@@ -145,14 +159,15 @@ export function exportBaseFile(
   return { text: `${EXPORT_HEADER}\n${stringify(doc, { lineWidth: 0 })}`, notes };
 }
 
-export type BaseImport = { session: BasesSession; notes: string[] } | { error: string };
+/** `sourceKeys[i]` are the `formulas` keys view i reads, so a rewrite knows which formulas it owns. */
+export type BaseImport = { session: BasesSession; notes: string[]; sourceKeys: string[][] } | { error: string };
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+export function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 /** Flattens `and` groups into expressions; `or` / `not` are reported, not guessed at. */
-function filterAtoms(node: unknown, notes: string[]): string[] {
+export function filterAtoms(node: unknown, notes: string[]): string[] {
   if (node == null) return [];
   if (typeof node === "string") return [node.trim()].filter(Boolean);
   if (Array.isArray(node)) return node.flatMap((item) => filterAtoms(item, notes));
@@ -166,7 +181,7 @@ function filterAtoms(node: unknown, notes: string[]): string[] {
   return out;
 }
 
-function folderOf(expr: string): string | null {
+export function folderOf(expr: string): string | null {
   const inFolder = /^file\.inFolder\(\s*(["'])(.*?)\1\s*\)$/.exec(expr);
   if (inFolder) return inFolder[2] ?? null;
   const eq = /^file\.folder\s*==\s*(["'])(.*?)\1$/.exec(expr);
@@ -184,7 +199,8 @@ export function importBaseFile(text: string): BaseImport {
   try {
     doc = parse(text);
   } catch (err) {
-    return { error: `Not a readable .base file: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}` };
+    const first = err instanceof Error ? (err.message.split("\n")[0] ?? "") : String(err);
+    return { error: `Not a readable .base file: ${first.replace(/[:\s]+$/, "")}.` };
   }
   const root = asRecord(doc);
   const rawViews = root && Array.isArray(root.views) ? root.views.map(asRecord).filter((v): v is Record<string, unknown> => !!v) : [];
@@ -213,6 +229,7 @@ export function importBaseFile(text: string): BaseImport {
     }
   };
 
+  const sourceKeys: string[][] = [];
   const views = rawViews.slice(0, 2).map((raw, index): BasesViewConfig => {
     const fallback = base.views[index] as BasesViewConfig;
     const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : fallback.name;
@@ -300,6 +317,7 @@ export function importBaseFile(text: string): BaseImport {
       const compiled = compileNoteFormula(f.expr);
       if (compiled.error) report(`Formula “${f.name}” uses syntax Nexus does not read yet (${compiled.error}); it shows that error in its column.`);
     }
+    sourceKeys[index] = [...formulaIdFor.keys()].filter((key) => sourceFormulas.has(key));
     const columnFor = (prop: string): string | null => {
       const fileCol = Object.entries(FILE_SORT).find(([, id]) => id === prop)?.[0];
       if (fileCol) return fileCol;
@@ -362,5 +380,5 @@ export function importBaseFile(text: string): BaseImport {
   };
   if (session.views[0]) session.views[0].id = "all";
   if (session.views[1]) session.views[1].id = "saved";
-  return { session, notes };
+  return { session, notes, sourceKeys: [sourceKeys[0] ?? [], sourceKeys[1] ?? []] };
 }

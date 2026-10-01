@@ -809,7 +809,8 @@ assert.doesNotMatch(table, /no cards view/);
 assert.match(table, /bases-layout-cards/);
 assert.match(table, /data-testid="bases-card"/);
 assert.match(table, /typed note links/);
-assert.match(table, /not an Obsidian \.base file/);
+assert.doesNotMatch(table, /not an Obsidian \.base file/);
+assert.match(table, /an Obsidian \.base file Nexus saves to and reloads/);
 assert.match(table, /bases-add-relation/);
 assert.match(table, /bases-relation-filter/);
 assert.match(table, /bases-link-note/);
@@ -826,7 +827,7 @@ assert.match(readFileSync("src/lib/vault/tauri-adapter.ts", "utf8"), /mkdirTarge
 assert.match(readFileSync("src/lib/vault/tauri-adapter.ts", "utf8"), /destKind === "file"/);
 assert.doesNotMatch(table, /no typed relations/);
 assert.match(table, /bases-relation/);
-assert.match(table, /NOTE_TABLE_FILE|note-table\.json/);
+assert.match(table, /LIVE_BASE_FILE/);
 assert.match(table, /data-testid="bases-row"/);
 assert.match(table, /data-testid="bases-filter"/);
 assert.match(table, /data-testid="bases-sort"/);
@@ -834,8 +835,8 @@ assert.match(table, /data-testid="bases-view"/);
 assert.match(table, /data-testid="bases-formula"/);
 assert.match(table, /data-testid="bases-save-view"/);
 assert.match(table, /setActiveNote\(row\.id\)/);
-assert.match(readFileSync("src/lib/vault/note-table-file.ts", "utf8"), /NOTE_TABLE_FILE/);
-assert.match(readFileSync("src/lib/vault/note-table-file.ts", "utf8"), /could not write/);
+assert.match(readFileSync("src/lib/vault/bases-live-storage.ts", "utf8"), /NOTE_TABLE_FILE/);
+assert.match(table, /could not write/);
 const scope = readFileSync("src-tauri/src/vault_scope.rs", "utf8");
 assert.match(scope, /p\.join\("\.nexus"\)/);
 assert.match(scope, /require_literal_leading_dot/);
@@ -857,7 +858,7 @@ assert.match(table, /data-testid="bases-group-by"/);
 assert.match(table, /data-testid="bases-summary-select"/);
 assert.match(table, /data-testid="bases-group"/);
 assert.match(table, /data-testid="bases-card-group"/);
-assert.match(table, /\.base files import and export/);
+assert.match(table, /other \.base files open only through Import/);
 assert.match(table, /data-testid="bases-add-formula"/);
 assert.match(table, /data-testid="bases-formula-remove"/);
 assert.match(table, /data-testid="bases-import-base"/);
@@ -878,7 +879,7 @@ assert.match(workspace, /NoteTable/);
 // .base import / export
 const { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } = await import("../src/lib/vault/bases-file.ts");
 const { parse: parseYaml } = await import("yaml");
-assert.equal(BASE_EXPORT_FILE, "Nexus Bases.base");
+assert.equal(BASE_EXPORT_FILE, "Nexus Bases export.base");
 const exportSession = {
   activeId: "all",
   views: [
