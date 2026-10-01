@@ -899,22 +899,22 @@ pub fn vault_index_search_ops(
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TaskHitDto {
-    note_id: String,
-    path: String,
-    title: String,
-    line: i32,
-    text: String,
-    due: Option<String>,
+pub struct TaskHitDto {
+    pub note_id: String,
+    pub path: String,
+    pub title: String,
+    pub line: i32,
+    pub text: String,
+    pub due: Option<String>,
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TaskPageDto {
-    tasks: Vec<TaskHitDto>,
-    next_rowid: i64,
-    scanned: i64,
-    done: bool,
+pub struct TaskPageDto {
+    pub tasks: Vec<TaskHitDto>,
+    pub next_rowid: i64,
+    pub scanned: i64,
+    pub done: bool,
 }
 
 #[tauri::command(async)]
