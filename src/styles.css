@@ -1878,6 +1878,12 @@
   box-shadow: none;
   overflow: visible;
   z-index: 0;
+  pointer-events: none;
+}
+.nexus-canvas-group .nexus-canvas-grip,
+.nexus-canvas-group .nexus-canvas-resize,
+.nexus-canvas-group p {
+  pointer-events: auto;
 }
 .nexus-canvas-grip {
   display: flex;
@@ -1942,6 +1948,7 @@
 }
 .nexus-canvas-card.is-selected .nexus-canvas-port {
   opacity: 1;
+  pointer-events: auto;
 }
 .nexus-canvas-card:hover .nexus-canvas-port,
 .nexus-canvas-card.is-ports .nexus-canvas-port,

@@ -272,6 +272,26 @@ export function CanvasBoard({ noteId, content }: Props) {
     return card.id;
   };
 
+  const frameIds = (ids: string[]) => {
+    const cards = ids
+      .map((id) => docRef.current.cards.find((x) => x.id === id))
+      .filter((c): c is CanvasCard => c != null && c.kind !== "group");
+    if (cards.length < 2) return;
+    const pad = 28;
+    const group: CanvasCard = {
+      id: newCardId(),
+      kind: "group",
+      text: "Frame",
+      x: Math.min(...cards.map((c) => c.x)) - pad,
+      y: Math.min(...cards.map((c) => c.y)) - pad,
+      w: Math.max(...cards.map((c) => c.x + c.w)) - Math.min(...cards.map((c) => c.x)) + pad * 2,
+      h: Math.max(...cards.map((c) => c.y + c.h)) - Math.min(...cards.map((c) => c.y)) + pad * 2,
+      color: "6",
+    };
+    commit({ ...docRef.current, cards: [group, ...docRef.current.cards] });
+    setSelected([group.id, ...ids]);
+  };
+
   const patchCards = (fn: (cards: CanvasCard[]) => CanvasCard[]) =>
     commit({ ...docRef.current, cards: fn(docRef.current.cards) });
   const layoutCards = (fn: (cards: CanvasCard[]) => CanvasCard[]) => {
@@ -684,23 +704,7 @@ export function CanvasBoard({ noteId, content }: Props) {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "g" && selected.length >= 2) {
         e.preventDefault();
-        const cards = selected
-          .map((id) => docRef.current.cards.find((x) => x.id === id))
-          .filter((c): c is CanvasCard => c != null && c.kind !== "group");
-        if (cards.length < 2) return;
-        const pad = 28;
-        const group: CanvasCard = {
-          id: newCardId(),
-          kind: "group",
-          text: "Group",
-          x: Math.min(...cards.map((c) => c.x)) - pad,
-          y: Math.min(...cards.map((c) => c.y)) - pad,
-          w: Math.max(...cards.map((c) => c.x + c.w)) - Math.min(...cards.map((c) => c.x)) + pad * 2,
-          h: Math.max(...cards.map((c) => c.y + c.h)) - Math.min(...cards.map((c) => c.y)) + pad * 2,
-          color: "6",
-        };
-        commit({ ...docRef.current, cards: [group, ...docRef.current.cards] });
-        setSelected([group.id, ...selected]);
+        frameIds(selected);
       }
       const step = e.shiftKey ? 24 : 4;
       if (selected.length && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
@@ -790,7 +794,7 @@ export function CanvasBoard({ noteId, content }: Props) {
     if (menu.kind === "board") {
       return [
         { label: "Add text", run: () => addCard({ kind: "text", text: "" }, { x: menu.wx, y: menu.wy }) },
-        { label: "Add group", run: () => addCard({ kind: "group", text: "Group" }, { x: menu.wx, y: menu.wy }) },
+        { label: "Add frame", run: () => addCard({ kind: "group", text: "Frame" }, { x: menu.wx, y: menu.wy }) },
         { label: "Add note", run: () => setPicker("note") },
         { label: "Paste here", run: () => pasteClipboard({ x: menu.wx, y: menu.wy }) },
         { label: "Select all", run: () => setSelected(doc.cards.map((c) => c.id)) },
@@ -843,7 +847,7 @@ export function CanvasBoard({ noteId, content }: Props) {
       <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
         <span className="font-semibold text-[var(--text-secondary)]">Board</span>
         {" · "}
-        Cards and links. Not full Obsidian Canvas.
+        Edges and frames save in the file. Still missing: live note embeds.
       </div>
       <div className="nexus-canvas-toolbar">
         <div className="relative" data-canvas-add>
@@ -852,14 +856,14 @@ export function CanvasBoard({ noteId, content }: Props) {
           </button>
           {addOpen ? (
             <div className="nexus-canvas-pop">
-              <button type="button" className="nexus-canvas-menu-item" onClick={() => addCard({ kind: "text", text: "" })}>
+              <button type="button" className="nexus-canvas-menu-item" data-testid="canvas-add-text" onClick={() => addCard({ kind: "text", text: "Card" })}>
                 <Type size={13} /> Text card
               </button>
               <button type="button" className="nexus-canvas-menu-item" onClick={() => { setPicker("note"); setAddOpen(false); }}>
                 <StickyNote size={13} /> Note card
               </button>
-              <button type="button" className="nexus-canvas-menu-item" onClick={() => addCard({ kind: "group", text: "Group" })}>
-                <Square size={13} /> Group
+              <button type="button" className="nexus-canvas-menu-item" data-testid="canvas-add-frame" onClick={() => addCard({ kind: "group", text: "Frame" })}>
+                <Square size={13} /> Frame
               </button>
               <button type="button" className="nexus-canvas-menu-item" onClick={() => { setPicker("link"); setAddOpen(false); }}>
                 <Link2 size={13} /> Link
@@ -883,6 +887,16 @@ export function CanvasBoard({ noteId, content }: Props) {
             </div>
           ) : null}
         </div>
+        <button
+          type="button"
+          className="chip-btn"
+          data-testid="canvas-frame"
+          title="Frame the selected cards"
+          disabled={selected.filter((id) => cardById(id)?.kind !== "group").length < 2}
+          onClick={() => frameIds(selected)}
+        >
+          <Square size={13} /> Frame
+        </button>
         <button type="button" className="chip-btn" title="Undo" disabled={!undoRef.current.length} onClick={undo}>
           <Undo2 size={13} />
         </button>
@@ -1151,7 +1165,7 @@ export function CanvasBoard({ noteId, content }: Props) {
               const on = selectedEdge === edge.id || hoverEdge === edge.id;
               const stroke = on ? "#7dd3fc" : canvasColorHex(edge.color) || "var(--accent)";
               return (
-                <g key={edge.id} data-canvas-edge className="pointer-events-auto">
+                <g key={edge.id} data-canvas-edge data-testid="canvas-edge" className="pointer-events-auto">
                   <path
                     d={d}
                     fill="none"
@@ -1377,6 +1391,7 @@ export function CanvasBoard({ noteId, content }: Props) {
                       key={side}
                       type="button"
                       data-canvas-port
+                      data-testid="canvas-port"
                       tabIndex={-1}
                       aria-hidden={!showPorts}
                       className={cn(
