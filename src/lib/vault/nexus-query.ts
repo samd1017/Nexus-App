@@ -2,8 +2,8 @@
  * Built-in note list for one fenced block.
  * LIST or TABLE, FROM a folder or tag, WHERE on one field,
  * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
- * tags joined by OR or AND, SORT title|mtime.
- * Not full Dataview: no joins, no formulas.
+ * one + - * / formula column, tags joined by OR or AND, SORT title|mtime.
+ * Not full Dataview: no joins.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
@@ -19,13 +19,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  "Built-in list. Not Dataview — no joins, no formulas.";
+  "Built-in list. Not Dataview — no joins. A TABLE formula is one + - * /.";
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. file.mtime >= date(today) - 7d. TABLE status, due or field:mtime. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. No joins, no formulas. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
+  'This block is not Dataview. No joins. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -73,6 +73,17 @@ type WhereCmp =
 
 const DAY_MS = 86_400_000;
 
+type FormulaOp = "+" | "-" | "*" | "/";
+
+type FormulaAtom =
+  | { kind: "field"; name: string }
+  | { kind: "number"; n: number }
+  | { kind: "text"; text: string };
+
+type QueryColumn =
+  | { kind: "field"; name: string }
+  | { kind: "formula"; label: string; left: FormulaAtom; op: FormulaOp; right: FormulaAtom };
+
 type Parsed =
   | { kind: "help" }
   | { kind: "error"; error: string }
@@ -82,7 +93,7 @@ type Parsed =
       path: string | null;
       tags: string[];
       tagMode: TagJoin;
-      columns: string[];
+      columns: QueryColumn[];
       where: WhereCmp | null;
       sort: QuerySort | null;
     };
@@ -93,12 +104,21 @@ function tokenize(source: string): string[] {
   const out: string[] = [];
   const re = /"([^"]*)"|(\S+)/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(source))) out.push((m[1] ?? m[2] ?? "").trim());
+  while ((m = re.exec(source))) {
+    if (m[1] !== undefined) out.push(`"${m[1]}"`);
+    else if (m[2]) out.push(m[2].trim());
+  }
   return out.filter(Boolean);
 }
 
 function unsupportedDql(token: string): boolean {
-  if (/^(file|this)\./i.test(token) && !FILE_META.has(token.toLowerCase())) return true;
+  const meta = /^((?:file|this)\.[A-Za-z_][\w-]*)(.*)$/i.exec(token);
+  if (meta) {
+    const head = (meta[1] ?? "").toLowerCase();
+    const rest = meta[2] ?? "";
+    const formulaTail = rest === "" || /^([+*/]|-(?=\d))/.test(rest);
+    if (!FILE_META.has(head) || !formulaTail) return true;
+  }
   if (/choice\s*\(/i.test(token)) return true;
   if (/^(FLATTEN|GROUP|LIMIT)$/i.test(token)) return true;
   return false;
@@ -293,14 +313,79 @@ function cleanPath(value: string): string {
 }
 
 function readPath(token: string): string | null {
-  const kv = /^(?:path|folder):([\s\S]+)$/i.exec(token);
+  const raw = unquote(token);
+  const kv = /^(?:path|folder):([\s\S]+)$/i.exec(raw);
   if (kv) {
     const value = kv[1].trim();
     return value ? cleanPath(value) : null;
   }
-  if (!token || token.includes(":") || token.startsWith("#")) return null;
-  if (/^(FROM|WHERE|SORT|OR|AND|ASC|DESC|LIST|TABLE)$/i.test(token)) return null;
-  return cleanPath(token);
+  if (!raw || raw.includes(":") || raw.startsWith("#")) return null;
+  if (/^(FROM|WHERE|SORT|OR|AND|ASC|DESC|LIST|TABLE)$/i.test(raw)) return null;
+  return cleanPath(raw);
+}
+
+const FORMULA_HINT = 'A TABLE formula is one + - * /, such as price * 2 or file.name + " note".';
+
+function stripTrailingComma(raw: string): string {
+  return raw.trim().replace(/,+$/, "");
+}
+
+function parseAtom(raw: string): FormulaAtom | null {
+  const text = stripTrailingComma(raw);
+  if (!text || /^(FROM|WHERE|SORT|OR|AND|ASC|DESC|LIST|TABLE)$/i.test(text)) return null;
+  const quoted = /^"([\s\S]*)"$/.exec(text) ?? /^'([\s\S]*)'$/.exec(text);
+  if (quoted) return { kind: "text", text: quoted[1] ?? "" };
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return { kind: "number", n: Number(text) };
+  if (FILE_META.has(text.toLowerCase()) || /^[A-Za-z_][\w-]*$/.test(text)) return { kind: "field", name: text };
+  return null;
+}
+
+function asFormulaOp(raw: string): FormulaOp | null {
+  if (raw === "+" || raw === "-" || raw === "*" || raw === "/") return raw;
+  return null;
+}
+
+function formulaColumn(left: FormulaAtom, op: FormulaOp, right: FormulaAtom): QueryColumn {
+  const show = (atom: FormulaAtom) =>
+    atom.kind === "text" ? `"${atom.text}"` : atom.kind === "number" ? String(atom.n) : atom.name;
+  return { kind: "formula", label: `${show(left)} ${op} ${show(right)}`, left, op, right };
+}
+
+/** `price*2` or `file.name+"!"` as one token. A hyphenated key such as due-date stays a field. */
+function splitGluedFormula(token: string): { left: string; op: FormulaOp; right: string } | null {
+  const body = stripTrailingComma(token);
+  if (!body || /\s/.test(body)) return null;
+  const match = /^(file\.(?:name|path|folder|mtime|tags)|[A-Za-z_][\w-]*|-?\d+(?:\.\d+)?|"[^"]*")([+*/]|-(?=\d))([\s\S]+)$/.exec(body);
+  if (!match) return null;
+  const op = asFormulaOp(match[2] ?? "");
+  if (!op) return null;
+  return { left: match[1] ?? "", op, right: match[3] ?? "" };
+}
+
+function parseFormulaAt(tokens: string[], at: number): { col: QueryColumn; end: number } | { error: string } | null {
+  const glued = splitGluedFormula(tokens[at] ?? "");
+  if (glued) {
+    const left = parseAtom(glued.left);
+    const right = parseAtom(glued.right);
+    if (!left || !right) return { error: FORMULA_HINT };
+    return { col: formulaColumn(left, glued.op, right), end: at };
+  }
+  const left = parseAtom(tokens[at] ?? "");
+  if (!left) return null;
+  const opTok = tokens[at + 1] ?? "";
+  const op = asFormulaOp(opTok);
+  if (op) {
+    if (tokens[at + 2] === undefined) return { error: FORMULA_HINT };
+    const right = parseAtom(tokens[at + 2] ?? "");
+    if (!right) return { error: FORMULA_HINT };
+    return { col: formulaColumn(left, op, right), end: at + 2 };
+  }
+  const inline = /^([+*/]|-(?=\d))([\s\S]+)$/.exec(opTok);
+  if (!inline) return null;
+  const inlineOp = asFormulaOp(inline[1] ?? "");
+  const right = inlineOp ? parseAtom(inline[2] ?? "") : null;
+  if (!inlineOp || !right) return { error: FORMULA_HINT };
+  return { col: formulaColumn(left, inlineOp, right), end: at + 1 };
 }
 
 export function parseNexusQuery(source: string): Parsed {
@@ -319,15 +404,18 @@ export function parseNexusQuery(source: string): Parsed {
   const tags: string[] = [];
   let tagMode: TagJoin = "or";
   let sawJoin = false;
-  const columns: string[] = [];
+  const columns: QueryColumn[] = [];
   let where: WhereCmp | null = null;
   let sort: QuerySort | null = null;
 
-  const addColumn = (name: string): string | null => {
+  const addColumn = (col: QueryColumn): string | null => {
     if (head !== "TABLE") return "Columns belong on TABLE. LIST shows the title and the path.";
-    if (columns.some((col) => columnKey(col) === columnKey(name))) return `“${name}” is already a column.`;
+    const id = col.kind === "field" ? columnKey(col.name) : col.label.toLowerCase();
+    const label = col.kind === "field" ? col.name : col.label;
+    const taken = columns.some((item) => (item.kind === "field" ? columnKey(item.name) : item.label.toLowerCase()) === id);
+    if (taken) return `“${label}” is already a column.`;
     if (columns.length >= MAX_QUERY_COLUMNS) return `Only ${MAX_QUERY_COLUMNS} TABLE columns fit.`;
-    columns.push(name);
+    columns.push(col);
     return null;
   };
   const addWhere = (cmp: WhereCmp): string | null => {
@@ -456,17 +544,28 @@ export function parseNexusQuery(source: string): Parsed {
     if (fieldMatch) {
       const value = (fieldMatch[1] ?? "").trim();
       if (!value) return { kind: "error", error: "field: needs a value." };
-      const err = addColumn(value);
+      const err = addColumn({ kind: "field", name: value });
       if (err) return { kind: "error", error: err };
+      continue;
+    }
+    const formula = parseFormulaAt(tokens, i);
+    if (formula && "error" in formula) return { kind: "error", error: formula.error };
+    if (formula) {
+      const err = addColumn(formula.col);
+      if (err) return { kind: "error", error: err };
+      i = formula.end;
       continue;
     }
     const cols = columnParts(token);
     if (cols && !/^(?:path|folder):/i.test(token)) {
       for (const name of cols) {
-        const err = addColumn(name);
+        const err = addColumn({ kind: "field", name });
         if (err) return { kind: "error", error: err };
       }
       continue;
+    }
+    if (token === "+" || token === "-" || token === "*" || token === "/") {
+      return { kind: "error", error: FORMULA_HINT };
     }
     return {
       kind: "error",
@@ -656,10 +755,46 @@ function whereMatch(node: VaultNode, where: WhereCmp, now: number): "yes" | "no"
   return ordered(day, dateValueMs(where.value, now), where.op) ? "yes" : "no";
 }
 
-function rowFrom(node: VaultNode, columns: string[]): NexusQueryRow {
-  const fields = columns.map((name) => {
-    const value = fieldActual(node, name);
-    return { name, value: value ? value : "—" };
+function formatNum(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const rounded = Math.round(n * 1000) / 1000;
+  return String(rounded);
+}
+
+function formulaText(node: VaultNode, column: Extract<QueryColumn, { kind: "formula" }>): string {
+  const read = (atom: FormulaAtom): { kind: "num"; n: number } | { kind: "text"; text: string } | { kind: "blank" } | { kind: "missing" } => {
+    if (atom.kind === "number") return { kind: "num", n: atom.n };
+    if (atom.kind === "text") return { kind: "text", text: atom.text };
+    const actual = fieldActual(node, atom.name);
+    if (actual === null) return { kind: "missing" };
+    if (!actual) return { kind: "blank" };
+    const n = numericActual(actual);
+    if (n !== null) return { kind: "num", n };
+    return { kind: "text", text: actual };
+  };
+  const left = read(column.left);
+  const right = read(column.right);
+  if (left.kind === "missing" || right.kind === "missing") return "—";
+  if (column.op === "+") {
+    if (left.kind === "num" && right.kind === "num") return formatNum(left.n + right.n);
+    if (left.kind === "text" || right.kind === "text") {
+      const show = (side: typeof left) => (side.kind === "text" ? side.text : side.kind === "num" ? formatNum(side.n) : "");
+      return show(left) + show(right);
+    }
+    return "—";
+  }
+  if (left.kind !== "num" || right.kind !== "num") return "—";
+  if (column.op === "-") return formatNum(left.n - right.n);
+  if (column.op === "*") return formatNum(left.n * right.n);
+  if (right.n === 0) return "—";
+  return formatNum(left.n / right.n);
+}
+
+function rowFrom(node: VaultNode, columns: QueryColumn[]): NexusQueryRow {
+  const fields = columns.map((column) => {
+    if (column.kind === "formula") return { name: column.label, value: formulaText(node, column) || "—" };
+    const value = fieldActual(node, column.name);
+    return { name: column.name, value: value ? value : "—" };
   });
   const tags = fields.find((field) => columnKey(field.name) === "tags");
   const mtime = fields.find((field) => columnKey(field.name) === "mtime");
@@ -851,9 +986,11 @@ export function runNexusQuery(
   });
   const truncated = notes.length > NEXUS_QUERY_CAP;
   const rows = notes.slice(0, NEXUS_QUERY_CAP).map((n) => rowFrom(n, parsed.columns));
-  const frontmatterCols = parsed.columns.filter((name) => {
-    const key = columnKey(name);
-    return key !== "tags" && key !== "mtime" && !key.startsWith("file.");
+  const frontmatterCols = parsed.columns.flatMap((column) => {
+    if (column.kind !== "field") return [];
+    const key = columnKey(column.name);
+    if (key === "tags" || key === "mtime" || key.startsWith("file.")) return [];
+    return [column.name];
   });
   if (unloaded) {
     fieldNote = `${unloaded} ${unloaded === 1 ? "note is" : "notes are"} not loaded, so a field comparison left ${unloaded === 1 ? "it" : "them"} out and empty fields show —.`;

@@ -161,7 +161,7 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`WHERE due > date(today)\` and \`file.mtime >= date(today) - 7d\` compare dates. Not Dataview: no joins, no formulas.
+A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`WHERE due > date(today)\` compares dates. Not Dataview: no joins. A TABLE formula is one + - * /.
 
 \`\`\`nexus-query
 LIST FROM #writing OR #graph
@@ -173,6 +173,10 @@ TABLE status FROM path:Research WHERE status = "draft"
 
 \`\`\`nexus-query
 LIST FROM path:Research WHERE contains(file.name, "Graph")
+\`\`\`
+
+\`\`\`nexus-query
+TABLE file.name + " note" FROM path:Research WHERE contains(file.name, "Graph")
 \`\`\`
 
 \`\`\`nexus-query
