@@ -16,7 +16,17 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { buildNoteTable, evalNoteFormula, filterNoteRows, parseBasesSession, sortNoteRows } = await import("../src/lib/vault/note-table.ts");
+const {
+  buildNoteTable,
+  evalNoteFormula,
+  filterNoteRows,
+  parseBasesSession,
+  relationTargets,
+  resolveNoteLink,
+  serializeNoteTableFile,
+  sortNoteRows,
+  NOTE_TABLE_FILE,
+} = await import("../src/lib/vault/note-table.ts");
 
 const notes = [
   {
@@ -109,6 +119,45 @@ const legacy = parseBasesSession(JSON.stringify({ query: "Welcome", folder: "Jou
 assert.equal(legacy.views[0].query, "Welcome");
 assert.equal(legacy.views[0].folder, "Journal");
 
+const catalog = [
+  { id: "b", path: "Projects/Beta.md", name: "Beta.md" },
+  { id: "g", path: "Journal/Gamma.md", name: "Gamma.md" },
+];
+assert.deepEqual(relationTargets("[[Beta]]"), ["Beta"]);
+assert.deepEqual(relationTargets("[[Journal/Gamma|G]] and [[Beta]]"), ["Journal/Gamma", "Beta"]);
+assert.deepEqual(relationTargets("Projects/Beta.md"), ["Projects/Beta"]);
+assert.deepEqual(relationTargets("draft"), []);
+assert.equal(resolveNoteLink("Beta", catalog).id, "b");
+assert.equal(resolveNoteLink("Journal/Gamma", catalog).title, "Gamma");
+assert.equal(resolveNoteLink("Missing", catalog).id, null);
+const related = buildNoteTable([
+  {
+    id: "a",
+    path: "Projects/Alpha.md",
+    name: "Alpha.md",
+    content: "---\nrelated: \"[[Beta]]\"\nstatus: draft\n---\n\n# Alpha\n",
+  },
+  { id: "b", path: "Projects/Beta.md", name: "Beta.md", content: "# Beta\n" },
+]);
+assert.equal(related.rows.find((row) => row.id === "a")?.links.related?.[0]?.id, "b");
+assert.equal(related.rows.find((row) => row.id === "a")?.links.related?.[0]?.title, "Beta");
+assert.equal(related.rows.find((row) => row.id === "a")?.links.status, undefined);
+const file = serializeNoteTableFile({
+  activeId: "saved",
+  views: [
+    { id: "all", name: "All notes", query: "", folder: "", column: "name", dir: "asc", formula: "file.mtime", columns: [] },
+    { id: "saved", name: "Saved view", query: "draft", folder: "Projects", column: "status", dir: "asc", formula: "file.name", columns: ["status", "related"] },
+  ],
+});
+assert.equal(NOTE_TABLE_FILE, ".nexus/note-table.json");
+assert.match(file, /nexus-note-table/);
+assert.doesNotMatch(file, /"type":\s*"base"/);
+const fromFile = parseBasesSession(file);
+assert.equal(fromFile.activeId, "saved");
+assert.equal(fromFile.views[1].folder, "Projects");
+assert.deepEqual(fromFile.views[1].columns, ["status", "related"]);
+assert.equal(fromFile.views[1].formula, "file.name");
+
 const { readFileSync } = await import("node:fs");
 const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
 assert.match(palette, /label: "Bases"/);
@@ -116,7 +165,9 @@ assert.match(palette, /note table/);
 assert.match(palette, /setBasesOpen\(true\)/);
 const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
 assert.match(table, /Not Obsidian Bases/);
-assert.match(table, /no relations, no \.base files/);
+assert.match(table, /no typed relations, no Obsidian \.base files/);
+assert.match(table, /bases-relation/);
+assert.match(table, /NOTE_TABLE_FILE|note-table\.json/);
 assert.match(table, /data-testid="bases-row"/);
 assert.match(table, /data-testid="bases-filter"/);
 assert.match(table, /data-testid="bases-sort"/);
@@ -124,7 +175,8 @@ assert.match(table, /data-testid="bases-view"/);
 assert.match(table, /data-testid="bases-formula"/);
 assert.match(table, /data-testid="bases-save-view"/);
 assert.match(table, /setActiveNote\(row\.id\)/);
-assert.match(table, /Built-in formulas only/);
+assert.match(table, /Not an Obsidian \.base file/);
+assert.match(readFileSync("src/lib/vault/note-table-file.ts", "utf8"), /NOTE_TABLE_FILE/);
 assert.doesNotMatch(table, /No formulas, relations, or extra views/);
 assert.doesNotMatch(table, /Obsidian Bases formulas/);
 assert.doesNotMatch(table, /\.base parity/);

@@ -9,6 +9,8 @@ export type NoteTableSource = {
   mtime?: number;
 };
 
+export type NoteLink = { id: string | null; title: string };
+
 export type NoteTableRow = {
   id: string;
   name: string;
@@ -16,6 +18,8 @@ export type NoteTableRow = {
   folder: string;
   mtime: number;
   props: Record<string, string>;
+  /** Wikilink or note-path values in each property, when the value points at notes. */
+  links: Record<string, NoteLink[]>;
   /** Result of the view formula. Empty when the view has no formula. */
   formula: string;
 };
@@ -28,7 +32,12 @@ export type BasesViewConfig = {
   column: string;
   dir: "asc" | "desc";
   formula: string;
+  /** Property columns to keep. Empty means every detected key. */
+  columns: string[];
 };
+
+/** Vault file for the saved table. Not an Obsidian .base file. */
+export const NOTE_TABLE_FILE = ".nexus/note-table.json";
 
 export type BasesSession = {
   activeId: "all" | "saved";
@@ -45,6 +54,37 @@ export function noteTableTitle(name: string): string {
 export function noteTableFolder(path: string): string {
   const i = path.lastIndexOf("/");
   return i <= 0 ? "" : path.slice(0, i);
+}
+
+/** Targets inside a property: [[Note]], [[Note|label]], or a note path. */
+export function relationTargets(value: string): string[] {
+  const found: string[] = [];
+  const re = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(value))) {
+    const target = (match[1] || "").trim();
+    if (target) found.push(target);
+  }
+  if (found.length) return found;
+  const plain = value.trim();
+  if (!plain) return [];
+  if (plain.includes("/") || /\.md$/i.test(plain)) return [plain.replace(/\.md$/i, "")];
+  return [];
+}
+
+export function resolveNoteLink(
+  target: string,
+  notes: { id: string; path: string; name: string }[],
+): NoteLink {
+  const needle = target.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
+  const base = needle.split("/").pop() || needle;
+  const hit = notes.find((note) => {
+    const path = note.path.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase();
+    const name = (note.name || "").replace(/\.md$/i, "").toLowerCase();
+    return path === needle || path.endsWith(`/${needle}`) || name === base || path.endsWith(`/${base}`);
+  });
+  const title = hit ? noteTableTitle(hit.name || hit.path) : noteTableTitle(base);
+  return { id: hit?.id ?? null, title };
 }
 
 export function noteTableProperties(content: string | null | undefined): Record<string, string> {
@@ -72,6 +112,7 @@ export function defaultBasesSession(): BasesSession {
         column: "name",
         dir: "asc",
         formula: "file.mtime",
+        columns: [],
       },
       {
         id: "saved",
@@ -81,6 +122,7 @@ export function defaultBasesSession(): BasesSession {
         column: "name",
         dir: "asc",
         formula: 'if(status, status, "—")',
+        columns: [],
       },
     ],
   };
@@ -96,7 +138,14 @@ function asView(raw: unknown, fallback: BasesViewConfig): BasesViewConfig {
     column: typeof row.column === "string" && row.column ? row.column : fallback.column,
     dir: row.dir === "desc" ? "desc" : "asc",
     formula: typeof row.formula === "string" ? row.formula : fallback.formula,
+    columns: Array.isArray(row.columns)
+      ? row.columns.filter((key): key is string => typeof key === "string" && key.trim().length > 0)
+      : fallback.columns,
   };
+}
+
+export function serializeNoteTableFile(session: BasesSession): string {
+  return `${JSON.stringify({ kind: "nexus-note-table", ...session }, null, 2)}\n`;
 }
 
 /** Session views. An older single-view blob stays on All notes. */
@@ -297,6 +346,9 @@ export function buildNoteTable(
   const rows: NoteTableRow[] = [];
   let truncated = false;
   let formulaError: string | null = null;
+  const catalog = notes
+    .filter((note) => note.path && !isCanvasPath(note.path))
+    .map((note) => ({ id: note.id, path: note.path, name: note.name || note.path }));
   for (const note of notes) {
     if (!note.path || isCanvasPath(note.path)) continue;
     if (prefix && note.path !== prefix && !note.path.startsWith(`${prefix}/`)) continue;
@@ -305,7 +357,12 @@ export function buildNoteTable(
       break;
     }
     const props = noteTableProperties(note.content);
-    for (const key of Object.keys(props)) counts.set(key, (counts.get(key) || 0) + 1);
+    const links: Record<string, NoteLink[]> = {};
+    for (const key of Object.keys(props)) {
+      counts.set(key, (counts.get(key) || 0) + 1);
+      const targets = relationTargets(props[key] || "");
+      if (targets.length) links[key] = targets.map((target) => resolveNoteLink(target, catalog));
+    }
     const built = {
       name: noteTableTitle(note.name || note.path.split("/").pop() || note.path),
       path: note.path,
@@ -317,6 +374,7 @@ export function buildNoteTable(
     rows.push({
       id: note.id,
       ...built,
+      links,
       formula: computed.error ? "" : computed.value,
     });
     if (computed.error) formulaError = computed.error;
@@ -339,6 +397,9 @@ export function filterNoteRows(rows: NoteTableRow[], query: string): NoteTableRo
       if (value.toLowerCase().includes(q)) return true;
     }
     if (row.formula.toLowerCase().includes(q)) return true;
+    for (const group of Object.values(row.links)) {
+      if (group.some((link) => link.title.toLowerCase().includes(q))) return true;
+    }
     return false;
   });
 }

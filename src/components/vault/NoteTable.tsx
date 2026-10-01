@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { setBasesOpen } from "@/lib/vault/bases-session";
 import {
@@ -9,6 +9,7 @@ import {
   type BasesSession,
   type BasesViewConfig,
 } from "@/lib/vault/note-table";
+import { loadNoteTableConfig, saveNoteTableConfig } from "@/lib/vault/note-table-file";
 import { useVaultStore } from "@/lib/vault/store";
 import {
   scheduleFillSafeHydrate,
@@ -27,11 +28,13 @@ function readSession(): BasesSession {
 }
 
 export function NoteTable() {
+  const vaultId = useVaultStore((s) => s.vaultId);
   const nodes = useVaultStore((s) => s.nodes);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [session, setSession] = useState<BasesSession>(readSession);
+  const ready = useRef(false);
   const view = session.views.find((item) => item.id === session.activeId) ?? session.views[0];
 
   const patchView = (partial: Partial<BasesViewConfig>) => {
@@ -42,12 +45,30 @@ export function NoteTable() {
   };
 
   useEffect(() => {
+    let cancel = false;
+    ready.current = false;
+    void loadNoteTableConfig(vaultId).then((loaded) => {
+      if (cancel) return;
+      if (loaded) setSession(loaded);
+      ready.current = true;
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [vaultId]);
+
+  useEffect(() => {
     try {
       sessionStorage.setItem(VIEW_KEY, JSON.stringify(session));
     } catch {
       /* ignore */
     }
-  }, [session]);
+    if (!ready.current) return;
+    const timer = window.setTimeout(() => {
+      void saveNoteTableConfig(vaultId, session);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [session, vaultId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -115,10 +136,11 @@ export function NoteTable() {
   };
 
   const saveView = () => {
+    const columns = built.keys;
     setSession((prev) => {
       const current = prev.views.find((item) => item.id === prev.activeId) ?? prev.views[0];
-      return {
-        activeId: "saved",
+      const next = {
+        activeId: "saved" as const,
         views: prev.views.map((item) =>
           item.id === "saved"
             ? {
@@ -128,18 +150,26 @@ export function NoteTable() {
                 column: current.column,
                 dir: current.dir,
                 formula: current.formula,
+                columns,
               }
             : item,
         ),
       };
+      void saveNoteTableConfig(vaultId, next);
+      return next;
     });
   };
+
+  const propKeys = view.columns.length
+    ? view.columns.filter((key) => built.keys.includes(key))
+    : built.keys;
+  const shownKeys = propKeys.length ? propKeys : built.keys;
 
   const columns = [
     ["name", "Name"],
     ["folder", "Folder"],
     ["path", "Path"],
-    ...built.keys.map((key) => [key, key] as [string, string]),
+    ...shownKeys.map((key) => [key, key] as [string, string]),
     ...(view.formula.trim() ? [["formula", "Formula"] as [string, string]] : []),
   ];
 
@@ -149,7 +179,7 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table with two views and formulas. Not Obsidian Bases — no relations, no .base files.
+            Built-in table with two views, formulas, and note links. Not Obsidian Bases — no typed relations, no Obsidian .base files.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -237,11 +267,35 @@ export function NoteTable() {
                 <td className="max-w-[16rem] truncate px-2 py-1.5 font-medium">{row.name}</td>
                 <td className="max-w-[12rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.folder || "—"}</td>
                 <td className="max-w-[18rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.path}</td>
-                {built.keys.map((key) => (
-                  <td key={key} className="max-w-[14rem] truncate px-2 py-1.5" data-prop={key}>
-                    {row.props[key] || ""}
-                  </td>
-                ))}
+                {shownKeys.map((key) => {
+                  const links = row.links[key] || [];
+                  return (
+                    <td key={key} className="max-w-[16rem] truncate px-2 py-1.5" data-prop={key}>
+                      {links.length
+                        ? links.map((link) =>
+                            link.id ? (
+                              <button
+                                key={link.id}
+                                type="button"
+                                className="mr-1 text-[var(--accent)] hover:underline"
+                                data-testid="bases-relation"
+                                data-note-id={link.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveNote(link.id);
+                                  setBasesOpen(false);
+                                }}
+                              >
+                                {link.title}
+                              </button>
+                            ) : (
+                              <span key={link.title}>{link.title}</span>
+                            ),
+                          )
+                        : row.props[key] || ""}
+                    </td>
+                  );
+                })}
                 {view.formula.trim() ? (
                   <td className="max-w-[16rem] truncate px-2 py-1.5" data-formula={row.formula}>
                     {row.formula}
@@ -263,7 +317,7 @@ export function NoteTable() {
         {built.formulaError ? ` · ${built.formulaError}` : ""}
         {missingKey && !indexFillBusy ? " · reading note properties" : ""}
         {indexFillBusy ? " · properties wait until the index is idle" : ""}
-        . Built-in formulas only. No relations. No .base files.
+        . Saved view is stored in .nexus/note-table.json. Not an Obsidian .base file.
       </p>
     </div>
   );
