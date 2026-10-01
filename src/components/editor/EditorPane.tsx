@@ -523,7 +523,7 @@ export function EditorPane({
   }
 
   const body = note.content ?? "";
-  const canvasNote = isCanvasNote(body);
+  const canvasNote = isCanvasNote(body, note.path);
   const reading = readingView && !canvasNote;
   const editing = !reading;
   const editorKey = `${reading ? "reading" : editorMode}::${canvasNote ? "canvas" : "note"}`;
@@ -828,7 +828,7 @@ export function EditorPane({
           >
             <SourcePreview content={body} noteId={note.id} reading pane={pane} />
           </div>
-        ) : editorMode === "visual" && canvasNote ? (
+        ) : canvasNote ? (
           <CanvasBoard noteId={note.id} content={body} />
         ) : editorMode === "visual" ? (
           <VisualEditor noteId={note.id} content={body} pane={pane} />

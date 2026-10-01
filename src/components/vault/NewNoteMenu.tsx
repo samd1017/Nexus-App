@@ -3,6 +3,7 @@ import {
   CalendarDays,
   FilePlus2,
   FileText,
+  LayoutGrid,
   FolderKanban,
   Lightbulb,
   Users,
@@ -56,6 +57,7 @@ export function NewNoteMenu({
   const menuId = useId();
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createNote = useVaultStore((s) => s.createNote);
+  const createCanvas = useVaultStore((s) => s.createCanvas);
 
   useEffect(() => {
     if (!open) return;
@@ -148,6 +150,28 @@ export function NewNoteMenu({
           <div className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
             New note
           </div>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="new-canvas"
+            onClick={() => {
+              setOpen(false);
+              createCanvas(parentId, "Untitled");
+            }}
+            className="flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.05]"
+          >
+            <span className="mt-0.5 text-[var(--accent)]">
+              <LayoutGrid size={14} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[12.5px] font-medium text-[var(--text-primary)]">
+                New canvas
+              </span>
+              <span className="block text-[11px] leading-snug text-[var(--text-muted)]">
+                Empty .canvas board in this folder
+              </span>
+            </span>
+          </button>
           {NOTE_TEMPLATES.map((t) => (
             <button
               key={t.id}

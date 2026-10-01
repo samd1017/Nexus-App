@@ -56,7 +56,33 @@ const EMPTY: CanvasDoc = { cards: [], edges: [], cam: { x: 40, y: 40, k: 1 }, sn
 const FENCE_RE = /````canvas\r?\n([\s\S]*?)\r?\n````/;
 const GRID = 24;
 
-export function isCanvasNote(md: string): boolean {
+export function isCanvasPath(path: string | null | undefined): boolean {
+  return !!path && path.toLowerCase().endsWith(".canvas");
+}
+
+/** A vault file the tree should open: Markdown or a canvas board. */
+export function isVaultNoteFileName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n.endsWith(".md") || n.endsWith(".canvas");
+}
+
+export function emptyCanvasFile(): string {
+  return `${JSON.stringify({ nodes: [], edges: [] }, null, 2)}\n`;
+}
+
+function looksLikeCanvasJson(md: string): boolean {
+  const trimmed = (md || "").trim();
+  if (!trimmed.startsWith("{")) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as { nodes?: unknown; cards?: unknown };
+    return Array.isArray(parsed.nodes) || Array.isArray(parsed.cards);
+  } catch {
+    return false;
+  }
+}
+
+export function isCanvasNote(md: string, path?: string | null): boolean {
+  if (isCanvasPath(path)) return true;
   const { yaml } = splitFrontmatter(md);
   if (yaml) {
     const fields = parseFrontmatterFields(yaml);
@@ -64,7 +90,7 @@ export function isCanvasNote(md: string): boolean {
       return true;
     }
   }
-  return FENCE_RE.test(md);
+  return FENCE_RE.test(md) || looksLikeCanvasJson(md);
 }
 
 export function newCardId(): string {
@@ -145,6 +171,14 @@ export function normalizeCanvasDoc(raw: unknown): CanvasDoc {
 }
 
 export function parseCanvasDoc(md: string): CanvasDoc {
+  const trimmed = (md || "").trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      return normalizeCanvasDoc(JSON.parse(trimmed));
+    } catch {
+      return { ...EMPTY, cards: [], edges: [] };
+    }
+  }
   const m = md.match(FENCE_RE);
   if (!m) return { ...EMPTY, cards: [], edges: [] };
   try {
@@ -152,6 +186,14 @@ export function parseCanvasDoc(md: string): CanvasDoc {
   } catch {
     return { ...EMPTY, cards: [], edges: [] };
   }
+}
+
+/** Write the board back in the same shape the file already uses. */
+export function serializeCanvas(md: string, doc: CanvasDoc, path?: string | null): string {
+  if (isCanvasPath(path) || looksLikeCanvasJson(md)) {
+    return `${JSON.stringify(toObsidianCanvas(doc), null, 2)}\n`;
+  }
+  return writeCanvasDoc(md, doc);
 }
 
 function slimCard(c: CanvasCard): Record<string, unknown> {

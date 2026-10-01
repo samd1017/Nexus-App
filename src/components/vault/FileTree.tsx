@@ -11,6 +11,7 @@ import {
   Pencil,
   FolderPlus,
   FilePlus,
+  LayoutGrid,
   Users,
   Lightbulb,
   FolderKanban,
@@ -557,6 +558,7 @@ export const FileTree = memo(function FileTree() {
   // Stable tick — never ensureVaultIndex inside a Zustand selector
   const structureTick = useTreeStructureTick();
   const createNote = useVaultStore((s) => s.createNote);
+  const createCanvas = useVaultStore((s) => s.createCanvas);
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createFolder = useVaultStore((s) => s.createFolder);
   const requestDelete = useVaultStore((s) => s.requestDelete);
@@ -1842,6 +1844,25 @@ export const FileTree = memo(function FileTree() {
                             : null,
                       )
                     }
+                  />
+                  <MenuBtn
+                    icon={<LayoutGrid size={13} />}
+                    label="New canvas"
+                    onClick={() => {
+                      const parentId =
+                        ctx.kind === "empty"
+                          ? ctx.parentId
+                          : ctxNode?.kind === "folder"
+                            ? ctxNode.id
+                            : null;
+                      setCtx(null);
+                      if (parentId) {
+                        const expanded = useVaultStore.getState().expandedFolders;
+                        if (!expanded.includes(parentId)) toggleFolderReveal(parentId);
+                      }
+                      const id = createCanvas(parentId, "Untitled");
+                      if (id) requestAnimationFrame(() => setRenamingId(id));
+                    }}
                   />
                   <MenuBtn
                     icon={<Users size={13} />}

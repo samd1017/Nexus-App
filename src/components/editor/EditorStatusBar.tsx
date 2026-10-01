@@ -100,7 +100,7 @@ export function EditorStatusBar({ noteId }: { noteId: string }) {
     };
   }, [nodes, note, content, shellCatalog, shellIn]);
 
-  if (isCanvasNote(content)) {
+  if (isCanvasNote(content, note?.path)) {
     return (
       <div
         className="editor-status flex h-7 shrink-0 items-center border-t border-[var(--border)] px-3 text-[11px] text-[var(--text-muted)]"

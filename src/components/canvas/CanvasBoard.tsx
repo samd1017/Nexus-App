@@ -52,7 +52,7 @@ import {
   snapToGrid,
   toObsidianCanvas,
   vacantPoint,
-  writeCanvasDoc,
+  serializeCanvas,
   type CanvasCard,
   type CanvasDoc,
   type CanvasEdge,
@@ -107,6 +107,7 @@ function ColorDots({
 export function CanvasBoard({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
+  const createNote = useVaultStore((s) => s.createNote);
   const nodes = useVaultStore((s) => s.nodes);
   const [doc, setDoc] = useState<CanvasDoc>(() => parseCanvasDoc(content));
   const [picker, setPicker] = useState<"note" | "link" | null>(null);
@@ -147,7 +148,8 @@ export function CanvasBoard({ noteId, content }: Props) {
   }, [noteId, content]);
 
   const persist = (next: CanvasDoc) => {
-    const md = writeCanvasDoc(baselineRef.current, next);
+    const path = useVaultStore.getState().nodes[noteId]?.path;
+    const md = serializeCanvas(baselineRef.current, next, path);
     baselineRef.current = md;
     updateNoteContent(noteId, md);
   };
@@ -415,7 +417,7 @@ export function CanvasBoard({ noteId, content }: Props) {
   };
 
   const onBgPointerDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest("[data-canvas-card],[data-canvas-port],[data-canvas-edge],[data-canvas-menu],[data-canvas-float]")) {
+    if ((e.target as HTMLElement).closest("[data-canvas-card],[data-canvas-port],[data-canvas-edge],[data-canvas-menu],[data-canvas-float],[data-canvas-empty]")) {
       return;
     }
     setPicker(null);
@@ -841,7 +843,7 @@ export function CanvasBoard({ noteId, content }: Props) {
       <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
         <span className="font-semibold text-[var(--text-secondary)]">Board</span>
         {" · "}
-        Arrange cards and links.
+        Cards and links. Not full Obsidian Canvas.
       </div>
       <div className="nexus-canvas-toolbar">
         <div className="relative" data-canvas-add>
@@ -919,6 +921,23 @@ export function CanvasBoard({ noteId, content }: Props) {
             placeholder="Pin a note…"
             className="nexus-field mb-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px]"
           />
+          <button
+            type="button"
+            className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-[var(--accent)] hover:bg-white/[0.05]"
+            data-testid="canvas-create-note"
+            onClick={() => {
+              const parentId = useVaultStore.getState().nodes[noteId]?.parentId ?? null;
+              const id = createNote(parentId, "Untitled", { activate: false });
+              const created = id ? useVaultStore.getState().nodes[id] : null;
+              if (created?.kind === "note") {
+                addCard({ kind: "note", notePath: created.path, w: 260, h: 160 });
+              }
+              setPicker(null);
+              setPickerQ("");
+            }}
+          >
+            <Plus size={12} /> Create note
+          </button>
           <ul className="max-h-56 overflow-y-auto">
             {filteredNotes.map((n) => (
               <li key={n.id}>
@@ -978,6 +997,29 @@ export function CanvasBoard({ noteId, content }: Props) {
       >
         {connectFrom ? (
           <div className="nexus-canvas-hint">Click another card to connect · Esc to cancel</div>
+        ) : null}
+        {doc.cards.length === 0 ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+            data-testid="canvas-empty"
+            data-canvas-empty
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-[12px] border border-[var(--border)] bg-[var(--panel-solid)] px-4 py-3 text-center">
+              <p className="text-[13px] text-[var(--text-secondary)]">This canvas is empty.</p>
+              <button
+                type="button"
+                className="primary-btn min-h-8 px-3 text-[12px]"
+                data-testid="canvas-add-note"
+                onClick={() => {
+                  setPicker("note");
+                  setAddOpen(false);
+                }}
+              >
+                Add note
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {selected.length && !selectedEdge ? (
@@ -1354,6 +1396,7 @@ export function CanvasBoard({ noteId, content }: Props) {
                         {note ? (
                           <button
                             type="button"
+                            data-testid="canvas-open-note"
                             data-card-open
                             className="ml-auto shrink-0 text-[10px] text-[var(--accent)] hover:underline"
                             onClick={(e) => {

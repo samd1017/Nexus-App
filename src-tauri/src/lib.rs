@@ -194,7 +194,7 @@ fn vault_meta_walk(app: tauri::AppHandle, root: String) -> Result<Vec<NodeMetaDt
                 dirs.push((path, child_rel, name));
             } else if ft.is_file() {
                 let lower = name.to_ascii_lowercase();
-                if !lower.ends_with(".md") {
+                if !lower.ends_with(".md") && !lower.ends_with(".canvas") {
                     continue;
                 }
                 let meta = entry.metadata().ok();

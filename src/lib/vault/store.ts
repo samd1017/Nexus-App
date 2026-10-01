@@ -41,6 +41,7 @@ import { preferCleanWrite } from "@/lib/markdown/serialize";
 import { flushActiveEditors } from "@/lib/editor/flush";
 import { setFindFocusPane } from "@/lib/editor/find-target";
 import { slugifyTitle } from "@/lib/utils";
+import { emptyCanvasFile, isCanvasNote, isCanvasPath } from "./canvas";
 import {
   clearDirectoryHandle,
   createFolderOnDisk,
@@ -326,6 +327,8 @@ export type CreateNoteOpts = {
   content?: string;
   raw?: boolean;
   template?: NoteTemplateId;
+  /** `.canvas` creates a canvas file. Anything else stays a Markdown note. */
+  extension?: ".md" | ".canvas";
 };
 export type CreateFolderOpts = { expand?: boolean };
 export type DailyNoteOpts = { silent?: boolean };
@@ -448,6 +451,7 @@ export type VaultStore = {
     title?: string,
     opts?: CreateNoteOpts,
   ) => string | null;
+  createCanvas: (parentId: string | null, title?: string) => string | null;
   createFolder: (
     parentId: string | null,
     name?: string,
@@ -4418,10 +4422,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (!node) return;
 		let name = newName.trim();
 		if (!name) return;
+		const canvasFile =
+			node.kind === "note" &&
+			(isCanvasPath(node.path) || isCanvasNote(typeof node.content === "string" ? node.content : "", node.path));
 		if (node.kind === "note") {
-			name = name.replace(/\.md$/i, "");
+			name = name.replace(/\.(md|canvas)$/i, "");
 			if (!name) return;
-			name = `${name}.md`;
+			name = canvasFile ? `${name}.canvas` : `${name}.md`;
 		}
 		const parent = parentPath(node.path);
 		let newPath = parent ? pathJoin(parent, name) : name;
@@ -4429,8 +4436,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const idx = ensureVaultIndex(get().nodes);
 		const conflictId = idx.getIdByPath(get().nodes, newPath);
 		if (conflictId && conflictId !== id) {
-			const stem = name.replace(/\.md$/i, "");
-			const ext = node.kind === "note" ? ".md" : "";
+			const stem = name.replace(/\.(md|canvas)$/i, "");
+			const ext = node.kind === "note" ? (canvasFile ? ".canvas" : ".md") : "";
 			let i = 1;
 			while (idx.hasPath(parent ? pathJoin(parent, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
 			name = `${stem} ${i}${ext}`;
@@ -4439,10 +4446,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const oldPath = node.path;
 		const nodes = { ...get().nodes };
-		const titleOnly = name.replace(/\.md$/i, "");
+		const titleOnly = name.replace(/\.(md|canvas)$/i, "");
 		let content = node.content;
-		if (node.kind === "note" && typeof content === "string") if (/^#\s+.+$/m.test(content)) content = content.replace(/^#\s+.+$/m, `# ${titleOnly}`);
-		else content = `# ${titleOnly}\n\n` + content.replace(/^\n+/, "");
+		if (node.kind === "note" && typeof content === "string" && !canvasFile) {
+			if (/^#\s+.+$/m.test(content)) content = content.replace(/^#\s+.+$/m, `# ${titleOnly}`);
+			else content = `# ${titleOnly}\n\n` + content.replace(/^\n+/, "");
+		}
 		nodes[id] = {
 			...node,
 			name,
@@ -4527,12 +4536,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const activate = opts?.activate !== false;
 		const stage = beginStage(get);
 		const parent = parentId ? stage.nodes[parentId] : null;
-		const base = slugifyTitle(title) || "Untitled";
-		let name = base.endsWith(".md") ? base : `${base}.md`;
+		const ext = opts?.extension === ".canvas" ? ".canvas" : ".md";
+		const base = (slugifyTitle(title) || "Untitled").replace(/\.md$/i, "").replace(/\.canvas$/i, "");
+		let name = `${base}${ext}`;
 		let path = parent ? pathJoin(parent.path, name) : name;
 		let i = 1;
 		while (pathOccupied(stage.nodes, path)) {
-			name = `${base.replace(/\.md$/i, "")} ${i}.md`;
+			name = `${base} ${i}${ext}`;
 			path = parent ? pathJoin(parent.path, name) : name;
 			i++;
 		}
@@ -4613,6 +4623,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		persistLargeVaultOverlayNode(get().vaultId, get().nodes[id], get().nodes);
 		return id;
 	},
+	createCanvas: (parentId, title = "Untitled") =>
+		get().createNote(parentId, title, {
+			raw: true,
+			content: emptyCanvasFile(),
+			extension: ".canvas",
+		}),
 	createFolder: (parentId, name = "New Folder", opts) => {
 		if (get().connecting) return null;
 		const expand = opts?.expand !== false;

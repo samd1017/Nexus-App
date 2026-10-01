@@ -1510,7 +1510,7 @@ export async function admitBrowserPaths(paths: string[]): Promise<void> {
         continue;
       }
       const fileHandle = entry as FileSystemFileHandle;
-      if (!rel.toLowerCase().endsWith(".md")) continue;
+      if (!rel.toLowerCase().endsWith(".md") && !rel.toLowerCase().endsWith(".canvas")) continue;
       const existing = await byPath(rel);
       if (!existing) {
         if (notes < 0) notes = (await counts()).notes;

@@ -201,7 +201,7 @@ export async function walkCollect(
         await walk(handle as FileSystemDirectoryHandle, path);
       } else if (
         handle.kind === "file" &&
-        name.toLowerCase().endsWith(".md")
+        (name.toLowerCase().endsWith(".md") || name.toLowerCase().endsWith(".canvas"))
       ) {
         notes += 1;
         if (opts?.maxNotes != null && notes > opts.maxNotes) {
@@ -642,7 +642,7 @@ export async function listFsaTrash(
     const trash = await root.getDirectoryHandle(".trash", { create: false });
     for await (const [name, handle] of trash.entries()) {
       if (handle.kind !== "file") continue;
-      if (!name.toLowerCase().endsWith(".md")) continue;
+      if (!name.toLowerCase().endsWith(".md") && !name.toLowerCase().endsWith(".canvas")) continue;
       const file = await (handle as FileSystemFileHandle).getFile();
       out.push({ relPath: `.trash/${name}`, mtime: file.lastModified });
     }

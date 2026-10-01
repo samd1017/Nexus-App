@@ -66,7 +66,7 @@ export function extractAttachmentPaths(markdown: string): string[] {
       return;
     }
     p = p.replace(/^\.\//, "").replace(/^\/+/, "");
-    if (!p || SKIP_PREFIX.test(p) || p.toLowerCase().endsWith(".md")) return;
+    if (!p || SKIP_PREFIX.test(p) || p.toLowerCase().endsWith(".md") || p.toLowerCase().endsWith(".canvas")) return;
     if (!p.includes(".") || p.includes(" ")) {
       // allow assets/foo.pdf style; skip bare wikilink note names
       if (!p.includes("/")) return;

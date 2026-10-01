@@ -6,6 +6,8 @@ import { diskFolderRow, folderForEnter } from "@/lib/search/folder-enter";
 import { paletteEnterOpensNow } from "@/lib/search/palette-enter";
 import { focusEditorPane } from "@/lib/editor/pane-focus";
 import { getFindFocusPane } from "@/lib/editor/find-target";
+import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
+import { isCanvasPath } from "@/lib/vault/canvas";
 import { switcherHits } from "@/lib/search/switcher-order";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
@@ -15,6 +17,7 @@ import {
   Network,
   ArrowUpRight,
   ListChecks,
+  LayoutGrid,
   BookOpen,
   Code2,
   Eye,
@@ -1109,6 +1112,60 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "new-canvas",
+          label: "New canvas",
+          keywords: ["canvas", "board", "create"],
+          icon: <LayoutGrid size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("new-canvas", () => {
+            const st = useVaultStore.getState();
+            const active = st.activeNoteId ? st.nodes[st.activeNoteId] : null;
+            const parent = focusedEmptyFolderId() ?? active?.parentId ?? null;
+            st.createCanvas(parent, "Untitled");
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "open-canvas",
+          label: "Open canvas",
+          keywords: ["canvas", "board", "open"],
+          icon: <LayoutGrid size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("open-canvas", () => {
+            const canvases = Object.values(useVaultStore.getState().nodes)
+              .filter((n) => n.kind === "note" && isCanvasPath(n.path))
+              .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)));
+            if (canvases.length === 0) {
+              useVaultStore.getState().setToast("No canvas files yet. New canvas creates one.");
+              setCommandOpen(false);
+              return;
+            }
+            if (canvases.length === 1) {
+              useVaultStore.getState().setActiveNote(canvases[0].id);
+              setCommandOpen(false);
+              return;
+            }
+            setQuery("open canvas ");
+          }),
+        },
+        ...(actionQuery.trim().toLowerCase().startsWith("open canvas")
+          ? Object.values(nodes)
+              .filter((n) => n.kind === "note" && isCanvasPath(n.path))
+              .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)))
+              .slice(0, 30)
+              .map((n) => ({
+                id: `open-canvas-${n.id}`,
+                label: `Open canvas: ${noteTitle(n)}`,
+                keywords: ["canvas", n.path],
+                icon: <LayoutGrid size={15} />,
+                shortcut: undefined as string | undefined,
+                run: wrapRun(`open-canvas-${n.id}`, () => {
+                  useVaultStore.getState().setActiveNote(n.id);
+                  setCommandOpen(false);
+                }),
+              }))
+          : []),
+        {
           id: "daily",
           label: "Daily note",
           keywords: ["today", "journal", "daily"],
@@ -1147,7 +1204,7 @@ function CommandPaletteOpen() {
           }),
         ),
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
-    [actionQuery, createNote, openDailyNote, createFromTemplate, setCommandOpen],
+    [actionQuery, nodes, createNote, openDailyNote, createFromTemplate, setCommandOpen, setQuery],
   );
 
   const navigateActions = useMemo(
@@ -1492,6 +1549,43 @@ function CommandPaletteOpen() {
         run: wrapRun("new-note", () => {
           createNote(null);
           setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "new-canvas",
+        label: "New canvas",
+        icon: <LayoutGrid size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("new-canvas", () => {
+          const st = useVaultStore.getState();
+          const active = st.activeNoteId ? st.nodes[st.activeNoteId] : null;
+          const parent = focusedEmptyFolderId() ?? active?.parentId ?? null;
+          st.createCanvas(parent, "Untitled");
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-canvas",
+        label: "Open canvas",
+        icon: <LayoutGrid size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-canvas", () => {
+          const canvases = Object.values(useVaultStore.getState().nodes)
+            .filter((n) => n.kind === "note" && isCanvasPath(n.path))
+            .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)));
+          if (canvases.length === 0) {
+            useVaultStore.getState().setToast("No canvas files yet. New canvas creates one.");
+            setCommandOpen(false);
+            return;
+          }
+          if (canvases.length === 1) {
+            useVaultStore.getState().setActiveNote(canvases[0].id);
+            setCommandOpen(false);
+            return;
+          }
+          setQuery("open canvas ");
           setRecentTick((t) => t + 1);
         }),
       },

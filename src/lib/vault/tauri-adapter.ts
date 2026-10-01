@@ -301,7 +301,7 @@ async function walkNotes(
     } else if (
       // Wave S3: only .md notes loaded; non-md files skipped during vault scans
       entry.isFile &&
-      name.toLowerCase().endsWith(".md")
+      (name.toLowerCase().endsWith(".md") || name.toLowerCase().endsWith(".canvas"))
     ) {
       const rel = relDir ? pathJoin(relDir, name) : name;
       const abs = joinRoot(root, rel);
@@ -450,7 +450,7 @@ export async function listDesktopTrash(
     const out: Array<{ relPath: string; mtime: number }> = [];
     for (const e of entries) {
       if (!e.name || e.isDirectory) continue;
-      if (!e.name.toLowerCase().endsWith(".md")) continue;
+      if (!e.name.toLowerCase().endsWith(".md") && !e.name.toLowerCase().endsWith(".canvas")) continue;
       const full = joinRoot(root, pathJoin(".trash", e.name));
       let mtime = Date.now();
       try {
@@ -506,6 +506,7 @@ export async function countDesktopFolderEntries(
       if (!e.name || e.name.startsWith(".")) continue;
       if (e.isDirectory) folders += 1;
       else if (e.name.toLowerCase().endsWith(".md")) notes += 1;
+      else if (e.name.toLowerCase().endsWith(".canvas")) notes += 1;
     }
     return { notes, folders };
   } catch {

@@ -136,7 +136,7 @@ export const DEFAULT_SETTINGS: VaultSettings = {
 
 export function noteTitle(node: VaultNode): string {
   if (node.kind !== "note") return node.name;
-  return node.name.replace(/\.md$/i, "");
+  return node.name.replace(/\.canvas$/i, "").replace(/\.md$/i, "");
 }
 
 export function pathJoin(...parts: string[]): string {

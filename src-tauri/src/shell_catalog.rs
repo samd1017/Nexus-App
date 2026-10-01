@@ -798,7 +798,10 @@ pub fn write_catalog(conn: &mut Connection, root: &Path) -> Result<(), String> {
                 let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
                 push_insert(&mut batch, &child_rel, &name, "folder", mtime);
                 stack.push((entry.path(), child_rel));
-            } else if ft.is_file() && name.to_ascii_lowercase().ends_with(".md") {
+            } else if ft.is_file()
+                && (name.to_ascii_lowercase().ends_with(".md")
+                    || name.to_ascii_lowercase().ends_with(".canvas"))
+            {
                 let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
                 push_insert(&mut batch, &child_rel, &name, "note", mtime);
             }

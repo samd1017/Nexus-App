@@ -866,6 +866,14 @@ fn is_md_name(name: &str) -> bool {
     b.len() >= 3 && b[b.len() - 3..].eq_ignore_ascii_case(b".md")
 }
 
+fn is_note_name(name: &str) -> bool {
+    if is_md_name(name) {
+        return true;
+    }
+    let b = name.as_bytes();
+    b.len() >= 7 && b[b.len() - 7..].eq_ignore_ascii_case(b".canvas")
+}
+
 fn child_rel(rel: &str, name: &str) -> String {
     if rel.is_empty() {
         name.to_string()
@@ -910,7 +918,7 @@ fn list_dir_window(
         // Extension decides a note. file_type() stats when the filesystem
         // has no type in the directory entry, which made the first page
         // wait on every file in a fat folder.
-        if is_md_name(&name) {
+        if is_note_name(&name) {
             if skip.contains(&child) {
                 continue;
             }
@@ -1017,7 +1025,7 @@ fn list_dir_ready_page(
             continue;
         }
         let child = child_rel(rel, &name);
-        if is_md_name(&name) {
+        if is_note_name(&name) {
             if skip.contains(&child) || !taken.insert(child.clone()) {
                 continue;
             }
@@ -1128,7 +1136,7 @@ fn stream_dir_tail<'p, 'c>(
         } else {
             format!("{rel}/{name}")
         };
-        if is_md_name(&name) {
+        if is_note_name(&name) {
             // fall through to the note path
         } else {
             let Ok(ft) = entry.file_type() else { continue };
@@ -1182,7 +1190,7 @@ fn collect_md_notes_publishing<'a>(
     // its folder sorts later.
     for raw in prefixes {
         let rel = normalize_rel(raw).trim_matches('/').to_string();
-        if !rel.to_ascii_lowercase().ends_with(".md") {
+        if !rel.to_ascii_lowercase().ends_with(".md") && !rel.to_ascii_lowercase().ends_with(".canvas") {
             continue;
         }
         let abs = root.join(&rel);
@@ -2614,7 +2622,7 @@ fn list_vault_paths(
                 let child = child_rel(&rel, &name);
                 dirs.push(child.clone());
                 stack.push((entry.path(), child));
-            } else if kind.is_file() && is_md_name(&name) {
+            } else if kind.is_file() && is_note_name(&name) {
                 notes.push(child_rel(&rel, &name));
             }
             seen += 1;
@@ -2782,7 +2790,7 @@ pub fn admit_new_paths(conn: &mut Connection, root: &Path, rels: &[String]) -> V
         }
         let abs = root.join(&rel);
         let is_dir = abs.is_dir();
-        if !is_dir && !(is_md_name(&rel) && abs.is_file()) {
+        if !is_dir && !(is_note_name(&rel) && abs.is_file()) {
             continue;
         }
         let mut cur = if is_dir { Some(rel.as_str()) } else { rel.rsplit_once('/').map(|(p, _)| p) };
