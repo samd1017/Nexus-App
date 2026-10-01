@@ -213,6 +213,19 @@ assert.equal(fromFile.views[1].folder, "Projects");
 assert.deepEqual(fromFile.views[1].columns, ["status", "related"]);
 assert.deepEqual(fromFile.views[1].relations, ["related"]);
 assert.equal(fromFile.views[1].formula, "file.name");
+assert.equal(fromFile.views[1].layout, "table");
+const cardsSession = parseBasesSession(JSON.stringify({
+  activeId: "saved",
+  views: [
+    { id: "all", layout: "cards" },
+    { id: "saved", layout: "cards" },
+  ],
+}));
+assert.equal(cardsSession.views[0].layout, "cards");
+assert.equal(cardsSession.views[1].layout, "cards");
+assert.match(serializeNoteTableFile(cardsSession), /"layout": "cards"/);
+const legacyLayout = parseBasesSession(JSON.stringify({ query: "Welcome", folder: "Journal" }));
+assert.equal(legacyLayout.views[0].layout, "table");
 
 const { readFileSync } = await import("node:fs");
 const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
@@ -221,6 +234,10 @@ assert.match(palette, /note table/);
 assert.match(palette, /setBasesOpen\(true\)/);
 const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
 assert.match(table, /Not Obsidian Bases/);
+assert.match(table, /table and cards/);
+assert.doesNotMatch(table, /no cards view/);
+assert.match(table, /bases-layout-cards/);
+assert.match(table, /data-testid="bases-card"/);
 assert.match(table, /typed note links/);
 assert.match(table, /not an Obsidian \.base file/);
 assert.match(table, /bases-add-relation/);

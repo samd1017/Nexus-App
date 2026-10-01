@@ -36,6 +36,8 @@ export type BasesViewConfig = {
   columns: string[];
   /** Frontmatter keys stored as note links ([[Title]]). */
   relations: string[];
+  /** Table spreadsheet or note cards. Same filters either way. */
+  layout: "table" | "cards";
 };
 
 /** Vault file for the saved table. Not an Obsidian .base file. */
@@ -147,6 +149,7 @@ export function defaultBasesSession(): BasesSession {
         formula: "file.mtime",
         columns: [],
         relations: [],
+        layout: "table",
       },
       {
         id: "saved",
@@ -158,6 +161,7 @@ export function defaultBasesSession(): BasesSession {
         formula: 'if(status, status, "—")',
         columns: [],
         relations: ["related"],
+        layout: "table",
       },
     ],
   };
@@ -179,6 +183,7 @@ function asView(raw: unknown, fallback: BasesViewConfig): BasesViewConfig {
     relations: Array.isArray(row.relations)
       ? row.relations.filter((key): key is string => typeof key === "string" && /^[A-Za-z_][\w-]*$/.test(key))
       : fallback.relations,
+    layout: row.layout === "cards" ? "cards" : "table",
   };
 }
 

@@ -190,6 +190,7 @@ export function NoteTable() {
                 formula: current.formula,
                 columns,
                 relations: current.relations ?? [],
+                layout: current.layout === "cards" ? "cards" : "table",
               }
             : item,
         ),
@@ -204,6 +205,11 @@ export function NoteTable() {
     ? view.columns.filter((key) => built.keys.includes(key) || relations.includes(key))
     : built.keys;
   const shownKeys = [...new Set([...(propKeys.length ? propKeys : built.keys), ...relations])];
+  const layout = view.layout === "cards" ? "cards" : "table";
+  const openNote = (id: string) => {
+    setActiveNote(id);
+    setBasesOpen(false);
+  };
 
   const addRelationField = () => {
     const key = relationName.trim();
@@ -249,7 +255,7 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table with views, formulas, and typed note links. Not Obsidian Bases — no cards view, no full formula language, and the file is .nexus/note-table.json, not an Obsidian .base file.
+            Built-in table and cards with views, formulas, and typed note links. Not Obsidian Bases — no full formula language, and the file is .nexus/note-table.json, not an Obsidian .base file.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -268,6 +274,26 @@ export function NoteTable() {
           ))}
           <button type="button" className="chip-btn" data-testid="bases-save-view" onClick={saveView}>
             Save view
+          </button>
+        </div>
+        <div className="flex items-center gap-1" role="group" aria-label="Layout">
+          <button
+            type="button"
+            className={cn("chip-btn", layout === "table" && "is-active")}
+            data-testid="bases-layout-table"
+            aria-pressed={layout === "table"}
+            onClick={() => patchView({ layout: "table" })}
+          >
+            Table
+          </button>
+          <button
+            type="button"
+            className={cn("chip-btn", layout === "cards" && "is-active")}
+            data-testid="bases-layout-cards"
+            aria-pressed={layout === "cards"}
+            onClick={() => patchView({ layout: "cards" })}
+          >
+            Cards
           </button>
         </div>
         <input
@@ -318,7 +344,95 @@ export function NoteTable() {
           <X size={13} /> Close
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto" data-layout={layout}>
+        {layout === "cards" ? (
+          <div
+            className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 p-3"
+            data-testid="bases-cards"
+          >
+            {shown.map((row) => (
+              <div
+                key={row.id}
+                role="button"
+                tabIndex={0}
+                data-testid="bases-card"
+                data-note-id={row.id}
+                data-path={row.path}
+                className="flex cursor-pointer flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                onClick={() => openNote(row.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && e.target === e.currentTarget) {
+                    e.preventDefault();
+                    openNote(row.id);
+                  }
+                }}
+              >
+                <h3 className="text-[14px] font-semibold">{row.name}</h3>
+                <p className="truncate text-[11px] text-[var(--text-muted)]">{row.folder || row.path}</p>
+                {shownKeys.map((key) => {
+                  const links = row.links[key] || [];
+                  return (
+                    <div key={key} data-prop={key} className="flex flex-wrap items-center gap-1 text-[12px]">
+                      <span className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{key}</span>
+                      {links.length
+                        ? links.map((link) =>
+                            link.id ? (
+                              <button
+                                key={link.id}
+                                type="button"
+                                className="text-[var(--accent)] hover:underline"
+                                data-testid="bases-relation"
+                                data-note-id={link.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openNote(link.id);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") e.stopPropagation();
+                                }}
+                              >
+                                {link.title}
+                              </button>
+                            ) : (
+                              <span key={link.title}>{link.title}</span>
+                            ),
+                          )
+                        : relations.includes(key)
+                          ? null
+                          : (
+                            <span>{row.props[key] || "—"}</span>
+                          )}
+                      {relations.includes(key) ? (
+                        <button
+                          type="button"
+                          className="inline-flex min-h-9 min-w-[4.5rem] items-center justify-center rounded-md border border-[var(--border)] px-3 text-[13px]"
+                          data-testid="bases-link-note"
+                          data-row-id={row.id}
+                          data-relation={key}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLinking({ rowId: row.id, key });
+                            setLinkQuery("");
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.stopPropagation();
+                          }}
+                        >
+                          Link
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {view.formula.trim() ? (
+                  <p className="text-[12px] text-[var(--text-muted)]" data-testid="bases-card-formula">
+                    {row.formula || "—"}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
         <table className="w-full border-collapse text-left text-[12px]">
           <thead className="sticky top-0 bg-[var(--panel-solid)]">
             <tr>
@@ -418,6 +532,7 @@ export function NoteTable() {
             ))}
           </tbody>
         </table>
+        )}
         {shown.length === 0 ? (
           <p className="px-3 py-6 text-[12px] text-[var(--text-muted)]" data-testid="bases-empty">
             No notes match.
