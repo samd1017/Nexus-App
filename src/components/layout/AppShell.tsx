@@ -11,6 +11,8 @@ import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette, openCommandPalette } from "@/components/search/CommandPalette";
+import { QuickSwitcher } from "@/components/search/QuickSwitcher";
+import { setSwitcherOpen, toggleQuickSwitcher } from "@/lib/search/switcher-session";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
 import { installKeyboardFocusRings } from "@/lib/chrome/focus-ring";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
@@ -295,11 +297,13 @@ export function AppShell() {
       },
       closeVault: () => useVaultStore.getState().closeVault(),
       settings: () => usePrefsStore.getState().setSettingsOpen(true),
-      search: () => useVaultStore.getState().setCommandOpen(true),
+      search: () => {
+        setSwitcherOpen(false);
+        useVaultStore.getState().setCommandOpen(true);
+      },
       quickSwitcher: () => {
-        const st = useVaultStore.getState();
-        if (st.commandOpen) st.setCommandOpen(false);
-        else openCommandPalette();
+        useVaultStore.getState().setCommandOpen(false);
+        toggleQuickSwitcher();
       },
       commandPalette: () => {
         const st = useVaultStore.getState();
@@ -557,6 +561,7 @@ export function AppShell() {
         </main>
         <Toast />
         <CommandPalette />
+        <QuickSwitcher />
         <SettingsPanel />
         <DeleteConfirmHost />
         <ConflictStudioHost />
@@ -587,6 +592,7 @@ export function AppShell() {
       {graphMode !== "fullscreen" ? <MobileBottomNav /> : null}
       <Toast />
       <CommandPalette />
+      <QuickSwitcher />
       <SettingsPanel />
       <DeleteConfirmHost />
       <ConflictStudioHost />

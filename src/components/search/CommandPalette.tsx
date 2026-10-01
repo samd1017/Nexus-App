@@ -8,6 +8,7 @@ import { focusEditorPane } from "@/lib/editor/pane-focus";
 import { getFindFocusPane } from "@/lib/editor/find-target";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
 import { setBasesOpen } from "@/lib/vault/bases-session";
+import { setSwitcherOpen } from "@/lib/search/switcher-session";
 import { isCanvasPath } from "@/lib/vault/canvas";
 import { switcherHits } from "@/lib/search/switcher-order";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
@@ -191,6 +192,7 @@ const ASK_OPS = [
 
 /** Open command palette, optionally with a prefilled query. */
 export function openCommandPalette(query?: string) {
+  setSwitcherOpen(false);
   setPendingCommandQuery(query ?? null);
   useVaultStore.getState().setCommandOpen(true);
 }

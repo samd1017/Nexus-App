@@ -11,6 +11,7 @@ import {
 } from "@/lib/vault/nav-history";
 import { openFindInNote, closeFindInNote } from "@/components/editor/FindInNoteBar";
 import { openCommandPalette } from "@/components/search/CommandPalette";
+import { setSwitcherOpen, toggleQuickSwitcher } from "@/lib/search/switcher-session";
 import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
@@ -76,9 +77,13 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     }
     case "search":
+      setSwitcherOpen(false);
       store.setCommandOpen(!store.commandOpen);
       return true;
     case "quickSwitcher":
+      toggleQuickSwitcher();
+      store.setCommandOpen(false);
+      return true;
     case "searchVault":
       if (store.commandOpen) store.setCommandOpen(false);
       else openCommandPalette();
@@ -212,6 +217,22 @@ export function KeyboardShortcuts() {
         e.preventDefault();
         e.stopImmediatePropagation();
         window.dispatchEvent(new CustomEvent("nexus-canvas-frame"));
+        return;
+      }
+
+      // Ctrl/Cmd+O is the note switcher. The native menu must not eat it.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "o" &&
+        !e.repeat &&
+        !e.isComposing
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        useVaultStore.getState().setCommandOpen(false);
+        toggleQuickSwitcher();
         return;
       }
 
