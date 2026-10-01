@@ -107,6 +107,18 @@ export interface DurableIndex {
   getNoteMeta(id: string): DurableNoteMeta | undefined;
   searchFts(query: string, limit?: number): SearchHit[];
   searchFtsAsync?(query: string, limit?: number): Promise<SearchHit[]>;
+  /** Desktop: OR / path: / folder: / file: against SQLite, not the mounted window. */
+  searchOpsAsync?(
+    clauses: Array<{
+      rest: string;
+      pathFilter: string;
+      folderFilter: string;
+      fileFilter: string;
+      tagFilter: string;
+      excludes: string[];
+    }>,
+    limit?: number,
+  ): Promise<SearchHit[]>;
   stats(): {
     notes: number;
     folders: number;

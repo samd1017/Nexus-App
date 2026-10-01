@@ -1994,6 +1994,153 @@ pub fn query_by_paths(conn: &Connection, paths: &[String]) -> Result<Vec<ShellRo
     Ok(out)
 }
 
+/// One palette clause. Empty strings mean that filter is off.
+#[derive(Clone, Debug)]
+pub struct SearchOpsClause {
+    pub rest: String,
+    pub path_filter: String,
+    pub folder_filter: String,
+    pub file_filter: String,
+    pub tag_filter: String,
+    pub excludes: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchOpsHit {
+    pub note_id: String,
+    pub path: String,
+    pub title: String,
+    pub snippet: String,
+    pub score: f64,
+}
+
+fn fts_and_query(rest: &str) -> String {
+    rest.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+        .filter(|t| t.chars().count() >= 2)
+        .take(8)
+        .map(|t| {
+            let cleaned: String = t
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            format!("\"{cleaned}\"*")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn clause_keeps(hit: &SearchOpsHit, excludes: &[String]) -> bool {
+    if excludes.is_empty() {
+        return true;
+    }
+    let hay = format!("{} {} {}", hit.title, hit.path, hit.snippet).to_lowercase();
+    excludes.iter().all(|ex| !hay.contains(ex))
+}
+
+/// `OR`, `path:`, `folder:`, and `file:` against `note_fts` / `note_meta`.
+/// Not the notes loaded in the shell window.
+pub fn search_note_ops(
+    conn: &Connection,
+    clauses: &[SearchOpsClause],
+    limit: i64,
+) -> Result<Vec<SearchOpsHit>, String> {
+    let limit = limit.clamp(1, 80);
+    let mut by_id: std::collections::HashMap<String, SearchOpsHit> = std::collections::HashMap::new();
+    for clause in clauses {
+        let fts = fts_and_query(&clause.rest);
+        let path_q = clause.path_filter.trim().to_ascii_lowercase();
+        let folder_q = clause.folder_filter.trim().to_ascii_lowercase();
+        let file_q = clause.file_filter.trim().to_ascii_lowercase();
+        let tag_q = clause.tag_filter.trim().to_ascii_lowercase();
+        if fts.is_empty() && path_q.is_empty() && folder_q.is_empty() && file_q.is_empty() && tag_q.is_empty()
+        {
+            continue;
+        }
+        let found = if fts.is_empty() {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT m.id, m.path, COALESCE(NULLIF(m.title, ''), m.name), m.path, 1.0
+                     FROM note_meta m
+                     WHERE m.deleted = 0 AND m.kind = 'note'
+                       AND (?1 = '' OR instr(lower(m.path), ?1) > 0)
+                       AND (?2 = '' OR instr(lower(m.path), ?2) > 0)
+                       AND (?3 = '' OR instr(lower(m.name), ?3) > 0 OR instr(lower(COALESCE(m.title, '')), ?3) > 0)
+                       AND (?4 = '' OR EXISTS (
+                            SELECT 1 FROM tag_map t WHERE t.note_id = m.id AND t.tag = ?4
+                       ))
+                     ORDER BY m.mtime DESC
+                     LIMIT ?5",
+                )
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt
+                .query_map(params![path_q, folder_q, file_q, tag_q, limit], |r| {
+                    Ok(SearchOpsHit {
+                        note_id: r.get(0)?,
+                        path: r.get(1)?,
+                        title: r.get(2)?,
+                        snippet: r.get(3)?,
+                        score: 1.0,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            mapped.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT f.note_id, f.path, COALESCE(NULLIF(f.title, ''), m.name),
+                            snippet(note_fts, 3, '', '', '…', 12), bm25(note_fts)
+                     FROM note_fts f
+                     JOIN note_meta m ON m.id = f.note_id
+                     WHERE note_fts MATCH ?1
+                       AND m.deleted = 0 AND m.kind = 'note'
+                       AND (?2 = '' OR instr(lower(m.path), ?2) > 0)
+                       AND (?3 = '' OR instr(lower(m.path), ?3) > 0)
+                       AND (?4 = '' OR instr(lower(m.name), ?4) > 0 OR instr(lower(COALESCE(m.title, '')), ?4) > 0)
+                       AND (?5 = '' OR EXISTS (
+                            SELECT 1 FROM tag_map t WHERE t.note_id = m.id AND t.tag = ?5
+                       ))
+                     ORDER BY bm25(note_fts)
+                     LIMIT ?6",
+                )
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt
+                .query_map(params![fts, path_q, folder_q, file_q, tag_q, limit], |r| {
+                    let bm: f64 = r.get(4).unwrap_or(0.0);
+                    Ok(SearchOpsHit {
+                        note_id: r.get(0)?,
+                        path: r.get(1)?,
+                        title: r.get(2)?,
+                        snippet: r.get(3)?,
+                        score: if bm < 0.0 { -bm } else { bm.max(1.0) },
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            mapped.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        };
+        for hit in found {
+            if !clause_keeps(&hit, &clause.excludes) {
+                continue;
+            }
+            let id = hit.note_id.clone();
+            match by_id.get(&id) {
+                Some(prev) if prev.score >= hit.score => {}
+                _ => {
+                    by_id.insert(id, hit);
+                }
+            }
+        }
+    }
+    let mut out: Vec<SearchOpsHit> = by_id.into_values().collect();
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    out.truncate(limit as usize);
+    Ok(out)
+}
+
 /// `path:` and `folder:` against the catalog. The result is a page.
 pub fn query_path_page(
     conn: &Connection,

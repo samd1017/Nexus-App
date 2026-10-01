@@ -7,10 +7,11 @@
 //! then reads short heads. `FillUntil::Deep` (the desktop path) reads note
 //! text only for a bounded window: the priority open set, or the first
 //! page of the walk when no priority was passed, never more than
-//! `EAGER_CONTENT_CAP` files. A later fill reads that same window again
-//! only where it is still shallow. Notes outside the window stay on their
-//! title until something opens them. `FillUntil::Meta` catalogs titles
-//! only. No Tauri imports — also compiled by `src-tauri/fill-test`.
+//! `EAGER_CONTENT_CAP` files. That window is announced before the rest of
+//! the bodies are read, so Ready stays a page. The same deep fill then
+//! reads the remaining notes in small batches. An unopened note's text is
+//! searchable when that pass finishes, without a second open. `FillUntil::Meta`
+//! catalogs titles only. No Tauri imports — also compiled by `src-tauri/fill-test`.
 //!
 //! Mid-fill UI (tree / note open / graph) must stay interactive: small WAL
 //! write batches, at most four head readers, a yield after a real write,
@@ -2458,7 +2459,7 @@ fn index_priority_files(
     vault_root: &Path,
     priority: &[String],
     deep_head: usize,
-    is_cancelled: &mut impl FnMut() -> bool,
+    is_cancelled: &mut dyn FnMut() -> bool,
 ) -> i64 {
     let mut files = Vec::new();
     for raw in priority {
@@ -2521,6 +2522,51 @@ fn index_priority_files(
         &mut fresh,
     );
     indexed
+}
+
+/// After the open window is searchable, read every remaining note body.
+/// Returns false when the caller cancels before the shallow rows are gone.
+fn index_remaining_bodies(
+    conn: &mut Connection,
+    vault_root: &Path,
+    deep_head: usize,
+    is_cancelled: &mut dyn FnMut() -> bool,
+) -> bool {
+    loop {
+        if is_cancelled() {
+            return false;
+        }
+        let paths: Vec<String> = {
+            let mut stmt = match conn.prepare(
+                "SELECT path FROM note_meta
+                 WHERE kind='note' AND deleted=0 AND COALESCE(fill_depth, 0) < ?1
+                 LIMIT ?2",
+            ) {
+                Ok(stmt) => stmt,
+                Err(_) => return false,
+            };
+            let collected = match stmt.query_map(params![FILL_DEPTH_DEEP, READ_CHUNK as i64], |r| {
+                r.get::<_, String>(0)
+            }) {
+                Ok(rows) => rows.flatten().collect::<Vec<String>>(),
+                Err(_) => return false,
+            };
+            collected
+        };
+        if paths.is_empty() {
+            return true;
+        }
+        let started = Instant::now();
+        let wrote = index_priority_files(conn, vault_root, &paths, deep_head, is_cancelled);
+        if wrote == 0 {
+            return false;
+        }
+        if started.elapsed() >= Duration::from_millis(2) {
+            std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
+        } else {
+            std::thread::yield_now();
+        }
+    }
 }
 
 /// What a disk/catalog reconcile changed. `complete` is false when the
@@ -2932,6 +2978,7 @@ pub fn fill_from_disk_with_opts<'a>(
             deep_head,
             &mut is_cancelled,
         );
+        let bodies_done = index_remaining_bodies(conn, vault_root, deep_head, &mut is_cancelled);
         let stored: i64 = conn
             .query_row(
                 "SELECT value FROM meta_kv WHERE key = 'shell_note_count'",
@@ -2960,13 +3007,33 @@ pub fn fill_from_disk_with_opts<'a>(
                 &mut on_progress,
             );
         }
+        let warm_state = if bodies_done {
+            "ready-fts"
+        } else {
+            "ready-fts-partial"
+        };
+        emit(
+            &mut progress,
+            if bodies_done { "done" } else { "ready-fts-partial" },
+            warm_state,
+            notes,
+            indexed_open,
+            notes,
+            0,
+            Some(if bodies_done {
+                "SQLite FTS5 BM25 ready".into()
+            } else {
+                "Titles and open notes are searchable".into()
+            }),
+            &mut on_progress,
+        );
         return Ok(IndexFillResult {
             indexed: indexed_open,
             skipped: notes,
             errors: 0,
             notes,
             edges: 0,
-            search_state: "ready-fts-partial".into(),
+            search_state: warm_state.into(),
         });
     }
     on_progress(&progress);
@@ -3154,6 +3221,11 @@ pub fn fill_from_disk_with_opts<'a>(
     }
     if interactive_done.get() {
         let notes = listed;
+        let mut bodies_done = false;
+        if walk_done {
+            let mut cancel = is_cancelled.borrow_mut();
+            bodies_done = index_remaining_bodies(conn, vault_root, deep_head, &mut **cancel);
+        }
         if walk_done {
             if errors == 0 {
                 if let Some(gen) = walk_gen {
@@ -3165,7 +3237,11 @@ pub fn fill_from_disk_with_opts<'a>(
             emit(
                 &mut progress,
                 "catalog-counted",
-                "ready-fts-partial",
+                if bodies_done {
+                    "ready-fts"
+                } else {
+                    "ready-fts-partial"
+                },
                 notes,
                 indexed,
                 0,
@@ -3174,13 +3250,33 @@ pub fn fill_from_disk_with_opts<'a>(
                 &mut on_progress,
             );
         }
+        let search_state = if bodies_done {
+            "ready-fts"
+        } else {
+            "ready-fts-partial"
+        };
+        emit(
+            &mut progress,
+            if bodies_done { "done" } else { "ready-fts-partial" },
+            search_state,
+            notes,
+            indexed,
+            0,
+            errors,
+            Some(if bodies_done {
+                "SQLite FTS5 BM25 ready".into()
+            } else {
+                "Titles and open notes are searchable".into()
+            }),
+            &mut on_progress,
+        );
         return Ok(IndexFillResult {
             indexed,
             skipped: 0,
             errors,
             notes,
             edges: interactive_edges.get(),
-            search_state: "ready-fts-partial".into(),
+            search_state: search_state.into(),
         });
     }
     let mut is_cancelled = is_cancelled.into_inner();
@@ -3605,11 +3701,91 @@ pub fn fill_from_disk_with_opts<'a>(
         &mut on_progress,
     );
 
+    // The open window is already searchable. Keep reading the notes past
+    // it in short batches so a body word in an unopened note is in FTS
+    // when this fill returns. Ready was announced at the title page.
+    let rest: Vec<usize> = need_deep
+        .iter()
+        .copied()
+        .filter(|i| !window_set.contains(i))
+        .collect();
+    let mut rest_complete = rest.is_empty();
+    if !rest.is_empty() && !is_cancelled() {
+        let rest_total = rest.len() as i64;
+        let mut rest_scanned: i64 = 0;
+        emit(
+            &mut progress,
+            "body-rest",
+            "ready-fts-partial",
+            0,
+            indexed,
+            skipped,
+            errors,
+            Some("Indexing note text…".into()),
+            &mut on_progress,
+        );
+        for chunk in rest.chunks(READ_CHUNK) {
+            if is_cancelled() {
+                break;
+            }
+            let started = Instant::now();
+            index_note_heads(
+                conn,
+                &files,
+                chunk,
+                deep_head,
+                FILL_DEPTH_DEEP,
+                &mut is_cancelled,
+                &mut batch,
+                &mut indexed,
+                &mut errors,
+                &mut written,
+                &mut fresh_titles,
+                &mut headed_rows,
+                |n, indexed_now, errors_now| {
+                    rest_scanned += n;
+                    if should_emit_progress(last_emit, last_emitted_scanned, rest_scanned) {
+                        emit(
+                            &mut progress,
+                            "body-rest",
+                            "ready-fts-partial",
+                            rest_scanned.min(rest_total),
+                            indexed_now,
+                            skipped,
+                            errors_now,
+                            Some("Indexing note text…".into()),
+                            &mut on_progress,
+                        );
+                        last_emit = Instant::now();
+                        last_emitted_scanned = rest_scanned;
+                    }
+                },
+            );
+            flush_note_batch(
+                conn,
+                &mut batch,
+                &mut indexed,
+                &mut errors,
+                &mut written,
+                &mut fresh_titles,
+            );
+            if started.elapsed() >= Duration::from_millis(2) {
+                std::thread::sleep(Duration::from_millis(FILL_YIELD_MS));
+            } else {
+                std::thread::yield_now();
+            }
+        }
+        rest_complete = !is_cancelled();
+    }
+
     crate::shell_catalog::mark_catalog_walk_done(conn);
     // PASSIVE never waits for writers; never TRUNCATE (that hung a 100k fill).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
 
-    let search_state = if open_set_covers_vault {
+    let cancelled_now = is_cancelled();
+    let search_state = if cancelled_now {
+        "ready-fts-partial"
+    } else if open_set_covers_vault || rest_complete {
         "ready-fts"
     } else {
         "ready-fts-partial"
@@ -3637,7 +3813,7 @@ pub fn fill_from_disk_with_opts<'a>(
         errors,
         Some(if is_cancelled() {
             "Index fill cancelled".into()
-        } else if open_set_covers_vault {
+        } else if search_state == "ready-fts" {
             "SQLite FTS5 BM25 ready".into()
         } else {
             "Titles and open notes are searchable".into()
@@ -4382,7 +4558,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         for i in 0..TITLE_INTERACTIVE_CAP + 40 {
             write_note(&vault, &format!("aa/n{i:04}.md"), "early body\n");
         }
-        write_note(&vault, "zz/LateTitleToken.md", &format!("{}latebodytokenzz\n", "x".repeat(900)));
+        write_note(
+            &vault,
+            "zz/LateTitleToken.md",
+            &format!("{}\nlatebodytokenzz\n", "x".repeat(900)),
+        );
         let mut conn = open_test_conn(&db);
         let mut at_ready = false;
         let mut late_at_ready = false;
@@ -4410,7 +4590,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
                         p.scanned
                     );
                 }
-                if p.phase == "done" {
+                if p.phase == "done" && done_scanned < 0 {
                     late_at_done = fts_has_at(&db, "LateTitleToken");
                     done_scanned = p.scanned;
                 }
@@ -4427,9 +4607,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "the rest of the titles still land after Ready"
         );
         assert!(
-            !fts_has(&conn, "latebodytokenzz"),
-            "the title tail does not read note bodies"
+            fts_has(&conn, "latebodytokenzz"),
+            "note text past the open window is indexed before the fill returns"
         );
+        assert_eq!(result.search_state, "ready-fts");
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
@@ -5178,40 +5359,158 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         .unwrap();
 
         assert!(at_open_set, "deep fill must announce the open window");
-        assert!(!saw_fts_tail, "deep fill must not start a vault-sized tail phase");
-        assert_eq!(result.search_state, "ready-fts-partial");
+        assert!(
+            !saw_fts_tail,
+            "the body pass uses body-rest, not a single vault-sized fts phase"
+        );
+        assert_eq!(
+            result.search_state,
+            "ready-fts",
+            "notes={} indexed={} skipped={}",
+            result.notes,
+            result.indexed,
+            result.skipped
+        );
         assert_eq!(result.notes, (n as i64) + 1);
         assert!(fts_has(&conn, "cluster"));
         assert!(
-            !fts_has(&conn, "deeptokenzz"),
-            "a note outside the priority window is not body-indexed"
+            fts_has(&conn, "deeptokenzz"),
+            "a note outside the open window is body-indexed before the fill returns"
         );
-        assert_ne!(fill_depth_of(&conn, "tail/late.md"), FILL_DEPTH_DEEP);
-        assert_eq!(
-            deep_row_count(&conn),
-            EAGER_CONTENT_CAP as i64,
-            "body reads stop at the cap"
-        );
-        assert_eq!(shallow_note_count(&conn), 21, "the cap leaves the rest shallow");
+        assert!(fts_has(&conn, "beyondwindowtoken"));
+        assert_eq!(fill_depth_of(&conn, "tail/late.md"), FILL_DEPTH_DEEP);
+        assert_eq!(shallow_note_count(&conn), 0, "the body pass finishes the vault");
+        assert_eq!(deep_row_count(&conn), (n as i64) + 1);
 
         let (again, _) = fill_until(&mut conn, &vault, false, FillUntil::Deep, &["eager".into()]);
-        assert_eq!(again.indexed, 0, "a reopen must not advance into the rest");
-        assert_eq!(again.search_state, "ready-fts-partial");
-        assert_eq!(deep_row_count(&conn), EAGER_CONTENT_CAP as i64);
-        assert!(!fts_has(&conn, "deeptokenzz"));
+        assert_eq!(again.indexed, 0, "a finished body index is not read again");
+        assert_eq!(again.search_state, "ready-fts");
+        assert!(fts_has(&conn, "deeptokenzz"));
 
-        let (opened, _) = fill_until(
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
+
+    #[test]
+    fn deep_fill_finds_unopened_body_on_10k() {
+        let (vault, db) = temp_pair("body10k");
+        write_n(&vault, 10_000);
+        write_note(
+            &vault,
+            "zz-unopened/hidden.md",
+            "# Hidden\n\nzephyrquilltoken sits only in this body.\n",
+        );
+        let mut conn = open_test_conn(&db);
+        let mut saw_ready = false;
+        let mut token_at_ready = false;
+        let result = fill_from_disk_with_opts(
             &mut conn,
             &vault,
-            false,
-            FillUntil::Deep,
-            &["tail/late.md".into()],
+            FillOpts {
+                deep_head_chars: 8000,
+                short_head_chars: 768,
+                force_rebuild: false,
+                db_path: "test.sqlite",
+                priority_rels: &[],
+                until: FillUntil::Deep,
+            },
+            || false,
+            |p| {
+                if p.phase == "ready-meta" && !saw_ready {
+                    saw_ready = true;
+                    token_at_ready = fts_has_at(&db, "zephyrquilltoken");
+                }
+            },
+        )
+        .unwrap();
+        assert!(saw_ready, "Ready is announced on the title page");
+        assert!(
+            !token_at_ready,
+            "the unopened body token must not be required before Ready"
         );
-        assert_eq!(opened.indexed, 1, "opening that note indexes that note");
-        assert!(fts_has(&conn, "deeptokenzz"));
-        assert_eq!(shallow_note_count(&conn), 20, "opening one note does not walk the rest");
-        assert_eq!(deep_row_count(&conn), (EAGER_CONTENT_CAP as i64) + 1);
+        assert_eq!(result.notes, 10_001);
+        assert_eq!(result.search_state, "ready-fts");
+        assert!(
+            fts_has(&conn, "zephyrquilltoken"),
+            "desktop FTS must find a body token that was never opened"
+        );
+        assert_eq!(
+            fill_depth_of(&conn, "zz-unopened/hidden.md"),
+            FILL_DEPTH_DEEP
+        );
+        let _ = fs::remove_dir_all(vault.parent().unwrap());
+    }
 
+    #[test]
+    fn sqlite_ops_search_or_and_path_not_the_window() {
+        let (vault, db) = temp_pair("ops");
+        write_note(&vault, "inbox/alpha.md", "alpha only body\n");
+        write_note(&vault, "archive/beta.md", "beta zephyrquilltoken\n");
+        write_note(&vault, "elsewhere/gamma.md", "gamma plain\n");
+        let mut conn = open_test_conn(&db);
+        let (filled, _) = fill(&mut conn, &vault, false);
+        assert_eq!(filled.search_state, "ready-fts");
+        let or = crate::shell_catalog::search_note_ops(
+            &conn,
+            &[
+                crate::shell_catalog::SearchOpsClause {
+                    rest: "alpha".into(),
+                    path_filter: String::new(),
+                    folder_filter: String::new(),
+                    file_filter: String::new(),
+                    tag_filter: String::new(),
+                    excludes: Vec::new(),
+                },
+                crate::shell_catalog::SearchOpsClause {
+                    rest: "zephyrquilltoken".into(),
+                    path_filter: String::new(),
+                    folder_filter: String::new(),
+                    file_filter: String::new(),
+                    tag_filter: String::new(),
+                    excludes: Vec::new(),
+                },
+            ],
+            16,
+        )
+        .unwrap();
+        let or_paths: Vec<&str> = or.iter().map(|h| h.path.as_str()).collect();
+        assert!(
+            or_paths.iter().any(|p| p.ends_with("alpha.md")),
+            "OR must hit note_fts, got {or_paths:?}"
+        );
+        assert!(
+            or_paths.iter().any(|p| p.ends_with("beta.md")),
+            "OR must find the body token, got {or_paths:?}"
+        );
+        let path_hits = crate::shell_catalog::search_note_ops(
+            &conn,
+            &[crate::shell_catalog::SearchOpsClause {
+                rest: "zephyrquilltoken".into(),
+                path_filter: "archive".into(),
+                folder_filter: String::new(),
+                file_filter: String::new(),
+                tag_filter: String::new(),
+                excludes: Vec::new(),
+            }],
+            16,
+        )
+        .unwrap();
+        assert_eq!(path_hits.len(), 1);
+        assert!(path_hits[0].path.contains("archive"));
+        let folder_hits = crate::shell_catalog::search_note_ops(
+            &conn,
+            &[crate::shell_catalog::SearchOpsClause {
+                rest: String::new(),
+                path_filter: String::new(),
+                folder_filter: "inbox".into(),
+                file_filter: String::new(),
+                tag_filter: String::new(),
+                excludes: Vec::new(),
+            }],
+            16,
+        )
+        .unwrap();
+        assert!(folder_hits.iter().all(|h| h.path.contains("inbox")));
+        assert!(!folder_hits.is_empty());
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 

@@ -834,6 +834,69 @@ pub fn vault_index_remove(
     Ok(OkResult { ok: true })
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOpsClauseDto {
+    #[serde(default)]
+    pub rest: String,
+    #[serde(default)]
+    pub path_filter: String,
+    #[serde(default)]
+    pub folder_filter: String,
+    #[serde(default)]
+    pub file_filter: String,
+    #[serde(default)]
+    pub tag_filter: String,
+    #[serde(default)]
+    pub excludes: Vec<String>,
+}
+
+fn ops_hit_to_search(hit: crate::shell_catalog::SearchOpsHit) -> SearchHitDto {
+    let match_type = if hit.snippet.is_empty() || hit.snippet == hit.path {
+        "title"
+    } else {
+        "content"
+    };
+    SearchHitDto {
+        note_id: hit.note_id,
+        path: hit.path,
+        title: hit.title,
+        snippet: hit.snippet,
+        score: hit.score,
+        match_type: match_type.into(),
+    }
+}
+
+/// OR / path: / folder: / file: against SQLite, not the notes mounted in the window.
+#[tauri::command(async)]
+pub fn vault_index_search_ops(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    clauses: Vec<SearchOpsClauseDto>,
+    limit: Option<i64>,
+) -> Result<Vec<SearchHitDto>, String> {
+    let limit = limit.unwrap_or(16);
+    let clauses: Vec<crate::shell_catalog::SearchOpsClause> = clauses
+        .into_iter()
+        .map(|c| crate::shell_catalog::SearchOpsClause {
+            rest: c.rest,
+            path_filter: c.path_filter,
+            folder_filter: c.folder_filter,
+            file_filter: c.file_filter,
+            tag_filter: c.tag_filter,
+            excludes: c.excludes,
+        })
+        .collect();
+    let run = |conn: &Connection| {
+        crate::shell_catalog::search_note_ops(conn, &clauses, limit)
+            .map(|hits| hits.into_iter().map(ops_hit_to_search).collect())
+    };
+    if let Some(found) = with_search_reader(&db_path, |conn| run(conn)) {
+        return found;
+    }
+    with_shell_conn(&state, &db_path, |conn| run(conn))
+}
+
 #[tauri::command(async)]
 pub fn vault_index_search(
     state: tauri::State<'_, SharedIndex>,

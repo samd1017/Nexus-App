@@ -8,6 +8,7 @@ import type { SearchHit, VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import { notesForTag } from "@/lib/vault/tags";
 import { getOrphanNotes } from "@/lib/vault/broken-links";
+import { getDurableIndex } from "@/lib/vault/durable-index";
 import {
   filterHitsByPathOps,
   searchWithBackend,
@@ -68,6 +69,58 @@ export function unsupportedSearchHint(ops: Pick<SearchOps, "unsupported">): stri
 
 export function hasOrQuery(ops: SearchOps): boolean {
   return ops.orClauses.length > 1;
+}
+
+/** Shown when OR / path: / folder: cannot reach the durable index. */
+export const WINDOW_SCOPED_SEARCH_HINT =
+  "OR, path:, and folder: are searching notes loaded in this window, not the whole vault.";
+
+export type PagedSearchEngine = "sqlite-ops" | "catalog-path" | "window" | "default";
+
+/**
+ * Paged desktop search must not silently use the mounted note window.
+ * SQLite owns OR, file:, and path/folder combined with words.
+ * Path or folder alone already reads note_meta. Without SQLite, say so.
+ */
+export function planPagedDesktopSearch(args: {
+  shellCatalog: boolean;
+  sqlite: boolean;
+  ops: SearchOps;
+}): { engine: PagedSearchEngine; hint: string | null } {
+  const clauses = args.ops.orClauses.length > 1 ? args.ops.orClauses : [args.ops];
+  const or = hasOrQuery(args.ops);
+  const path = clauses.some((c) => c.pathFilter || c.folderFilter);
+  const file = clauses.some((c) => c.fileFilter);
+  const rest = clauses.some((c) => c.rest.trim().length > 0);
+  if (args.sqlite && (or || file || (path && rest))) {
+    return { engine: "sqlite-ops", hint: null };
+  }
+  if ((args.sqlite || args.shellCatalog) && path && !or && !file) {
+    return { engine: "catalog-path", hint: null };
+  }
+  if (args.shellCatalog && !args.sqlite && (or || path || file)) {
+    return { engine: "window", hint: WINDOW_SCOPED_SEARCH_HINT };
+  }
+  return { engine: "default", hint: null };
+}
+
+/** Desktop SQLite for OR / path+words / file:. Null when this index cannot. */
+export async function searchDesktopOps(
+  raw: string,
+  limit = 16,
+): Promise<SearchHit[] | null> {
+  const idx = getDurableIndex();
+  if (!idx?.searchOpsAsync) return null;
+  const ops = parseSearchOps(raw);
+  const clauses = (ops.orClauses.length > 1 ? ops.orClauses : [ops]).map((c) => ({
+    rest: c.rest,
+    pathFilter: c.pathFilter ?? "",
+    folderFilter: c.folderFilter ?? "",
+    fileFilter: c.fileFilter ?? "",
+    tagFilter: c.tagFilter ?? "",
+    excludes: c.excludes,
+  }));
+  return idx.searchOpsAsync(clauses, limit);
 }
 
 /** `#tag` or `tag:tag` with no other filters — same tag lookup either way. */

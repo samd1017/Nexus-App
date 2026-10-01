@@ -352,7 +352,7 @@ assert.equal(
 assert.equal(advanceSearchIndexState("ready-fts", "meta"), "ready-fts");
 assert.equal(sqliteEngineShortLabel("ready-meta"), "SQLite FTS5 BM25 · titles");
 assert.equal(sqliteEngineShortLabel("ready-fts-partial"), "SQLite FTS5 BM25 · heads");
-assert.equal(sqliteEngineShortLabel("ready-fts"), "SQLite FTS5 BM25");
+assert.equal(sqliteEngineShortLabel("ready-fts"), "SQLite FTS5 BM25 · titles+bodies");
 
 assert.equal(isTitleSearchLive("idle"), false);
 assert.equal(isTitleSearchLive("ready-meta"), true);

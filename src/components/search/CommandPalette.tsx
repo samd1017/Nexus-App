@@ -52,6 +52,8 @@ import {
   hasSearchOps,
   isTagOnlyQuery,
   parseSearchOps,
+  planPagedDesktopSearch,
+  searchDesktopOps,
   searchWithOps,
   unsupportedSearchHint,
 } from "@/lib/search/query-ops";
@@ -403,6 +405,13 @@ function CommandPaletteOpen() {
   const hasOr = hasOrQuery(pathFolderOps);
   const useOpsSearch = hasPathFolderOp || hasOr;
   const unsupportedHint = isCommandMode ? null : unsupportedSearchHint(pathFolderOps);
+  const scopeHint = isCommandMode
+    ? null
+    : planPagedDesktopSearch({
+        shellCatalog: Boolean(shellCatalog && shellDbPath),
+        sqlite: Boolean(getDurableIndex()?.searchOpsAsync),
+        ops: pathFolderOps,
+      }).hint;
   const showAllActions = Boolean(raw) || isCommandMode;
   const actionQuery = isCommandMode
     ? q
@@ -509,6 +518,44 @@ function CommandPaletteOpen() {
     setAsyncHits(null);
     setNoteSearchPending(false);
     setNoteSearchFailed(false);
+    const searchPlan = planPagedDesktopSearch({
+      shellCatalog: Boolean(shellCatalog && shellDbPath),
+      sqlite: Boolean(getDurableIndex()?.searchOpsAsync),
+      ops: pathFolderOps,
+    });
+    if (
+      searchPlan.engine === "sqlite-ops" &&
+      shellDbPath &&
+      shellDbPath !== BROWSER_SHELL_DB
+    ) {
+      let cancelled = false;
+      setNoteSearchPending(true);
+      void searchDesktopOps(raw, PALETTE_RESULT_LIMIT)
+        .then((rows) => {
+          if (cancelled) return;
+          setNoteSearchPending(false);
+          if (!rows) {
+            setNoteSearchFailed(true);
+            setAsyncHits([]);
+            return;
+          }
+          setNoteSearchFailed(false);
+          setAsyncHits(rows);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setNoteSearchPending(false);
+          setNoteSearchFailed(true);
+          setAsyncHits([]);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (searchPlan.engine === "window") {
+      setAsyncHits([]);
+      return;
+    }
     if (shellCatalog && shellDbPath && !hasOr) {
       let cancelled = false;
       const db = shellDbPath;
@@ -1793,6 +1840,15 @@ function CommandPaletteOpen() {
             data-testid="search-unsupported-hint"
           >
             {unsupportedHint}
+          </div>
+        ) : null}
+        {scopeHint ? (
+          <div
+            className="border-b border-[var(--border)] px-4 py-1.5 text-[11px] text-[var(--text-secondary)]"
+            role="status"
+            data-testid="search-scope-hint"
+          >
+            {scopeHint}
           </div>
         ) : null}
 

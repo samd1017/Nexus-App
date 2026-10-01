@@ -60,8 +60,10 @@ const {
   hasOrQuery,
   isTagOnlyQuery,
   parseSearchOps,
+  planPagedDesktopSearch,
   searchWithOps,
   unsupportedSearchHint,
+  WINDOW_SCOPED_SEARCH_HINT,
 } = await import(pathToFileURL(path.join(outDir, "query-ops.mjs")).href);
 
 function note(id, name, content) {
@@ -181,6 +183,48 @@ function ids(query) {
   for (const phrase of ["tag:", ">OR</span>", "line:", "section:", "not supported yet", "search-unsupported-hint"]) {
     assert.match(palette, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+}
+
+{
+  const or = parseSearchOps("alpha OR beta");
+  const pathWords = parseSearchOps("path:inbox zephyr");
+  const pathOnly = parseSearchOps("folder:projects");
+  const sqliteOr = planPagedDesktopSearch({
+    shellCatalog: true,
+    sqlite: true,
+    ops: or,
+  });
+  assert.equal(sqliteOr.engine, "sqlite-ops");
+  assert.equal(sqliteOr.hint, null);
+  const sqlitePath = planPagedDesktopSearch({
+    shellCatalog: true,
+    sqlite: true,
+    ops: pathWords,
+  });
+  assert.equal(sqlitePath.engine, "sqlite-ops");
+  assert.equal(sqlitePath.hint, null);
+  const catalogPath = planPagedDesktopSearch({
+    shellCatalog: true,
+    sqlite: true,
+    ops: pathOnly,
+  });
+  assert.equal(catalogPath.engine, "catalog-path");
+  assert.equal(catalogPath.hint, null);
+  const windowOr = planPagedDesktopSearch({
+    shellCatalog: true,
+    sqlite: false,
+    ops: or,
+  });
+  assert.equal(windowOr.engine, "window");
+  assert.equal(windowOr.hint, WINDOW_SCOPED_SEARCH_HINT);
+  const palette = readFileSync(path.join(root, "src/components/search/CommandPalette.tsx"), "utf8");
+  assert.match(palette, /planPagedDesktopSearch/);
+  assert.match(palette, /searchDesktopOps/);
+  assert.match(palette, /search-scope-hint/);
+  assert.doesNotMatch(
+    palette,
+    /searchPlan\.engine === "sqlite-ops"[\s\S]{0,400}searchWithOps\(nodes/,
+  );
 }
 
 rmSync(outDir, { recursive: true, force: true });

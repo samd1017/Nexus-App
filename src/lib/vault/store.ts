@@ -1201,6 +1201,12 @@ async function runCompleteDiskSearchIndex(opts?: {
 					// Ready is the interactive window. Later title batches must
 					// not put the banner back on a full-folder listing.
 					if (interactiveFillSettled && p.phase !== "error") {
+						const settled = advanceSearchIndexState(
+							getSearchIndexState(),
+							p.phase,
+							p.searchState,
+						);
+						setSearchIndexState(settled);
 						if (useVaultStore.getState().indexFillBusy) {
 							useVaultStore.setState({ indexFillBusy: false });
 						}

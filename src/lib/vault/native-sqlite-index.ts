@@ -543,6 +543,41 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     return this.mirror.searchFts(query, limit);
   }
 
+  async searchOpsAsync(
+    clauses: Array<{
+      rest: string;
+      pathFilter: string;
+      folderFilter: string;
+      fileFilter: string;
+      tagFilter: string;
+      excludes: string[];
+    }>,
+    limit = 16,
+  ): Promise<SearchHit[]> {
+    const hits = await this.invoke<
+      Array<{
+        noteId: string;
+        path: string;
+        title: string;
+        snippet: string;
+        score: number;
+        matchType: string;
+      }>
+    >("vault_index_search_ops", {
+      dbPath: this.dbPath,
+      clauses,
+      limit,
+    });
+    return hits.map((h) => ({
+      noteId: h.noteId,
+      path: h.path,
+      title: h.title,
+      snippet: h.snippet,
+      score: h.score,
+      matchType: h.matchType === "content" ? "content" : "title",
+    }));
+  }
+
   async searchFtsAsync(query: string, limit = 40): Promise<SearchHit[]> {
     try {
       const hits = await this.invoke<

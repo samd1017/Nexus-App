@@ -305,6 +305,7 @@ export const FILL_IN_PROGRESS_TOAST =
 export function sqliteEngineShortLabel(state: SearchIndexState): string {
   if (state === "ready-meta") return "SQLite FTS5 BM25 · titles";
   if (state === "ready-fts-partial") return "SQLite FTS5 BM25 · heads";
+  if (state === "ready-fts") return "SQLite FTS5 BM25 · titles+bodies";
   return "SQLite FTS5 BM25";
 }
 
