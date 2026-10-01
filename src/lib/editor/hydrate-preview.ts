@@ -8,7 +8,7 @@ import { markdownToHtml } from "@/lib/markdown/serialize";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
-import { NEXUS_QUERY_CAP, runNexusQuery } from "@/lib/vault/nexus-query";
+import { NEXUS_QUERY_CAP, queryColumnLabel, runNexusQuery } from "@/lib/vault/nexus-query";
 import { loadTagExtras } from "@/lib/vault/nexus-query-tags";
 import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle, type VaultNode } from "@/lib/vault/types";
@@ -248,15 +248,12 @@ async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, Vaul
       bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(empty)}</p>`);
     }
     if (model.mode === "table" && model.rows.length) {
-      const tags = model.rows.some((r) => r.tags != null);
-      const mtime = model.rows.some((r) => r.mtime != null);
-      const extra = tags || mtime;
-      const head = `<tr><th>Title</th><th>Path</th>${tags ? "<th>Tags</th>" : ""}${mtime ? "<th>Modified</th>" : ""}</tr>`;
+      const fields = model.rows[0]?.fields ?? [];
+      const head = `<tr><th>Title</th><th>Path</th>${fields.map((field) => `<th>${escapeHtml(queryColumnLabel(field.name))}</th>`).join("")}</tr>`;
       const body = model.rows
         .map((r) => {
-          const tagSpan = r.tags != null ? ` <span>${escapeHtml(r.tags)}</span>` : "";
-          const timeSpan = r.mtime != null ? ` <span>${escapeHtml(r.mtime)}</span>` : "";
-          return `<tr><td colspan="${extra ? 3 : 2}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${tagSpan}${timeSpan}</button></td></tr>`;
+          const cells = r.fields.map((field) => ` <span data-testid="nexus-query-field">${escapeHtml(field.value)}</span>`).join("");
+          return `<tr><td colspan="${2 + r.fields.length}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${cells}</button></td></tr>`;
         })
         .join("");
       bits.push(`<table>${head}${body}</table>`);

@@ -9,6 +9,7 @@ import { loadTagExtras } from "@/lib/vault/nexus-query-tags";
 import {
   NEXUS_QUERY_CAP,
   NEXUS_QUERY_HELP,
+  queryColumnLabel,
   runNexusQuery,
 } from "@/lib/vault/nexus-query";
 
@@ -117,34 +118,36 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
               <tr className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
                 <th className="px-1 py-1 font-semibold">Title</th>
                 <th className="px-1 py-1 font-semibold">Path</th>
-                {model.rows.some((r) => r.tags != null) ? (
-                  <th className="px-1 py-1 font-semibold">Tags</th>
-                ) : null}
-                {model.rows.some((r) => r.mtime != null) ? (
-                  <th className="px-1 py-1 font-semibold">Modified</th>
-                ) : null}
+                {(model.rows[0]?.fields ?? []).map((field) => (
+                  <th key={field.name} className="px-1 py-1 font-semibold">
+                    {queryColumnLabel(field.name)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {model.rows.map((row) => (
                 <tr key={row.id}>
-                  <td colSpan={row.tags != null || row.mtime != null ? 3 : 2} className="p-0">
+                  <td colSpan={2 + row.fields.length} className="p-0">
                     <button
                       type="button"
                       className="grid w-full gap-2 px-1 py-1 text-left hover:bg-white/[0.04]"
-                      style={{ gridTemplateColumns: row.tags != null || row.mtime != null ? "1.2fr 1.4fr 1fr" : "1.2fr 1.6fr" }}
+                      style={{
+                        gridTemplateColumns: row.fields.length
+                          ? `1.2fr 1.4fr repeat(${row.fields.length}, 1fr)`
+                          : "1.2fr 1.6fr",
+                      }}
                       data-testid="nexus-query-row"
                       data-open-note={row.id}
                       onClick={() => openRow(row.id)}
                     >
                       <span className="truncate font-medium">{row.title}</span>
                       <span className="truncate text-[11px] text-[var(--text-muted)]">{row.path}</span>
-                      {row.tags != null ? (
-                        <span className="truncate text-[11px] text-[var(--text-muted)]">{row.tags}</span>
-                      ) : null}
-                      {row.mtime != null ? (
-                        <span className="truncate text-[11px] text-[var(--text-muted)]">{row.mtime}</span>
-                      ) : null}
+                      {row.fields.map((field) => (
+                        <span key={field.name} className="truncate text-[11px] text-[var(--text-muted)]" data-testid="nexus-query-field">
+                          {field.value}
+                        </span>
+                      ))}
                     </button>
                   </td>
                 </tr>

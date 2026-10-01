@@ -58,8 +58,10 @@ assert.equal(both.rows[0].id, "c");
 
 const skipped = runNexusQuery("TABLE path:Research field:status", nodes);
 assert.equal(skipped.error, null);
-assert.match(skipped.fieldNote, /not indexed/);
+assert.match(skipped.fieldNote, /No loaded note has “status”/);
 assert.equal(skipped.rows[0].tags, null);
+assert.equal(skipped.rows[0].fields[0].name, "status");
+assert.equal(skipped.rows[0].fields[0].value, "—");
 assert.ok(skipped.rows.length >= 2);
 
 const tagsCol = runNexusQuery("TABLE path:Research tag:graph field:tags", nodes);
@@ -170,8 +172,9 @@ const modified = runNexusQuery("TABLE FROM path:Journal field:mtime", nodes);
 assert.equal(modified.fieldNote, null);
 assert.match(modified.rows[0].mtime, /2026-10-01 12:00/);
 const ctime = runNexusQuery("TABLE FROM path:Journal field:ctime", nodes);
-assert.match(ctime.fieldNote, /not indexed/);
+assert.match(ctime.fieldNote, /No loaded note has “ctime”/);
 assert.equal(ctime.rows[0].mtime, null);
+assert.equal(ctime.rows[0].fields[0].value, "—");
 
 assert.equal(runNexusQuery("LIST path:Missing", nodes).error?.includes("No folder"), true);
 assert.match(runNexusQuery("TABLE file.link FROM #tag", nodes).error, /not Dataview/);
@@ -179,7 +182,8 @@ assert.match(runNexusQuery("LIST FROM #a WHERE date(today)", nodes).error, /not 
 assert.equal(parseNexusQuery("").kind, "help");
 assert.match(runNexusQuery("LIST", nodes).error, /path:/);
 assert.match(runNexusQuery("SORT path:Research", nodes).error, /Not Dataview/);
-assert.equal(NEXUS_QUERY_DQL.includes("full DQL"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("No joins"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("WHERE field"), true);
 
 const many = { box: folder("box", "Box") };
 for (let i = 0; i < NEXUS_QUERY_CAP + 5; i++) {
@@ -205,6 +209,9 @@ assert.ok(demoOr.rows.some((r) => r.path === "Research/Callouts.md"));
 const demoList = runNexusQuery("LIST FROM path:Journal", demo.nodes);
 assert.ok(demoList.rows.some((r) => r.path === "Journal/First Light.md"));
 assert.match(noteList.content, /SORT mtime/);
+assert.match(noteList.content, /WHERE status = "draft"/);
+assert.match(noteList.content, /no joins, no date\(\), no formulas/);
+assert.doesNotMatch(noteList.content, /are the whole language/);
 
 const html = marked.parse("```nexus-query\nLIST path:Research\n```");
 const promoted = promoteNexusQueryBlocks(html);
@@ -224,8 +231,62 @@ assert.match(view, /model\.footer/);
 assert.match(view, /setActiveNote/);
 const lib = readFileSync("src/lib/vault/nexus-query.ts", "utf8");
 assert.match(lib, /Not Dataview/);
+assert.match(lib, /no joins, no date\(\), no formulas/);
+assert.doesNotMatch(lib, /no full DQL/);
+assert.match(view, /queryColumnLabel/);
+assert.match(view, /data-testid="nexus-query-field"/);
 const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
 assert.match(preview, /renderNexusQueries/);
 assert.match(preview, /data-open-note/);
+assert.match(preview, /queryColumnLabel/);
+
+const shop = {
+  r: folder("r", "Research"),
+  draft: {
+    ...note("draft", "Research/Callouts.md", "---\nstatus: draft\ndue: 2026-10-02\n---\n\n# Callouts\n"),
+    parentId: "r",
+    mtime: 50,
+  },
+  live: {
+    ...note("live", "Research/Graph View.md", "---\nstatus: live\ndue: 2026-09-01\n---\n\n# Graph\n"),
+    parentId: "r",
+    mtime: 80,
+  },
+  plain: { ...note("plain", "Research/Plain.md", "# Plain\n"), parentId: "r", mtime: 10 },
+};
+const where = runNexusQuery('TABLE status, due FROM "Research" WHERE status = "draft"', shop);
+assert.equal(where.error, null);
+assert.deepEqual(where.rows.map((r) => r.id), ["draft"]);
+assert.deepEqual(where.rows[0].fields.map((f) => f.value), ["draft", "2026-10-02"]);
+assert.equal(where.fieldNote, null);
+const notDraft = runNexusQuery('LIST FROM path:Research WHERE status != "draft"', shop);
+assert.deepEqual(notDraft.rows.map((r) => r.id).sort(), ["live", "plain"]);
+const glued = runNexusQuery('LIST FROM path:Research WHERE status="live"', shop);
+assert.deepEqual(glued.rows.map((r) => r.id), ["live"]);
+const byFileTime = runNexusQuery("TABLE file.mtime FROM path:Research SORT file.mtime desc", shop);
+assert.deepEqual(byFileTime.rows.map((r) => r.id), ["live", "draft", "plain"]);
+assert.match(byFileTime.rows[0].mtime, /1970|^\d{4}-/);
+assert.equal(byFileTime.rows[0].fields[0].name, "file.mtime");
+const named = runNexusQuery('LIST FROM path:Research WHERE file.name = "Plain"', shop);
+assert.deepEqual(named.rows.map((r) => r.id), ["plain"]);
+const unloaded = {
+  r: folder("r", "Research"),
+  hidden: { id: "hidden", path: "Research/Hidden.md", name: "Hidden.md", kind: "note", parentId: "r", mtime: 1 },
+  draft: shop.draft,
+};
+const leftOut = runNexusQuery('LIST FROM path:Research WHERE status = "draft"', unloaded);
+assert.deepEqual(leftOut.rows.map((r) => r.id), ["draft"]);
+assert.match(leftOut.fieldNote, /1 note is not loaded/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE status = "a" AND status = "b"', shop).error, /Only one WHERE/);
+assert.match(runNexusQuery("TABLE a, b, c, d, e FROM path:Research", shop).error, /Only 4 TABLE columns/);
+assert.match(runNexusQuery("LIST status FROM path:Research", shop).error, /Columns belong on TABLE/);
+assert.match(runNexusQuery('TABLE file.link FROM path:Research', shop).error, /not Dataview/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /not Dataview/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE file.mtime = "1"', shop).error, /is a column/);
+const demoWhere = runNexusQuery('TABLE status FROM path:Research WHERE status = "draft"', demo.nodes);
+assert.equal(demoWhere.error, null);
+assert.equal(demoWhere.rows.length, 1);
+assert.equal(demoWhere.rows[0].path, "Research/Callouts.md");
+assert.equal(demoWhere.rows[0].fields[0].value, "draft");
 
 console.log("nexus-query: PASS");

@@ -72,7 +72,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
-| Note list | [[Note List]] — \`\`\`nexus-query\`\`\` lists a folder or a tag. Not Dataview |
+| Note list | [[Note List]] — \`\`\`nexus-query\`\`\` lists a folder, a tag, or a frontmatter field. Not full Dataview |
 | Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
 | Backlinks | Right panel → see what points here |
@@ -161,10 +161,14 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block lists notes. Not Dataview: no full DQL, no joins, no formulas. \`FROM path:\` or \`FROM #tag\`, \`OR\` / \`AND\`, and \`SORT title\` or \`SORT mtime\` are the whole language.
+A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. Not Dataview: no joins, no date(), no formulas.
 
 \`\`\`nexus-query
 LIST FROM #writing OR #graph
+\`\`\`
+
+\`\`\`nexus-query
+TABLE status FROM path:Research WHERE status = "draft"
 \`\`\`
 
 \`\`\`nexus-query
@@ -222,7 +226,11 @@ On disk they stay plain text. In **Visual** mode they render as interactive pill
       pathJoin("Research", "Graph View.md"),
       "Graph View.md",
       research.id,
-      `# Graph View
+      `---
+status: live
+---
+
+# Graph View
 
 #graph #links
 
@@ -298,7 +306,11 @@ Open **Settings (⌘,)** and switch Cyan → Violet → Emerald. The whole UI up
       pathJoin("Research", "Callouts.md"),
       "Callouts.md",
       research.id,
-      `# Callouts
+      `---
+status: draft
+---
+
+# Callouts
 
 #writing #callouts
 
