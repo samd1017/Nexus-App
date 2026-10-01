@@ -28,6 +28,9 @@ const FILE_SORT: Record<string, string> = { name: "file.name", folder: "file.fol
 const FILE_FORMULAS: Record<string, { name: string; expr: string }> = {
   "file.mtime": { name: "Modified", expr: "file.mtime" },
   "file.ext": { name: "Extension", expr: "file.ext" },
+  "file.tags": { name: "Tags", expr: "file.tags" },
+  "file.links": { name: "Links", expr: "file.links" },
+  "file.backlinks": { name: "Backlinks", expr: "file.backlinks" },
 };
 
 type Picked = { key: string; name: string; expr: string };

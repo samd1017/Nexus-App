@@ -202,6 +202,216 @@ bad('"open', /end quote/);
 bad("status status", /where it does not fit/);
 bad("if(status)", /two or three parts/);
 
+// Lists, regexes, and note links
+const listy = {
+  name: "Weekly review",
+  path: "Reviews/Weekly review.md",
+  folder: "Reviews",
+  mtime: NOW,
+  props: {
+    tags: "[writing, work, writing/drafts]",
+    scores: "[3, 4.5, 12]",
+    owners: "[[Ada Lovelace]] [[Projects/Grace Hopper|Grace]]",
+    parent: "[[Q4 Plan]]",
+    quoted: '["a, b", \'it\'\'s\', "[[Inbox]]"]',
+    status: "Draft – needs edits",
+    ticket: "NEX-482 and NEX-17",
+    plain: "Writing, Work",
+    opened: "[[2026-09-28]]",
+  },
+  outlinks: () => [
+    { target: "Ada Lovelace" },
+    { target: "2026-09-30", display: null },
+    { target: "Projects/Grace Hopper", display: "Grace" },
+    { target: "Q4 Plan" },
+  ],
+  backlinks: () => [{ target: "Journal/2026-10-01", display: "2026-10-01" }, { target: "Hub", display: "Hub" }],
+  tags: () => ["planning/q4", "review"],
+};
+const L = (src, value) => ok(src, value, listy);
+const LB = (src, pattern) => bad(src, pattern, listy);
+// List literals, indexing, and frontmatter lists
+L("[1, 2, 3]", "1, 2, 3");
+L("[]", "");
+L("[1, 2, 3].length", "3");
+L("[1, 2, 3][0]", "1");
+L("[1, 2, 3][-1]", "3");
+L("[1, 2, 3][5]", "");
+L("tags", "writing, work, writing/drafts");
+L("tags.length", "3");
+L("tags[1]", "work");
+L('tags.contains("work")', "true");
+L('tags.contains("wor")', "false");
+L('tags.containsAll("work", "writing")', "true");
+L('tags.containsAll("work", "home")', "false");
+L('tags.containsAny("home", "work")', "true");
+L('plain.contains("Wri")', "true");
+L("plain.length", "13");
+L("quoted.length", "3");
+L("quoted[0]", "a, b");
+L("quoted[1]", "it's");
+L("quoted[2]", "Inbox");
+L('tags.join(" | ")', "writing | work | writing/drafts");
+L("tags.join()", "writing, work, writing/drafts");
+L("tags.sort()", "work, writing, writing/drafts");
+L("tags.reverse()", "writing/drafts, work, writing");
+L("tags.slice(1)", "work, writing/drafts");
+L("[3, 1, 2, 1].sort()", "1, 1, 2, 3");
+L('[2, "10", 1].sort()', "1, 2, 10");
+L('["b", null, "a"].sort()', "a, b");
+L("[1, 1, 2, \"1\"].unique()", "1, 2");
+L("[[1, [2]], 3].flat()", "1, 2, 3");
+L("[[1, [2]], 3].flat().length", "3");
+L("[1, 2] + [3]", "1, 2, 3");
+L("[1, 2] + 3", "1, 2, 3");
+L("[1, 2] == [1, 2]", "true");
+L("[1, 2] == [2, 1]", "false");
+L("list(status).length", "1");
+L("list(tags).length", "3");
+L("list(missing).length", "0");
+L("empty([])", "true");
+L("[].isEmpty()", "true");
+L("tags.isEmpty()", "false");
+L("if(tags, \"has tags\", \"none\")", "has tags");
+L("if([], \"has\", \"none\")", "none");
+L("max(scores)", "12");
+L("min(scores, 1)", "1");
+L('"stressed".reverse()', "desserts");
+// filter, map, reduce
+L('tags.filter(value != "work")', "writing, writing/drafts");
+L('tags.filter(value.startsWith("writing")).length', "2");
+L("scores.filter(value > 4)", "4.5, 12");
+L("scores.map(value * 2)", "6, 9, 24");
+L('tags.map(upper(value)).join("/")', "WRITING/WORK/WRITING/DRAFTS");
+L('tags.map(index & ":" & value)', "0:writing, 1:work, 2:writing/drafts");
+L("scores.reduce(acc + value, 0)", "19.5");
+L("scores.reduce(max(acc, value), 0)", "12");
+L("scores.reduce(acc + value)", "19.5");
+L("[].reduce(acc + value, 0)", "0");
+L("[[1, 2], [3]].map(value.length)", "2, 1");
+L("[[1, 2], [3, 4]].map(value.map(value * 10)).flat()", "10, 20, 30, 40");
+L('filter(tags, value == "work")', "work");
+L("map(scores, value + 1)", "4, 5.5, 13");
+L("status.map(upper(value))", "DRAFT – NEEDS EDITS");
+L("scores.filter(value > 100).length", "0");
+LB("tags.filter()", /filter\(\) keeps the items that pass a test/);
+LB("tags.filter", /filter\(\) keeps the items that pass a test/);
+LB("tags.map(value, 1)", /map\(\) changes every item/);
+LB("scores.reduce()", /reduce\(\) folds a list into one value/);
+LB("tags.filter(acc > 1)", /acc only works inside reduce\(\)/);
+LB("scores.map(value.frob())", /\.frob\(\) is not a formula function/);
+LB("scores + 1 * tags", /The list \[“writing”, “work”, “writing\/drafts”\] is not a number/);
+LB("scores * 2", /is not a number\. Use \.length to count it, or \.reduce\(acc \+ value, 0\) to add it up/);
+LB("date(tags)", /is not a date\. Pick one item, like dates\[0\]/);
+LB("status[0]", /“Draft – needs edits” is not a list, so it has no \[0\]/);
+LB("tags[0.5]", /List positions are whole numbers/);
+LB("tags[]", /\[ \] needs a position/);
+LB("tags[0", /A position needs a closing \]/);
+LB("[1, 2", /List needs a closing \]/);
+LB("today().filter(value)", /filter\(\) works on lists/);
+// value, index, acc outside a list method are properties again
+ok("value", "", { ...task, props: { value: "" } });
+ok("value", "42", { ...task, props: { value: "42" } });
+ok("index & acc", "ab", { ...task, props: { index: "a", acc: "b" } });
+ok("[1, 2].map(value + note.value)", "11, 12", { ...task, props: { value: "10" } });
+// Regex
+L("status.matches(/^draft/i)", "true");
+L("status.matches(/^draft/)", "false");
+L("/^draft/i.matches(status)", "true");
+L("matches(status, /needs/)", "true");
+L("missing.matches(/x/)", "false");
+L('ticket.replace(/NEX-(\\d+)/g, "#$1")', "#482 and #17");
+L('ticket.replace(/NEX-(\\d+)/, "#$1")', "#482 and NEX-17");
+L('ticket.replace("NEX-", "")', "482 and 17");
+L('ticket.replace("$", "x")', "NEX-482 and NEX-17");
+L("ticket.split(/\\s+and\\s+/)", "NEX-482, NEX-17");
+L('ticket.split(" ")', "NEX-482, and, NEX-17");
+L('ticket.split(" ", 2)', "NEX-482, and");
+L('ticket.split(" ").length', "3");
+L('"a/b".matches(/a\\/b/)', "true");
+L('"x".matches(/[/]/)', "false");
+L('"a/b".matches(/[/]/)', "true");
+L("tags.filter(value.matches(/^w.*s$/))", "writing/drafts");
+L("scores.filter(!string(value).matches(/\\./))", "3, 12");
+L("12 / 4 / 3", "1");
+L("(12) / 4", "3");
+L("/x/g == /x/g", "true");
+L("/x/g", "/x/g");
+L('if(true, /a/, "b").matches("cat")', "true");
+LB("status.matches(\"Draft\")", /matches\(\) needs a regex, like status\.matches\(\/\^draft\/i\)\. Use contains\(\) for plain text/);
+LB("/a/.matches(/b/)", /compares a regex with text, not two regexes/);
+LB("status.matches(/(/)", /Regex \/\(\/ is not valid: /);
+LB("status.matches(/a/x)", /Regex flag “x” is not supported\. Use g, i, m, s, or u/);
+LB("status.matches(/a/gg)", /Regex flag “g” is repeated/);
+LB("status.matches(/abc)", /Regex is missing its closing \//);
+LB('status.replace("a", /b/)', /replace\(\) takes text here, not the regex \/b\//);
+LB('status.split(",", 1.5)', /split\(\) keeps a whole number of parts/);
+// Note links
+L("parent", "Q4 Plan");
+L('parent == "Q4 Plan"', "true");
+L('parent == "q4 plan"', "true");
+L('parent == "[[Q4 Plan]]"', "true");
+L('parent == link("Q4 Plan")', "true");
+L('parent == link("Other")', "false");
+L("owners", "Ada Lovelace, Grace");
+L("owners.length", "2");
+L('owners.contains(link("Grace Hopper"))', "true");
+L('owners.contains("Projects/Grace Hopper")', "true");
+L('owners.contains("Other/Grace Hopper")', "false");
+L('owners.contains("Ada Lovelace")', "true");
+L('owners.map(value == link("Ada Lovelace"))', "true, false");
+L('link("Projects/Spec")', "Projects/Spec");
+L('link("Projects/Spec", "the spec")', "the spec");
+L('link("[[Projects/Spec#Scope|scope]]")', "scope");
+L('link("Spec#Scope")', "Spec > Scope");
+L('link("Spec.md") == link("spec")', "true");
+L('link("")', "");
+L('link(parent, "Plan")', "Plan");
+L("today() - opened", "3");
+L("opened.format(\"MMM D\")", "Sep 28");
+L("opened < today()", "true");
+LB("link(3)", /link\(\) needs a note title or path, not 3/);
+// file.links, file.backlinks, file.tags
+L("file.links", "Ada Lovelace, 2026-09-30, Grace, Q4 Plan");
+L("file.links.length", "4");
+L('file.links.filter(!value.matches(/^\\d{4}-/)).slice(0, 3)', "Ada Lovelace, Grace, Q4 Plan");
+L("file.backlinks", "2026-10-01, Hub");
+L("file.backlinks.length", "2");
+L('file.backlinks.contains("Hub")', "true");
+L("file.tags", "planning/q4, review");
+L('file.tags.map("#" & value).join(" ")', "#planning/q4 #review");
+L('file.hasLink("Q4 Plan")', "true");
+L('file.hasLink(link("grace hopper"))', "true");
+L('file.hasLink(parent)', "true");
+L('file.hasLink("Nope")', "false");
+L('file.hasLink("")', "false");
+L('file.hasTag("review")', "true");
+L('file.hasTag("#planning")', "true");
+L('file.hasTag("plan")', "false");
+L('file.hasTag("nope", "review")', "true");
+L('file.hasProperty("Status")', "true");
+L('file.hasProperty("nope")', "false");
+L('file.inFolder("Reviews")', "true");
+L('file.inFolder("reviews/")', "true");
+L('file.inFolder("Rev")', "false");
+L("file.asLink()", "Weekly review");
+L('file.asLink("this")', "this");
+L("file.asLink() == link(\"Weekly review\")", "true");
+ok("file.links.length", "0");
+ok("file.backlinks", "");
+ok('file.hasTag("x")', "false");
+LB("file.hasTag", /file\.hasTag needs \(…\), like file\.hasTag\("…"\)/);
+LB("file.hasTag()", /file\.hasTag\(\) takes 1 or more values/);
+LB('file.inFolder("a", "b")', /file\.inFolder\(\) takes 1 value/);
+LB('hasTag("x")', /hasTag\(\) is a file method\. Write file\.hasTag\(…\)/);
+LB("file.size", /file\. needs name, path, folder, ext, mtime, links, backlinks, tags, or hasLink\(\)/);
+// Later columns get the typed list, not its text
+{
+  const refs = new Map([["picked", { value: ["a", "b"] }]]);
+  ok("formula.picked.length", "2", { ...listy, refs });
+  ok('formula.picked.contains("b")', "true", { ...listy, refs });
+}
+
 const { FORMULA_EXAMPLES, FORMULA_FUNCTIONS, compileNoteFormula } = await import("../src/lib/vault/note-formula.ts");
 assert.ok(FORMULA_EXAMPLES.length >= 6);
 for (const example of FORMULA_EXAMPLES) {
@@ -209,6 +419,33 @@ for (const example of FORMULA_EXAMPLES) {
 }
 for (const name of ["if", "empty", "date", "today", "format", "relative", "upper", "lower", "contains", "replace", "round", "number"]) {
   assert.ok(FORMULA_FUNCTIONS.includes(name), name);
+}
+for (const name of ["list", "filter", "map", "reduce", "join", "sort", "unique", "flat", "reverse", "split", "containsAll", "containsAny", "isEmpty", "matches", "link"]) {
+  assert.ok(FORMULA_FUNCTIONS.includes(name), name);
+}
+{
+  const { FORMULA_FUNCTION_GROUPS } = await import("../src/lib/vault/note-formula.ts");
+  const groups = Object.fromEntries(FORMULA_FUNCTION_GROUPS.map((g) => [g.group, g.names]));
+  assert.ok(groups.list.includes("filter") && groups.regex.includes("matches") && groups.link.includes("link"));
+  assert.deepEqual(groups.file, ["file.hasLink", "file.hasTag", "file.hasProperty", "file.inFolder", "file.asLink"]);
+  const listed = FORMULA_FUNCTION_GROUPS.flatMap((g) => g.names);
+  assert.equal(new Set(listed).size, listed.length);
+  assert.equal(listed.filter((name) => !name.startsWith("file.")).length, FORMULA_FUNCTIONS.length);
+  assert.ok(FORMULA_FUNCTION_GROUPS.every((g) => g.names.length));
+}
+// Every example compiles and runs cleanly on a note with links and tags
+for (const example of FORMULA_EXAMPLES) {
+  const out = evalNoteFormula(
+    {
+      ...task,
+      outlinks: () => [{ target: "Ada" }, { target: "2026-09-30" }],
+      backlinks: () => [{ target: "Hub", display: "Hub" }],
+      tags: () => ["review"],
+    },
+    example.formula,
+    NOW,
+  );
+  assert.equal(out.error, null, `${example.formula} → ${out.error}`);
 }
 
 const formulaNotes = [
@@ -400,6 +637,65 @@ assert.deepEqual(
   noteTableProperties("---\ntags:\n  - writing\n  - \"has, comma\"\n\n  - '[[Q4 Plan]]'\nempty:\nnested:\n  key: v\nafter: 1\n---\n"),
   { tags: '[writing, "has, comma", "[[Q4 Plan]]"]', after: "1" },
 );
+const linkVault = [
+  {
+    id: "hub",
+    path: "Hub.md",
+    name: "Hub.md",
+    content: "---\ntags:\n  - planning/q4\n  - Review\nowner: \"[[Ada]]\"\n---\nSee [[Ada]], [[Projects/Spec#Scope|the spec]], [[Ada|again]], ![[diagram.png]], ![[Ada]] and `[[Code]]`.\n#inline tag\n",
+    mtime: NOW,
+  },
+  { id: "ada", path: "People/Ada.md", name: "Ada.md", content: "Works on [[Hub]] and [[Spec]].\n", mtime: NOW },
+  { id: "spec", path: "Projects/Spec.md", name: "Spec.md", content: "Back to [[hub]]. Also [[Hub]] and [[Spec]] (self).\n", mtime: NOW },
+  { id: "lazy", path: "Projects/Lazy.md", name: "Lazy.md", content: null, mtime: NOW },
+];
+const linkTable = buildNoteTable(
+  linkVault,
+  "",
+  [
+    col("out", "file.links"),
+    col("back", "file.backlinks"),
+    col("tags", "file.tags"),
+    col("owner", "owner"),
+    col("count", "file.backlinks.length"),
+    col("mixed", '[owner, "text"]'),
+    col("none", "file.links.filter(false)"),
+  ],
+  NOW,
+);
+const cell = (id, column) => linkTable.rows.find((row) => row.id === id).formulas[column];
+assert.equal(cell("hub", "out").value, "Ada, the spec");
+assert.deepEqual(cell("hub", "out").links, [{ id: "ada", title: "Ada" }, { id: "spec", title: "the spec" }]);
+assert.equal(cell("hub", "back").value, "Ada, Spec");
+assert.deepEqual(cell("hub", "back").links, [{ id: "ada", title: "Ada" }, { id: "spec", title: "Spec" }]);
+assert.equal(cell("spec", "back").value, "Ada, Hub");
+assert.equal(cell("ada", "back").value, "Hub");
+assert.equal(cell("lazy", "back").value, "");
+assert.equal(cell("lazy", "back").kind, "empty");
+assert.equal(cell("hub", "tags").value, "inline, planning/q4, review");
+assert.equal(cell("hub", "owner").value, "Ada");
+assert.deepEqual(cell("hub", "owner").links, [{ id: "ada", title: "Ada" }]);
+assert.equal(cell("hub", "count").value, "2");
+assert.equal(cell("hub", "count").kind, "number");
+assert.equal(cell("hub", "out").kind, "text");
+assert.equal(cell("hub", "mixed").links, undefined);
+assert.equal(cell("hub", "none").links, undefined);
+assert.equal(cell("hub", "none").kind, "empty");
+// A folder view still sees backlinks from notes outside the folder
+const folderLinks = buildNoteTable(linkVault, "Projects", [col("back", "file.backlinks")], NOW);
+assert.equal(folderLinks.rows.find((row) => row.id === "spec").formulas.back.value, "Ada, Hub");
+assert.ok(!folderLinks.rows.some((row) => row.id === "hub"));
+// Links to missing notes still show, but do not open anything
+const ghost = buildNoteTable([{ id: "g", path: "G.md", name: "G.md", content: "[[Nowhere]]", mtime: NOW }], "", [col("out", "file.links")], NOW);
+assert.deepEqual(ghost.rows[0].formulas.out.links, [{ id: null, title: "Nowhere" }]);
+// Group and summarize a list formula by its text
+const { groupNoteRows: groupLinkRows, summarize: summarizeLinks } = await import("../src/lib/vault/bases-groups.ts");
+assert.deepEqual(
+  groupLinkRows(linkTable.rows, { column: "formula:count", dir: "desc" }).map((g) => [g.label, g.rows.length]),
+  [["2", 2], ["1", 1], ["0", 1]],
+);
+assert.equal(summarizeLinks(linkTable.rows, "formula:count", "sum").text, "5");
+
 const onlyWelcome = filterRowsByRelation(related.rows, "Welcome", ["related"]);
 assert.equal(onlyWelcome.length, 0);
 const onlyBeta = filterRowsByRelation(related.rows, "beta", ["related"]);
@@ -536,7 +832,13 @@ assert.doesNotMatch(table, /Obsidian Bases formulas/);
 assert.doesNotMatch(table, /no full formula language/);
 assert.doesNotMatch(table, /one formula column per view/);
 assert.match(table, /formula columns/);
-assert.match(table, /no list, regex, or link functions, no custom summary formulas/);
+assert.doesNotMatch(table, /no list, regex, or link functions/);
+assert.match(table, /formula columns with list, regex, and link functions/);
+assert.match(table, /two views, no custom summary formulas, links do not open into files \(no asFile or linksTo\)/);
+assert.match(table, /some Obsidian functions are missing/);
+assert.match(table, /data-testid="bases-formula-link"/);
+assert.match(table, /data-testid="bases-formula-lists"/);
+assert.match(table, /FORMULA_FUNCTION_GROUPS\.map/);
 assert.doesNotMatch(table, /no group-by or summaries/);
 assert.match(table, /group-by, summary rows/);
 assert.match(table, /data-testid="bases-group-by"/);
@@ -685,7 +987,7 @@ const notesText = imported.notes.join("\n");
 assert.match(notesText, /Filter status != "done" was not imported/);
 assert.match(notesText, /Column file\.size has no Nexus equivalent/);
 assert.match(notesText, /Column formula\.missing has no formula in this file/);
-assert.match(notesText, /Formula “words” uses syntax Nexus does not read yet/);
+assert.doesNotMatch(notesText, /Formula “words” uses syntax Nexus does not read yet/);
 assert.deepEqual(open.groupBy, { column: "status", dir: "asc" });
 assert.doesNotMatch(notesText, /ungrouped/);
 assert.match(notesText, /row limit/);
@@ -696,7 +998,42 @@ const lateRows = buildNoteTable(formulaNotes, open.folder, open.formulas, NOW);
 const lateById = Object.fromEntries(lateRows.rows.map((row) => [row.id, row.formulas]));
 assert.equal(lateById.x.late.value, "late");
 assert.equal(lateById.y.late.value, "");
-assert.ok(lateById.x.words.error);
+assert.equal(lateById.x.words.error, null);
+assert.equal(lateById.x.words.value, "1");
+const obsidianLists = importBaseFile(`
+formulas:
+  drafts: 'file.tags.filter(value.startsWith("draft")).length'
+  people: 'file.links.filter(value.matches(/^People\\//)).join(" · ")'
+  first: 'list(owner)[0]'
+  total: 'scores.reduce(acc + value, 0)'
+views:
+  - type: table
+    name: Linked
+    order:
+      - file.name
+      - file.tags
+      - file.backlinks
+      - file.links
+      - formula.drafts
+      - formula.people
+      - formula.first
+      - formula.total
+`);
+assert.ok(!("error" in obsidianLists));
+assert.deepEqual(
+  obsidianLists.session.views[0].formulas.map((f) => [f.id, f.name, f.expr]),
+  [
+    ["file_tags", "Tags", "file.tags"],
+    ["file_backlinks", "Backlinks", "file.backlinks"],
+    ["file_links", "Links", "file.links"],
+    ["drafts", "drafts", 'file.tags.filter(value.startsWith("draft")).length'],
+    ["people", "people", 'file.links.filter(value.matches(/^People\\//)).join(" · ")'],
+    ["first", "first", "list(owner)[0]"],
+    ["total", "total", "scores.reduce(acc + value, 0)"],
+  ],
+);
+assert.doesNotMatch(obsidianLists.notes.join("\n"), /does not read yet|no Nexus equivalent/);
+for (const f of obsidianLists.session.views[0].formulas) assert.equal(compileNoteFormula(f.expr).error, null, f.expr);
 
 const bare = importBaseFile("formulas:\n  a: '1 + 1'\n  b: 'formula.a * 2'\nviews:\n  - type: cards\n");
 assert.ok(!("error" in bare));

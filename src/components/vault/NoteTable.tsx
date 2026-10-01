@@ -18,6 +18,7 @@ import {
   type BasesFormula,
   type BasesSession,
   type BasesViewConfig,
+  type FormulaCell,
   type NoteTableRow,
   type SummaryKind,
 } from "@/lib/vault/note-table";
@@ -25,7 +26,7 @@ import { groupNoteRows, summarize, summaryKindsFor, summaryLabel, type NoteGroup
 import { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } from "@/lib/vault/bases-file";
 import { writeNoteFile } from "@/lib/vault/fs-adapter";
 import { writeDesktopNote } from "@/lib/vault/tauri-adapter";
-import { FORMULA_EXAMPLES, FORMULA_FUNCTIONS } from "@/lib/vault/note-formula";
+import { FORMULA_EXAMPLES, FORMULA_FUNCTION_GROUPS } from "@/lib/vault/note-formula";
 import { loadNoteTableConfig, saveNoteTableConfig } from "@/lib/vault/note-table-file";
 import { getDesktopRoot, getFsaRoot, useVaultStore } from "@/lib/vault/store";
 import {
@@ -239,6 +240,34 @@ export function NoteTable() {
     setActiveNote(id);
     setBasesOpen(false);
   };
+
+  const formulaLinks = (cell: FormulaCell) =>
+    (cell.links ?? []).map((link, index) => (
+      <Fragment key={`${link.id ?? link.title}-${index}`}>
+        {index ? ", " : null}
+        {link.id ? (
+          <button
+            type="button"
+            className="text-[var(--accent)] hover:underline"
+            data-testid="bases-formula-link"
+            data-note-id={link.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              openNote(link.id as string);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.stopPropagation();
+            }}
+          >
+            {link.title}
+          </button>
+        ) : (
+          <span data-testid="bases-formula-link-missing" title="No note with this name">
+            {link.title}
+          </span>
+        )}
+      </Fragment>
+    ));
 
   const addRelationField = () => {
     const key = relationName.trim();
@@ -511,7 +540,7 @@ export function NoteTable() {
                 ⚠ {cell.error}
               </span>
             ) : (
-              <span className="text-[var(--text)]">{cell.value || "—"}</span>
+              <span className="text-[var(--text)]">{cell.links?.length ? formulaLinks(cell) : cell.value || "—"}</span>
             )}
           </p>
         );
@@ -604,6 +633,8 @@ export function NoteTable() {
                 <span className="text-[var(--danger)]" data-testid="bases-formula-error">
                   ⚠ {cell.error}
                 </span>
+              ) : cell?.links?.length ? (
+                formulaLinks(cell)
               ) : (
                 cell?.value
               )}
@@ -619,7 +650,7 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table and cards with views, formula columns, group-by, summary rows, and typed note links. Not Obsidian Bases — two views, no list, regex, or link functions, no custom summary formulas; .base files import and export, but the file is .nexus/note-table.json, not an Obsidian .base file.
+            Built-in table and cards with views, formula columns with list, regex, and link functions, group-by, summary rows, and typed note links. Not Obsidian Bases — two views, no custom summary formulas, links do not open into files (no asFile or linksTo), and some Obsidian functions are missing (Formula help lists what works); .base files import and export, but the file is .nexus/note-table.json, not an Obsidian .base file.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -900,15 +931,28 @@ export function NoteTable() {
             ))}
           </div>
           <p className="text-[11px] text-[var(--text-muted)]">
-            Values: a property name, note["key with spaces"], file.name, file.path, file.folder, file.ext, file.mtime, "text", numbers, true, false.
+            Values: a property name, note["key with spaces"], file.name, file.path, file.folder, file.ext, file.mtime, file.links, file.backlinks, file.tags, "text", numbers, true, false, lists like [1, 2], regexes like /^draft/i.
             Operators: + - * / % · &amp; joins text · == != &lt; &gt; &lt;= &gt;= · &amp;&amp; || !. Put spaces around - between names; due-date is one property.
             Dates: date(x) reads YYYY-MM-DD or [[YYYY-MM-DD]]; add or subtract durations like "7d", "2w", "1M", "1y"; date - date gives days; times are UTC.
             Format tokens: YYYY MM M MMM MMMM DD D ddd dddd HH mm ss.
             formula.&lt;column&gt; reads a formula column to its left, like formula.due.relative().
           </p>
-          <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-formula-functions">
-            Functions (also as methods, like status.upper()): {FORMULA_FUNCTIONS.join(", ")}.
+          <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-formula-lists">
+            Lists: frontmatter like [a, b] or a block of - items is a list; tags[0] is the first item, tags[-1] the last.
+            filter, map, and reduce re-run their expression per item with value and index, and reduce adds acc:
+            tags.filter(value != "draft"), scores.map(value * 2), scores.reduce(acc + value, 0). + joins lists.
+            Regex: status.matches(/^draft/i); replace and split take a regex too, and replace(/(\d+)/g, "#$1") uses groups.
+            Links: a property made of [[links]] is a link, and equals the note's title or path. link("Note") makes one;
+            links that point at a note open it from the cell. file.backlinks lists loaded notes that link here.
           </p>
+          <div className="space-y-0.5 text-[11px] text-[var(--text-muted)]" data-testid="bases-formula-functions">
+            <p>Functions also work as methods, like status.upper() or tags.join(" · ").</p>
+            {FORMULA_FUNCTION_GROUPS.map((group) => (
+              <p key={group.group} data-testid="bases-formula-group" data-group={group.group}>
+                <span className="font-medium text-[var(--text)]">{group.label}:</span> {group.names.join(", ")}
+              </p>
+            ))}
+          </div>
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto" data-layout={layout}>

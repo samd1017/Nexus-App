@@ -1,12 +1,15 @@
 import { applyFrontmatter, parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
+import { extractWikilinks, parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { isCanvasPath } from "@/lib/vault/canvas";
 import {
   compileNoteFormula,
   runNoteFormula,
+  type FormulaLink,
   type FormulaRefs,
   type FormulaResult,
   type FormulaRow,
 } from "@/lib/vault/note-formula";
+import { extractTagsFromMarkdown } from "@/lib/vault/tags";
 
 export type NoteTableSource = {
   id: string;
@@ -40,6 +43,8 @@ export type FormulaCell = {
   sort: number | null;
   /** What `sort` means, so summaries know a date from a number. */
   kind: "empty" | "text" | "number" | "date" | "boolean";
+  /** Set when the value is a note link or a list of only note links, so the cell can open them. */
+  links?: NoteLink[];
 };
 
 export const SUMMARY_KIND_IDS = [
@@ -435,11 +440,76 @@ export function formulaStatusLine(status: FormulaColumnStatus[]): string | null 
 
 function cellKind(result: FormulaResult): FormulaCell["kind"] {
   const raw = result.raw;
-  if (result.error || raw === null || raw === "") return "empty";
+  if (result.error || raw === null || raw === "" || (Array.isArray(raw) && !raw.length)) return "empty";
   if (typeof raw === "number") return "number";
   if (typeof raw === "boolean") return "boolean";
-  if (typeof raw === "object") return "date";
+  if (typeof raw === "object" && !Array.isArray(raw) && raw.kind === "date") return "date";
   return "text";
+}
+
+type LinkResolver = (target: string) => NoteLink;
+
+/** Same matching as resolveNoteLink, indexed once so a table of many links stays fast. */
+function noteLinkResolver(catalog: { id: string; path: string; name: string }[]): LinkResolver {
+  const byPath = new Map<string, { id: string; path: string; name: string }>();
+  const byName = new Map<string, { id: string; path: string; name: string }>();
+  for (const note of catalog) {
+    const path = note.path.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase();
+    if (!byPath.has(path)) byPath.set(path, note);
+    const name = (note.name || "").replace(/\.md$/i, "").toLowerCase();
+    if (name && !byName.has(name)) byName.set(name, note);
+    const base = path.split("/").pop() || path;
+    if (!byName.has(base)) byName.set(base, note);
+  }
+  return (target) => {
+    const needle = target.replace(/\\/g, "/").replace(/\.md$/i, "").replace(/^\/+/, "").trim().toLowerCase();
+    const base = needle.split("/").pop() || needle;
+    const hit =
+      byPath.get(needle) ??
+      (needle.includes("/") ? catalog.find((note) => note.path.replace(/\.md$/i, "").toLowerCase().endsWith(`/${needle}`)) : undefined) ??
+      byName.get(base);
+    return { id: hit?.id ?? null, title: hit ? noteTableTitle(hit.name || hit.path) : noteTableTitle(base) };
+  };
+}
+
+function cellLinks(raw: FormulaResult["raw"], resolve: LinkResolver): NoteLink[] | undefined {
+  const items = Array.isArray(raw) ? raw : raw === null ? [] : [raw];
+  if (!items.length) return undefined;
+  const links: NoteLink[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null || Array.isArray(item) || item.kind !== "link") return undefined;
+    const noteTarget = parseWikilinkInner(item.target).noteTarget;
+    const hit = resolve(noteTarget || item.target);
+    links.push({ id: hit.id, title: item.display || (hit.id ? hit.title : item.target) });
+  }
+  return links;
+}
+
+/** Wikilinks a note makes, once per target. Embeds (![[…]]) are not links. */
+function noteOutlinks(content: string): FormulaLink[] {
+  const out: FormulaLink[] = [];
+  const seen = new Set<string>();
+  for (const link of extractWikilinks(content)) {
+    if (!link.noteTarget || content[link.start - 1] === "!") continue;
+    const target = link.noteTarget.replace(/\.md$/i, "");
+    const key = target.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ target, display: link.alias });
+  }
+  return out;
+}
+
+/** Frontmatter `tags` plus #tags in the body, lowercased, without `#`. */
+function noteTags(content: string, props: Record<string, string>): string[] {
+  const tags = new Set(extractTagsFromMarkdown(splitFrontmatter(content).body));
+  const raw = (props.tags ?? props.tag ?? "").trim();
+  const list = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
+  for (const part of list.split(/[,\s]+/)) {
+    const tag = part.replace(/^["']|["']$/g, "").replace(/^#/, "").trim().toLowerCase();
+    if (tag) tags.add(tag);
+  }
+  return [...tags].sort();
 }
 
 export function buildNoteTable(
@@ -468,6 +538,38 @@ export function buildNoteTable(
   const catalog = notes
     .filter((note) => note.path && !isCanvasPath(note.path))
     .map((note) => ({ id: note.id, path: note.path, name: note.name || note.path }));
+  const resolve = noteLinkResolver(catalog);
+  const outlinkCache = new Map<string, FormulaLink[]>();
+  const outlinksOf = (note: NoteTableSource): FormulaLink[] => {
+    let hit = outlinkCache.get(note.id);
+    if (!hit) {
+      hit = noteOutlinks(note.content || "");
+      outlinkCache.set(note.id, hit);
+    }
+    return hit;
+  };
+  // Backlinks come from every loaded note, not only the rows in this folder.
+  let backlinkIndex: Map<string, FormulaLink[]> | null = null;
+  const backlinksOf = (id: string): FormulaLink[] => {
+    if (!backlinkIndex) {
+      const index = new Map<string, FormulaLink[]>();
+      for (const source of notes) {
+        if (!source.path || isCanvasPath(source.path) || !source.content) continue;
+        const seen = new Set<string>();
+        for (const link of outlinksOf(source)) {
+          const hit = resolve(link.target);
+          if (!hit.id || hit.id === source.id || seen.has(hit.id)) continue;
+          seen.add(hit.id);
+          const list = index.get(hit.id) ?? [];
+          list.push({ target: source.path.replace(/\.md$/i, ""), display: noteTableTitle(source.name || source.path) });
+          index.set(hit.id, list);
+        }
+      }
+      for (const list of index.values()) list.sort((a, b) => (a.display ?? "").localeCompare(b.display ?? ""));
+      backlinkIndex = index;
+    }
+    return backlinkIndex.get(id) ?? [];
+  };
   for (const note of notes) {
     if (!note.path || isCanvasPath(note.path)) continue;
     if (prefix && note.path !== prefix && !note.path.startsWith(`${prefix}/`)) continue;
@@ -491,13 +593,23 @@ export function buildNoteTable(
     };
     const refs: FormulaRefs = new Map();
     const cells: Record<string, FormulaCell> = {};
+    let tags: string[] | null = null;
+    const formulaRow: FormulaRow = {
+      ...built,
+      refs,
+      outlinks: () => outlinksOf(note),
+      backlinks: () => backlinksOf(note.id),
+      tags: () => (tags ??= noteTags(note.content || "", props)),
+    };
     columns.forEach(({ f, compiled }, index) => {
-      const computed = runNoteFormula(compiled, { ...built, refs }, now);
+      const computed = runNoteFormula(compiled, formulaRow, now);
+      const cellLinkList = computed.error ? undefined : cellLinks(computed.raw, resolve);
       cells[f.id] = {
         value: computed.error ? "" : computed.value,
         error: computed.error,
         sort: computed.sort,
         kind: cellKind(computed),
+        ...(cellLinkList ? { links: cellLinkList } : {}),
       };
       const entry = computed.error ? { error: computed.error } : { value: computed.raw };
       refs.set(f.id.toLowerCase(), entry);

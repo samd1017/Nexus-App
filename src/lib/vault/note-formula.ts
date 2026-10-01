@@ -1,15 +1,22 @@
 /**
  * Formula language for the Bases note table. One expression per view,
- * evaluated per note. Values are text, numbers, true/false, and dates.
+ * evaluated per note. Values are text, numbers, true/false, dates, lists,
+ * note links, and regexes.
  * Dates read and print in UTC so a saved view looks the same on every machine.
  */
 
+import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
+
 type DateValue = { kind: "date"; ms: number; dateOnly: boolean };
-type Value = null | string | number | boolean | DateValue;
+type LinkValue = { kind: "link"; target: string; display: string | null };
+type RegexValue = { kind: "regex"; source: string; flags: string };
+type Value = null | string | number | boolean | DateValue | LinkValue | RegexValue | Value[];
 /** A computed formula value, kept typed so later columns can do date math on it. */
 export type FormulaValue = Value;
 /** Results of columns to the left, by lowercased column id and name. */
 export type FormulaRefs = Map<string, { value: FormulaValue } | { error: string }>;
+/** A note link as written: target without `.md`, plus its `|label` if any. */
+export type FormulaLink = { target: string; display?: string | null };
 
 export type FormulaRow = {
   name: string;
@@ -18,22 +25,31 @@ export type FormulaRow = {
   mtime: number;
   props: Record<string, string>;
   refs?: FormulaRefs;
+  /** Lazy so a table that never reads links or tags does not scan note bodies. */
+  outlinks?: () => FormulaLink[];
+  backlinks?: () => FormulaLink[];
+  tags?: () => string[];
 };
 
 type Token =
   | { t: "num"; v: number }
   | { t: "str"; v: string }
   | { t: "id"; v: string }
+  | { t: "re"; source: string; flags: string }
   | { t: "op"; v: string };
 
-const FILE_KEYS = ["name", "path", "folder", "ext", "mtime"] as const;
+const FILE_KEYS = ["name", "path", "folder", "ext", "mtime", "links", "backlinks", "tags"] as const;
 type FileKey = (typeof FILE_KEYS)[number];
+type Local = "value" | "index" | "acc";
 
 type Node =
   | { k: "lit"; v: Value }
   | { k: "prop"; key: string }
   | { k: "file"; key: FileKey }
   | { k: "ref"; key: string }
+  | { k: "local"; name: Local }
+  | { k: "list"; items: Node[] }
+  | { k: "index"; a: Node; i: Node }
   | { k: "call"; name: string; args: Node[] }
   | { k: "bin"; op: string; a: Node; b: Node }
   | { k: "un"; op: "!" | "-"; a: Node };
@@ -48,6 +64,46 @@ const OPS = ["||", "&&", "==", "!=", ">=", "<=", ">", "<", "+", "-", "*", "/", "
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+const REGEX_FLAGS = "gimsu";
+
+/** `/` starts a regex where a value is expected, and divides after one. */
+function regexCanStart(prev: Token | undefined): boolean {
+  return !prev || (prev.t === "op" && prev.v !== ")" && prev.v !== "]");
+}
+
+function lexRegex(source: string, start: number): { token: Token; end: number } {
+  let j = start + 1;
+  let inClass = false;
+  let body = "";
+  while (j < source.length) {
+    const c = source[j] ?? "";
+    if (c === "\\" && j + 1 < source.length) {
+      body += c + source[j + 1];
+      j += 2;
+      continue;
+    }
+    if (c === "/" && !inClass) break;
+    if (c === "[") inClass = true;
+    else if (c === "]") inClass = false;
+    body += c;
+    j += 1;
+  }
+  if (source[j] !== "/") throw new FormulaError("Regex is missing its closing /.");
+  if (!body) throw new FormulaError("Regex needs a pattern between the slashes, like /draft/.");
+  const flags = /^[A-Za-z]*/.exec(source.slice(j + 1))?.[0] ?? "";
+  for (const [n, flag] of [...flags].entries()) {
+    if (!REGEX_FLAGS.includes(flag)) throw new FormulaError(`Regex flag “${flag}” is not supported. Use g, i, m, s, or u.`);
+    if (flags.indexOf(flag) !== n) throw new FormulaError(`Regex flag “${flag}” is repeated.`);
+  }
+  try {
+    new RegExp(body, flags);
+  } catch (err) {
+    const reason = String((err as Error).message ?? "").split(": ").pop() || "it does not parse";
+    throw new FormulaError(`Regex /${body}/ is not valid: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}.`);
+  }
+  return { token: { t: "re", source: body, flags }, end: j + 1 + flags.length };
+}
+
 function lex(source: string): Token[] {
   const out: Token[] = [];
   let i = 0;
@@ -55,6 +111,12 @@ function lex(source: string): Token[] {
     const ch = source[i] ?? "";
     if (/\s/.test(ch)) {
       i += 1;
+      continue;
+    }
+    if (ch === "/" && regexCanStart(out[out.length - 1])) {
+      const { token, end } = lexRegex(source, i);
+      out.push(token);
+      i = end;
       continue;
     }
     if (ch === '"' || ch === "'") {
@@ -101,11 +163,76 @@ function lex(source: string): Token[] {
 }
 
 function tokenText(t: Token): string {
+  if (t.t === "re") return `/${t.source}/${t.flags}`;
   return t.t === "str" ? `"${t.v}"` : String(t.v);
 }
 
 function isDate(v: Value): v is DateValue {
-  return typeof v === "object" && v !== null && v.kind === "date";
+  return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "date";
+}
+
+function isLink(v: Value): v is LinkValue {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "link";
+}
+
+function isRegex(v: Value): v is RegexValue {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "regex";
+}
+
+function isBlank(v: Value): boolean {
+  return v === null || v === "" || (Array.isArray(v) && v.length === 0);
+}
+
+/** One value as a list; list methods accept a single value as a one-item list. */
+function listOf(v: Value): Value[] {
+  if (v === null || v === "") return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+function toRegExp(re: RegexValue, keepGlobal: boolean): RegExp {
+  return new RegExp(re.source, keepGlobal ? re.flags : re.flags.replace("g", ""));
+}
+
+function linkLabel(target: string): string {
+  const parts = parseWikilinkInner(target);
+  const note = parts.noteTarget.replace(/\.md$/i, "");
+  if (parts.heading) return note ? `${note} > ${parts.heading}` : parts.heading;
+  return note || target;
+}
+
+/** Lowercased note path or title, without `.md`, heading, or label. */
+function linkKey(target: string): string {
+  const inner = target.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
+  return parseWikilinkInner(inner)
+    .noteTarget.replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\.md$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+/** Same note: equal paths, or equal titles when either side is a bare title. */
+function sameNote(a: string, b: string): boolean {
+  const ka = linkKey(a);
+  const kb = linkKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  if (ka.includes("/") && kb.includes("/")) return false;
+  return (ka.split("/").pop() ?? ka) === (kb.split("/").pop() ?? kb);
+}
+
+function linkMatches(link: LinkValue, other: Value): boolean {
+  if (isLink(other)) return sameNote(link.target, other.target);
+  if (typeof other === "string") return sameNote(link.target, other);
+  return false;
+}
+
+function makeLink(target: string, display: string | null = null): LinkValue | null {
+  const inner = target.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
+  const parts = parseWikilinkInner(inner);
+  const to = parts.target.replace(/\.md$/i, "").trim();
+  if (!to) return null;
+  return { kind: "link", target: to, display: display ?? parts.alias };
 }
 
 function pad(n: number, width = 2): string {
@@ -158,10 +285,15 @@ function show(v: Value): string {
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "number") return String(Math.round(v * 10_000) / 10_000);
+  if (Array.isArray(v)) return v.map(show).filter((s) => s !== "").join(", ");
+  if (v.kind === "link") return v.display || linkLabel(v.target);
+  if (v.kind === "regex") return `/${v.source}/${v.flags}`;
   return formatDate(v, v.dateOnly ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm");
 }
 
 function quote(v: Value): string {
+  if (Array.isArray(v)) return `[${v.map(quote).join(", ")}]`;
+  if (isLink(v)) return `[[${v.target}]]`;
   return typeof v === "string" ? `“${v}”` : show(v);
 }
 
@@ -169,7 +301,8 @@ function truthy(v: Value): boolean {
   if (v === null) return false;
   if (typeof v === "boolean") return v;
   if (typeof v === "number") return v !== 0;
-  if (isDate(v)) return true;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return true;
   const s = v.trim().toLowerCase();
   return s !== "" && s !== "0" && s !== "false" && s !== "no";
 }
@@ -182,9 +315,17 @@ function numeric(v: Value): number | null {
 
 function needNumber(v: Value): number | null {
   if (v === null || v === "") return null;
+  if (Array.isArray(v)) {
+    throw new FormulaError(`The list ${quote(v)} is not a number. Use .length to count it, or .reduce(acc + value, 0) to add it up.`);
+  }
   const n = numeric(v);
   if (n === null) throw new FormulaError(`${quote(v)} is not a number.`);
   return n;
+}
+
+function needText(v: Value, label: string): string {
+  if (isRegex(v)) throw new FormulaError(`${label} takes text here, not the regex ${show(v)}.`);
+  return show(v);
 }
 
 function startOfDay(ms: number): number {
@@ -224,7 +365,99 @@ function toDate(v: Value): DateValue | null {
     const d = parseDate(v);
     if (d) return d;
   }
+  if (isLink(v)) {
+    const d = parseDate(v.target);
+    if (d) return d;
+  }
+  if (Array.isArray(v)) {
+    if (!v.length) return null;
+    throw new FormulaError(`The list ${quote(v)} is not a date. Pick one item, like dates[0].`);
+  }
   throw new FormulaError(`${quote(v)} is not a date. Use YYYY-MM-DD.`);
+}
+
+/** Date for comparisons; a [[2026-10-01]] link counts as its date. */
+function dateOf(v: Value): DateValue | null {
+  if (isDate(v)) return v;
+  if (isLink(v)) return parseDate(v.target);
+  if (Array.isArray(v) || isRegex(v)) return null;
+  return parseDate(show(v));
+}
+
+/**
+ * Frontmatter text as a typed value: `[a, b]` is a list, a value made only of
+ * [[links]] is a link (or a list of links), anything else stays text.
+ */
+function splitFlowList(inner: string): string[] | null {
+  const items: string[] = [];
+  let depth = 0;
+  let q: string | null = null;
+  let cur = "";
+  for (let i = 0; i < inner.length; i += 1) {
+    const c = inner[i] ?? "";
+    if (q) {
+      cur += c;
+      if (c === "\\" && q === '"' && i + 1 < inner.length) {
+        cur += inner[i + 1];
+        i += 1;
+      } else if (c === q) q = null;
+      continue;
+    }
+    if ((c === '"' || c === "'") && !cur.trim()) q = c;
+    else if (c === "[") depth += 1;
+    else if (c === "]") depth -= 1;
+    else if (c === "," && depth === 0) {
+      items.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    if (depth < 0) return null;
+    cur += c;
+  }
+  if (q || depth !== 0) return null;
+  items.push(cur.trim());
+  return items.filter((item) => item !== "");
+}
+
+function unquoteItem(item: string): string {
+  if (item.length >= 2 && item.startsWith('"') && item.endsWith('"')) {
+    try {
+      return String(JSON.parse(item));
+    } catch {
+      return item.slice(1, -1);
+    }
+  }
+  if (item.length >= 2 && item.startsWith("'") && item.endsWith("'")) return item.slice(1, -1).replace(/''/g, "'");
+  return item;
+}
+
+function onlyLinks(s: string): LinkValue[] | null {
+  const found: LinkValue[] = [];
+  const re = /\[\[([^\]]+)\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) {
+    const link = makeLink(m[1] ?? "");
+    if (link) found.push(link);
+  }
+  if (!found.length || s.replace(re, "").replace(/[\s,]/g, "")) return null;
+  return found;
+}
+
+function typedProp(raw: string): Value {
+  const s = raw.trim();
+  if (s.startsWith("[") && !s.startsWith("[[") && s.endsWith("]")) {
+    const items = splitFlowList(s.slice(1, -1));
+    if (items) {
+      return items.map((item) => {
+        const text = unquoteItem(item);
+        const links = onlyLinks(text);
+        return links?.length === 1 ? (links[0] as LinkValue) : text;
+      });
+    }
+  }
+  const links = onlyLinks(s);
+  if (links) return links.length === 1 ? (links[0] as LinkValue) : links;
+  return raw;
 }
 
 type Duration = { n: number; unit: "y" | "M" | "w" | "d" | "h" | "m" | "s" };
@@ -285,8 +518,21 @@ function relative(d: DateValue, now: number): string {
   return days < 0 ? `${amount} ago` : `in ${amount}`;
 }
 
-type Ctx = { now: number };
-type Fn = { name: string; min: number; max: number; run?: (args: Value[], ctx: Ctx) => Value };
+type Scope = { value: Value; index: number; acc?: Value };
+type Ctx = { now: number; row: FormulaRow; scope: Scope[] };
+type FnGroup = "logic" | "text" | "number" | "date" | "list" | "regex" | "link" | "file";
+type Fn = {
+  name: string;
+  min: number;
+  max: number;
+  group: FnGroup;
+  /** Shown when the call has the wrong number of values. */
+  usage?: string;
+  run?: (args: Value[], ctx: Ctx) => Value;
+};
+
+/** Functions whose later values are re-run per item, with value, index, and acc in scope. */
+const LAMBDA_FUNCTIONS = new Set(["filter", "map", "reduce"]);
 
 const text = (fn: (s: string) => Value) => (args: Value[]) => (args[0] === null ? null : fn(show(args[0])));
 const num = (fn: (n: number) => number) => (args: Value[]) => {
@@ -298,16 +544,114 @@ const datePart = (fn: (t: Date) => number) => (args: Value[]) => {
   return d ? fn(new Date(d.ms)) : null;
 };
 
+function has(v: Value, x: Value): boolean {
+  if (v === null) return false;
+  if (Array.isArray(v)) return v.some((item) => equals(item, x));
+  if (isLink(v)) return linkMatches(v, x);
+  return show(v).includes(needText(x, "contains()"));
+}
+
+function flatten(list: Value[]): Value[] {
+  const out: Value[] = [];
+  for (const item of list) {
+    if (Array.isArray(item)) out.push(...flatten(item));
+    else out.push(item);
+  }
+  return out;
+}
+
+function uniqueKey(v: Value): string {
+  if (v === null) return "0";
+  if (Array.isArray(v)) return `L[${v.map(uniqueKey).join(",")}]`;
+  if (isLink(v)) return `K${linkKey(v.target)}`;
+  if (isDate(v)) return `D${v.ms}`;
+  if (isRegex(v)) return `R${show(v)}`;
+  const n = numeric(v);
+  return n !== null ? `N${n}` : `S${show(v)}`;
+}
+
+function sortList(list: Value[]): Value[] {
+  return [...list].sort((a, b) => {
+    if (isBlank(a)) return isBlank(b) ? 0 : 1;
+    if (isBlank(b)) return -1;
+    return order(a, b) ?? 0;
+  });
+}
+
+function optionalText(v: Value | undefined): string | null {
+  return v === undefined || v === null || v === "" ? null : show(v);
+}
+
 const FUNCTION_LIST: Fn[] = [
-  { name: "if", min: 2, max: 3 },
-  { name: "empty", min: 1, max: 1, run: ([v]) => v === null || v === undefined || (typeof v === "string" && !v.trim()) },
-  { name: "now", min: 0, max: 0, run: (_a, ctx) => ({ kind: "date", ms: ctx.now, dateOnly: false }) },
-  { name: "today", min: 0, max: 0, run: (_a, ctx) => ({ kind: "date", ms: startOfDay(ctx.now), dateOnly: true }) },
-  { name: "date", min: 1, max: 1, run: ([v]) => toDate(v ?? null) },
+  { name: "if", min: 2, max: 3, group: "logic" },
+  { name: "empty", min: 1, max: 1, group: "logic", run: ([v]) => isBlank(v ?? null) || (typeof v === "string" && !v.trim()) },
+  { name: "isEmpty", min: 1, max: 1, group: "logic", run: ([v]) => isBlank(v ?? null) || (typeof v === "string" && !v.trim()) },
+  { name: "string", min: 1, max: 1, group: "text", run: ([v]) => show(v ?? null) },
+  { name: "toString", min: 1, max: 1, group: "text", run: ([v]) => show(v ?? null) },
+  { name: "lower", min: 1, max: 1, group: "text", run: text((s) => s.toLowerCase()) },
+  { name: "upper", min: 1, max: 1, group: "text", run: text((s) => s.toUpperCase()) },
+  { name: "trim", min: 1, max: 1, group: "text", run: text((s) => s.trim()) },
+  {
+    name: "length",
+    min: 1,
+    max: 1,
+    group: "text",
+    run: ([v]) => (v === null || v === undefined ? 0 : Array.isArray(v) ? v.length : show(v).length),
+  },
+  { name: "contains", min: 2, max: 2, group: "text", run: ([v, x]) => has(v ?? null, x ?? null) },
+  { name: "containsAll", min: 2, max: 32, group: "text", run: ([v, ...xs]) => xs.every((x) => has(v ?? null, x)) },
+  { name: "containsAny", min: 2, max: 32, group: "text", run: ([v, ...xs]) => xs.some((x) => has(v ?? null, x)) },
+  { name: "startsWith", min: 2, max: 2, group: "text", run: ([v, s]) => v !== null && v !== undefined && show(v).startsWith(show(s ?? null)) },
+  { name: "endsWith", min: 2, max: 2, group: "text", run: ([v, s]) => v !== null && v !== undefined && show(v).endsWith(show(s ?? null)) },
+  {
+    name: "replace",
+    min: 3,
+    max: 3,
+    group: "text",
+    run: ([v, a, b]) => {
+      if (v === null || v === undefined) return null;
+      const to = needText(b ?? null, "replace()");
+      if (a && isRegex(a)) return show(v).replace(toRegExp(a, true), to);
+      const find = show(a ?? null);
+      return find ? show(v).split(find).join(to) : show(v);
+    },
+  },
+  {
+    name: "slice",
+    min: 2,
+    max: 3,
+    group: "text",
+    run: (args) => {
+      const v = args[0] ?? null;
+      if (v === null) return null;
+      const start = needNumber(args[1] ?? null) ?? 0;
+      const end = args.length > 2 ? needNumber(args[2] ?? null) : null;
+      if (Array.isArray(v)) return v.slice(start, end ?? undefined);
+      return show(v).slice(start, end ?? undefined);
+    },
+  },
+  {
+    name: "split",
+    min: 2,
+    max: 3,
+    group: "text",
+    run: ([v, sep, n]) => {
+      if (v === null || v === undefined) return [];
+      const s = show(v);
+      if (!s) return [];
+      const limit = n === undefined ? null : needNumber(n);
+      if (limit !== null && (!Number.isInteger(limit) || limit < 0)) {
+        throw new FormulaError('split() keeps a whole number of parts, like split(",", 2).');
+      }
+      if (sep && isRegex(sep)) return s.split(toRegExp(sep, false), limit ?? undefined);
+      return s.split(show(sep ?? null), limit ?? undefined);
+    },
+  },
   {
     name: "number",
     min: 1,
     max: 1,
+    group: "number",
     run: ([v]) => {
       if (v === undefined || v === null) return null;
       if (typeof v === "boolean") return v ? 1 : 0;
@@ -315,40 +659,11 @@ const FUNCTION_LIST: Fn[] = [
       return needNumber(v);
     },
   },
-  { name: "string", min: 1, max: 1, run: ([v]) => show(v ?? null) },
-  { name: "lower", min: 1, max: 1, run: text((s) => s.toLowerCase()) },
-  { name: "upper", min: 1, max: 1, run: text((s) => s.toUpperCase()) },
-  { name: "trim", min: 1, max: 1, run: text((s) => s.trim()) },
-  { name: "length", min: 1, max: 1, run: ([v]) => (v === null || v === undefined ? 0 : show(v).length) },
-  { name: "contains", min: 2, max: 2, run: ([v, s]) => v !== null && v !== undefined && show(v).includes(show(s ?? null)) },
-  { name: "startsWith", min: 2, max: 2, run: ([v, s]) => v !== null && v !== undefined && show(v).startsWith(show(s ?? null)) },
-  { name: "endsWith", min: 2, max: 2, run: ([v, s]) => v !== null && v !== undefined && show(v).endsWith(show(s ?? null)) },
-  {
-    name: "replace",
-    min: 3,
-    max: 3,
-    run: ([v, a, b]) => {
-      if (v === null || v === undefined) return null;
-      const find = show(a ?? null);
-      return find ? show(v).split(find).join(show(b ?? null)) : show(v);
-    },
-  },
-  {
-    name: "slice",
-    min: 2,
-    max: 3,
-    run: (args) => {
-      const v = args[0] ?? null;
-      if (v === null) return null;
-      const start = needNumber(args[1] ?? null) ?? 0;
-      const end = args.length > 2 ? needNumber(args[2] ?? null) : null;
-      return show(v).slice(start, end ?? undefined);
-    },
-  },
   {
     name: "round",
     min: 1,
     max: 2,
+    group: "number",
     run: (args) => {
       const n = needNumber(args[0] ?? null);
       if (n === null) return null;
@@ -356,15 +671,16 @@ const FUNCTION_LIST: Fn[] = [
       return Math.round(n * f) / f;
     },
   },
-  { name: "floor", min: 1, max: 1, run: num(Math.floor) },
-  { name: "ceil", min: 1, max: 1, run: num(Math.ceil) },
-  { name: "abs", min: 1, max: 1, run: num(Math.abs) },
+  { name: "floor", min: 1, max: 1, group: "number", run: num(Math.floor) },
+  { name: "ceil", min: 1, max: 1, group: "number", run: num(Math.ceil) },
+  { name: "abs", min: 1, max: 1, group: "number", run: num(Math.abs) },
   {
     name: "min",
     min: 1,
     max: 32,
+    group: "number",
     run: (args) => {
-      const nums = args.map((a) => needNumber(a)).filter((n): n is number => n !== null);
+      const nums = flatten(args).map((a) => needNumber(a)).filter((n): n is number => n !== null);
       return nums.length ? Math.min(...nums) : null;
     },
   },
@@ -372,15 +688,20 @@ const FUNCTION_LIST: Fn[] = [
     name: "max",
     min: 1,
     max: 32,
+    group: "number",
     run: (args) => {
-      const nums = args.map((a) => needNumber(a)).filter((n): n is number => n !== null);
+      const nums = flatten(args).map((a) => needNumber(a)).filter((n): n is number => n !== null);
       return nums.length ? Math.max(...nums) : null;
     },
   },
+  { name: "date", min: 1, max: 1, group: "date", run: ([v]) => toDate(v ?? null) },
+  { name: "now", min: 0, max: 0, group: "date", run: (_a, ctx) => ({ kind: "date", ms: ctx.now, dateOnly: false }) },
+  { name: "today", min: 0, max: 0, group: "date", run: (_a, ctx) => ({ kind: "date", ms: startOfDay(ctx.now), dateOnly: true }) },
   {
     name: "format",
     min: 1,
     max: 2,
+    group: "date",
     run: (args) => {
       const d = toDate(args[0] ?? null);
       if (!d) return null;
@@ -391,20 +712,183 @@ const FUNCTION_LIST: Fn[] = [
     name: "relative",
     min: 1,
     max: 1,
+    group: "date",
     run: ([v], ctx) => {
       const d = toDate(v ?? null);
       return d ? relative(d, ctx.now) : null;
     },
   },
-  { name: "year", min: 1, max: 1, run: datePart((t) => t.getUTCFullYear()) },
-  { name: "month", min: 1, max: 1, run: datePart((t) => t.getUTCMonth() + 1) },
-  { name: "day", min: 1, max: 1, run: datePart((t) => t.getUTCDate()) },
+  { name: "year", min: 1, max: 1, group: "date", run: datePart((t) => t.getUTCFullYear()) },
+  { name: "month", min: 1, max: 1, group: "date", run: datePart((t) => t.getUTCMonth() + 1) },
+  { name: "day", min: 1, max: 1, group: "date", run: datePart((t) => t.getUTCDate()) },
+  { name: "list", min: 1, max: 1, group: "list", run: ([v]) => listOf(v ?? null) },
+  {
+    name: "filter",
+    min: 2,
+    max: 2,
+    group: "list",
+    usage: 'filter() keeps the items that pass a test, like tags.filter(value != "draft").',
+  },
+  { name: "map", min: 2, max: 2, group: "list", usage: "map() changes every item, like tags.map(upper(value))." },
+  {
+    name: "reduce",
+    min: 2,
+    max: 3,
+    group: "list",
+    usage: "reduce() folds a list into one value, like scores.reduce(acc + value, 0).",
+  },
+  {
+    name: "join",
+    min: 1,
+    max: 2,
+    group: "list",
+    run: ([v, sep]) => listOf(v ?? null).map(show).join(sep === undefined ? ", " : needText(sep, "join()")),
+  },
+  { name: "sort", min: 1, max: 1, group: "list", run: ([v]) => sortList(listOf(v ?? null)) },
+  {
+    name: "unique",
+    min: 1,
+    max: 1,
+    group: "list",
+    run: ([v]) => {
+      const seen = new Set<string>();
+      return listOf(v ?? null).filter((item) => {
+        const key = uniqueKey(item);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    },
+  },
+  { name: "flat", min: 1, max: 1, group: "list", run: ([v]) => flatten(listOf(v ?? null)) },
+  {
+    name: "reverse",
+    min: 1,
+    max: 1,
+    group: "list",
+    run: ([v]) => {
+      if (v === null || v === undefined) return null;
+      if (Array.isArray(v)) return [...v].reverse();
+      return [...show(v)].reverse().join("");
+    },
+  },
+  {
+    name: "matches",
+    min: 2,
+    max: 2,
+    group: "regex",
+    run: ([a, b]) => {
+      const first = a ?? null;
+      const second = b ?? null;
+      const re = isRegex(first) ? first : isRegex(second) ? second : null;
+      if (!re) throw new FormulaError("matches() needs a regex, like status.matches(/^draft/i). Use contains() for plain text.");
+      const other = re === first ? second : first;
+      if (isRegex(other)) throw new FormulaError("matches() compares a regex with text, not two regexes.");
+      if (other === null) return false;
+      return toRegExp(re, false).test(show(other));
+    },
+  },
+  {
+    name: "link",
+    min: 1,
+    max: 2,
+    group: "link",
+    run: ([t, d]) => {
+      const target = t ?? null;
+      if (isBlank(target)) return null;
+      const display = optionalText(d);
+      if (isLink(target)) return { ...target, display: display ?? target.display };
+      if (typeof target !== "string") throw new FormulaError(`link() needs a note title or path, not ${quote(target)}.`);
+      return makeLink(target, display);
+    },
+  },
+];
+
+/** `file.<name>(…)`: questions about the note this row is. */
+const FILE_FUNCTION_LIST: Fn[] = [
+  {
+    name: "hasLink",
+    min: 1,
+    max: 1,
+    group: "file",
+    run: ([t], ctx) => {
+      const target = t ?? null;
+      if (isBlank(target)) return false;
+      const want = isLink(target) ? target.target : needText(target, "file.hasLink()");
+      return (ctx.row.outlinks?.() ?? []).some((link) => sameNote(link.target, want));
+    },
+  },
+  {
+    name: "hasTag",
+    min: 1,
+    max: 32,
+    group: "file",
+    run: (args, ctx) => {
+      const tags = ctx.row.tags?.() ?? [];
+      return flatten(args).some((t) => {
+        const want = show(t).trim().replace(/^#/, "").toLowerCase();
+        return !!want && tags.some((tag) => tag === want || tag.startsWith(`${want}/`));
+      });
+    },
+  },
+  {
+    name: "hasProperty",
+    min: 1,
+    max: 1,
+    group: "file",
+    run: ([k], ctx) => {
+      const key = show(k ?? null).trim().toLowerCase();
+      return !!key && Object.keys(ctx.row.props).some((p) => p.toLowerCase() === key);
+    },
+  },
+  {
+    name: "inFolder",
+    min: 1,
+    max: 1,
+    group: "file",
+    run: ([f], ctx) => {
+      const want = show(f ?? null).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").toLowerCase();
+      const folder = ctx.row.folder.toLowerCase();
+      return !want || folder === want || folder.startsWith(`${want}/`);
+    },
+  },
+  {
+    name: "asLink",
+    min: 0,
+    max: 1,
+    group: "file",
+    run: ([d], ctx) => ({ kind: "link", target: ctx.row.path.replace(/\.md$/i, ""), display: optionalText(d) ?? ctx.row.name }),
+  },
 ];
 
 const FUNCTIONS = new Map(FUNCTION_LIST.map((fn) => [fn.name.toLowerCase(), fn]));
+const FILE_FUNCTIONS = new Map(FILE_FUNCTION_LIST.map((fn) => [fn.name.toLowerCase(), fn]));
 
 /** Function names, in the order the help lists them. */
 export const FORMULA_FUNCTIONS = FUNCTION_LIST.map((fn) => fn.name);
+
+const GROUP_LABELS: Record<FnGroup, string> = {
+  logic: "Logic",
+  text: "Text",
+  number: "Numbers",
+  date: "Dates",
+  list: "Lists",
+  regex: "Regex",
+  link: "Links",
+  file: "This note",
+};
+
+/** Help lines: each group's functions, file ones written as file.name(). */
+export const FORMULA_FUNCTION_GROUPS: { group: FnGroup; label: string; names: string[] }[] = (
+  Object.keys(GROUP_LABELS) as FnGroup[]
+).map((group) => ({
+  group,
+  label: GROUP_LABELS[group],
+  names: [
+    ...FUNCTION_LIST.filter((fn) => fn.group === group).map((fn) => fn.name),
+    ...FILE_FUNCTION_LIST.filter((fn) => fn.group === group).map((fn) => `file.${fn.name}`),
+  ],
+}));
 
 export const FORMULA_EXAMPLES: { formula: string; label: string; name: string }[] = [
   { formula: "file.mtime.relative()", label: "Edited, like “3 days ago”", name: "Edited" },
@@ -414,12 +898,16 @@ export const FORMULA_EXAMPLES: { formula: string; label: string; name: string }[
   { formula: 'if(status == "done", "Done", status.upper())', label: "Compare and change text", name: "Status" },
   { formula: 'round(number(estimate) / 60, 1) & " h"', label: "Math on a number property", name: "Hours" },
   { formula: 'if(contains(lower(tags), "writing"), "Writing", file.folder)', label: "Text contains", name: "Area" },
+  { formula: "file.backlinks", label: "Links: notes that link here", name: "Backlinks" },
+  { formula: 'file.links.filter(!value.matches(/^\\d{4}-/)).slice(0, 3)', label: "List + regex: first 3 links, no dailies", name: "Links" },
+  { formula: 'file.tags.map("#" & value).join(" ")', label: "List: every tag", name: "Tags" },
 ];
 
-function arityMessage(fn: Fn, method: boolean): string {
+function arityMessage(fn: Fn, method: boolean, file = false): string {
+  if (fn.usage) return fn.usage;
   const lo = method ? fn.min - 1 : fn.min;
   const hi = method ? fn.max - 1 : fn.max;
-  const label = method ? `.${fn.name}()` : `${fn.name}()`;
+  const label = file ? `file.${fn.name}()` : method ? `.${fn.name}()` : `${fn.name}()`;
   if (fn.name === "if") return "if() needs two or three parts: if(test, then, else).";
   if (hi <= 0) return `${label} takes no values.`;
   const span = lo === hi ? `${lo}` : hi >= 32 ? `${lo} or more` : `${lo} to ${hi}`;
@@ -428,6 +916,8 @@ function arityMessage(fn: Fn, method: boolean): string {
 
 class Parser {
   private i = 0;
+  /** Inside filter/map/reduce, value, index, and acc name the current item. */
+  private lambda = 0;
   constructor(private readonly toks: Token[]) {}
 
   private peek(offset = 0): Token | undefined {
@@ -483,7 +973,8 @@ class Parser {
     return this.postfix();
   };
 
-  private callArgs(label: string): Node[] {
+  /** `lambdaFrom`: index of the value that is re-run per list item. */
+  private callArgs(label: string, lambdaFrom = Number.POSITIVE_INFINITY): Node[] {
     this.i += 1;
     const out: Node[] = [];
     if (!this.peek()) throw new FormulaError(`${label} needs a closing ).`);
@@ -492,7 +983,13 @@ class Parser {
       return out;
     }
     for (;;) {
-      out.push(this.or());
+      const inLambda = out.length === lambdaFrom;
+      if (inLambda) this.lambda += 1;
+      try {
+        out.push(this.or());
+      } finally {
+        if (inLambda) this.lambda -= 1;
+      }
       if (this.isOp(",")) {
         this.i += 1;
         continue;
@@ -504,18 +1001,28 @@ class Parser {
 
   private postfix(): Node {
     let node = this.primary();
-    while (this.isOp(".")) {
+    for (;;) {
+      if (this.isOp("[")) {
+        this.i += 1;
+        if (this.isOp("]")) throw new FormulaError("[ ] needs a position, like tags[0].");
+        const index = this.or();
+        this.expect("]", "A position needs a closing ], like tags[0].");
+        node = { k: "index", a: node, i: index };
+        continue;
+      }
+      if (!this.isOp(".")) return node;
       this.i += 1;
       const t = this.peek();
       if (t?.t !== "id") throw new FormulaError("A name must follow the dot.");
       this.i += 1;
       const fn = FUNCTIONS.get(t.v.toLowerCase());
       if (!fn || fn.name === "if" || fn.max === 0) throw new FormulaError(`.${t.v}() is not a formula function.`);
-      const args = [node, ...(this.isOp("(") ? this.callArgs(`.${fn.name}(`) : [])];
+      const lambda = LAMBDA_FUNCTIONS.has(fn.name);
+      if (lambda && !this.isOp("(")) throw new FormulaError(arityMessage(fn, true));
+      const args = [node, ...(this.isOp("(") ? this.callArgs(`.${fn.name}(`, lambda ? 0 : undefined) : [])];
       if (args.length < fn.min || args.length > fn.max) throw new FormulaError(arityMessage(fn, true));
       node = { k: "call", name: fn.name, args };
     }
-    return node;
   }
 
   private primary(): Node {
@@ -523,11 +1030,28 @@ class Parser {
     if (!t) throw new FormulaError("Formula is incomplete.");
     this.i += 1;
     if (t.t === "num" || t.t === "str") return { k: "lit", v: t.v };
+    if (t.t === "re") return { k: "lit", v: { kind: "regex", source: t.source, flags: t.flags } };
     if (t.t === "op") {
       if (t.v === "(") {
         const inner = this.or();
         this.expect(")", "Formula is missing a closing ).");
         return inner;
+      }
+      if (t.v === "[") {
+        const items: Node[] = [];
+        if (this.isOp("]")) {
+          this.i += 1;
+          return { k: "list", items };
+        }
+        for (;;) {
+          items.push(this.or());
+          if (this.isOp(",")) {
+            this.i += 1;
+            continue;
+          }
+          this.expect("]", "List needs a closing ], like [1, 2].");
+          return { k: "list", items };
+        }
       }
       throw new FormulaError(`Formula has “${t.v}” where a value should be.`);
     }
@@ -537,17 +1061,32 @@ class Parser {
     if (lower === "null") return { k: "lit", v: null };
     if (this.isOp("(")) {
       const fn = FUNCTIONS.get(lower);
-      if (!fn) throw new FormulaError(`${word}() is not a formula function.`);
-      const args = this.callArgs(`${fn.name}(`);
+      if (!fn) {
+        if (FILE_FUNCTIONS.has(lower)) throw new FormulaError(`${word}() is a file method. Write file.${FILE_FUNCTIONS.get(lower)?.name}(…).`);
+        throw new FormulaError(`${word}() is not a formula function.`);
+      }
+      const args = this.callArgs(`${fn.name}(`, LAMBDA_FUNCTIONS.has(fn.name) ? 1 : undefined);
       if (args.length < fn.min || args.length > fn.max) throw new FormulaError(arityMessage(fn, false));
       return { k: "call", name: fn.name, args };
     }
+    if (this.lambda > 0 && (word === "value" || word === "index" || word === "acc")) return { k: "local", name: word };
     if (word === "file" && this.isOp(".")) {
       this.i += 1;
       const key = this.peek();
       this.i += 1;
+      const method = key?.t === "id" ? FILE_FUNCTIONS.get(key.v.toLowerCase()) : undefined;
+      if (method && this.isOp("(")) {
+        const args = this.callArgs(`file.${method.name}(`);
+        if (args.length < method.min || args.length > method.max) throw new FormulaError(arityMessage(method, false, true));
+        return { k: "call", name: `file.${method.name}`, args };
+      }
+      if (method) throw new FormulaError(`file.${method.name} needs (…), like file.${method.name}(${method.min ? '"…"' : ""}).`);
       const field = key?.t === "id" ? FILE_KEYS.find((k) => k === key.v) : undefined;
-      if (!field) throw new FormulaError(`file. needs ${FILE_KEYS.join(", ")}.`);
+      if (!field) {
+        throw new FormulaError(
+          `file. needs ${FILE_KEYS.join(", ")}, or ${FILE_FUNCTION_LIST.map((fn) => `${fn.name}()`).join(", ")}.`,
+        );
+      }
       return { k: "file", key: field };
     }
     if (word === "note" && this.isOp(".")) {
@@ -583,14 +1122,21 @@ class Parser {
 }
 
 function equals(a: Value, b: Value): boolean {
-  const blankA = a === null || a === "";
-  const blankB = b === null || b === "";
+  const blankA = isBlank(a);
+  const blankB = isBlank(b);
   if (blankA || blankB) return blankA && blankB;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, i) => equals(item, b[i] ?? null));
+  }
+  if (isRegex(a) || isRegex(b)) return isRegex(a) && isRegex(b) && a.source === b.source && a.flags === b.flags;
   if (isDate(a) || isDate(b)) {
-    const da = isDate(a) ? a : parseDate(show(a));
-    const db = isDate(b) ? b : parseDate(show(b));
+    const da = dateOf(a);
+    const db = dateOf(b);
     return !!da && !!db && da.ms === db.ms;
   }
+  if (isLink(a)) return linkMatches(a, b);
+  if (isLink(b)) return linkMatches(b, a);
   const na = numeric(a);
   const nb = numeric(b);
   if (na !== null && nb !== null) return na === nb;
@@ -598,10 +1144,10 @@ function equals(a: Value, b: Value): boolean {
 }
 
 function order(a: Value, b: Value): number | null {
-  if (a === null || b === null || a === "" || b === "") return null;
+  if (isBlank(a) || isBlank(b)) return null;
   if (isDate(a) || isDate(b)) {
-    const da = isDate(a) ? a : parseDate(show(a));
-    const db = isDate(b) ? b : parseDate(show(b));
+    const da = dateOf(a);
+    const db = dateOf(b);
     if (da && db) return da.ms - db.ms;
   }
   const na = numeric(a);
@@ -615,6 +1161,11 @@ function daysBetween(a: DateValue, b: DateValue): number {
 }
 
 function add(a: Value, b: Value): Value {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (Array.isArray(a) && Array.isArray(b)) return [...a, ...b];
+    if (Array.isArray(a)) return b === null ? a : [...a, b];
+    return a === null ? (b as Value[]) : [a, ...(b as Value[])];
+  }
   if (isDate(a) || isDate(b)) {
     const d = (isDate(a) ? a : b) as DateValue;
     const other = isDate(a) ? b : a;
@@ -637,6 +1188,8 @@ function add(a: Value, b: Value): Value {
 
 function subtract(a: Value, b: Value): Value {
   if (a === null || b === null || a === "" || b === "") return null;
+  if (isLink(a) && isDate(b)) a = dateOf(a) ?? a;
+  if (isLink(b) && isDate(a)) b = dateOf(b) ?? b;
   if (isDate(a)) {
     if (isDate(b)) return daysBetween(a, b);
     if (typeof b === "string") {
@@ -668,10 +1221,21 @@ function arithmetic(op: string, a: Value, b: Value): Value {
   return na % nb;
 }
 
+const typedProps = new WeakMap<Record<string, string>, Map<string, Value>>();
+
 function readProp(row: FormulaRow, key: string): Value {
-  if (Object.prototype.hasOwnProperty.call(row.props, key)) return row.props[key] ?? null;
-  const found = Object.keys(row.props).find((k) => k.toLowerCase() === key.toLowerCase());
-  return found ? row.props[found] ?? null : null;
+  const found = Object.prototype.hasOwnProperty.call(row.props, key)
+    ? key
+    : Object.keys(row.props).find((k) => k.toLowerCase() === key.toLowerCase());
+  const raw = found === undefined ? undefined : row.props[found];
+  if (raw === undefined || found === undefined) return null;
+  let cache = typedProps.get(row.props);
+  if (!cache) {
+    cache = new Map();
+    typedProps.set(row.props, cache);
+  }
+  if (!cache.has(found)) cache.set(found, typedProp(raw));
+  return cache.get(found) ?? null;
 }
 
 function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
@@ -693,7 +1257,31 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
         const dot = base.lastIndexOf(".");
         return dot > 0 ? base.slice(dot + 1) : "";
       }
+      if (node.key === "links" || node.key === "backlinks") {
+        const links = (node.key === "links" ? row.outlinks : row.backlinks)?.() ?? [];
+        return links.map((link) => ({ kind: "link", target: link.target, display: link.display ?? null }));
+      }
+      if (node.key === "tags") return [...(row.tags?.() ?? [])];
       return row[node.key];
+    case "local": {
+      const top = ctx.scope[ctx.scope.length - 1];
+      if (!top) throw new FormulaError(`${node.name} only works inside filter(), map(), or reduce().`);
+      if (node.name === "acc") {
+        if (!("acc" in top)) throw new FormulaError("acc only works inside reduce().");
+        return top.acc ?? null;
+      }
+      return node.name === "index" ? top.index : top.value;
+    }
+    case "list":
+      return node.items.map((item) => evalNode(item, row, ctx));
+    case "index": {
+      const list = evalNode(node.a, row, ctx);
+      const at = needNumber(evalNode(node.i, row, ctx));
+      if (list === null || at === null) return null;
+      if (!Array.isArray(list)) throw new FormulaError(`${quote(list)} is not a list, so it has no [${at}]. Use list(x) to make one.`);
+      if (!Number.isInteger(at)) throw new FormulaError(`List positions are whole numbers, like tags[0], not ${at}.`);
+      return list[at < 0 ? list.length + at : at] ?? null;
+    }
     case "un": {
       const v = evalNode(node.a, row, ctx);
       if (node.op === "!") return !truthy(v);
@@ -737,7 +1325,10 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
         if (truthy(evalNode(cond as Node, row, ctx))) return evalNode(yes as Node, row, ctx);
         return no ? evalNode(no, row, ctx) : null;
       }
-      const fn = FUNCTIONS.get(node.name.toLowerCase());
+      if (LAMBDA_FUNCTIONS.has(node.name)) return runLambda(node.name, node.args, row, ctx);
+      const fn = node.name.startsWith("file.")
+        ? FILE_FUNCTIONS.get(node.name.slice(5).toLowerCase())
+        : FUNCTIONS.get(node.name.toLowerCase());
       if (!fn?.run) throw new FormulaError(`${node.name}() is not a formula function.`);
       const out = fn.run(
         node.args.map((arg) => evalNode(arg, row, ctx)),
@@ -747,6 +1338,30 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
       return out;
     }
   }
+}
+
+function runLambda(name: string, args: Node[], row: FormulaRow, ctx: Ctx): Value {
+  const [listNode, body, initial] = args as [Node, Node, Node | undefined];
+  const source = evalNode(listNode, row, ctx);
+  if (isRegex(source) || isDate(source)) throw new FormulaError(`${name}() works on lists, not ${quote(source)}.`);
+  const items = listOf(source);
+  const step = (scope: Scope): Value => {
+    ctx.scope.push(scope);
+    try {
+      return evalNode(body, row, ctx);
+    } finally {
+      ctx.scope.pop();
+    }
+  };
+  if (name === "filter") return items.filter((value, index) => truthy(step({ value, index })));
+  if (name === "map") return items.map((value, index) => step({ value, index }));
+  // Without a start value, the first item is the start, as in JavaScript.
+  const start = initial ? 0 : 1;
+  let acc: Value = initial ? evalNode(initial, row, ctx) : (items[0] ?? null);
+  for (let index = start; index < items.length; index += 1) {
+    acc = step({ value: items[index] ?? null, index, acc });
+  }
+  return acc;
 }
 
 /** Milliseconds for a YYYY-MM-DD (or [[YYYY-MM-DD]], or ISO date-time) value, else null. */
@@ -772,7 +1387,7 @@ export function runNoteFormula(compiled: CompiledFormula, row: FormulaRow, now =
   if (compiled.error) return { value: "", error: compiled.error, sort: null, raw: null };
   if (!compiled.program) return { value: "", error: null, sort: null, raw: null };
   try {
-    const v = evalNode(compiled.program, row, { now });
+    const v = evalNode(compiled.program, row, { now, row, scope: [] });
     const sort = typeof v === "number" ? v : isDate(v) ? v.ms : typeof v === "boolean" ? Number(v) : null;
     return { value: show(v), error: null, sort, raw: v };
   } catch (err) {
