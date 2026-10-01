@@ -50,16 +50,20 @@ export async function saveNoteTableConfig(vaultId: string | null, session: Bases
   if (desktop) {
     try {
       await writeDesktopNote(desktop, NOTE_TABLE_FILE, body);
-    } catch {
-      /* disk vault may be read-only in a test */
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[nexus] could not write ${NOTE_TABLE_FILE} under ${desktop}: ${message}`);
+      useVaultStore.getState().setToast(`Couldn't save the note table to ${NOTE_TABLE_FILE}`);
     }
   } else {
     const fsa = getFsaRoot();
     if (fsa) {
       try {
         await writeNoteFile(fsa, NOTE_TABLE_FILE, body);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[nexus] could not write ${NOTE_TABLE_FILE}: ${message}`);
+        useVaultStore.getState().setToast(`Couldn't save the note table to ${NOTE_TABLE_FILE}`);
       }
     }
   }

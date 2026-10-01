@@ -119,6 +119,17 @@ pub fn grant_plugin_fs_scope(app: &AppHandle, root: &str) -> Result<(), String> 
             Ok(()) => granted = true,
             Err(e) => last_err = Some(e.to_string()),
         }
+        // Unix plugin-fs sets require_literal_leading_dot, so `vault/**` does
+        // not cover `.nexus`. Grant that directory by its literal name.
+        let nexus = p.join(".nexus");
+        match scope.allow_directory(&nexus, false) {
+            Ok(()) => granted = true,
+            Err(e) => last_err = Some(e.to_string()),
+        }
+        match scope.allow_directory(&nexus, true) {
+            Ok(()) => granted = true,
+            Err(e) => last_err = Some(e.to_string()),
+        }
     }
     if granted {
         return Ok(());
