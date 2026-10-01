@@ -71,6 +71,59 @@ assert.equal(fromPath.error, null);
 assert.equal(fromPath.rows[0].id, "f");
 const fromQuoted = runNexusQuery('LIST FROM "Journal"', nodes);
 assert.equal(fromQuoted.rows[0].id, "f");
+const { openMemoryDurableIndex, closeDurableIndex } = await import(
+  "../src/lib/vault/durable-index.ts"
+);
+const { invalidateVaultTagsCache } = await import("../src/lib/vault/tags.ts");
+closeDurableIndex();
+const tagIndex = openMemoryDurableIndex("nexus-query-tags");
+tagIndex.upsertNote({
+  id: "w",
+  path: "Indexed/Callouts.md",
+  name: "Callouts.md",
+  kind: "note",
+  parentId: null,
+  mtime: 10,
+  tags: ["writing"],
+});
+tagIndex.upsertNote({
+  id: "g2",
+  path: "Indexed/Graph View.md",
+  name: "Graph View.md",
+  kind: "note",
+  parentId: null,
+  mtime: 20,
+  tags: ["graph", "links"],
+});
+tagIndex.upsertNote({
+  id: "plain",
+  path: "Indexed/Plain.md",
+  name: "Plain.md",
+  kind: "note",
+  parentId: null,
+  mtime: 30,
+  tags: [],
+});
+const indexedNodes = {
+  w: { id: "w", path: "Indexed/Callouts.md", name: "Callouts.md", kind: "note", parentId: null, mtime: 10, content: "# Callouts\n\nNo hash tags in this body.\n" },
+  g2: { id: "g2", path: "Indexed/Graph View.md", name: "Graph View.md", kind: "note", parentId: null, mtime: 20, content: "# Graph View\n\nNo hash tags in this body.\n" },
+  plain: { id: "plain", path: "Indexed/Plain.md", name: "Plain.md", kind: "note", parentId: null, mtime: 30, content: "# Plain\n" },
+};
+invalidateVaultTagsCache();
+const indexedOr = runNexusQuery("LIST FROM #writing OR #graph", indexedNodes);
+assert.equal(indexedOr.error, null);
+assert.deepEqual(indexedOr.rows.map((r) => r.id).sort(), ["g2", "w"]);
+const indexedAnd = runNexusQuery("LIST FROM #graph AND #links", indexedNodes);
+assert.equal(indexedAnd.error, null);
+assert.deepEqual(indexedAnd.rows.map((r) => r.id), ["g2"]);
+const indexedOne = runNexusQuery("LIST FROM #graph", indexedNodes);
+assert.deepEqual(indexedOne.rows.map((r) => r.id), ["g2"]);
+const indexedMiss = runNexusQuery("LIST FROM #writing AND #graph", indexedNodes);
+assert.equal(indexedMiss.rows.length, 0);
+assert.equal(indexedMiss.error, null);
+closeDurableIndex();
+invalidateVaultTagsCache();
+
 const either = runNexusQuery("LIST FROM #writing OR #graph", nodes);
 assert.deepEqual(either.rows.map((r) => r.id).sort(), ["c", "g"]);
 const bothTags = runNexusQuery("LIST FROM #graph AND #links", nodes);

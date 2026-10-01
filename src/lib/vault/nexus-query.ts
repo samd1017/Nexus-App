@@ -236,9 +236,51 @@ function pathHasPrefix(path: string, prefix: string): boolean {
 
 function tagsOf(node: VaultNode): string[] {
   if (node.kind !== "note") return [];
-  if (typeof node.content === "string") return extractTagsFromMarkdown(node.content);
+  const tags = new Set<string>();
+  if (typeof node.content === "string") {
+    for (const tag of extractTagsFromMarkdown(node.content)) tags.add(tag);
+  }
   const meta = getDurableIndex()?.getNoteMeta(node.id);
-  return (meta?.tags ?? []).map((t) => t.toLowerCase());
+  for (const tag of meta?.tags ?? []) tags.add(tag.toLowerCase());
+  return [...tags];
+}
+
+/** notesForTag plus tags stored on the durable index (sqlite tag_map mirror). */
+function notesForTagJoined(nodes: Record<string, VaultNode>, tag: string): VaultNode[] {
+  const out = notesForTag(nodes, tag);
+  const idx = getDurableIndex();
+  if (!idx?.ready) return out;
+  const needle = tag.replace(/^#/, "").toLowerCase();
+  const seen = new Set(out.map((n) => n.id));
+  for (const meta of idx.listNoteMeta()) {
+    if (!meta?.id || seen.has(meta.id) || meta.kind === "folder") continue;
+    if (!meta.tags?.some((t) => t.toLowerCase() === needle)) continue;
+    const node = nodes[meta.id];
+    if (node?.kind !== "note") continue;
+    seen.add(node.id);
+    out.push(node);
+  }
+  return out;
+}
+
+export function joinTaggedNotes(lists: VaultNode[][], mode: TagJoin): VaultNode[] {
+  if (!lists.length) return [];
+  if (mode === "and") {
+    const sets = lists.map((list) => new Set(list.map((n) => n.id)));
+    let smallest = lists[0] ?? [];
+    for (const list of lists) if (list.length < smallest.length) smallest = list;
+    return smallest.filter((n) => sets.every((set) => set.has(n.id)));
+  }
+  const seen = new Set<string>();
+  const out: VaultNode[] = [];
+  for (const list of lists) {
+    for (const note of list) {
+      if (!note || seen.has(note.id)) continue;
+      seen.add(note.id);
+      out.push(note);
+    }
+  }
+  return out;
 }
 
 function formatMtime(mtime: number): string {
@@ -334,6 +376,8 @@ function collectInFolder(
 export function runNexusQuery(
   source: string,
   nodes: Record<string, VaultNode>,
+  /** Extra notes per tag, same order as the parsed tags. From sqlite tag_map. */
+  tagExtras?: VaultNode[][] | null,
 ): NexusQueryModel {
   const footer = NEXUS_QUERY_FOOTER;
   const parsed = parseNexusQuery(source);
@@ -388,19 +432,13 @@ export function runNexusQuery(
     const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode);
     notes = collected.notes;
     budgetHit = collected.budgetHit;
-  } else if (parsed.tagMode === "and" && parsed.tags.length > 1) {
-    notes = notesForTag(nodes, parsed.tags[0] ?? "").filter((n) => hasTags(n, parsed.tags, "and"));
-  } else if (parsed.tags.length === 1) {
-    notes = notesForTag(nodes, parsed.tags[0] ?? "");
-  } else if (parsed.tags.length > 1) {
-    const seen = new Set<string>();
-    for (const tag of parsed.tags) {
-      for (const note of notesForTag(nodes, tag)) {
-        if (seen.has(note.id)) continue;
-        seen.add(note.id);
-        notes.push(note);
-      }
-    }
+  } else if (parsed.tags.length) {
+    notes = joinTaggedNotes(
+      parsed.tags.map((tag, i) =>
+        joinTaggedNotes([notesForTagJoined(nodes, tag), tagExtras?.[i] ?? []], "or"),
+      ),
+      parsed.tagMode,
+    );
   }
 
   const dir = parsed.sort?.dir === "desc" ? -1 : 1;

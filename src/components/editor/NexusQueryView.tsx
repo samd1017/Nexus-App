@@ -1,22 +1,78 @@
 import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { List } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { getFindFocusPane } from "@/lib/editor/find-target";
+import { fetchShellTagNotes } from "@/lib/vault/shell-catalog";
+import type { VaultNode } from "@/lib/vault/types";
 import {
   NEXUS_QUERY_CAP,
   NEXUS_QUERY_HELP,
+  parseNexusQuery,
   runNexusQuery,
 } from "@/lib/vault/nexus-query";
 
 export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
   const query = String(node.attrs.query || "");
   const nodes = useVaultStore((s) => s.nodes);
+  const shellDb = useVaultStore((s) => s.shellDbPath);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(query);
-  const model = useMemo(() => runNexusQuery(query, nodes), [query, nodes]);
+  const [tagExtras, setTagExtras] = useState<VaultNode[][] | null>(null);
+  const [tagsLoading, setTagsLoading] = useState(false);
+
+  useEffect(() => {
+    const parsed = parseNexusQuery(query);
+    if (!shellCatalog || !shellDb || parsed.kind !== "ok" || parsed.tags.length === 0) {
+      setTagExtras(null);
+      setTagsLoading(false);
+      return;
+    }
+    let cancel = false;
+    setTagsLoading(true);
+    const tags = parsed.tags;
+    void (async () => {
+      const pages = await Promise.all(
+        tags.map((tag) => fetchShellTagNotes(shellDb, tag, NEXUS_QUERY_CAP)),
+      );
+      if (cancel) return;
+      if (pages.some((page) => page == null)) {
+        setTagExtras(null);
+        setTagsLoading(false);
+        return;
+      }
+      const live = useVaultStore.getState();
+      const extras = pages.map((page) =>
+        (page ?? []).map((row) => {
+          const existing = live.nodes[row.id];
+          if (existing?.kind === "note") return existing;
+          return {
+            id: row.id,
+            path: row.path,
+            name: row.name,
+            kind: "note" as const,
+            parentId: row.parentId ?? null,
+            mtime: row.mtime || 0,
+          };
+        }),
+      );
+      const missing = pages.flatMap((page) => page ?? []).filter((row) => !live.nodes[row.id]);
+      if (missing.length) live.ingestShellRows(missing);
+      setTagExtras(extras);
+      setTagsLoading(false);
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [query, shellDb, shellCatalog]);
+
+  const model = useMemo(
+    () => runNexusQuery(query, nodes, tagExtras),
+    [query, nodes, tagExtras],
+  );
 
   const openRow = (id: string) => {
     const store = useVaultStore.getState();
@@ -80,7 +136,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
         ) : null}
         {!model.help && !model.error && model.rows.length === 0 ? (
           <p className="nexus-query-empty" data-testid="nexus-query-empty">
-            No notes match.
+            {tagsLoading ? "Reading tags…" : "No notes match."}
           </p>
         ) : null}
         {model.mode === "table" && model.rows.length > 0 ? (

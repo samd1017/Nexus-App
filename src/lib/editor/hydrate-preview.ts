@@ -8,9 +8,10 @@ import { markdownToHtml } from "@/lib/markdown/serialize";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
-import { NEXUS_QUERY_CAP, runNexusQuery } from "@/lib/vault/nexus-query";
-import { noteTitle } from "@/lib/vault/types";
-import type { VaultNode } from "@/lib/vault/types";
+import { NEXUS_QUERY_CAP, parseNexusQuery, runNexusQuery } from "@/lib/vault/nexus-query";
+import { fetchShellTagNotes } from "@/lib/vault/shell-catalog";
+import { useVaultStore } from "@/lib/vault/store";
+import { noteTitle, type VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
 import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
 
@@ -219,10 +220,40 @@ function renderQueries(
   }
 }
 
-function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>): void {
+async function tagExtrasFor(query: string): Promise<VaultNode[][] | null> {
+  const store = useVaultStore.getState();
+  if (!store.shellCatalog || !store.shellDbPath) return null;
+  const parsed = parseNexusQuery(query);
+  if (parsed.kind !== "ok" || parsed.tags.length === 0) return null;
+  const pages = await Promise.all(
+    parsed.tags.map((tag) => fetchShellTagNotes(store.shellDbPath || "", tag, NEXUS_QUERY_CAP)),
+  );
+  if (pages.some((page) => page == null)) return null;
+  const live = useVaultStore.getState();
+  const missing = pages.flatMap((page) => page ?? []).filter((row) => !live.nodes[row.id]);
+  if (missing.length) live.ingestShellRows(missing);
+  const current = useVaultStore.getState().nodes;
+  return pages.map((page) =>
+    (page ?? []).map((row) => {
+      const existing = current[row.id];
+      if (existing?.kind === "note") return existing;
+      return {
+        id: row.id,
+        path: row.path,
+        name: row.name,
+        kind: "note" as const,
+        parentId: row.parentId ?? null,
+        mtime: row.mtime || 0,
+      };
+    }),
+  );
+}
+
+async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>): Promise<void> {
   for (const el of els) {
     const query = (el.getAttribute("data-query") || "").trim();
-    const model = runNexusQuery(query, nodes);
+    const extras = await tagExtrasFor(query);
+    const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras);
     const bits: string[] = [];
     if (model.help) {
       bits.push(
@@ -325,9 +356,10 @@ export async function hydratePreviewSpecials(
 
   const embeds = renderEmbeds(embedEls, nodes, activeNoteId, cancelled, findOutside);
   renderQueries(queryEls, nodes);
-  renderNexusQueries(nexusQueryEls, nodes);
+  const nexus = renderNexusQueries(nexusQueryEls, nodes);
   await Promise.all([
     embeds,
+    nexus,
     renderMermaid(mermaidEls, theme, cancelled),
     renderMath(mathEls, cancelled),
   ]);

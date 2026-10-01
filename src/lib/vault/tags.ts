@@ -203,12 +203,11 @@ function buildTagHitsUnsorted(nodes: Record<string, VaultNode>): TagHit[] {
   for (const id in nodes) {
     const n = nodes[id];
     if (!n || n.kind !== "note") continue;
-    let tags: string[];
+    const tags = new Set<string>();
     if (n.content !== undefined) {
-      tags = extractTagsFromMarkdown(n.content);
-    } else {
-      tags = durableTags.get(n.id) ?? [];
+      for (const tag of extractTagsFromMarkdown(n.content)) tags.add(tag);
     }
+    for (const tag of durableTags.get(n.id) ?? []) tags.add(tag.toLowerCase());
     for (const t of tags) {
       let set = map.get(t);
       if (!set) {
