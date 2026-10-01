@@ -1,5 +1,5 @@
 import { applyFrontmatter, parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
-import { extractWikilinks, parseWikilinkInner } from "@/lib/markdown/wikilinks";
+import { parseWikilinkInner, stripCodeForLinkScan } from "@/lib/markdown/wikilinks";
 import { isCanvasPath } from "@/lib/vault/canvas";
 import {
   compileNoteFormula,
@@ -485,12 +485,18 @@ function cellLinks(raw: FormulaResult["raw"], resolve: LinkResolver): NoteLink[]
   return links;
 }
 
-/** Wikilinks a note makes, once per target. Embeds (![[…]]) are not links. */
+/** A wikilink never spans lines, so a stray `[[` in text does not swallow the next real link. */
+const LINE_WIKILINK = /\[\[([^\]\n]+)\]\]/g;
+
+/** Wikilinks a note makes, once per target. Embeds (![[…]]) and code are not links. */
 function noteOutlinks(content: string): FormulaLink[] {
   const out: FormulaLink[] = [];
   const seen = new Set<string>();
-  for (const link of extractWikilinks(content)) {
-    if (!link.noteTarget || content[link.start - 1] === "!") continue;
+  const source = stripCodeForLinkScan(content);
+  for (const match of source.matchAll(LINE_WIKILINK)) {
+    if (source[(match.index ?? 0) - 1] === "!") continue;
+    const link = parseWikilinkInner(match[1] ?? "");
+    if (!link.noteTarget) continue;
     const target = link.noteTarget.replace(/\.md$/i, "");
     const key = target.toLowerCase();
     if (seen.has(key)) continue;

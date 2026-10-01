@@ -685,6 +685,18 @@ assert.equal(cell("hub", "none").kind, "empty");
 const folderLinks = buildNoteTable(linkVault, "Projects", [col("back", "file.backlinks")], NOW);
 assert.equal(folderLinks.rows.find((row) => row.id === "spec").formulas.back.value, "Ada, Hub");
 assert.ok(!folderLinks.rows.some((row) => row.id === "hub"));
+// A stray [[ in text is not a link and does not swallow the next real one
+const stray = buildNoteTable(
+  [
+    { id: "s", path: "S.md", name: "S.md", content: "| ⌘⇧L | Insert [[ wikilink |\n| x | y |\n\n- [[Hub]]\n- [[Two\nlines]]\n", mtime: NOW },
+    { id: "hub2", path: "Hub.md", name: "Hub.md", content: "", mtime: NOW },
+  ],
+  "",
+  [col("out", "file.links"), col("back", "file.backlinks")],
+  NOW,
+);
+assert.equal(stray.rows.find((row) => row.id === "s").formulas.out.value, "Hub");
+assert.equal(stray.rows.find((row) => row.id === "hub2").formulas.back.value, "S");
 // Links to missing notes still show, but do not open anything
 const ghost = buildNoteTable([{ id: "g", path: "G.md", name: "G.md", content: "[[Nowhere]]", mtime: NOW }], "", [col("out", "file.links")], NOW);
 assert.deepEqual(ghost.rows[0].formulas.out.links, [{ id: null, title: "Nowhere" }]);
