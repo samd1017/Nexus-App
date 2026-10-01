@@ -53,6 +53,37 @@ export function noteTableTitle(name: string): string {
   return name.replace(/\.canvas$/i, "").replace(/\.md$/i, "").trim() || name;
 }
 
+export type LinkChoiceNote = { name: string; path: string };
+
+/** Exact title first, then prefix, then contains. Canvas files are not choices. */
+export function rankLinkChoices<T extends LinkChoiceNote>(notes: T[], query: string): T[] {
+  const q = query.trim().toLowerCase();
+  const ranked: { note: T; score: number }[] = [];
+  for (const note of notes) {
+    if (note.path.toLowerCase().endsWith(".canvas")) continue;
+    const title = noteTableTitle(note.name || note.path).toLowerCase();
+    const path = note.path.toLowerCase();
+    let score = 0;
+    if (!q) score = 1;
+    else if (title === q) score = 300;
+    else if (title.startsWith(q)) score = 200;
+    else if (title.includes(q)) score = 100;
+    else if (path.includes(q)) score = 50;
+    if (score) ranked.push({ note, score });
+  }
+  ranked.sort(
+    (a, b) =>
+      b.score - a.score ||
+      noteTableTitle(a.note.name || a.note.path).localeCompare(noteTableTitle(b.note.name || b.note.path)),
+  );
+  return ranked.slice(0, 8).map((row) => row.note);
+}
+
+/** Reading is only while visible rows are still loading. A loaded table is idle. */
+export function basesPropertiesReading(visibleMissing: number, hydrating: boolean): boolean {
+  return visibleMissing > 0 && hydrating;
+}
+
 export function noteTableFolder(path: string): string {
   const i = path.lastIndexOf("/");
   return i <= 0 ? "" : path.slice(0, i);

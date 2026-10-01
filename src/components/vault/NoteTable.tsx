@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { setBasesOpen } from "@/lib/vault/bases-session";
 import {
+  basesPropertiesReading,
   buildNoteTable,
   filterNoteRows,
   filterRowsByRelation,
+  noteTableTitle,
   parseBasesSession,
+  rankLinkChoices,
   sortNoteRows,
   withNoteRelation,
   type BasesSession,
@@ -41,7 +44,10 @@ export function NoteTable() {
   const [relationName, setRelationName] = useState("related");
   const [linking, setLinking] = useState<{ rowId: string; key: string } | null>(null);
   const [linkQuery, setLinkQuery] = useState("");
+  const [hydratingProps, setHydratingProps] = useState(false);
+  const [bodyEpoch, setBodyEpoch] = useState(0);
   const ready = useRef(false);
+  const triedPropertyIds = useRef(new Set<string>());
   const view = session.views.find((item) => item.id === session.activeId) ?? session.views[0];
 
   const patchView = (partial: Partial<BasesViewConfig>) => {
@@ -81,12 +87,19 @@ export function NoteTable() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (document.querySelector("[role='dialog'], [data-nexus-confirm]")) return;
+      if (linking) {
+        e.preventDefault();
+        e.stopPropagation();
+        setLinking(null);
+        setLinkQuery("");
+        return;
+      }
       e.preventDefault();
       setBasesOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [linking]);
 
   const sources = useMemo(
     () =>
@@ -99,32 +112,12 @@ export function NoteTable() {
           content: n.content,
           mtime: n.mtime,
         })),
-    [nodes],
+    [nodes, bodyEpoch],
   );
 
-  const missingKey = useMemo(() => {
-    const ids: string[] = [];
-    for (const note of sources) {
-      if (note.content !== undefined) continue;
-      if (note.path.toLowerCase().endsWith(".canvas")) continue;
-      ids.push(note.id);
-      if (ids.length >= 24) break;
-    }
-    return ids.join("\n");
-  }, [sources]);
-
   useEffect(() => {
-    if (!missingKey) return;
-    const ids = missingKey.split("\n");
-    const run = () => {
-      if (shouldSkipBackgroundBodyHydrate({ fillBusy: useVaultStore.getState().indexFillBusy })) return;
-      for (const id of ids) void ensureNoteBody(id);
-    };
-    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
-      return scheduleFillSafeHydrate(run);
-    }
-    run();
-  }, [missingKey, indexFillBusy, ensureNoteBody]);
+    triedPropertyIds.current = new Set();
+  }, [vaultId]);
 
   const built = useMemo(
     () => buildNoteTable(sources, view.folder, view.formula),
@@ -135,6 +128,43 @@ export function NoteTable() {
     const filtered = filterRowsByRelation(filterNoteRows(built.rows, view.query), relationQuery, relations.length ? relations : built.keys);
     return sortNoteRows(filtered, view.column, view.dir);
   }, [built.rows, built.keys, view.query, view.column, view.dir, view.relations, relationQuery]);
+
+  const visibleMissingIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const row of shown) {
+      const node = nodes[row.id];
+      if (!node || node.kind !== "note" || node.content !== undefined) continue;
+      ids.push(row.id);
+    }
+    return ids;
+  }, [shown, nodes]);
+  useEffect(() => {
+    const pending = visibleMissingIds.filter((id) => !triedPropertyIds.current.has(id));
+    if (!pending.length) {
+      setHydratingProps(false);
+      return;
+    }
+    let cancel = false;
+    const run = () => {
+      if (shouldSkipBackgroundBodyHydrate({ fillBusy: useVaultStore.getState().indexFillBusy })) return;
+      for (const id of pending) triedPropertyIds.current.add(id);
+      setHydratingProps(true);
+      void Promise.all(pending.map((id) => ensureNoteBody(id))).finally(() => {
+        if (cancel) return;
+        setHydratingProps(false);
+        setBodyEpoch((n) => n + 1);
+      });
+    };
+    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
+      return scheduleFillSafeHydrate(run);
+    }
+    run();
+    return () => {
+      cancel = true;
+    };
+  }, [visibleMissingIds, indexFillBusy, ensureNoteBody]);
+
+  const readingProperties = basesPropertiesReading(visibleMissingIds.length, hydratingProps);
 
   const sortBy = (column: string) => {
     patchView({
@@ -182,6 +212,11 @@ export function NoteTable() {
     patchView({ relations: [...relations, key], columns: [...new Set([...(view.columns.length ? view.columns : built.keys), key])] });
   };
 
+  const linkChoices = useMemo(
+    () => (linking ? rankLinkChoices(sources, linkQuery) : []),
+    [linking, sources, linkQuery],
+  );
+
   const linkNote = async (rowId: string, key: string, title: string) => {
     const node = useVaultStore.getState().nodes[rowId];
     if (!node || node.kind !== "note") return;
@@ -189,8 +224,15 @@ export function NoteTable() {
     if (typeof loaded !== "string") return;
     const next = withNoteRelation(loaded, key, title);
     updateNoteContent(rowId, next, { source: true });
+    setBodyEpoch((n) => n + 1);
     setLinking(null);
     setLinkQuery("");
+  };
+
+  const confirmTopLink = () => {
+    const top = linkChoices[0];
+    if (!linking || !top) return;
+    void linkNote(linking.rowId, linking.key, noteTableTitle(top.name || top.path));
   };
 
   const columns = [
@@ -303,13 +345,21 @@ export function NoteTable() {
                 data-testid="bases-row"
                 data-note-id={row.id}
                 data-path={row.path}
-                className="cursor-pointer border-b border-[var(--border)] hover:bg-white/[0.04]"
-                onClick={() => {
-                  setActiveNote(row.id);
-                  setBasesOpen(false);
-                }}
+                className="border-b border-[var(--border)] hover:bg-white/[0.04]"
               >
-                <td className="max-w-[16rem] truncate px-2 py-1.5 font-medium">{row.name}</td>
+                <td className="max-w-[16rem] truncate px-2 py-1.5 font-medium">
+                  <button
+                    type="button"
+                    className="max-w-full truncate text-left hover:text-[var(--accent)]"
+                    data-testid="bases-open-note"
+                    onClick={() => {
+                      setActiveNote(row.id);
+                      setBasesOpen(false);
+                    }}
+                  >
+                    {row.name}
+                  </button>
+                </td>
                 <td className="max-w-[12rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.folder || "—"}</td>
                 <td className="max-w-[18rem] truncate px-2 py-1.5 text-[var(--text-muted)]">{row.path}</td>
                 {shownKeys.map((key) => {
@@ -343,7 +393,7 @@ export function NoteTable() {
                       {relations.includes(key) ? (
                         <button
                           type="button"
-                          className="text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)]"
+                          className="ml-1 inline-flex min-h-9 min-w-[4.5rem] items-center justify-center rounded-md border border-[var(--border)] px-3 text-[13px] text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
                           data-testid="bases-link-note"
                           data-row-id={row.id}
                           data-relation={key}
@@ -369,52 +419,73 @@ export function NoteTable() {
           </tbody>
         </table>
         {shown.length === 0 ? (
-          <p className="px-3 py-6 text-[12px] text-[var(--text-muted)]">No notes match.</p>
-        ) : null}
-        {linking ? (
-          <div className="border-t border-[var(--border)] px-3 py-2" data-testid="bases-link-picker">
-            <input
-              autoFocus
-              value={linkQuery}
-              onChange={(e) => setLinkQuery(e.target.value)}
-              placeholder="Link a note…"
-              className="nexus-field mb-1 h-8 w-full rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
-              data-testid="bases-link-query"
-            />
-            <ul className="max-h-32 overflow-y-auto">
-              {sources
-                .filter((note) => !note.path.toLowerCase().endsWith(".canvas"))
-                .filter((note) => {
-                  const q = linkQuery.trim().toLowerCase();
-                  if (!q) return true;
-                  return note.name.toLowerCase().includes(q) || note.path.toLowerCase().includes(q);
-                })
-                .slice(0, 8)
-                .map((note) => (
-                  <li key={note.id}>
-                    <button
-                      type="button"
-                      className="w-full truncate px-1 py-1 text-left text-[12px] hover:bg-white/[0.05]"
-                      data-testid="bases-link-choice"
-                      data-note-id={note.id}
-                      onClick={() => linkNote(linking.rowId, linking.key, note.name.replace(/\.md$/i, ""))}
-                    >
-                      {note.name.replace(/\.md$/i, "")}
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          </div>
+          <p className="px-3 py-6 text-[12px] text-[var(--text-muted)]" data-testid="bases-empty">
+            No notes match.
+          </p>
         ) : null}
       </div>
-      <p className="shrink-0 border-t border-[var(--border)] px-3 py-1.5 text-[11px] text-[var(--text-muted)]">
+      {linking ? (
+        <div className="shrink-0 border-t border-[var(--border)] px-3 py-2" data-testid="bases-link-picker">
+          <input
+            autoFocus
+            value={linkQuery}
+            onChange={(e) => setLinkQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                confirmTopLink();
+              }
+            }}
+            placeholder="Type a note title, then Enter"
+            aria-label="Choose a note to link"
+            aria-controls="bases-link-list"
+            aria-activedescendant={linkChoices[0] ? `bases-link-choice-${linkChoices[0].id}` : undefined}
+            className="nexus-field mb-2 h-9 w-full rounded-md border border-[var(--border)] bg-transparent px-2 text-[13px]"
+            data-testid="bases-link-query"
+          />
+          <ul id="bases-link-list" role="listbox" className="max-h-64 overflow-y-auto" data-testid="bases-link-list">
+            {linkChoices.map((note, index) => {
+              const title = noteTableTitle(note.name || note.path);
+              const active = index === 0;
+              return (
+                <li key={note.id}>
+                  <button
+                    id={`bases-link-choice-${note.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className={cn(
+                      "flex min-h-11 w-full items-center rounded-md px-3 text-left text-[14px]",
+                      active ? "bg-white/[0.08]" : "hover:bg-white/[0.05]",
+                    )}
+                    data-testid="bases-link-choice"
+                    data-note-id={note.id}
+                    data-active={active ? "1" : "0"}
+                    onClick={() => linkNote(linking.rowId, linking.key, title)}
+                  >
+                    {title}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+      <p className="shrink-0 border-t border-[var(--border)] px-3 py-1.5 text-[11px] text-[var(--text-muted)]" data-testid="bases-footer">
         {shown.length} note{shown.length === 1 ? "" : "s"}
-        {built.keys.length ? ` · ${built.keys.join(", ")}` : " · no frontmatter properties in this set"}
+        {built.keys.length
+          ? ` · ${built.keys.join(", ")}`
+          : visibleMissingIds.length === 0
+            ? " · no frontmatter properties in this set"
+            : ""}
         {built.truncated ? " · first 400 notes" : ""}
         {view.formula.trim() ? ` · formula ${view.formula}` : ""}
         {built.formulaError ? ` · ${built.formulaError}` : ""}
-        {missingKey && !indexFillBusy ? " · reading note properties" : ""}
-        {indexFillBusy ? " · properties wait until the index is idle" : ""}
+        {readingProperties ? " · reading note properties" : ""}
+        {indexFillBusy && visibleMissingIds.length > 0 && !readingProperties
+          ? " · properties wait until the index is idle"
+          : ""}
         . Typed note links save as [[Title]] in the note. .nexus/note-table.json is not an Obsidian .base file.
       </p>
     </div>

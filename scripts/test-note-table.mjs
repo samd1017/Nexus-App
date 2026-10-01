@@ -20,8 +20,10 @@ const {
   buildNoteTable,
   evalNoteFormula,
   filterNoteRows,
+  basesPropertiesReading,
   filterRowsByRelation,
   parseBasesSession,
+  rankLinkChoices,
   relationTargets,
   resolveNoteLink,
   serializeNoteTableFile,
@@ -158,6 +160,20 @@ const onlyBeta = filterRowsByRelation(related.rows, "beta", ["related"]);
 assert.deepEqual(onlyBeta.map((row) => row.id), ["a"]);
 const nonsense = filterRowsByRelation(related.rows, "ZZZ", ["related"]);
 assert.equal(nonsense.length, 0);
+const choices = rankLinkChoices(
+  [
+    { id: "w3", name: "Welcome 3.md", path: "Projects/Welcome 3.md" },
+    { id: "w", name: "Welcome.md", path: "Welcome.md" },
+    { id: "other", name: "Local-first Vault.md", path: "Projects/Local-first Vault.md" },
+    { id: "canvas", name: "Board.canvas", path: "Projects/Board.canvas" },
+  ],
+  "Welcome",
+);
+assert.equal(choices[0].id, "w");
+assert.equal(choices.some((note) => note.id === "canvas"), false);
+assert.equal(basesPropertiesReading(0, true), false);
+assert.equal(basesPropertiesReading(4, false), false);
+assert.equal(basesPropertiesReading(4, true), true);
 
 const { desktopWriteParent, mkdirTargetForFolder, mkdirTargetForWrite } = await import(
   "../src/lib/vault/desktop-write-path.ts"
@@ -212,6 +228,13 @@ assert.match(table, /bases-relation-filter/);
 assert.match(table, /bases-link-note/);
 assert.match(table, /ensureNoteBody\(rowId\)/);
 assert.match(table, /updateNoteContent\(rowId, next, \{ source: true \}\)/);
+assert.match(table, /confirmTopLink/);
+assert.match(table, /setBodyEpoch/);
+assert.match(table, /min-h-11/);
+assert.match(table, /data-active=\{active \? "1" : "0"\}/);
+assert.match(table, /basesPropertiesReading/);
+assert.match(table, /e\.key === "Enter"/);
+assert.doesNotMatch(table, /ids\.length >= 24/);
 assert.match(readFileSync("src/lib/vault/tauri-adapter.ts", "utf8"), /mkdirTargetForWrite/);
 assert.match(readFileSync("src/lib/vault/tauri-adapter.ts", "utf8"), /destKind === "file"/);
 assert.doesNotMatch(table, /no typed relations/);
