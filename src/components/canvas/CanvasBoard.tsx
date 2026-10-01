@@ -185,6 +185,9 @@ export function CanvasBoard({ noteId, content }: Props) {
       if (!t.closest("[data-canvas-add]")) setAddOpen(false);
       if (!t.closest("[data-canvas-align]")) setAlignOpen(false);
       if (!t.closest("[data-canvas-more]")) setMoreOpen(false);
+      if (!t.closest(".nexus-canvas")) {
+        document.querySelectorAll(".nexus-canvas").forEach((el) => el.setAttribute("data-canvas-focus", "0"));
+      }
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
@@ -288,8 +291,35 @@ export function CanvasBoard({ noteId, content }: Props) {
       h: Math.max(...cards.map((c) => c.y + c.h)) - Math.min(...cards.map((c) => c.y)) + pad * 2,
       color: "6",
     };
-    commit({ ...docRef.current, cards: [group, ...docRef.current.cards] });
+    const next = { ...docRef.current, cards: [group, ...docRef.current.cards] };
+    commit(next);
+    persist(next);
     setSelected([group.id, ...ids]);
+  };
+
+  const connectSelected = () => {
+    const cards = selected
+      .map((id) => docRef.current.cards.find((c) => c.id === id))
+      .filter((c): c is CanvasCard => c != null && c.kind !== "group");
+    if (cards.length < 2) return;
+    const a = cards[0];
+    const b = cards[1];
+    if (!a || !b) return;
+    const exists = docRef.current.edges.some(
+      (edge) =>
+        (edge.from === a.id && edge.to === b.id) || (edge.from === b.id && edge.to === a.id),
+    );
+    if (exists) return;
+    const edge: CanvasEdge = {
+      id: newCardId(),
+      from: a.id,
+      to: b.id,
+      fromSide: "right",
+      toSide: "left",
+    };
+    const next = { ...docRef.current, edges: [...docRef.current.edges, edge] };
+    commit(next);
+    persist(next);
   };
 
   const patchCards = (fn: (cards: CanvasCard[]) => CanvasCard[]) =>
@@ -492,7 +522,8 @@ export function CanvasBoard({ noteId, content }: Props) {
     setMenu(null);
     setEditingId(null);
     setSelectedEdge(null);
-    const ids = e.shiftKey
+    const multi = e.shiftKey || e.metaKey || (e.ctrlKey && !e.altKey);
+    const ids = multi
       ? selected.includes(card.id)
         ? selected.filter((id) => id !== card.id)
         : [...selected, card.id]
@@ -702,9 +733,14 @@ export function CanvasBoard({ noteId, content }: Props) {
         e.preventDefault();
         toggleLock(selected);
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === "g" && selected.length >= 2) {
-        e.preventDefault();
-        frameIds(selected);
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "g") {
+        const board = document.querySelector(".nexus-canvas");
+        if (board?.getAttribute("data-canvas-focus") === "1") {
+          e.preventDefault();
+          e.stopPropagation();
+          frameIds(selected);
+          return;
+        }
       }
       const step = e.shiftKey ? 24 : 4;
       if (selected.length && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
@@ -843,11 +879,15 @@ export function CanvasBoard({ noteId, content }: Props) {
   const liveEdge = selectedEdge ? edgeById(selectedEdge) : null;
 
   return (
-    <div className="nexus-canvas relative flex min-h-0 flex-1 flex-col">
+    <div
+      className="nexus-canvas relative flex min-h-0 flex-1 flex-col"
+      data-canvas-focus="0"
+      onPointerDownCapture={(e) => e.currentTarget.setAttribute("data-canvas-focus", "1")}
+    >
       <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
         <span className="font-semibold text-[var(--text-secondary)]">Board</span>
         {" · "}
-        Edges and frames save in the file. Still missing: live note embeds.
+        Shift-click or Ctrl-click cards, then Connect or Frame. Edges and frames save in the file. Still missing: live note embeds.
       </div>
       <div className="nexus-canvas-toolbar">
         <div className="relative" data-canvas-add>
@@ -887,6 +927,16 @@ export function CanvasBoard({ noteId, content }: Props) {
             </div>
           ) : null}
         </div>
+        <button
+          type="button"
+          className="chip-btn"
+          data-testid="canvas-connect"
+          title="Connect the two selected cards"
+          disabled={selected.filter((id) => cardById(id)?.kind !== "group").length < 2}
+          onClick={connectSelected}
+        >
+          <Link2 size={13} /> Connect
+        </button>
         <button
           type="button"
           className="chip-btn"
@@ -1021,6 +1071,9 @@ export function CanvasBoard({ noteId, content }: Props) {
           >
             <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-[12px] border border-[var(--border)] bg-[var(--panel-solid)] px-4 py-3 text-center">
               <p className="text-[13px] text-[var(--text-secondary)]">This canvas is empty.</p>
+              <p className="max-w-[280px] text-[12px] text-[var(--text-muted)]">
+                Add cards, then Shift-click or Ctrl-click to select more than one. Connect links them. Frame groups them.
+              </p>
               <button
                 type="button"
                 className="primary-btn min-h-8 px-3 text-[12px]"

@@ -133,7 +133,7 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     case "graph":
       if (!hasVault || overlayOpen || prefs.focusMode) return false;
-      if (document.querySelectorAll(".nexus-canvas [data-canvas-card].is-selected").length >= 2) return false;
+      if (document.querySelector('.nexus-canvas[data-canvas-focus="1"]')) return false;
       toggleGraphForViewport();
       return true;
     case "newNote":

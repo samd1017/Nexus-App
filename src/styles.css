@@ -1928,8 +1928,8 @@
 }
 .nexus-canvas-port {
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   border: 0;
   background: transparent;
@@ -1941,9 +1941,9 @@
 .nexus-canvas-port::after {
   content: "";
   position: absolute;
-  inset: 6px;
+  inset: 12px;
   border-radius: 999px;
-  border: 1.5px solid var(--accent);
+  border: 2px solid var(--accent);
   background: var(--panel-solid);
 }
 .nexus-canvas-card.is-selected .nexus-canvas-port {
@@ -1956,10 +1956,10 @@
   opacity: 1;
   pointer-events: auto;
 }
-.nexus-canvas-port.is-top { top: -18px; left: 50%; transform: translateX(-50%); }
-.nexus-canvas-port.is-bottom { bottom: -18px; left: 50%; transform: translateY(0) translateX(-50%); }
-.nexus-canvas-port.is-left { left: -18px; top: 50%; transform: translateY(-50%); }
-.nexus-canvas-port.is-right { right: -18px; top: 50%; transform: translateY(-50%); }
+.nexus-canvas-port.is-top { top: -22px; left: 50%; transform: translateX(-50%); }
+.nexus-canvas-port.is-bottom { bottom: -22px; left: 50%; transform: translateY(0) translateX(-50%); }
+.nexus-canvas-port.is-left { left: -22px; top: 50%; transform: translateY(-50%); }
+.nexus-canvas-port.is-right { right: -22px; top: 50%; transform: translateY(-50%); }
 .nexus-canvas-port.is-live::after,
 .nexus-canvas-port:hover::after {
   background: var(--accent);

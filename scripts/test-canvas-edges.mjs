@@ -41,11 +41,33 @@ assert.equal(JSON.parse(raw).edges[0].fromNode, "a");
 assert.equal(JSON.parse(raw).nodes.find((n) => n.type === "group").label, "Frame");
 
 const { readFileSync } = await import("node:fs");
+const fixture = `{
+  "nodes": [
+    { "id": "a", "type": "text", "text": "A", "x": 0, "y": 0, "width": 200, "height": 80 },
+    { "id": "b", "type": "file", "file": "Welcome.md", "x": 320, "y": 40, "width": 200, "height": 80 },
+    { "id": "f", "type": "group", "label": "Frame", "x": -28, "y": -28, "width": 600, "height": 200 }
+  ],
+  "edges": [
+    { "id": "e", "fromNode": "a", "fromSide": "right", "toNode": "b", "toSide": "left" }
+  ]
+}
+`;
+const fromFile = parseCanvasDoc(fixture);
+assert.equal(fromFile.edges.length, 1);
+assert.equal(fromFile.edges[0].from, "a");
+assert.equal(fromFile.edges[0].to, "b");
+assert.equal(fromFile.cards.find((c) => c.kind === "group")?.text, "Frame");
 const board = readFileSync("src/components/canvas/CanvasBoard.tsx", "utf8");
+assert.match(board, /data-testid="canvas-connect"/);
 assert.match(board, /data-testid="canvas-frame"/);
-assert.match(board, /data-testid="canvas-edge"/);
-assert.match(board, /data-testid="canvas-port"/);
+assert.match(board, /data-canvas-focus/);
+assert.match(board, /Shift-click or Ctrl-click/);
 assert.match(board, /Still missing: live note embeds/);
 assert.doesNotMatch(board, /Not full Obsidian Canvas/);
+const css = readFileSync("src/styles.css", "utf8");
+assert.match(css, /\.nexus-canvas-port \{[^}]*width: 44px;/s);
+const keys = readFileSync("src/components/chrome/KeyboardShortcuts.tsx", "utf8");
+assert.match(keys, /nexus-canvas\[data-canvas-focus="1"\]/);
+assert.doesNotMatch(keys, /data-canvas-card].is-selected"\)\.length >= 2/);
 
 console.log("canvas-edges: PASS");
