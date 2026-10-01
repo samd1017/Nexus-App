@@ -60,6 +60,13 @@ export function isCanvasPath(path: string | null | undefined): boolean {
   return !!path && path.toLowerCase().endsWith(".canvas");
 }
 
+/** Title shown on a file card: the vault file name, not a rendered heading. */
+export function canvasNoteTitle(path: string, name?: string | null): string {
+  const file = (name && name.trim()) || path.split("/").pop() || path;
+  const title = file.replace(/\.canvas$/i, "").replace(/\.md$/i, "").trim();
+  return title || "Missing note";
+}
+
 /** A vault file the tree should open: Markdown or a canvas board. */
 export function isVaultNoteFileName(name: string): boolean {
   const n = name.toLowerCase();

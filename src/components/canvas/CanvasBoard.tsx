@@ -37,6 +37,7 @@ import {
   bringToFront,
   CANVAS_COLORS,
   canvasColorHex,
+  canvasNoteTitle,
   cardAnchor,
   cardAtPoint,
   distributeCards,
@@ -45,6 +46,7 @@ import {
   fitCamera,
   frameAroundCards,
   idsMovedWith,
+  isCanvasPath,
   nearestSide,
   newCardId,
   nudgeCards,
@@ -62,6 +64,10 @@ import {
   type CanvasSide,
 } from "@/lib/vault/canvas";
 import { previewSnippet } from "@/lib/markdown/serialize";
+import {
+  scheduleFillSafeHydrate,
+  shouldSkipBackgroundBodyHydrate,
+} from "@/lib/vault/fill-interaction";
 import { cn } from "@/lib/utils";
 
 type Props = { noteId: string; content: string };
@@ -111,6 +117,8 @@ export function CanvasBoard({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const createNote = useVaultStore((s) => s.createNote);
+  const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const nodes = useVaultStore((s) => s.nodes);
   const [doc, setDoc] = useState<CanvasDoc>(() => parseCanvasDoc(content));
   const [picker, setPicker] = useState<"note" | "link" | null>(null);
@@ -223,15 +231,37 @@ export function CanvasBoard({ noteId, content }: Props) {
   }, [noteId]);
 
   const notes = useMemo(
-    () => Object.values(nodes).filter((n) => n.kind === "note" && n.id !== noteId),
+    () =>
+      Object.values(nodes).filter(
+        (n) => n.kind === "note" && n.id !== noteId && !isCanvasPath(n.path),
+      ),
     [nodes, noteId],
   );
   const filteredNotes = useMemo(() => {
     const q = pickerQ.trim().toLowerCase();
     return notes
       .filter((n) => !q || noteTitle(n).toLowerCase().includes(q) || n.path.toLowerCase().includes(q))
-      .slice(0, 14);
+      .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)))
+      .slice(0, 40);
   }, [notes, pickerQ]);
+
+  useEffect(() => {
+    const missing: string[] = [];
+    for (const card of doc.cards) {
+      if (card.kind !== "note" || !card.notePath) continue;
+      const note = Object.values(nodes).find((n) => n.kind === "note" && n.path === card.notePath);
+      if (note && note.content === undefined) missing.push(note.id);
+    }
+    if (!missing.length) return;
+    const run = () => {
+      if (shouldSkipBackgroundBodyHydrate({ fillBusy: useVaultStore.getState().indexFillBusy })) return;
+      for (const id of missing.slice(0, 12)) void ensureNoteBody(id);
+    };
+    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
+      return scheduleFillSafeHydrate(run);
+    }
+    run();
+  }, [doc.cards, nodes, indexFillBusy, ensureNoteBody]);
 
   const worldFromEvent = (e: { clientX: number; clientY: number }, cam = docRef.current.cam) => {
     const rect = hostRef.current?.getBoundingClientRect();
@@ -490,6 +520,12 @@ export function CanvasBoard({ noteId, content }: Props) {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("textarea,input,[data-resize],[data-card-open]")) return;
     if ((e.target as HTMLElement).closest("[data-canvas-port]")) return;
+    if (e.detail >= 2 && card.kind === "note") {
+      e.stopPropagation();
+      e.preventDefault();
+      openNote(card.notePath);
+      return;
+    }
     if (connectFrom && connectFrom.id !== card.id) {
       e.stopPropagation();
       e.preventDefault();
@@ -521,7 +557,6 @@ export function CanvasBoard({ noteId, content }: Props) {
       const c = docRef.current.cards.find((x) => x.id === id);
       if (c) ox[id] = { x: c.x, y: c.y };
     }
-    capture(e);
     dragRef.current = { kind: "card", ids: moveIds, x: e.clientX, y: e.clientY, ox, started: false };
   };
 
@@ -541,6 +576,7 @@ export function CanvasBoard({ noteId, content }: Props) {
       if (!drag.started) {
         if (dx * dx + dy * dy < 16) return;
         drag.started = true;
+        capture(e);
         beginHistory();
         live({ ...cur, cards: bringToFront(cur.cards, drag.ids) });
       }
@@ -870,7 +906,7 @@ export function CanvasBoard({ noteId, content }: Props) {
       <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
         <span className="font-semibold text-[var(--text-secondary)]">Board</span>
         {" · "}
-        Shift-click or Ctrl-click cards, then Connect or Frame. Edges and frames save in the file. Still missing: live note embeds.
+        Shift-click or Ctrl-click cards, then Connect or Frame. Note cards show the live title and a plain preview. Still missing: the note rendered inside the card, and community canvas plugins.
       </div>
       <div className="nexus-canvas-toolbar">
         <div className="relative" data-canvas-add>
@@ -1021,6 +1057,8 @@ export function CanvasBoard({ noteId, content }: Props) {
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-white/[0.05]"
+                  data-testid="canvas-pin-note"
+                  data-note-path={n.path}
                   onClick={() => addCard({ kind: "note", notePath: n.path, w: 260, h: 160 })}
                 >
                   <FileText size={12} className="opacity-50" />
@@ -1401,7 +1439,8 @@ export function CanvasBoard({ noteId, content }: Props) {
               const note = card.kind === "note"
                 ? Object.values(nodes).find((n) => n.kind === "note" && n.path === card.notePath)
                 : null;
-              const preview = note ? previewSnippet(note.content || "", 180) : "";
+              const noteLabel = card.kind === "note" ? canvasNoteTitle(card.notePath || "", note?.name) : "";
+              const preview = note && typeof note.content === "string" ? previewSnippet(note.content, 180) : "";
               const hex = canvasColorHex(card.color);
               const dim = q
                 ? !(
@@ -1470,27 +1509,34 @@ export function CanvasBoard({ noteId, content }: Props) {
                     />
                   ))}
                   {card.kind === "note" ? (
-                    <div className="flex h-full w-full flex-col items-start gap-1 overflow-hidden text-left">
+                    <div
+                      className="flex h-full w-full flex-col items-start gap-1 overflow-hidden text-left"
+                      data-testid="canvas-note-card"
+                      data-note-path={card.notePath || ""}
+                    >
                       <span className="flex w-full items-center gap-1.5 text-[13px] font-medium">
                         <StickyNote size={14} className="text-[var(--accent)]" />
-                        <span className="min-w-0 truncate">{note ? noteTitle(note) : card.notePath || "Missing note"}</span>
-                        {note ? (
-                          <button
-                            type="button"
-                            data-testid="canvas-open-note"
-                            data-card-open
-                            className="ml-auto shrink-0 text-[10px] text-[var(--accent)] hover:underline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openNote(card.notePath);
-                            }}
-                          >
-                            Open
-                          </button>
-                        ) : null}
+                        <span className="min-w-0 truncate" data-testid="canvas-note-title">
+                          {noteLabel}
+                        </span>
+                        <button
+                          type="button"
+                          data-testid="canvas-open-note"
+                          data-card-open
+                          className="ml-auto shrink-0 text-[10px] text-[var(--accent)] hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openNote(card.notePath);
+                          }}
+                        >
+                          Open
+                        </button>
                       </span>
-                      <span className="line-clamp-4 text-[11px] leading-relaxed text-[var(--text-muted)]">
-                        {preview || "Double-click to open"}
+                      <span
+                        className="line-clamp-4 text-[11px] leading-relaxed text-[var(--text-muted)]"
+                        data-testid="canvas-note-preview"
+                      >
+                        {preview || (note && note.content === undefined ? "Loading preview…" : note ? "Empty note" : "Missing note")}
                       </span>
                     </div>
                   ) : card.kind === "image" ? (

@@ -17,6 +17,7 @@ if (!process.env.NEXUS_TSX) {
 }
 
 const {
+  canvasNoteTitle,
   emptyCanvasFile,
   isCanvasNote,
   parseCanvasDoc,
@@ -41,6 +42,22 @@ const saved = serializeCanvas(emptyCanvasFile(), parsed, "Board.canvas");
 assert.match(saved, /"type": "file"/);
 assert.match(saved, /Welcome\.md/);
 assert.equal(parseCanvasDoc(saved).cards[0].notePath, "Welcome.md");
+assert.equal(JSON.parse(saved).nodes[0].type, "file");
+assert.equal(JSON.parse(saved).nodes[0].file, "Welcome.md");
+
+const nested = {
+  cards: [{ id: "n", x: 0, y: 0, w: 260, h: 160, kind: "note", notePath: "Projects/Welcome.md" }],
+  edges: [],
+  cam: { x: 0, y: 0, k: 1 },
+};
+const nestedRaw = serializeCanvas("", nested, "Board.canvas");
+assert.equal(JSON.parse(nestedRaw).nodes[0].type, "file");
+assert.equal(JSON.parse(nestedRaw).nodes[0].file, "Projects/Welcome.md");
+assert.equal(parseCanvasDoc(nestedRaw).cards[0].kind, "note");
+assert.equal(parseCanvasDoc(nestedRaw).cards[0].notePath, "Projects/Welcome.md");
+assert.equal(canvasNoteTitle("Projects/Welcome.md"), "Welcome");
+assert.equal(canvasNoteTitle("Projects/Welcome.md", "Welcome.md"), "Welcome");
+assert.equal(canvasNoteTitle(""), "Missing note");
 
 const fenced = "---\ntype: canvas\n---\n\n````canvas\n{\"cards\":[],\"edges\":[],\"cam\":{\"x\":0,\"y\":0,\"k\":1}}\n````\n";
 assert.equal(isCanvasNote(fenced, "Old.md"), true);
@@ -60,8 +77,15 @@ const board = readFileSync("src/components/canvas/CanvasBoard.tsx", "utf8");
 assert.match(board, /data-testid="canvas-empty"/);
 assert.match(board, /data-testid="canvas-add-note"/);
 assert.match(board, /data-testid="canvas-open-note"/);
+assert.match(board, /data-testid="canvas-note-title"/);
+assert.match(board, /data-testid="canvas-note-preview"/);
+assert.match(board, /data-testid="canvas-pin-note"/);
+assert.match(board, /ensureNoteBody/);
 assert.match(board, /serializeCanvas/);
-assert.match(board, /Still missing: live note embeds/);
+assert.match(board, /Still missing: the note rendered inside the card, and community canvas plugins/);
+assert.match(board, /live title and a plain preview/);
+assert.doesNotMatch(board, /live note embeds/);
+assert.doesNotMatch(board, /Not full Obsidian Canvas/);
 const pane = readFileSync("src/components/editor/EditorPane.tsx", "utf8");
 assert.match(pane, /isCanvasNote\(body, note\.path\)/);
 assert.match(pane, /canvasNote \? \(\s*<CanvasBoard/);
