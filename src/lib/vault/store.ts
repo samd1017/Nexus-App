@@ -119,6 +119,14 @@ import {
   markdownFingerprint,
 } from "@/lib/markdown/purity";
 import { recordNoteVisit, recentNoteIdsForVault } from "./visit-history";
+import {
+  loadTabSession,
+  pathIndex,
+  resolveTabList,
+  saveTabSession,
+  type TabSession,
+} from "./tab-session";
+import { recallPaneScroll, rememberPaneScroll } from "@/lib/editor/pane-scroll";
 import { trackVisit } from "./session-recents";
 import { pushNav, resetNavHistory } from "./nav-history";
 import { clearPulse, pushPulse } from "./pulse";
@@ -261,6 +269,7 @@ import {
   fetchShellAdmit,
   fetchShellForget,
   fetchShellNote,
+  fetchShellByPaths,
   fetchShellSearch,
   mergeShellRows,
   onShellCatalogReconciled,
@@ -1952,17 +1961,178 @@ function recentsForOpenVault(
 ) {
 	return recentNoteIdsForVault(vaultId, nodes, limit);
 }
+/** Which vault the in-memory tab strip belongs to. A different vault must not inherit it. */
+let tabsOwnerVault: string | null = null;
+let suppressTabSave = false;
+
+function notePaths(ids: readonly string[], nodes: Record<string, VaultNode>): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const id of ids) {
+		const node = nodes[id];
+		if (node?.kind !== "note" || !node.path || seen.has(node.path)) continue;
+		seen.add(node.path);
+		out.push(node.path);
+	}
+	return out;
+}
+
+function snapshotTabSession(s: VaultStore): TabSession {
+	const primary = notePaths(s.primaryTabs ?? [], s.nodes);
+	const secondary = notePaths(s.secondaryTabs ?? [], s.nodes);
+	const active = s.activeNoteId ? s.nodes[s.activeNoteId] : null;
+	const second = s.secondaryNoteId ? s.nodes[s.secondaryNoteId] : null;
+	const scroll: TabSession["scroll"] = [];
+	const pushScroll = (pane: "primary" | "secondary", ids: readonly string[]) => {
+		for (const id of ids) {
+			const node = s.nodes[id];
+			if (node?.kind !== "note" || !node.path) continue;
+			const top = recallPaneScroll(pane, id);
+			if (top > 0) scroll.push({ pane, path: node.path, top });
+		}
+	};
+	pushScroll("primary", s.primaryTabs ?? []);
+	pushScroll("secondary", s.secondaryTabs ?? []);
+	return {
+		primary,
+		secondary,
+		active: active?.kind === "note" ? active.path : primary[0] ?? null,
+		secondaryActive: second?.kind === "note" ? second.path : secondary[0] ?? null,
+		split: Boolean(s.settings.workspaceSplit && secondary.length),
+		scroll,
+		at: Date.now(),
+	};
+}
+
+function rememberSessionScroll(session: TabSession, pathToId: Map<string, string>): void {
+	for (const mark of session.scroll) {
+		const id = pathToId.get(mark.path);
+		if (id) rememberPaneScroll(mark.pane, id, mark.top);
+	}
+}
+
+function applyResolvedTabs(
+	s: VaultStore,
+	primary: ReturnType<typeof resolveTabList>,
+	secondary: ReturnType<typeof resolveTabList>,
+	split: boolean,
+	fallbackId: string | null,
+): void {
+	const note = (id: string | null) => Boolean(id && s.nodes[id]?.kind === "note");
+	let ids = primary.ids;
+	let active = primary.activeId;
+	if (!ids.length && note(fallbackId)) {
+		ids = [fallbackId as string];
+		active = fallbackId;
+	}
+	const secondIds = split ? secondary.ids : [];
+	const secondActive = secondIds.length ? secondary.activeId ?? secondIds[0] : null;
+	const activeNode = active ? s.nodes[active] : null;
+	const secondNode = secondActive ? s.nodes[secondActive] : null;
+	suppressTabSave = true;
+	useVaultStore.setState({
+		primaryTabs: ids,
+		activeNoteId: active,
+		secondaryTabs: secondIds,
+		secondaryNoteId: secondActive,
+		settings: {
+			...s.settings,
+			workspaceSplit: Boolean(secondActive),
+			lastNotePath: activeNode?.kind === "note" ? activeNode.path : s.settings.lastNotePath,
+			lastSecondaryNotePath:
+				secondNode?.kind === "note" ? secondNode.path : s.settings.lastSecondaryNotePath,
+		},
+	});
+	suppressTabSave = false;
+	if (active) {
+		const n = useVaultStore.getState().nodes[active];
+		if (n?.kind === "note" && n.content === undefined) {
+			void useVaultStore.getState().ensureNoteBody(active);
+		}
+	}
+}
+
+/** Paths not in this window: ask the catalog. Missing files leave the saved list. */
+function admitMissingTabPaths(vaultId: string, paths: string[]): void {
+	const db = useVaultStore.getState().shellDbPath;
+	if (!db || db === BROWSER_SHELL_DB || !paths.length) return;
+	void fetchShellByPaths(db, paths).then((rows) => {
+		const live = useVaultStore.getState();
+		if (live.vaultId !== vaultId || tabsOwnerVault !== vaultId) return;
+		if (!rows) return;
+		const notes = rows.filter((row) => row.kind === "note");
+		if (notes.length) live.ingestShellRows(notes);
+		const found = new Set(notes.map((row) => row.path));
+		const saved = loadTabSession(vaultId);
+		if (!saved) return;
+		const drop = new Set(paths.filter((path) => !found.has(path)));
+		const next: TabSession = {
+			...saved,
+			primary: saved.primary.filter((path) => !drop.has(path)),
+			secondary: saved.secondary.filter((path) => !drop.has(path)),
+			at: Date.now(),
+		};
+		if (next.active && drop.has(next.active)) next.active = next.primary[0] ?? null;
+		if (next.secondaryActive && drop.has(next.secondaryActive)) {
+			next.secondaryActive = next.secondary[0] ?? null;
+		}
+		next.split = next.split && next.secondary.length > 0;
+		saveTabSession(vaultId, next);
+		const again = useVaultStore.getState();
+		if (again.vaultId !== vaultId) return;
+		const index = pathIndex(again.nodes);
+		applyResolvedTabs(
+			again,
+			resolveTabList(next.primary, next.active, index),
+			resolveTabList(next.secondary, next.secondaryActive, index),
+			next.split,
+			again.activeNoteId,
+		);
+		rememberSessionScroll(next, pathIndex(useVaultStore.getState().nodes));
+	});
+}
+
+function restoreSavedTabs(s: VaultStore, fallbackId: string | null): void {
+	const saved = loadTabSession(s.vaultId);
+	const index = pathIndex(s.nodes);
+	const primary = saved
+		? resolveTabList(saved.primary, saved.active, index)
+		: { ids: [] as string[], paths: [] as string[], activeId: null, activePath: null, missing: [] as string[] };
+	const secondary = saved
+		? resolveTabList(saved.secondary, saved.secondaryActive, index)
+		: { ids: [] as string[], paths: [] as string[], activeId: null, activePath: null, missing: [] as string[] };
+	applyResolvedTabs(s, primary, secondary, Boolean(saved?.split), fallbackId);
+	if (saved) rememberSessionScroll(saved, index);
+	const missing = [...primary.missing, ...secondary.missing];
+	const shellLookup = Boolean(
+		s.shellCatalog && s.shellDbPath && s.shellDbPath !== BROWSER_SHELL_DB,
+	);
+	if (s.vaultId && missing.length && shellLookup) {
+		admitMissingTabPaths(s.vaultId, missing);
+		return;
+	}
+	const live = useVaultStore.getState();
+	if (live.vaultId) saveTabSession(live.vaultId, snapshotTabSession(live));
+}
+
 /** Reset nav stack and seed with launch note (browser-like: ⌘[ inactive until second open). */
 function resetAndSeedNav(activeNoteId: string | null) {
-	resetNavHistory();
-	if (activeNoteId) pushNav(activeNoteId);
 	const s = useVaultStore.getState();
 	const note = (id: string | null) => Boolean(id && s.nodes[id]?.kind === "note");
+	const vaultChanged = tabsOwnerVault !== s.vaultId;
+	const primaryLive = vaultChanged ? [] : (s.primaryTabs ?? []).filter((id) => note(id));
+	if (vaultChanged || primaryLive.length === 0) {
+		tabsOwnerVault = s.vaultId;
+		restoreSavedTabs(s, note(activeNoteId) ? activeNoteId : null);
+		const active = useVaultStore.getState().activeNoteId;
+		resetNavHistory();
+		if (active) pushNav(active);
+		return;
+	}
+	resetNavHistory();
+	if (activeNoteId) pushNav(activeNoteId);
 	const patch: Partial<VaultStore> = {};
-	const primaryLive = (s.primaryTabs ?? []).filter((id) => note(id));
-	if (primaryLive.length === 0) {
-		patch.primaryTabs = note(activeNoteId) ? [activeNoteId as string] : [];
-	} else if (note(activeNoteId) && !primaryLive.includes(activeNoteId as string)) {
+	if (note(activeNoteId) && !primaryLive.includes(activeNoteId as string)) {
 		patch.primaryTabs = openNoteTab(primaryLive, s.activeNoteId, activeNoteId as string, "replace").tabs;
 	} else if (primaryLive.length !== (s.primaryTabs ?? []).length) {
 		patch.primaryTabs = primaryLive;
@@ -2636,6 +2806,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		// A fill can outlive the mounted tree. Do not clear the session
 		// out from under it — Welcome reopen joins the same folder.
 		if (vaultFillBusy() || desktopFillRoot) return;
+		tabsOwnerVault = null;
 		set({
 			vaultId: null,
 			vaultName: "",
@@ -3509,6 +3680,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			totalHint: null,
 			message: ""
 		});
+		tabsOwnerVault = null;
 		set({
 			vaultId: null,
 			vaultName: "",
@@ -6285,6 +6457,20 @@ useVaultStore.subscribe((state, prev) => {
 	} finally {
 		noteTabSettle = false;
 	}
+});
+
+useVaultStore.subscribe((state, prev) => {
+	if (suppressTabSave || !prev || !state.vaultId || tabsOwnerVault !== state.vaultId) return;
+	if (
+		state.primaryTabs === prev.primaryTabs &&
+		state.secondaryTabs === prev.secondaryTabs &&
+		state.activeNoteId === prev.activeNoteId &&
+		state.secondaryNoteId === prev.secondaryNoteId &&
+		state.settings.workspaceSplit === prev.settings.workspaceSplit
+	) {
+		return;
+	}
+	saveTabSession(state.vaultId, snapshotTabSession(state));
 });
 
 /** DEV-only probe for Playwright / stress harnesses — not shipped to production. */

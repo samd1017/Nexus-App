@@ -280,6 +280,19 @@ export function SourceEditor({
     emitLive(live);
   }, [noteId, content, emitLive, pane]);
 
+  useEffect(() => {
+    const y = recallPaneScroll(pane, noteId);
+    if (y <= 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta || noteIdRef.current !== noteId || ta.scrollTop > 1) return;
+      const path = useVaultStore.getState().nodes[noteId]?.path;
+      if (writeFocusPending(path)) return;
+      ta.scrollTop = y;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [noteId, pane]);
+
   // Morning autofocus: today's daily + empty Focus — once per note open
   useEffect(() => {
     if (morningFocusedFor.current === noteId) return;

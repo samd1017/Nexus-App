@@ -953,12 +953,13 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       rememberPaneScroll(pane, previousNoteId, scrollRef.current.scrollTop);
     }
     const restoreScroll = () => {
-      if (!switchedNote) return;
       const port = scrollRef.current;
       if (!port) return;
       const path = useVaultStore.getState().nodes[noteId]?.path;
       if (writeFocusPending(path)) return;
-      port.scrollTop = recallPaneScroll(pane, noteId);
+      const y = recallPaneScroll(pane, noteId);
+      if (!switchedNote && (y <= 0 || port.scrollTop > 1)) return;
+      port.scrollTop = y;
     };
     if (noteIdRef.current !== noteId && editor && !editor.isDestroyed) {
       if (saveTimer.current) {
