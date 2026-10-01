@@ -384,6 +384,22 @@ assert.equal(again.match(/\[\[Welcome\]\]/g).length, 1);
 const also = withNoteRelation(linked, "related", "Beta");
 assert.match(also, /\[\[Welcome\]\]/);
 assert.match(also, /\[\[Beta\]\]/);
+// Linking keeps block lists, comments, and other keys exactly as written
+const blocky = "---\ntitle: X\naliases:\n  - Old name\n  - Other\n# keep me\nrelated: [[A]]\nstatus: draft\n---\nBody\n";
+const blockLinked = withNoteRelation(blocky, "related", "B");
+assert.equal(blockLinked, "---\ntitle: X\naliases:\n  - Old name\n  - Other\n# keep me\nrelated: [[A]] [[B]]\nstatus: draft\n---\nBody\n");
+assert.equal(withNoteRelation(blockLinked, "related", "b"), blockLinked);
+const blockRelated = "---\nrelated:\n  - \"[[A]]\"\n  - \"[[Folder/C]]\"\naliases:\n  - Keep\n---\n# T\n";
+assert.equal(withNoteRelation(blockRelated, "related", "B"), "---\nrelated: [[A]] [[C]] [[B]]\naliases:\n  - Keep\n---\n# T\n");
+assert.equal(withNoteRelation("---\ntitle: X\n---\nBody\n", "related", "B"), "---\ntitle: X\nrelated: [[B]]\n---\nBody\n");
+assert.equal(withNoteRelation("---\r\ntitle: X\r\n---\r\nBody\r\n", "related", "B"), "---\r\ntitle: X\r\nrelated: [[B]]\r\n---\r\nBody\r\n");
+
+// Block lists read as lists; links, backlinks, and tags come from note text
+const { noteTableProperties } = await import("../src/lib/vault/note-table.ts");
+assert.deepEqual(
+  noteTableProperties("---\ntags:\n  - writing\n  - \"has, comma\"\n\n  - '[[Q4 Plan]]'\nempty:\nnested:\n  key: v\nafter: 1\n---\n"),
+  { tags: '[writing, "has, comma", "[[Q4 Plan]]"]', after: "1" },
+);
 const onlyWelcome = filterRowsByRelation(related.rows, "Welcome", ["related"]);
 assert.equal(onlyWelcome.length, 0);
 const onlyBeta = filterRowsByRelation(related.rows, "beta", ["related"]);

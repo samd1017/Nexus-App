@@ -172,13 +172,40 @@ export function resolveNoteLink(
   return { id: hit?.id ?? null, title };
 }
 
+function flowItem(item: string): string {
+  const raw = item.trim();
+  const text =
+    raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
+      ? raw.slice(1, -1)
+      : raw;
+  return /[,[\]"']|^\s|\s$/.test(text) ? JSON.stringify(text) : text;
+}
+
+/**
+ * One string per top-level key. A block list (`key:` then `- item` lines)
+ * reads as the flow list `[a, b]`, so formulas see the same list either way.
+ */
 export function noteTableProperties(content: string | null | undefined): Record<string, string> {
   if (!content) return {};
   const { yaml } = splitFrontmatter(content);
   if (!yaml) return {};
   const props: Record<string, string> = {};
-  for (const field of parseFrontmatterFields(yaml)) {
-    const value = field.value.replace(/^['"]|['"]$/g, "").trim();
+  const lines = yaml.split(/\r?\n/);
+  const fields = parseFrontmatterFields(yaml);
+  for (const field of fields) {
+    let value = field.value.replace(/^['"]|['"]$/g, "").trim();
+    if (!value) {
+      const at = lines.findIndex((line) => new RegExp(`^${field.key}\\s*:\\s*$`).test(line));
+      const items: string[] = [];
+      for (let i = at + 1; at >= 0 && i < lines.length; i += 1) {
+        const line = lines[i] ?? "";
+        if (!line.trim()) continue;
+        const item = /^\s+-\s*(.*)$/.exec(line);
+        if (!item) break;
+        if (item[1]?.trim()) items.push(flowItem(item[1]));
+      }
+      if (items.length) value = `[${items.join(", ")}]`;
+    }
     if (!value) continue;
     props[field.key] = value;
   }
@@ -325,15 +352,30 @@ function asSummaries(raw: unknown, formulas: BasesFormula[]): Record<string, Sum
 export function withNoteRelation(content: string, key: string, title: string): string {
   const name = title.trim();
   if (!/^[A-Za-z_][\w-]*$/.test(key) || !name) return content;
-  const { yaml } = splitFrontmatter(content || "");
-  const fields = yaml ? parseFrontmatterFields(yaml) : [];
-  const current = fields.find((field) => field.key === key)?.value ?? "";
+  const source = content || "";
+  const current = noteTableProperties(source)[key] ?? "";
   const titles = relationTargets(current).map((target) => target.split("/").pop() || target);
   if (!titles.some((item) => item.toLowerCase() === name.toLowerCase())) titles.push(name);
   const value = titles.map((item) => `[[${item}]]`).join(" ");
+  const block = /^(\uFEFF?---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(source);
+  if (block) {
+    // Replace only this key's lines so block lists and comments elsewhere survive.
+    const lines = (block[2] ?? "").split(/\r?\n/);
+    const at = lines.findIndex((line) => new RegExp(`^${key}\\s*:`).test(line));
+    if (at < 0) lines.push(`${key}: ${value}`);
+    else {
+      let end = at + 1;
+      while (end < lines.length && /^\s+\S/.test(lines[end] ?? "")) end += 1;
+      lines.splice(at, end - at, `${key}: ${value}`);
+    }
+    const eol = (block[1] ?? "").endsWith("\r\n") ? "\r\n" : "\n";
+    return `${block[1]}${lines.join(eol)}${block[3]}${source.slice(block[0].length)}`;
+  }
+  const { yaml } = splitFrontmatter(source);
+  const fields = yaml ? parseFrontmatterFields(yaml) : [];
   const next = fields.filter((field) => field.key !== key);
   next.push({ key, value });
-  return applyFrontmatter(content || "", next);
+  return applyFrontmatter(source, next);
 }
 
 /** `formula` keeps the first column's expression so older Nexus builds still open the file. */
