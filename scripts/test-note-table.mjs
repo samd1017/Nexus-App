@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { buildNoteTable, filterNoteRows, sortNoteRows } = await import("../src/lib/vault/note-table.ts");
+const { buildNoteTable, evalNoteFormula, filterNoteRows, parseBasesSession, sortNoteRows } = await import("../src/lib/vault/note-table.ts");
 
 const notes = [
   {
@@ -67,19 +67,67 @@ assert.deepEqual(byStatus.map((row) => row.id), ["a", "b", "d"]);
 const byNameDesc = sortNoteRows(all.rows, "name", "desc");
 assert.equal(byNameDesc[0].name, "Loose");
 
+const alpha = {
+  name: "Alpha",
+  path: "Projects/Alpha.md",
+  folder: "Projects",
+  mtime: Date.UTC(2026, 9, 1, 15, 30),
+  props: { status: "draft" },
+};
+const blank = { ...alpha, name: "Blank", props: {} };
+assert.equal(evalNoteFormula(alpha, "file.mtime").value, "2026-10-01 15:30");
+assert.equal(evalNoteFormula(alpha, "file.name").value, "Alpha");
+assert.equal(evalNoteFormula(alpha, 'status & " · " & file.folder').value, "draft · Projects");
+assert.equal(evalNoteFormula(alpha, 'if(status, status, "—")').value, "draft");
+assert.equal(evalNoteFormula(blank, 'if(status, status, "—")').value, "—");
+assert.equal(evalNoteFormula(blank, "if(empty(status), \"none\", status)").value, "none");
+assert.ok(evalNoteFormula(alpha, "file.mtime + 1").error);
+assert.equal(evalNoteFormula(alpha, "file.mtime + 1").value, "");
+const withFormula = buildNoteTable(
+  [{ id: "a", path: "Projects/Alpha.md", name: "Alpha.md", content: "---\nstatus: draft\n---\n", mtime: Date.UTC(2026, 9, 1, 15, 30) }],
+  "",
+  "file.mtime",
+);
+assert.equal(withFormula.formulaError, null);
+assert.equal(withFormula.rows[0].formula, "2026-10-01 15:30");
+const session = parseBasesSession(null);
+assert.equal(session.views.length, 2);
+assert.equal(session.views[0].name, "All notes");
+assert.equal(session.views[0].formula, "file.mtime");
+assert.equal(session.views[1].id, "saved");
+const restored = parseBasesSession(JSON.stringify({
+  activeId: "saved",
+  views: [
+    { id: "all", name: "All notes", query: "", folder: "", column: "name", dir: "asc", formula: "file.mtime" },
+    { id: "saved", name: "Saved view", query: "draft", folder: "Projects", column: "formula", dir: "desc", formula: "file.name" },
+  ],
+}));
+assert.equal(restored.activeId, "saved");
+assert.equal(restored.views[1].folder, "Projects");
+assert.equal(restored.views[1].formula, "file.name");
+const legacy = parseBasesSession(JSON.stringify({ query: "Welcome", folder: "Journal", column: "name", dir: "asc" }));
+assert.equal(legacy.views[0].query, "Welcome");
+assert.equal(legacy.views[0].folder, "Journal");
+
 const { readFileSync } = await import("node:fs");
 const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
 assert.match(palette, /label: "Bases"/);
 assert.match(palette, /note table/);
 assert.match(palette, /setBasesOpen\(true\)/);
 const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
-assert.match(table, /Built-in table\. Not Obsidian Bases\./);
+assert.match(table, /Not Obsidian Bases/);
+assert.match(table, /no relations, no \.base files/);
 assert.match(table, /data-testid="bases-row"/);
 assert.match(table, /data-testid="bases-filter"/);
 assert.match(table, /data-testid="bases-sort"/);
+assert.match(table, /data-testid="bases-view"/);
+assert.match(table, /data-testid="bases-formula"/);
+assert.match(table, /data-testid="bases-save-view"/);
 assert.match(table, /setActiveNote\(row\.id\)/);
-assert.match(table, /No formulas, relations, or extra views/);
-assert.doesNotMatch(table, /Obsidian Bases views/);
+assert.match(table, /Built-in formulas only/);
+assert.doesNotMatch(table, /No formulas, relations, or extra views/);
+assert.doesNotMatch(table, /Obsidian Bases formulas/);
+assert.doesNotMatch(table, /\.base parity/);
 const editor = readFileSync("src/components/editor/EditorPane.tsx", "utf8");
 assert.match(editor, /data-testid="bases-open"/);
 const workspace = readFileSync("src/components/layout/Workspace.tsx", "utf8");

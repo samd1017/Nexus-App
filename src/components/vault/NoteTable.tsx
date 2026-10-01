@@ -4,7 +4,10 @@ import { setBasesOpen } from "@/lib/vault/bases-session";
 import {
   buildNoteTable,
   filterNoteRows,
+  parseBasesSession,
   sortNoteRows,
+  type BasesSession,
+  type BasesViewConfig,
 } from "@/lib/vault/note-table";
 import { useVaultStore } from "@/lib/vault/store";
 import {
@@ -15,21 +18,11 @@ import { cn } from "@/lib/utils";
 
 const VIEW_KEY = "nexus-bases-view";
 
-type View = { query: string; folder: string; column: string; dir: "asc" | "desc" };
-
-function readView(): View {
+function readSession(): BasesSession {
   try {
-    const raw = sessionStorage.getItem(VIEW_KEY);
-    if (!raw) return { query: "", folder: "", column: "name", dir: "asc" };
-    const parsed = JSON.parse(raw) as Partial<View>;
-    return {
-      query: typeof parsed.query === "string" ? parsed.query : "",
-      folder: typeof parsed.folder === "string" ? parsed.folder : "",
-      column: typeof parsed.column === "string" ? parsed.column : "name",
-      dir: parsed.dir === "desc" ? "desc" : "asc",
-    };
+    return parseBasesSession(sessionStorage.getItem(VIEW_KEY));
   } catch {
-    return { query: "", folder: "", column: "name", dir: "asc" };
+    return parseBasesSession(null);
   }
 }
 
@@ -38,15 +31,23 @@ export function NoteTable() {
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
-  const [view, setView] = useState<View>(readView);
+  const [session, setSession] = useState<BasesSession>(readSession);
+  const view = session.views.find((item) => item.id === session.activeId) ?? session.views[0];
+
+  const patchView = (partial: Partial<BasesViewConfig>) => {
+    setSession((prev) => ({
+      ...prev,
+      views: prev.views.map((item) => (item.id === prev.activeId ? { ...item, ...partial } : item)),
+    }));
+  };
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(VIEW_KEY, JSON.stringify(view));
+      sessionStorage.setItem(VIEW_KEY, JSON.stringify(session));
     } catch {
       /* ignore */
     }
-  }, [view]);
+  }, [session]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -68,6 +69,7 @@ export function NoteTable() {
           path: n.path,
           name: n.name,
           content: n.content,
+          mtime: n.mtime,
         })),
     [nodes],
   );
@@ -96,18 +98,41 @@ export function NoteTable() {
     run();
   }, [missingKey, indexFillBusy, ensureNoteBody]);
 
-  const built = useMemo(() => buildNoteTable(sources, view.folder), [sources, view.folder]);
+  const built = useMemo(
+    () => buildNoteTable(sources, view.folder, view.formula),
+    [sources, view.folder, view.formula],
+  );
   const shown = useMemo(
     () => sortNoteRows(filterNoteRows(built.rows, view.query), view.column, view.dir),
     [built.rows, view.query, view.column, view.dir],
   );
 
   const sortBy = (column: string) => {
-    setView((prev) => ({
-      ...prev,
+    patchView({
       column,
-      dir: prev.column === column && prev.dir === "asc" ? "desc" : "asc",
-    }));
+      dir: view.column === column && view.dir === "asc" ? "desc" : "asc",
+    });
+  };
+
+  const saveView = () => {
+    setSession((prev) => {
+      const current = prev.views.find((item) => item.id === prev.activeId) ?? prev.views[0];
+      return {
+        activeId: "saved",
+        views: prev.views.map((item) =>
+          item.id === "saved"
+            ? {
+                ...item,
+                query: current.query,
+                folder: current.folder,
+                column: current.column,
+                dir: current.dir,
+                formula: current.formula,
+              }
+            : item,
+        ),
+      };
+    });
   };
 
   const columns = [
@@ -115,6 +140,7 @@ export function NoteTable() {
     ["folder", "Folder"],
     ["path", "Path"],
     ...built.keys.map((key) => [key, key] as [string, string]),
+    ...(view.formula.trim() ? [["formula", "Formula"] as [string, string]] : []),
   ];
 
   return (
@@ -123,22 +149,48 @@ export function NoteTable() {
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Bases</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure">
-            Built-in table. Not Obsidian Bases.
+            Built-in table with two views and formulas. Not Obsidian Bases — no relations, no .base files.
           </p>
+        </div>
+        <div className="flex items-center gap-1">
+          {session.views.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={cn("chip-btn", session.activeId === item.id && "is-active")}
+              data-testid="bases-view"
+              data-view={item.id}
+              aria-pressed={session.activeId === item.id}
+              onClick={() => setSession((prev) => ({ ...prev, activeId: item.id }))}
+            >
+              {item.name}
+            </button>
+          ))}
+          <button type="button" className="chip-btn" data-testid="bases-save-view" onClick={saveView}>
+            Save view
+          </button>
         </div>
         <input
           value={view.query}
-          onChange={(e) => setView((prev) => ({ ...prev, query: e.target.value }))}
+          onChange={(e) => patchView({ query: e.target.value })}
           placeholder="Filter title or property…"
-          className="nexus-field ml-2 h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+          className="nexus-field h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
           data-testid="bases-filter"
         />
         <input
           value={view.folder}
-          onChange={(e) => setView((prev) => ({ ...prev, folder: e.target.value }))}
+          onChange={(e) => patchView({ folder: e.target.value })}
           placeholder="Folder"
-          className="nexus-field h-8 w-36 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+          className="nexus-field h-8 w-28 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
           data-testid="bases-folder"
+        />
+        <input
+          value={view.formula}
+          onChange={(e) => patchView({ formula: e.target.value })}
+          placeholder='Formula, e.g. file.mtime'
+          className="nexus-field h-8 w-44 rounded-md border border-[var(--border)] bg-transparent px-2 font-mono text-[11px]"
+          data-testid="bases-formula"
+          title="file.mtime, file.name, a property, a & b, or if(value, then, else)"
         />
         <button
           type="button"
@@ -190,6 +242,11 @@ export function NoteTable() {
                     {row.props[key] || ""}
                   </td>
                 ))}
+                {view.formula.trim() ? (
+                  <td className="max-w-[16rem] truncate px-2 py-1.5" data-formula={row.formula}>
+                    {row.formula}
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>
@@ -202,9 +259,11 @@ export function NoteTable() {
         {shown.length} note{shown.length === 1 ? "" : "s"}
         {built.keys.length ? ` · ${built.keys.join(", ")}` : " · no frontmatter properties in this set"}
         {built.truncated ? " · first 400 notes" : ""}
+        {view.formula.trim() ? ` · formula ${view.formula}` : ""}
+        {built.formulaError ? ` · ${built.formulaError}` : ""}
         {missingKey && !indexFillBusy ? " · reading note properties" : ""}
         {indexFillBusy ? " · properties wait until the index is idle" : ""}
-        . No formulas, relations, or extra views.
+        . Built-in formulas only. No relations. No .base files.
       </p>
     </div>
   );
