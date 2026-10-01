@@ -18,6 +18,8 @@ if (!process.env.NEXUS_TSX) {
 
 const { selectOverviewNotes, overviewEdges, OVERVIEW_CAP } = await import("../src/lib/graph/overview.ts");
 const { layoutOverviewGrid } = await import("../src/lib/graph/local-layout.ts");
+const { layoutOverviewForces, meanPairDistance, meanRadius } = await import("../src/lib/graph/overview-layout.ts");
+const { overviewGroupKey, overviewGroupColor } = await import("../src/lib/graph/overview.ts");
 const { surfaceForGraphHotkey } = await import("../src/lib/layout/graph-hotkey.ts");
 const { graphSurfaceOf } = await import("../src/lib/prefs/preferences.ts");
 
@@ -60,6 +62,31 @@ const grid = layoutOverviewGrid([
 assert.equal(grid.length, 4);
 assert.ok(grid.some((p) => p.x !== 0 || p.y !== 0));
 
+const four = [
+  { id: "a", title: "A" },
+  { id: "b", title: "B" },
+  { id: "c", title: "C" },
+  { id: "d", title: "D" },
+];
+const link = [{ source: "a", target: "b" }];
+const tight = layoutOverviewForces(four, link, { center: 20, link: 80, repulsion: 5 });
+const wide = layoutOverviewForces(four, link, { center: 20, link: 80, repulsion: 90 });
+assert.ok(meanPairDistance(wide) > meanPairDistance(tight));
+const shortLink = layoutOverviewForces(four, link, { center: 10, link: 40, repulsion: 8 });
+const longLink = layoutOverviewForces(four, link, { center: 10, link: 240, repulsion: 8 });
+const edgeLen = (points) => {
+  const a = points.find((p) => p.id === "a");
+  const b = points.find((p) => p.id === "b");
+  return Math.hypot(a.x - b.x, a.y - b.y);
+};
+assert.ok(edgeLen(longLink) > edgeLen(shortLink));
+const loose = layoutOverviewForces(four, [], { center: 0, link: 120, repulsion: 30 });
+const pulled = layoutOverviewForces(four, [], { center: 100, link: 120, repulsion: 30 });
+assert.ok(meanRadius(pulled) < meanRadius(loose));
+assert.equal(overviewGroupKey({ id: "a", title: "A", path: "Projects/A.md", folder: "Projects", tags: ["graph"] }, "folder"), "Projects");
+assert.equal(overviewGroupKey({ id: "a", title: "A", path: "A.md", folder: "", tags: [] }, "tag"), "(no tag)");
+assert.notEqual(overviewGroupColor("Projects", ["Journal", "Projects"]), overviewGroupColor("Journal", ["Journal", "Projects"]));
+
 assert.equal(surfaceForGraphHotkey("overview"), "local");
 assert.equal(graphSurfaceOf("overview"), "overview");
 assert.equal(graphSurfaceOf("explore"), "explore");
@@ -75,7 +102,13 @@ assert.match(overview, /graph-overview-folder/);
 assert.match(overview, /graph-overview-tag/);
 assert.match(overview, /graph-overview-count/);
 assert.match(overview, /graph-overview-node/);
-assert.match(overview, /Still missing: force sliders and color groups/);
+assert.match(overview, /graph-overview-center/);
+assert.match(overview, /graph-overview-link/);
+assert.match(overview, /graph-overview-repulsion/);
+assert.match(overview, /graph-overview-color/);
+assert.match(overview, /graph-overview-group/);
+assert.match(overview, /Still missing: drag-to-pin and saved group queries/);
+assert.doesNotMatch(overview, /Still missing: force sliders and color groups/);
 assert.match(overview, /setActiveNote/);
 const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
 assert.match(palette, /label: "Graph overview"/);

@@ -18,6 +18,26 @@ export type OverviewNote = {
 
 export type OverviewEdge = { source: string; target: string };
 
+export const OVERVIEW_GROUP_COLORS = [
+  "#5b8def",
+  "#3dbe8b",
+  "#e0a045",
+  "#d46a8c",
+  "#8b7cf6",
+  "#4ec4d4",
+  "#c4b15a",
+];
+
+export function overviewGroupKey(note: OverviewNote, mode: "folder" | "tag"): string {
+  if (mode === "folder") return note.folder || "(vault root)";
+  return note.tags[0] || "(no tag)";
+}
+
+export function overviewGroupColor(key: string, keys: readonly string[]): string {
+  const index = Math.max(0, keys.indexOf(key));
+  return OVERVIEW_GROUP_COLORS[index % OVERVIEW_GROUP_COLORS.length] ?? "#8b7cf6";
+}
+
 function folderOf(path: string): string {
   const i = path.lastIndexOf("/");
   return i <= 0 ? "" : path.slice(0, i);
