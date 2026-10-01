@@ -27,6 +27,7 @@ import {
 import {
   holdMathTokens,
   promoteMermaidBlocks,
+  promoteNexusQueryBlocks,
   promoteQueryBlocks,
   restoreMathTokens,
 } from "@/lib/editor/special-blocks";
@@ -87,6 +88,16 @@ turndown.addRule("embed", {
         .join("") ||
       "";
     return `\n\n![[${target}]]\n\n`;
+  },
+});
+
+turndown.addRule("nexusQueryBlock", {
+  filter: (node) =>
+    node.nodeName === "DIV" &&
+    (node as HTMLElement).getAttribute("data-type") === "nexus-query",
+  replacement: (_content, node) => {
+    const q = (node as HTMLElement).getAttribute("data-query") || "";
+    return `\n\`\`\`nexus-query\n${q.replace(/\n+$/, "")}\n\`\`\`\n\n`;
   },
 });
 
@@ -507,6 +518,7 @@ export function markdownToHtml(md: string): string {
 
   html = annotateBulletListsFromMarkdown(body, html);
   html = promoteMermaidBlocks(html);
+  html = promoteNexusQueryBlocks(html);
   html = promoteQueryBlocks(html);
   html = restoreMathTokens(html, mathHold);
   html = promoteCalloutBlockquotes(html);
@@ -580,6 +592,18 @@ function flattenSpecialEditorBlocks(root: HTMLElement): void {
     const next = doc.createElement("div");
     next.setAttribute("data-type", "embed");
     next.setAttribute("data-embed-target", target);
+    el.replaceWith(next);
+  });
+  root.querySelectorAll("[data-type='nexus-query']").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.parentElement?.closest("[data-type='nexus-query']")) return;
+    const query =
+      el.getAttribute("data-query") ||
+      el.querySelector("[data-query]")?.getAttribute("data-query") ||
+      "";
+    const next = doc.createElement("div");
+    next.setAttribute("data-type", "nexus-query");
+    next.setAttribute("data-query", query);
     el.replaceWith(next);
   });
   root.querySelectorAll("[data-type='query'], .nexus-query").forEach((el) => {

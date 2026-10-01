@@ -72,6 +72,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
+| Note list | [[Note List]] — \`\`\`nexus-query\`\`\` lists a folder or a tag. Not Dataview |
 | Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
 | Backlinks | Right panel → see what points here |
@@ -149,6 +150,26 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
 - [[External Agents]]
 - [[Linking Notes]]
 - [[Settings & Shortcuts]]
+`,
+    ),
+  );
+
+  add(
+    note(
+      pathJoin("Projects", "Note List.md"),
+      "Note List.md",
+      projects.id,
+      `# Note List
+
+A \`\`\`nexus-query\`\`\` block lists notes in a folder or with a tag. Not Dataview: no DQL, no \`FROM\`, no joins, no formulas.
+
+\`\`\`nexus-query
+TABLE path:Research tag:graph
+\`\`\`
+
+\`\`\`nexus-query
+LIST path:Journal
+\`\`\`
 `,
     ),
   );

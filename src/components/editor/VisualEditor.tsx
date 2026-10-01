@@ -32,6 +32,7 @@ import { Mermaid } from "@/lib/editor/mermaid-node";
 import { MathBlock, MathInline } from "@/lib/editor/math-node";
 import { Embed } from "@/lib/editor/embed-node";
 import { QueryBlock } from "@/lib/editor/query-node";
+import { NexusQueryBlock } from "@/lib/editor/nexus-query-node";
 import {
   detectSlashCommand,
   ensureEditableGaps,
@@ -628,6 +629,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         MathInline,
         Embed,
         QueryBlock,
+        NexusQueryBlock,
         FindHighlight,
       ],
       content: markdownWithWikilinksToHtml(

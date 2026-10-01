@@ -8,6 +8,7 @@ import { markdownToHtml } from "@/lib/markdown/serialize";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
+import { NEXUS_QUERY_CAP, runNexusQuery } from "@/lib/vault/nexus-query";
 import { noteTitle } from "@/lib/vault/types";
 import type { VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
@@ -218,6 +219,65 @@ function renderQueries(
   }
 }
 
+function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>): void {
+  for (const el of els) {
+    const query = (el.getAttribute("data-query") || "").trim();
+    const model = runNexusQuery(query, nodes);
+    const bits: string[] = [];
+    if (model.help) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(model.help)}. ${escapeHtml(model.footer)}</p>`,
+      );
+    }
+    if (model.error) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-error">${escapeHtml(model.error)}</p>`,
+      );
+    }
+    if (model.fieldNote) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-field-note">${escapeHtml(model.fieldNote)}</p>`,
+      );
+    }
+    if (!model.help && !model.error && model.rows.length === 0) {
+      bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-empty">No notes match.</p>`);
+    }
+    if (model.mode === "table" && model.rows.length) {
+      const tags = model.rows.some((r) => r.tags != null);
+      const head = `<tr><th>Title</th><th>Path</th>${tags ? "<th>Tags</th>" : ""}</tr>`;
+      const body = model.rows
+        .map((r) => {
+          const tagCell = r.tags != null ? `<td>${escapeHtml(r.tags)}</td>` : "";
+          return `<tr><td colspan="${tags ? 3 : 2}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${tagCell ? ` <span>${escapeHtml(r.tags || "")}</span>` : ""}</button></td></tr>`;
+        })
+        .join("");
+      bits.push(`<table>${head}${body}</table>`);
+    }
+    if (model.mode === "list" && model.rows.length) {
+      const items = model.rows
+        .map(
+          (r) =>
+            `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span></button></li>`,
+        )
+        .join("");
+      bits.push(`<ul>${items}</ul>`);
+    }
+    if (model.truncated) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-cap">Stopped at ${NEXUS_QUERY_CAP}.</p>`,
+      );
+    }
+    if (model.scanNote) bits.push(`<p class="nexus-query-empty">${escapeHtml(model.scanNote)}</p>`);
+    bits.push(
+      `<p data-testid="nexus-query-footer">${escapeHtml(model.footer)}</p>`,
+    );
+    el.innerHTML = `
+      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query || "nexus-query")}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">nexus-query</span></div>
+      <div class="nexus-query-body">${bits.join("")}</div>
+    `;
+  }
+}
+
 function promoteLeftoverMermaidFences(root: HTMLElement): void {
   root.querySelectorAll("pre code").forEach((code) => {
     const cls = `${code.className} ${code.getAttribute("class") || ""}`;
@@ -256,9 +316,13 @@ export async function hydratePreviewSpecials(
   const queryEls = Array.from(
     root.querySelectorAll<HTMLElement>("[data-type='query']"),
   );
+  const nexusQueryEls = Array.from(
+    root.querySelectorAll<HTMLElement>("[data-type='nexus-query']"),
+  );
 
   const embeds = renderEmbeds(embedEls, nodes, activeNoteId, cancelled, findOutside);
   renderQueries(queryEls, nodes);
+  renderNexusQueries(nexusQueryEls, nodes);
   await Promise.all([
     embeds,
     renderMermaid(mermaidEls, theme, cancelled),

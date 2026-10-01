@@ -1992,7 +1992,8 @@
   border-bottom: 2px solid color-mix(in srgb, var(--text-muted) 55%, transparent);
 }
 .nexus-embed,
-.nexus-query {
+.nexus-query,
+.nexus-note-list {
   margin: 0.85rem 0;
   border: 1px solid var(--border);
   border-radius: 12px;
