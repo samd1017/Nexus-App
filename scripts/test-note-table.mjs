@@ -855,6 +855,8 @@ assert.deepEqual(groupDoc.views[0].summaries, { price: "Sum", "formula.tax": "Av
 assert.match(groupExport.notes.join("\n"), /“Shop” count summary on file\.name has no \.base equivalent/);
 assert.deepEqual(groupDoc.views[1].groupBy, { property: "formula.formula", direction: "ASC" });
 assert.deepEqual(groupDoc.views[1].summaries, { "file.folder": "Unique" });
+assert.deepEqual(groupDoc.views[1].order.slice(0, 2), ["file.name", "file.folder"]);
+assert.ok(!groupDoc.views[0].order.includes("file.folder"));
 const groupBack = importBaseFile(groupExport.text);
 assert.deepEqual(groupBack.session.views[0].groupBy, { column: "status", dir: "desc" });
 assert.deepEqual(groupBack.session.views[0].summaries, { price: "sum", "formula:tax": "average" });

@@ -110,11 +110,13 @@ export function exportBaseFile(
       .map((f) => exportKey.get(`${view.id}:${f.id}`))
       .filter((key): key is string => Boolean(key))
       .map((key) => `formula.${key}`);
-    out.order = ["file.name", ...props, ...formulaOrder];
     const propertyFor = (column: string): string => {
       const f = view.formulas.find((item) => formulaColumnId(item.id) === column);
       return f ? `formula.${exportKey.get(`${view.id}:${f.id}`) ?? f.id}` : FILE_SORT[column] ?? column;
     };
+    // Obsidian shows a summary only under a column in `order`; Nexus always shows folder and path.
+    const summarizedFile = ["folder", "path"].filter((column) => view.summaries?.[column]).map((column) => FILE_SORT[column]);
+    out.order = ["file.name", ...summarizedFile, ...props, ...formulaOrder];
     out.sort = [{ property: propertyFor(view.column), direction: view.dir === "desc" ? "DESC" : "ASC" }];
     if (view.groupBy) {
       out.groupBy = { property: propertyFor(view.groupBy.column), direction: view.groupBy.dir === "desc" ? "DESC" : "ASC" };
