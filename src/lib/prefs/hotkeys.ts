@@ -107,7 +107,7 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   settings: "Open Settings",
   focusMode: "Focus / zen mode",
   toggleEditor: "Toggle reading view",
-  graph: "Fullscreen graph. Folder Map is on the graph bar",
+  graph: "Fullscreen Local graph. Folder Map stays one click on the graph bar",
   newNote: "New note",
   daily: "Today's daily note",
   find: "Find in note",

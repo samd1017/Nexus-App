@@ -1011,7 +1011,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Graph"
-                body="Local is the default: this note and the notes it links. Folder Map is one click away and opens the 3D vault, where folder spheres open a level. Small vaults still show every note there. Click a node to open it."
+                body={`${formatShortcut("G")} always opens the Local graph: this note and the notes it links, even after Folder Map. Folder Map stays one click on the graph bar and opens the 3D vault, where folder spheres open a level. Small vaults still show every note there. Click a node to open it.`}
               />
               <HelpItem
                 title="Cloud"

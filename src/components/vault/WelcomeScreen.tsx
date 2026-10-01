@@ -22,7 +22,7 @@ import {
   NEXUS_NAME,
   NEXUS_TAGLINE,
 } from "@/components/brand/NexusLogo";
-import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
+import { canOpenLocalVaultFolder, formatShortcut, isDesktopShell } from "@/lib/platform";
 import { ThemeToggle } from "@/components/chrome/ThemeToggle";
 import {
   chromeFsaHonestyLine,
@@ -463,7 +463,7 @@ export function WelcomeScreen() {
               {
                 icon: Network,
                 title: "See",
-                body: "Local graph of this note. Folder Map opens the 3D vault.",
+                body: `${formatShortcut("G")} opens the Local graph of this note. Folder Map is one click away.`,
               },
               {
                 icon: Cloud,

@@ -1197,8 +1197,8 @@ function CommandPaletteOpen() {
         },
         {
           id: "toggle-graph",
-          label: "Open graph",
-          keywords: ["graph", "fullscreen", "network", "orbit"],
+          label: "Open Local graph",
+          keywords: ["graph", "fullscreen", "local", "network", "orbit"],
           icon: <Network size={15} />,
           shortcut: formatShortcut("G"),
           run: wrapRun("toggle-graph", () => {
@@ -1564,7 +1564,7 @@ function CommandPaletteOpen() {
       },
       {
         id: "toggle-graph",
-        label: "Open graph",
+        label: "Open Local graph",
         icon: <Network size={15} />,
         shortcut: formatShortcut("G"),
         run: wrapRun("toggle-graph", () => {

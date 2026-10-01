@@ -37,6 +37,11 @@ for (const p of points.filter((n) => n.id !== "a")) {
 }
 assert.equal(DEFAULT_PREFS.graphSurface, "local");
 
+const { surfaceForGraphHotkey } = await import("../src/lib/layout/graph-hotkey.ts");
+assert.equal(surfaceForGraphHotkey("explore"), "local");
+assert.equal(surfaceForGraphHotkey("local"), "local");
+assert.equal(surfaceForGraphHotkey(null), "local");
+
 const { readFileSync } = await import("node:fs");
 const slot = readFileSync("src/components/graph/GraphSlot.tsx", "utf8");
 assert.match(slot, /Folder Map/);
@@ -48,5 +53,19 @@ const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");
 assert.match(panel, /<GraphSlot mode="panel"/);
 assert.match(panel, /<GraphSlot mode="fullscreen"/);
 assert.equal(panel.includes("<GraphView"), false);
+
+const viewport = readFileSync("src/lib/layout/viewport.ts", "utf8");
+assert.match(viewport, /surfaceForGraphHotkey\(prefs\.graphSurface\)/);
+assert.match(viewport, /updatePrefs\(\{ graphSurface: surface \}\)/);
+const keys = readFileSync("src/components/chrome/KeyboardShortcuts.tsx", "utf8");
+const graphCase = keys.slice(keys.indexOf('case "graph":'));
+assert.match(graphCase, /toggleGraphForViewport\(\)/);
+assert.match(slot, /choose\("explore"\)|choose\(\"explore\"\)/);
+const help = readFileSync("src/components/settings/SettingsPanel.tsx", "utf8");
+assert.match(help, /always opens the Local graph/);
+const welcome = readFileSync("src/components/vault/WelcomeScreen.tsx", "utf8");
+assert.match(welcome, /opens the Local graph of this note/);
+const labels = readFileSync("src/lib/prefs/hotkeys.ts", "utf8");
+assert.match(labels, /Fullscreen Local graph/);
 
 console.log("local-graph: PASS");

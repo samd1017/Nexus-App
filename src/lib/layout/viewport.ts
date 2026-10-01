@@ -3,6 +3,8 @@
  */
 
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { surfaceForGraphHotkey } from "@/lib/layout/graph-hotkey";
 
 const NARROW_MQ = "(max-width: 899px)";
 const PHONE_MQ = "(max-width: 640px)";
@@ -35,8 +37,9 @@ export function closeDrawersIfNarrow(): void {
 }
 
 /**
- * ⌘G / Graph toolbar: always enter fullscreen (idempotent).
- * A second press must not bounce the demo back to the editor — leave via
+ * ⌘G / Graph toolbar: fullscreen on the Local graph (this note and its links).
+ * Folder Map can stay the last tab click, but G still lands on Local.
+ * A second press must not bounce back to the editor — leave via
  * Esc or Exit graph only (`exitGraphForViewport`).
  */
 let mapChosenAt = 0;
@@ -48,6 +51,11 @@ export function mapChosenSince(since: number): boolean {
 
 export function enterGraphFullscreen(): void {
   mapChosenAt = Date.now();
+  const prefs = usePrefsStore.getState();
+  const surface = surfaceForGraphHotkey(prefs.graphSurface);
+  if (prefs.graphSurface !== surface) {
+    prefs.updatePrefs({ graphSurface: surface });
+  }
   const s = useVaultStore.getState();
   if (isPhoneViewport()) {
     if (s.settings.leftOpen) s.setLeftOpen(false);

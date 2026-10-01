@@ -762,7 +762,7 @@ export function EditorPane({
                       "is-active",
                   )}
                   onClick={() => toggleGraphForViewport()}
-                  title={`Fullscreen graph (${formatShortcut("G")}) — Esc or Exit to leave`}
+                  title={`Local graph (${formatShortcut("G")}) — Esc or Exit to leave`}
                   aria-pressed={
                     graphMode === "fullscreen" ||
                     (graphMode === "panel" && rightOpen && rightTab === "graph")

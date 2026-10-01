@@ -75,7 +75,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
 | Backlinks | Right panel → see what points here |
-| Graph | Right panel → Graph, or **Ctrl/⌘G** for fullscreen |
+| Graph | Right panel → Graph, or **Ctrl/⌘G** for the Local graph |
 | Search | **Ctrl/⌘K** — find any note instantly |
 | Callouts | Open [[Callouts]] or insert from the toolbar More menu |
 | Diagrams | Open [[Diagrams & Math]] — mermaid charts and $math$ |
@@ -100,7 +100,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 
 ## See the graph
 
-Open the right panel → **Graph**, or press **Ctrl/⌘G** for fullscreen. Orbit, zoom, and click a node. Use the download icon to export a PNG.
+Open the right panel → **Graph**, or press **Ctrl/⌘G** for the Local graph (this note and its links), even if Folder Map was open. Orbit, zoom, and click a node. Use the download icon to export a PNG.
 
 ## What stays true
 
@@ -218,7 +218,7 @@ The graph opens on **Local**: this note and the notes it links. **Folder Map** i
 | Click | Open the note (exits fullscreen) |
 | Drag | Reposition nodes |
 | Scroll | Zoom |
-| **⌘G** | Fullscreen graph, still on Local |
+| **⌘G** | Fullscreen Local graph, even after Folder Map |
 | Folder Map | 3D vault map, on the graph bar |
 
 ## Seed network
