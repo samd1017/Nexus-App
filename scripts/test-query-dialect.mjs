@@ -304,6 +304,12 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   const days = runNexusQuery(blocks[1], demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"));
   assert.deepEqual(days.columns, ["due", "Days left"]);
   assert.equal(days.rows[0].fields[1].value, "17");
+  const sameOwner = runNexusQuery(blocks.find((b) => b.includes("this.owner")), demo.nodes, null, Date.now(), noteList.id);
+  assert.deepEqual(sameOwner.rows.map((r) => r.title ?? r.path), ["Graph View"]);
+  const linked = runNexusQuery(blocks.find((b) => b.includes("this.file.outlinks")), demo.nodes, null, Date.now(), noteList.id);
+  assert.deepEqual(linked.rows.map((r) => r.fields[0].value).sort(), ["Ana", "Sam"]);
+  const linkingHere = runNexusQuery("LIST FROM [[]]", demo.nodes, null, Date.now(), noteList.id);
+  assert.ok(linkingHere.rows.some((r) => r.path === "Welcome.md"));
   const dvDays = runNexusQuery('TABLE (date(due) - date(today)).days AS "D" FROM "Research" WHERE due', demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"));
   assert.match(dvDays.fieldNote, /already gives a number of days, so leave \.days off/);
 }

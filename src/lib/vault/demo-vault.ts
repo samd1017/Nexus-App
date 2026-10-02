@@ -168,6 +168,10 @@ A \`\`\`nexus-query\`\`\` block is a live view of your notes. It is plain text i
 
 Start with LIST, TABLE, or CARDS, then add FROM, WHERE, GROUP BY, SORT and LIMIT. A mistake is pointed out in the clause that caused it; nothing else stops working.
 
+Properties come from frontmatter and from inline fields written as \`key:: value\` on their own line or as \`[key:: value]\` inside a sentence. When both set the same key, frontmatter wins. \`this\` is the note the query is written in, so \`this.owner\`, \`this.file.name\` and \`this.file.outlinks\` read this note, and \`FROM [[]]\` lists the notes that link here.
+
+owner:: Sam
+
 ## Everyday recipes
 
 A status board for a folder:
@@ -201,6 +205,28 @@ LIST file.folder
 WHERE file.mtime >= date(today) - 7d
 SORT file.mtime DESC
 LIMIT 10
+\`\`\`
+
+Research notes with the same owner as this note, read from inline \`owner::\` fields:
+
+\`\`\`nexus-query
+TABLE owner, status
+FROM "Research"
+WHERE owner = this.owner
+\`\`\`
+
+Notes this one links to, here [[Graph View]] and [[Callouts]]:
+
+\`\`\`nexus-query
+TABLE owner, status
+FROM "Research"
+WHERE contains(this.file.outlinks, file.link)
+\`\`\`
+
+Notes that link here:
+
+\`\`\`nexus-query
+LIST FROM [[]]
 \`\`\`
 
 The same language written as a Dataview block:
@@ -295,6 +321,8 @@ due: 2026-09-01
 
 #graph #links
 
+owner:: Sam
+
 The graph opens on **Local**: this note and the notes it links. **Folder Map** is one click away and opens the 3D vault.
 
 ## What you’ll see
@@ -375,6 +403,8 @@ due: 2026-10-02
 # Callouts
 
 #writing #callouts
+
+owner:: Ana
 
 Callouts are ordinary Markdown. They look rich in Visual and stay portable in Source.
 
