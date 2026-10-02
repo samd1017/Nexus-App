@@ -194,6 +194,8 @@ assert.equal(NEXUS_QUERY_DQL.includes("LIMIT 3"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("Nested rows after GROUP BY"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("file.size"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("file.ctime"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("SORT due"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("SORT file.folder"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("No joins"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("WHERE field"), true);
 
@@ -274,6 +276,8 @@ assert.match(noteList.content, /LIMIT 3/);
 assert.match(noteList.content, /TABLE file\.size, file\.ctime/);
 assert.match(noteList.content, /WHERE file\.size > 10/);
 assert.match(noteList.content, /SORT file\.ctime/);
+assert.match(noteList.content, /SORT due/);
+assert.match(noteList.content, /SORT file\.folder/);
 assert.doesNotMatch(lib, /no full DQL/);
 assert.match(view, /queryColumnLabel/);
 assert.match(view, /data-testid="nexus-query-field"/);
@@ -347,6 +351,33 @@ const glued = runNexusQuery('LIST FROM path:Research WHERE status="live"', shop)
 assert.deepEqual(glued.rows.map((r) => r.id), ["live"]);
 const byFileTime = runNexusQuery("TABLE file.mtime FROM path:Research SORT file.mtime desc", shop);
 assert.deepEqual(byFileTime.rows.map((r) => r.id), ["live", "draft", "plain"]);
+const byDue = runNexusQuery("TABLE status, due FROM path:Research SORT due", shop);
+assert.equal(byDue.error, null);
+assert.deepEqual(byDue.rows.map((r) => r.id), ["live", "draft", "plain"]);
+const byDueDesc = runNexusQuery("TABLE status, due FROM path:Research SORT due desc", shop);
+assert.deepEqual(byDueDesc.rows.map((r) => r.id), ["draft", "live", "plain"]);
+const byStatus = runNexusQuery("LIST FROM path:Research SORT status", groupedShop);
+assert.deepEqual(byStatus.rows.map((r) => r.title), ["Callouts", "Zebra", "Alpha", "Graph View", "Plain"]);
+const byStatusDesc = runNexusQuery("LIST FROM path:Research SORT status desc", groupedShop);
+assert.deepEqual(byStatusDesc.rows.map((r) => r.title), ["Graph View", "Alpha", "Zebra", "Callouts", "Plain"]);
+const byPrice = runNexusQuery("LIST FROM path:Research SORT price desc", shop);
+assert.deepEqual(byPrice.rows.map((r) => r.id), ["draft", "live", "plain"]);
+const folderSortNodes = {
+  r: folder("r", "Research"),
+  j: folder("j", "Journal"),
+  a: { ...note("a", "Research/Alpha.md", "# Alpha\n\n#idea\n"), parentId: "r" },
+  b: { ...note("b", "Journal/Beta.md", "# Beta\n\n#idea\n"), parentId: "j" },
+};
+const byFolder = runNexusQuery("LIST FROM #idea SORT file.folder", folderSortNodes);
+assert.equal(byFolder.error, null);
+assert.deepEqual(byFolder.rows.map((r) => r.id), ["b", "a"]);
+const byFolderDesc = runNexusQuery("LIST FROM #idea SORT file.folder desc", folderSortNodes);
+assert.deepEqual(byFolderDesc.rows.map((r) => r.id), ["a", "b"]);
+const sortLinks = runNexusQuery("LIST FROM path:Research SORT file.outlinks", shop);
+assert.match(sortLinks.error, /FLATTEN/);
+assert.match(sortLinks.error, /contains/);
+assert.doesNotMatch(sortLinks.error, /not Dataview/);
+assert.match(runNexusQuery("LIST FROM path:Research SORT file.inlinks", shop).error, /FLATTEN/);
 assert.match(byFileTime.rows[0].mtime, /1970|^\d{4}-/);
 assert.equal(byFileTime.rows[0].fields[0].name, "file.mtime");
 const named = runNexusQuery('LIST FROM path:Research WHERE file.name = "Plain"', shop);

@@ -2,7 +2,7 @@
  * Built-in note list for one fenced block.
  * LIST or TABLE, FROM a folder or tag, WHERE on one field,
  * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
- * one + - * / formula column, tags joined by OR or AND, SORT title|mtime|size|ctime.
+ * one + - * / formula column, tags joined by OR or AND, SORT title|mtime|size|ctime or a field.
  * FLATTEN file.outlinks is one row per outgoing link.
  * FLATTEN file.inlinks is one row per incoming link.
  * One of those joins, not both, and not a join of two queries.
@@ -24,13 +24,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. A TABLE formula is one + - * /.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, or SORT file.ctime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, or SORT file.ctime.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -67,7 +67,7 @@ export type NexusQueryModel = {
 
 type TagJoin = "or" | "and";
 
-type QuerySort = { key: "title" | "mtime" | "size" | "ctime"; dir: "asc" | "desc" };
+type QuerySort = { key: string; dir: "asc" | "desc" };
 
 type WhereOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte";
 
@@ -606,18 +606,17 @@ export function parseNexusQuery(source: string): Parsed {
     }
     if (upper === "SORT") {
       const keyRaw = (tokens[++i] || "").toLowerCase();
-      const key =
-        keyRaw === "file.mtime" || keyRaw === "mtime"
-          ? "mtime"
-          : keyRaw === "file.size" || keyRaw === "size"
-            ? "size"
-            : keyRaw === "file.ctime" || keyRaw === "ctime"
-              ? "ctime"
-              : keyRaw === "file.name" || keyRaw === "name"
-                ? "title"
-                : keyRaw;
-      if (key !== "title" && key !== "mtime" && key !== "size" && key !== "ctime") {
-        return { kind: "error", error: "SORT title, mtime, file.size, or file.ctime. asc or desc follows." };
+      let key = keyRaw;
+      if (keyRaw === "file.mtime" || keyRaw === "mtime") key = "mtime";
+      else if (keyRaw === "file.size" || keyRaw === "size") key = "size";
+      else if (keyRaw === "file.ctime" || keyRaw === "ctime") key = "ctime";
+      else if (keyRaw === "file.name" || keyRaw === "name" || keyRaw === "title") key = "title";
+      else if (linkListField(keyRaw)) {
+        return { kind: "error", error: "SORT reads a field such as status, due, or file.folder. A link list uses contains() or FLATTEN." };
+      } else {
+        const field = groupFieldName(keyRaw);
+        if (!field) return { kind: "error", error: "SORT needs a field, such as status, due, or file.folder. asc or desc follows." };
+        key = field;
       }
       let dir: "asc" | "desc" = "asc";
       const maybe = tokens[i + 1];
@@ -831,6 +830,41 @@ function numericActual(text: string): number | null {
   if (!/^-?\d+(?:\.\d+)?$/.test(trimmed)) return null;
   const n = Number(trimmed);
   return Number.isFinite(n) ? n : null;
+}
+
+type FieldRank =
+  | { kind: "blank" }
+  | { kind: "num"; n: number }
+  | { kind: "date"; n: number }
+  | { kind: "text"; text: string };
+
+/** Blank and missing sort last. Numbers and dates compare as values when both sides match. */
+function fieldRank(node: VaultNode, field: string): FieldRank {
+  const actual = fieldActual(node, field);
+  if (actual == null || actual === "" || actual === "—") return { kind: "blank" };
+  const n = numericActual(actual);
+  if (n !== null) return { kind: "num", n };
+  const day = ymdToMs(actual);
+  if (day !== null) return { kind: "date", n: day };
+  return { kind: "text", text: actual };
+}
+
+function compareFieldSort(a: VaultNode, b: VaultNode, field: string, dir: number): number {
+  const left = fieldRank(a, field);
+  const right = fieldRank(b, field);
+  if (left.kind === "blank" || right.kind === "blank") {
+    if (left.kind === right.kind) return 0;
+    return left.kind === "blank" ? 1 : -1;
+  }
+  if (left.kind === right.kind && left.kind === "text" && right.kind === "text") {
+    return left.text.localeCompare(right.text, undefined, { numeric: true, sensitivity: "base" }) * dir;
+  }
+  if (left.kind === right.kind && left.kind !== "text" && right.kind !== "text") {
+    return (left.n - right.n) * dir;
+  }
+  const ta = fieldActual(a, field) ?? "";
+  const tb = fieldActual(b, field) ?? "";
+  return ta.localeCompare(tb, undefined, { numeric: true, sensitivity: "base" }) * dir;
 }
 
 function ordered(left: number, right: number, op: WhereOp): boolean {
@@ -1249,6 +1283,9 @@ export function runNexusQuery(
       const bMissing = typeof b.size !== "number" || !Number.isFinite(b.size) || b.size < 0;
       if (aMissing !== bMissing) return aMissing ? 1 : -1;
       if (!aMissing && !bMissing && a.size !== b.size) return ((a.size ?? 0) - (b.size ?? 0)) * dir;
+    } else if (sortKey !== "title") {
+      const delta = compareFieldSort(a, b, sortKey, dir);
+      if (delta) return delta;
     }
     return noteTitle(a).localeCompare(noteTitle(b)) * dir || a.path.localeCompare(b.path) * dir;
   });
