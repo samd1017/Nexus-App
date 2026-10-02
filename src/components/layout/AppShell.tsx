@@ -10,8 +10,13 @@ import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
-import { CommandPalette } from "@/components/search/CommandPalette";
+import { CommandPalette, openCommandPalette } from "@/components/search/CommandPalette";
+import { QuickSwitcher } from "@/components/search/QuickSwitcher";
+import { setSwitcherOpen, toggleQuickSwitcher } from "@/lib/search/switcher-session";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
+import { installKeyboardFocusRings } from "@/lib/chrome/focus-ring";
+import { useVaultCssSnippets } from "@/lib/appearance/snippets";
+import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { NexusMark, NEXUS_NAME } from "@/components/brand/NexusLogo";
 import {
@@ -22,10 +27,10 @@ import {
   useVaultStore,
   vaultOpenLocked,
 } from "@/lib/vault/store";
-import { vaultContentHash, VaultWatcher } from "@/lib/vault/watcher";
+import { nodeMapToken, VaultWatcher } from "@/lib/vault/watcher";
 import { startDesktopWatch } from "@/lib/vault/tauri-adapter";
 import { shouldLazyBodies } from "@/lib/vault/scale-flags";
-import { applyPrefsToDom, getPrefs, usePrefsStore } from "@/lib/prefs/preferences";
+import { applyPrefsToDom, getPrefs, settleSystemTheme, usePrefsStore } from "@/lib/prefs/preferences";
 import {
   getOpenProgress,
   setOpenProgress,
@@ -34,16 +39,21 @@ import {
 } from "@/lib/vault/native-index";
 import { bindDesktopMenu } from "@/lib/desktop/menu-bridge";
 import { bindWindowState } from "@/lib/desktop/window-state";
-import { toggleGraphForViewport } from "@/lib/layout/viewport";
+import { exitGraphForViewport, mapChosenSince, toggleGraphForViewport } from "@/lib/layout/viewport";
+import { revealFileList } from "@/lib/chrome/reveal-list";
+import { startFirstNote, vaultHasNoNotes } from "@/lib/vault/first-note";
 import { cn } from "@/lib/utils";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
-import { canOpenLocalVaultFolder } from "@/lib/platform";
+import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
+
+const LIST_REOPENED_KEY = "nexus.desktop.list-reopened.v1";
 import {
   CHROME_FSA_WATCH_MAX,
   chromeFsaRefuseBanner,
   chromeFsaWarnMessage,
 } from "@/lib/vault/chrome-fsa-cap";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { fillProgressRatio, openProgressTail } from "@/lib/vault/sqlite-fill-progress";
 
 function OpenProgressBanner() {
   // Subscribe here — not in AppShell — so 400ms fill ticks do not
@@ -51,9 +61,18 @@ function OpenProgressBanner() {
   const [progress, setProgress] = useState<OpenProgress>(() => getOpenProgress());
   useEffect(() => subscribeOpenProgress(setProgress), []);
 
-  // Auto-dismiss ready flash so the banner doesn't stick forever
+  useEffect(() => {
+    // Ready is a state, not a banner. Take the early overlay down on any
+    // Ready. An error leaves that overlay; it must not flash a scope failure.
+    if (progress.phase !== "ready") return;
+    document.getElementById("nexus-boot-banner")?.remove();
+  }, [progress.phase]);
+
+  // Full-index Ready is a short state. The saved-page message stays so
+  // search honesty can tell titles-and-open-notes from a finished FTS.
   useEffect(() => {
     if (progress.phase !== "ready") return;
+    if (progress.message.includes("titles and open notes")) return;
     const t = window.setTimeout(() => {
       const cur = getOpenProgress();
       if (cur.phase === "ready") {
@@ -68,26 +87,23 @@ function OpenProgressBanner() {
     return () => window.clearTimeout(t);
   }, [progress.phase, progress.scanned, progress.message]);
 
+  // Users do not see Ready. Walking and indexing stay a quiet line; errors stay.
+  if (progress.phase === "ready") return null;
+
   if (
     progress.phase !== "walking" &&
     progress.phase !== "indexing" &&
-    progress.phase !== "error" &&
-    progress.phase !== "ready"
+    progress.phase !== "error"
   ) {
     return null;
   }
 
-  const isReady = progress.phase === "ready";
   const isError = progress.phase === "error";
-  const hasTotalHint =
-    progress.totalHint != null && progress.totalHint > 0;
-  const ratio = hasTotalHint
-    ? Math.min(1, progress.scanned / progress.totalHint!)
-    : null;
+  const ratio = isError
+    ? null
+    : fillProgressRatio(progress.scanned, progress.totalHint);
   const valueNow =
-    hasTotalHint && !isError && progress.phase !== "ready"
-      ? Math.round(ratio! * 100)
-      : undefined;
+    ratio != null ? Math.round(ratio * 100) : undefined;
 
   const dismissError = () => {
     setOpenProgress({
@@ -101,43 +117,28 @@ function OpenProgressBanner() {
   return (
     <div
       className={cn(
-        "flex shrink-0 flex-col border-b px-3 py-1.5 text-[12px]",
+        "flex shrink-0 flex-col border-b px-3",
         isError
-          ? "border-[rgba(255,69,58,0.3)] bg-[rgba(255,69,58,0.08)] text-[var(--danger)]"
-          : isReady
-            ? "border-[rgba(48,209,88,0.28)] bg-[rgba(48,209,88,0.08)] text-[var(--success)]"
-            : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] text-[var(--text-secondary)]",
+          ? "border-[rgba(255,69,58,0.3)] bg-[rgba(255,69,58,0.08)] py-1.5 text-[12px] text-[var(--danger)]"
+          : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] py-1.5 text-[12px] text-[var(--text-secondary)]",
       )}
       data-open-progress={progress.phase}
       role={valueNow != null ? "progressbar" : "status"}
       aria-valuenow={valueNow}
       aria-valuemin={valueNow != null ? 0 : undefined}
       aria-valuemax={valueNow != null ? 100 : undefined}
-      aria-busy={!isError && !isReady ? true : undefined}
+      aria-busy={!isError ? true : undefined}
     >
       <div className="flex items-center gap-2">
         {!isError ? (
-          <span
-            className={cn(
-              "inline-block h-1.5 w-1.5 rounded-full",
-              isReady
-                ? "bg-[var(--success)]"
-                : "animate-pulse bg-[var(--accent)]",
-            )}
-          />
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
         ) : null}
         <span className="min-w-0 flex-1">
-          {progress.message ||
-            (isError ? "Open failed" : isReady ? "Ready" : "Opening vault…")}
+          {progress.message || (isError ? "Open failed" : "Opening vault…")}
         </span>
         {progress.scanned > 0 ? (
-          <span className={isReady ? "text-[var(--success)]/80" : "text-[var(--text-muted)]"}>
-            · {progress.scanned.toLocaleString()} items
-            {ratio != null
-              ? ` · ${isReady ? 100 : Math.round(ratio * 100)}%`
-              : isReady
-                ? " · 100%"
-                : ""}
+          <span className="text-[var(--text-muted)]">
+            {openProgressTail(progress.phase, progress.scanned, progress.totalHint)}
           </span>
         ) : null}
         {isError ? (
@@ -150,7 +151,7 @@ function OpenProgressBanner() {
           </button>
         ) : null}
       </div>
-      {ratio != null && !isError && progress.phase !== "ready" ? (
+      {ratio != null && !isError ? (
         <div className="mt-1 h-0.5 overflow-hidden rounded-full bg-white/10">
           <div
             className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-200"
@@ -236,12 +237,31 @@ export function AppShell() {
     void bootstrap();
   }, [bootstrap]);
 
+  useEffect(() => installKeyboardFocusRings(document), []);
+  useVaultCssSnippets();
+
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const mq = window.matchMedia("(prefers-color-scheme: light)");
-    const onChange = () => applyPrefsToDom(getPrefs());
+    // Some desktops report the system scheme flipping back and forth for a
+    // moment (portal restarts, focus changes). Only repaint once it settles
+    // on a different theme than the one showing.
+    let settle = 0;
+    const onChange = () => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => {
+        const want = settleSystemTheme();
+        const prefs = getPrefs();
+        if (prefs.theme !== "system") return;
+        if (document.documentElement.dataset.theme === want) return;
+        applyPrefsToDom(prefs);
+      }, 400);
+    };
     mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    return () => {
+      window.clearTimeout(settle);
+      mq.removeEventListener("change", onChange);
+    };
   }, []);
 
   // Wave A: warn before tab close when unsaved disk notes exist
@@ -279,24 +299,113 @@ export function AppShell() {
       },
       closeVault: () => useVaultStore.getState().closeVault(),
       settings: () => usePrefsStore.getState().setSettingsOpen(true),
-      search: () => useVaultStore.getState().setCommandOpen(true),
+      search: () => {
+        setSwitcherOpen(false);
+        useVaultStore.getState().setCommandOpen(true);
+      },
+      quickSwitcher: () => {
+        useVaultStore.getState().setCommandOpen(false);
+        toggleQuickSwitcher();
+      },
+      commandPalette: () => {
+        const st = useVaultStore.getState();
+        if (st.commandOpen) st.setCommandOpen(false);
+        else openCommandPalette(">");
+      },
       save: () => {
         void useVaultStore.getState().flushDirty();
       },
       newNote: () => {
-        useVaultStore.getState().createNote(null, "Untitled");
+        if (vaultHasNoNotes()) startFirstNote();
+        else useVaultStore.getState().createNote(focusedEmptyFolderId(), "Untitled");
       },
-      toggleGraph: () => toggleGraphForViewport(),
-      toggleSource: () => useVaultStore.getState().toggleEditorMode(),
+      toggleGraph: () => {
+        // Native Cmd/Ctrl+G is a menu accelerator. The board keeps that chord.
+        if (document.querySelector('.nexus-canvas[data-canvas-focus="1"]')) {
+          window.dispatchEvent(new CustomEvent("nexus-canvas-frame"));
+          return;
+        }
+        toggleGraphForViewport();
+      },
+      toggleSource: () => useVaultStore.getState().toggleReadingView(),
     }).then((fn) => {
       un = fn;
     });
     return () => un?.();
   }, []);
 
+  // Dev-only: VITE_OPEN_VAULT=/absolute/folder opens that vault on desktop
+  // startup, skipping the native folder picker.
+  useEffect(() => {
+    const path = import.meta.env.VITE_OPEN_VAULT;
+    if (!import.meta.env.DEV || typeof path !== "string" || !path.trim()) return;
+    const soak = (
+      window as unknown as {
+        __NEXUS_SOAK__?: {
+          openDesktop: (abs: string) => Promise<unknown>;
+        };
+      }
+    ).__NEXUS_SOAK__;
+    if (!soak) return;
+    void soak
+      .openDesktop(path.trim())
+      .then(() => {
+        useVaultStore.getState().setGraphMode("fullscreen");
+      })
+      .catch(() => {
+        /* picker-less open is best-effort in dev */
+      });
+  }, []);
+
+  // A vault that opens empty lands on the list, where Enter starts the first
+  // note. An open that puts it straight into the fullscreen map (a saved graph
+  // preference, or a scripted open) is undone in the first moments only; a
+  // reader who opens the map on purpose stays there, however soon.
+  useEffect(() => {
+    if (!vaultId) return;
+    const openedAt = Date.now();
+    const land = () => {
+      if (Date.now() - openedAt > 5000) return;
+      // Ctrl+G, the menu, or a button put it there: the reader wants the map.
+      if (mapChosenSince(openedAt)) return;
+      const st = useVaultStore.getState();
+      if (st.settings.graphMode !== "fullscreen" || !vaultHasNoNotes()) return;
+      exitGraphForViewport();
+      revealFileList((tree) => {
+        const active = document.activeElement as HTMLElement | null;
+        if (!active || active === document.body || active.closest?.("[data-graph-host]")) {
+          tree.focus({ preventScroll: true });
+        }
+      });
+    };
+    land();
+    const unsub = useVaultStore.subscribe((s, prev) => {
+      if (s.settings.graphMode !== prev.settings.graphMode || s.rootIds !== prev.rootIds) land();
+    });
+    const stop = window.setTimeout(unsub, 5200);
+    return () => {
+      unsub();
+      window.clearTimeout(stop);
+    };
+  }, [vaultId]);
+
   // Responsive panels: auto-close on narrow vault open + when crossing below tablet width
   useEffect(() => {
     if (!vaultId) return;
+    // The desktop window cannot be narrower than 900. While it is still hidden
+    // before Ready the webview can report a smaller width, and closing the list
+    // then is saved and sticks on every later open.
+    if (isDesktopShell()) {
+      try {
+        if (localStorage.getItem(LIST_REOPENED_KEY) !== "1") {
+          localStorage.setItem(LIST_REOPENED_KEY, "1");
+          if (!useVaultStore.getState().settings.leftOpen) setLeftOpen(true);
+        }
+      } catch {
+        /* storage blocked */
+      }
+      return;
+    }
     let wasNarrow = window.innerWidth < 900;
     if (wasNarrow) {
       setLeftOpen(false);
@@ -331,13 +440,36 @@ export function AppShell() {
 
     if (mode === "fsa" && getFsaRoot()) {
       const dir = getFsaRoot()!;
-      let notes = 0;
-      try {
-        notes = ensureVaultIndex(useVaultStore.getState().nodes).noteCount;
-      } catch {
-        /* ignore */
+      const shellNow = useVaultStore.getState();
+      let notes = shellNow.shellCatalog ? shellNow.catalogNoteCount : 0;
+      if (!shellNow.shellCatalog) {
+        try {
+          notes = ensureVaultIndex(shellNow.nodes).noteCount;
+        } catch {
+          /* ignore */
+        }
       }
-      if (notes >= CHROME_FSA_WATCH_MAX) {
+      if (shellNow.shellCatalog) {
+        // One path at a time. A signature poll would copy the folder back into the tab.
+        setWatcherAck(null);
+        setDesktopWatchAck(null);
+        void watcher.startFsaShell(
+          dir,
+          (paths) => {
+            if (!paths.length) return;
+            useVaultStore.getState().refreshShellPaths(paths);
+          },
+          () => {
+            const live = useVaultStore.getState();
+            const paths = [""];
+            for (const id of live.expandedFolders) {
+              const node = live.nodes[id];
+              if (node?.kind === "folder" && node.path) paths.push(node.path);
+            }
+            return paths;
+          },
+        );
+      } else if (notes >= CHROME_FSA_WATCH_MAX) {
         // Signature poll + FileSystemObserver re-walked 20k–100k files and
         // discarded Chrome while opening notes 8–12.
         setWatcherAck(null);
@@ -354,13 +486,21 @@ export function AppShell() {
     } else if (mode === "desktop" && getDesktopRoot()) {
       const root = getDesktopRoot()!;
       setWatcherAck(null);
+      const shellWindow = useVaultStore.getState().shellCatalog;
       const handle = startDesktopWatch(
         root,
         (scan) => {
+          if (useVaultStore.getState().shellCatalog) return;
           applyExternalSnapshot(scan.nodes, scan.rootIds);
         },
         900,
-        { metaOnly: shouldLazyBodies("desktop") },
+        shellWindow
+          ? {
+              metaOnly: true,
+              shellWindow: true,
+              onPaths: (paths) => useVaultStore.getState().refreshShellPaths(paths),
+            }
+          : { metaOnly: shouldLazyBodies("desktop") },
       );
       setDesktopWatchAck(() => handle.acknowledge());
       desktopStop = handle.stop;
@@ -368,7 +508,7 @@ export function AppShell() {
       setWatcherAck(null);
       setDesktopWatchAck(null);
       watcher.start(
-        () => vaultContentHash(useVaultStore.getState().nodes),
+        () => nodeMapToken(useVaultStore.getState().nodes),
         () => {
           /* zustand drives UI */
         },
@@ -386,6 +526,15 @@ export function AppShell() {
   }, [vaultId, mode, applyExternalSnapshot]);
 
   if (!ready) {
+    const earlyHost =
+      typeof document === "undefined" ? null : document.getElementById("nexus-boot-banner");
+    const painted =
+      typeof window !== "undefined" &&
+      (window as unknown as { __NEXUS_BOOT__?: { paintedFromPage?: boolean } }).__NEXUS_BOOT__
+        ?.paintedFromPage === true;
+    if ((earlyHost && !earlyHost.hidden) || painted) {
+      return <div className="h-full bg-[var(--bg-deepest)]" data-early-ready="" />;
+    }
     return (
       <div className="flex h-full items-center justify-center bg-[var(--bg-deepest)]">
         <div className="text-center">
@@ -409,11 +558,12 @@ export function AppShell() {
         <TitleBar />
         <OpenProgressBanner />
         <ChromeFsaLimitBanner />
-        <main id="main-content" tabIndex={-1} className="min-h-0 flex-1 outline-none">
+        <main id="main-content" tabIndex={-1} className="min-h-0 flex-1">
           <WelcomeScreen />
         </main>
         <Toast />
         <CommandPalette />
+        <QuickSwitcher />
         <SettingsPanel />
         <DeleteConfirmHost />
         <ConflictStudioHost />
@@ -435,7 +585,7 @@ export function AppShell() {
       <main
         id="main-content"
         tabIndex={-1}
-        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
+        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
       >
         {graphMode !== "fullscreen" ? <LeftSidebar /> : null}
         {graphMode !== "fullscreen" ? <Workspace /> : null}
@@ -444,6 +594,7 @@ export function AppShell() {
       {graphMode !== "fullscreen" ? <MobileBottomNav /> : null}
       <Toast />
       <CommandPalette />
+      <QuickSwitcher />
       <SettingsPanel />
       <DeleteConfirmHost />
       <ConflictStudioHost />

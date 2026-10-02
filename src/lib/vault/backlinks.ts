@@ -43,12 +43,13 @@ export function getBacklinks(
     }
   }
 
-  // Fallback: classic reverse index when link map empty (cold open / small vault).
-  // Skip the O(n) body scan on large vaults — stripped 45k seeds have no in-memory links.
+  // Small vaults still have every body. Scan when the link map is cold
+  // or only holds the note that was just saved. Skip the scan once the
+  // vault is large enough for the ego graph — those bodies are not in memory.
+  const noteCount = ensureVaultIndex(nodes).noteCount;
   if (
-    fromIds.size === 0 &&
-    vaultLinkIndex.stats().edgeCount === 0 &&
-    !shouldUseEgoGraph(ensureVaultIndex(nodes).noteCount)
+    !vaultLinkIndex.coversNoteCount(noteCount) &&
+    !shouldUseEgoGraph(noteCount)
   ) {
     const index = buildReverseIndex(nodes);
     for (const key of targets) {

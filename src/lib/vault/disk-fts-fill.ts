@@ -120,7 +120,7 @@ export function nodesFromFileMap(
 
   const paths = Object.keys(files).sort();
   for (const path of paths) {
-    if (!path.toLowerCase().endsWith(".md")) continue;
+    if (!path.toLowerCase().endsWith(".md") && !path.toLowerCase().endsWith(".canvas")) continue;
     const slash = path.lastIndexOf("/");
     const parentPath = slash >= 0 ? path.slice(0, slash) : "";
     const parentId = parentPath ? ensureFolder(parentPath) : null;

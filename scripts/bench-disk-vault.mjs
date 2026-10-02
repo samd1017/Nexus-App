@@ -1,6 +1,6 @@
 /**
  * Disk Markdown generator + core path for 100k then 300k.
- * This VM is browser-first (no Tauri/FSA mount). We write real .md files
+ * A browser-only run has no Tauri/FSA mount. We write real .md files
  * and exercise the same in-process generate / structural / path-patch / FTS
  * path desktop will use after a native scan.
  *
@@ -8,7 +8,8 @@
  */
 import { build } from "esbuild";
 import { mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { artifactPath } from "./artifact-dir.mjs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
@@ -157,10 +158,8 @@ const report = {
   largestGreen: [...rows].reverse().find((r) => r.ok)?.notes ?? 0,
 };
 writeFileSync(join(outRoot, "disk-bench.json"), JSON.stringify(report, null, 2));
-mkdirSync("/opt/cursor/artifacts/stress", { recursive: true });
-writeFileSync(
-  "/opt/cursor/artifacts/stress/disk-bench.json",
-  JSON.stringify(report, null, 2),
-);
+const artifactCopy = artifactPath("stress", "disk-bench.json");
+mkdirSync(dirname(artifactCopy), { recursive: true });
+writeFileSync(artifactCopy, JSON.stringify(report, null, 2));
 console.log("LARGEST_DISK_GREEN", report.largestGreen);
 if (rows.some((r) => !r.ok)) process.exitCode = 2;

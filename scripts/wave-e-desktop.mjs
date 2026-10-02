@@ -1,7 +1,7 @@
 /**
  * Wave E desktop runner — Mac / Windows Tauri + SQLite FTS5 BM25.
  *
- * This Linux VM cannot prove SCALE READY. Chrome 100k is refused. Mock-20k
+ * A browser-only machine cannot prove SCALE READY. Chrome 100k is refused. Mock-20k
  * is not Wave E. Run this script on the machine that has `npm run tauri:dev`.
  *
  *   npm run soak:wave-e-desktop -- --notes 100000
@@ -29,6 +29,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { artifactPath } from "./artifact-dir.mjs";
 import { defaultSoakVaultPath } from "./soak-vault-path.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,11 +45,7 @@ const CDP = arg("--cdp", process.env.NEXUS_TAURI_CDP || "");
 const URL = arg("--url", process.env.NEXUS_TAURI_URL || "");
 const defaultVault = defaultSoakVaultPath(NOTES);
 const VAULT = path.resolve(arg("--vault", defaultVault));
-const OUT_DIR =
-  process.env.NEXUS_WAVE_E_OUT ||
-  (existsSync("/opt/cursor/artifacts/stress")
-    ? "/opt/cursor/artifacts/stress"
-    : path.join(root, "artifacts", "wave-e"));
+const OUT_DIR = process.env.NEXUS_WAVE_E_OUT || artifactPath("stress");
 mkdirSync(OUT_DIR, { recursive: true });
 
 const steps = {
@@ -171,7 +168,7 @@ const ticket = {
   generated,
   verdict: "not SCALE READY",
   why:
-    "SCALE READY requires a real Nexus Desktop (Tauri) open of 100k+ that stays responsive: palette SQLite FTS5 BM25, retrieval hub + cluster hits, 20 note opens, create+reload. This VM / Chrome FSA 100k refuse is not that proof.",
+    "SCALE READY requires a real Nexus Desktop (Tauri) open of 100k+ that stays responsive: palette SQLite FTS5 BM25, retrieval hub + cluster hits, 20 note opens, create+reload. A Chrome FSA 100k refuse is not that proof.",
   steps,
   cdp: CDP || null,
   url: URL || null,

@@ -28,11 +28,20 @@ import {
   formatDateISO,
   shiftDate,
 } from "@/lib/vault/templates";
-import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
+import { collectVaultTags, notesForTag, type TagHit } from "@/lib/vault/tags";
+import {
+  BROWSER_SHELL_DB,
+  fetchShellByPaths,
+  fetchShellRecent,
+  fetchShellTagNotes,
+  fetchShellTags,
+} from "@/lib/vault/shell-catalog";
+import type { VaultNode } from "@/lib/vault/types";
 import { formatShortcut } from "@/lib/platform";
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { closeDrawersIfNarrow } from "@/lib/layout/viewport";
 import { cn } from "@/lib/utils";
+import { linkCoverageLine, useLinkCoverage } from "@/lib/vault/link-coverage";
 
 const DEFAULT_LEFT_WIDTH = 260;
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -93,7 +102,73 @@ export function LeftSidebar() {
 
   const weekDays = useMemo(() => weekDaysMondayStart(new Date()), []);
 
-  const vaultTags = useMemo(() => collectVaultTags(nodes), [nodes]);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
+  const [catalogTags, setCatalogTags] = useState<TagHit[] | null>(null);
+  const tagCoverage = useLinkCoverage(
+    shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB ? shellDbPath : null,
+    true,
+  );
+  const tagCoverageLine = linkCoverageLine(tagCoverage, "Tags");
+  // Counts over a whole large vault take tens of milliseconds, so the list is
+  // asked again at each twentieth of the vault read, not at every poll.
+  const tagCoverageStep =
+    tagCoverage && !tagCoverage.complete && tagCoverage.total > 0
+      ? Math.floor((tagCoverage.scanned / tagCoverage.total) * 20)
+      : tagCoverage?.complete
+        ? 20
+        : -1;
+  const [catalogRecent, setCatalogRecent] = useState<VaultNode[] | null>(null);
+  const [pinnedCatalog, setPinnedCatalog] = useState<VaultNode[]>([]);
+
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath) {
+      setCatalogTags(null);
+      return;
+    }
+    let cancel = false;
+    void fetchShellTags(shellDbPath).then((rows) => {
+      if (cancel || !rows) return;
+      setCatalogTags(rows.map((row) => ({ tag: row.tag, count: row.count, noteIds: [] })));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy, shellLiveTick, tagCoverageStep]);
+
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath) {
+      setCatalogRecent(null);
+      return;
+    }
+    let cancel = false;
+    void fetchShellRecent(shellDbPath, 12).then((rows) => {
+      if (cancel || !rows) return;
+      setCatalogRecent(
+        rows
+          .filter((row) => row.kind === "note")
+          .map((row) => ({
+            id: row.id,
+            path: row.path,
+            name: row.name,
+            kind: "note" as const,
+            parentId: row.parentId ?? null,
+            mtime: row.mtime,
+          })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, catalogNoteCount, indexFillBusy, shellLiveTick]);
+
+  const vaultTags = useMemo(
+    () => (shellCatalog ? (catalogTags ?? []) : collectVaultTags(nodes)),
+    [shellCatalog, catalogTags, nodes],
+  );
   const visibleTags = useMemo(() => vaultTags.slice(0, 12), [vaultTags]);
   const tagCount = vaultTags.length;
 
@@ -117,7 +192,8 @@ export function LeftSidebar() {
       if (byVisit.length >= 3) break;
     }
     if (byVisit.length >= 3) return byVisit;
-    const byMtime = Object.values(nodes)
+    const pool = shellCatalog ? (catalogRecent ?? []) : Object.values(nodes);
+    const byMtime = pool
       .filter((n) => n.kind === "note" && !seen.has(n.id))
       .sort((a, b) => b.mtime - a.mtime);
     for (const n of byMtime) {
@@ -125,11 +201,48 @@ export function LeftSidebar() {
       if (byVisit.length >= 3) break;
     }
     return byVisit;
-  }, [recentNoteVisits]);
+  }, [recentNoteVisits, shellCatalog, catalogRecent]);
+
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB) {
+      setPinnedCatalog([]);
+      return;
+    }
+    const paths = pinnedNotePaths ?? [];
+    if (!paths.length) {
+      setPinnedCatalog([]);
+      return;
+    }
+    let cancel = false;
+    void fetchShellByPaths(shellDbPath, paths).then((rows) => {
+      if (cancel || !rows) return;
+      setPinnedCatalog(
+        rows
+          .filter((row) => row.kind === "note")
+          .map((row) => ({
+            id: row.id,
+            path: row.path,
+            name: row.name,
+            kind: "note" as const,
+            parentId: row.parentId ?? null,
+            mtime: row.mtime,
+          })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, pinnedNotePaths, shellLiveTick]);
 
   const pinnedNotes = useMemo(() => {
     const paths = pinnedNotePaths ?? [];
     if (!paths.length) return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) {
+      const byPath = new Map(pinnedCatalog.map((n) => [n.path, n]));
+      return paths
+        .map((p) => byPath.get(p))
+        .filter((n): n is NonNullable<typeof n> => Boolean(n));
+    }
     const byPath = new Map(
       Object.values(nodes)
         .filter((n) => n.kind === "note")
@@ -138,7 +251,7 @@ export function LeftSidebar() {
     return paths
       .map((p) => byPath.get(p))
       .filter((n): n is NonNullable<typeof n> => Boolean(n));
-  }, [nodes, pinnedNotePaths]);
+  }, [nodes, pinnedNotePaths, shellCatalog, shellDbPath, pinnedCatalog]);
 
   const [trashItems, setTrashItems] = useState<TrashEntry[]>([]);
   useEffect(() => {
@@ -217,7 +330,16 @@ export function LeftSidebar() {
             className="icon-btn"
             title="New folder"
             aria-label="New folder"
-            onClick={() => createFolder(null)}
+            onClick={() => {
+              const id = createFolder(null);
+              if (!id) return;
+              // Stage flush is ~48ms; wait so the row exists, then rename in place.
+              window.setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent("nexus-rename-node", { detail: id }),
+                );
+              }, 80);
+            }}
           >
             <FolderPlus size={16} />
           </button>
@@ -231,7 +353,7 @@ export function LeftSidebar() {
                 <button
                   type="button"
                   className={cn(
-                    "group flex items-center gap-1 rounded-md px-0.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,200,255,0.45)]",
+                    "group flex items-center gap-1 rounded-md px-0.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]",
                     monthOpen && "text-[var(--accent)]",
                   )}
                   aria-expanded={monthOpen}
@@ -261,7 +383,7 @@ export function LeftSidebar() {
                   align="start"
                   sideOffset={6}
                   collisionPadding={16}
-                  className="month-cal-popover z-[80] w-[min(280px,calc(100vw-24px))] rounded-[14px] border border-[var(--border)] bg-[rgba(16,16,20,0.98)] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.08)] backdrop-blur-xl outline-none"
+                  className="month-cal-popover z-[80] w-[min(280px,calc(100vw-24px))] rounded-[14px] border border-[var(--border)] bg-[rgba(16,16,20,0.98)] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.08)] backdrop-blur-xl"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onEscapeKeyDown={() => setMonthOpen(false)}
                 >
@@ -282,7 +404,7 @@ export function LeftSidebar() {
               <button
                 type="button"
                 className={cn(
-                  "daily-chip !h-6 !px-1.5 text-[10px]",
+                  "daily-chip !h-7 !min-w-7 !px-2 text-[11px]",
                   isTodayActive && "is-active",
                 )}
                 onClick={() => openDailyNote()}
@@ -293,7 +415,7 @@ export function LeftSidebar() {
               <button
                 type="button"
                 className={cn(
-                  "daily-chip !h-6 !px-1.5 text-[10px]",
+                  "daily-chip !h-7 !min-w-7 !px-2 text-[11px]",
                   isYesterdayActive && "is-active",
                 )}
                 onClick={() => openDailyNoteForDate(yesterday)}
@@ -444,7 +566,7 @@ export function LeftSidebar() {
           <div className="shrink-0 px-3 pt-1 pb-0.5">
             <button
               type="button"
-              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,200,255,0.45)]"
+              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03]"
               aria-expanded={sidebarRecentOpen}
               onClick={() =>
                 updatePrefs({ sidebarRecentOpen: !sidebarRecentOpen })
@@ -512,7 +634,7 @@ export function LeftSidebar() {
           >
             <button
               type="button"
-              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,200,255,0.45)]"
+              className="sidebar-section-label group flex w-full items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.03]"
               aria-expanded={sidebarTagsOpen}
               onClick={() => updatePrefs({ sidebarTagsOpen: !sidebarTagsOpen })}
               onKeyDown={(e) => {
@@ -546,6 +668,25 @@ export function LeftSidebar() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (shellCatalog && shellDbPath) {
+                          void fetchShellTagNotes(shellDbPath, t.tag, 80).then((rows) => {
+                            if (!rows?.length) {
+                              openCommandPalette(`#${t.tag}`);
+                              return;
+                            }
+                            setActiveNote(rows[0].id);
+                            if (rows.length === 1) closeDrawersIfNarrow();
+                            if (rows.length > 1) {
+                              setToast(
+                                `#${t.tag} · ${t.count} note${t.count === 1 ? "" : "s"}`,
+                              );
+                              openCommandPalette(`#${t.tag}`);
+                            } else {
+                              setToast(`#${t.tag}`);
+                            }
+                          });
+                          return;
+                        }
                         const hits = notesForTag(nodes, t.tag);
                         if (hits[0]) {
                           setActiveNote(hits[0].id);
@@ -569,6 +710,15 @@ export function LeftSidebar() {
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {sidebarTagsOpen && tagCoverageLine ? (
+              <p
+                role="status"
+                data-testid="tags-coverage"
+                className="px-1 pt-1 text-[11px] leading-snug text-[var(--text-muted)]"
+              >
+                {tagCoverageLine}
+              </p>
             ) : null}
           </div>
         ) : null}

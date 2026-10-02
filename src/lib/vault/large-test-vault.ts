@@ -52,7 +52,8 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 /**
- * Load the attached 45k-note large-test-vault seed (public/large-test-vault)
+ * Load the local 45k-note seed from /large-test-vault
+ * (gitignored public/large-test-vault; generate on disk, do not commit)
  * into in-memory VaultNodes for real app testing (same shape as demo vault).
  */
 export async function buildLargeTestVault(opts?: {

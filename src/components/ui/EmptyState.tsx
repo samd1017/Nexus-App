@@ -10,6 +10,8 @@ type Props = {
   compact?: boolean;
   /** Optional action slot (button, link) below description */
   children?: ReactNode;
+  /** When set, the card is announced as status (not a control). */
+  status?: string;
 };
 
 /** Shared empty placeholder for FileTree, Graph, right-panel sections. */
@@ -20,9 +22,13 @@ export function EmptyState({
   className,
   compact = false,
   children,
+  status,
 }: Props) {
   return (
     <div
+      role={status ? "status" : undefined}
+      data-panel-empty={status}
+      data-testid={status === "vault" ? "vault-first-run-list" : undefined}
       className={cn(
         "rounded-[12px] border border-dashed border-[var(--border)] text-center",
         compact ? "px-3 py-6" : "px-4 py-8",
@@ -30,7 +36,7 @@ export function EmptyState({
       )}
     >
       {icon ? (
-        <div className="mx-auto mb-2 flex justify-center text-[var(--text-muted)] opacity-40">
+        <div className="mx-auto mb-2 flex justify-center text-[var(--text-secondary)]">
           {icon}
         </div>
       ) : null}
@@ -38,7 +44,14 @@ export function EmptyState({
         {title}
       </p>
       {description ? (
-        <p className="mt-1 text-[11.5px] leading-snug text-[var(--text-muted)]">
+        <p
+          className={cn(
+            "mt-1 leading-relaxed",
+            status === "vault"
+              ? "text-[15px] font-semibold text-white"
+              : "text-[12.5px] text-[var(--text-secondary)]",
+          )}
+        >
           {description}
         </p>
       ) : null}

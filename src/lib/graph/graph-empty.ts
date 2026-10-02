@@ -14,6 +14,13 @@ export type GraphEmptyInput = {
   linkEdgeCount: number;
   hasFilters: boolean;
   folderHasPath: boolean;
+  /**
+   * Desktop shell asks SQLite for one neighborhood. The in-memory link
+   * map stays empty on purpose, so it must not cover the canvas.
+   */
+  catalogBacked?: boolean;
+  /** Heads are still being read. Don't cover the map with a dead-end. */
+  linksStillFilling?: boolean;
 };
 
 export type GraphEmptyCopy = {
@@ -32,6 +39,8 @@ export function graphEmptyCopy(input: GraphEmptyInput): GraphEmptyCopy {
     linkEdgeCount,
     hasFilters,
     folderHasPath,
+    catalogBacked,
+    linksStillFilling,
   } = input;
 
   if (viewMode === "folder") {
@@ -58,7 +67,7 @@ export function graphEmptyCopy(input: GraphEmptyInput): GraphEmptyCopy {
   }
 
   if (viewMode === "ego") {
-    if (!linkIndexReady) {
+    if (!linkIndexReady && !catalogBacked) {
       return {
         show: true,
         title: "Link index isn’t ready yet",
@@ -66,12 +75,19 @@ export function graphEmptyCopy(input: GraphEmptyInput): GraphEmptyCopy {
           "Native fill is still extracting [[wikilinks]] from note heads. The neighborhood appears when the link index is seeded — no need to open every note.",
       };
     }
+    if (catalogBacked && (drawnNodeCount > 0 || linksStillFilling)) {
+      return {
+        show: false,
+        title: "",
+        description: "",
+      };
+    }
     if (!activeNoteId) {
       return {
         show: true,
         title: "Pick a note",
         description:
-          "Open a note to see its neighborhood. The map never draws the whole vault.",
+          "Open a note and fly its neighborhood. A huge vault stays a folder map until you ask.",
       };
     }
     if (linkEdgeCount === 0) {

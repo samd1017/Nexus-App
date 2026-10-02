@@ -1,5 +1,5 @@
 /**
- * Bulk vault mutations for agent / Hermes bursts.
+ * Bulk vault mutations for outside writers.
  * Coalesces dozens–hundreds of creates into few store updates + disk flushes.
  */
 

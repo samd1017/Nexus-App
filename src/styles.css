@@ -77,6 +77,13 @@
     --fill-hover: rgba(255, 255, 255, 0.05);
     --titlebar-bg: rgba(8, 8, 10, 0.94);
     --code-inline: rgba(255, 255, 255, 0.06);
+    --switch-off: rgba(255, 255, 255, 0.18);
+    /* One keyboard ring. #5ad8ff on #0f0f12 is ~11:1. Light theme darkens it. */
+    --focus-ring: #5ad8ff;
+    --focus-ring-width: 2px;
+    --focus-ring-offset: 2px;
+    /* Solid accent fills: cyan-on-cyan is ~1.2:1, near-black on #00c8ff is ~10:1. */
+    --focus-ring-on-fill: #061018;
   }
 
   [data-theme="light"] {
@@ -101,14 +108,79 @@
     --fill-hover: rgba(16, 18, 28, 0.055);
     --titlebar-bg: rgba(247, 248, 251, 0.92);
     --code-inline: rgba(16, 18, 28, 0.06);
+    --switch-off: #c5cad6;
+    /* #0078a8 on #ffffff is ~4.9:1; on #eef0f4 ~4.3:1. Same ring, readable on paper. */
+    --focus-ring: #0078a8;
+    --focus-ring-on-fill: #061018;
     --danger-dim: color-mix(in srgb, var(--danger) 12%, transparent);
     --warning-dim: color-mix(in srgb, var(--warning) 12%, transparent);
     --success-dim: color-mix(in srgb, var(--success) 12%, transparent);
   }
 
+  /* Premium themes ride on dark / light so every light override still applies.
+     --graph-void is left alone: themes recolor chrome, not the 3D graph. */
+  :root[data-theme-variant="midnight"] {
+    color-scheme: dark;
+    --bg-deepest: #070a14;
+    --bg-primary: #0c1120;
+    --bg-secondary: #111829;
+    --bg-elevated: #172036;
+    --border: rgba(148, 170, 255, 0.1);
+    --border-strong: #26304a;
+    --text-primary: #e8ecfa;
+    --text-secondary: #a7b0cc;
+    --text-muted: #8f99b8;
+    --glass-bg: rgba(12, 17, 32, 0.74);
+    --panel-solid: #0e1424;
+    --fill-subtle: rgba(148, 170, 255, 0.04);
+    --fill-hover: rgba(148, 170, 255, 0.07);
+    --titlebar-bg: rgba(7, 10, 20, 0.94);
+    --code-inline: rgba(148, 170, 255, 0.08);
+    --switch-off: rgba(148, 170, 255, 0.22);
+  }
+
+  :root[data-theme-variant="paper"] {
+    color-scheme: light;
+    --bg-deepest: #ece4d4;
+    --bg-primary: #f6f0e4;
+    --bg-secondary: #fbf7ef;
+    --bg-elevated: #fffcf6;
+    --border: rgba(74, 56, 30, 0.12);
+    --border-strong: #d8ccb5;
+    --text-primary: #2a2219;
+    --text-secondary: #5a4d3c;
+    --text-muted: #6e6150;
+    --glass-bg: rgba(251, 247, 239, 0.84);
+    --shadow-panel: 0 4px 20px rgba(74, 56, 30, 0.08);
+    --overlay: rgba(42, 34, 25, 0.4);
+    --panel-solid: #fbf7ef;
+    --fill-subtle: rgba(74, 56, 30, 0.04);
+    --fill-hover: rgba(74, 56, 30, 0.07);
+    --titlebar-bg: rgba(246, 240, 228, 0.94);
+    --code-inline: rgba(74, 56, 30, 0.07);
+    --switch-off: #cdbfa6;
+  }
+
   [data-theme="light"] .glass-elevated,
   [data-theme="light"] .glass-panel {
     background: var(--glass-bg);
+  }
+
+  [data-theme="light"] .icon-btn:hover,
+  [data-theme="light"] .chip-btn:hover,
+  [data-theme="light"] .ghost-btn:hover {
+    background: var(--fill-hover);
+    border-color: var(--border-strong);
+  }
+
+  [data-theme="light"] .chip-btn,
+  [data-theme="light"] .ghost-btn {
+    background: var(--fill-subtle);
+  }
+
+  .settings-body > section + section {
+    border-top: 1px solid var(--border);
+    padding-top: 1.35rem;
   }
 
   * {
@@ -146,8 +218,8 @@
   }
 
   :focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
-    outline-offset: 2px;
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
   }
 
   @media (pointer: fine) {
@@ -221,6 +293,12 @@
     overscroll-behavior: contain;
   }
 
+  /* Note body scroller. Anchoring fights WebKit when chrome above the
+     prose updates, and a transformed ancestor disables compositor scroll. */
+  .editor-scrollport {
+    overflow-anchor: none;
+  }
+
   .skip-link {
     position: absolute;
     left: 8px;
@@ -236,7 +314,7 @@
   }
   .skip-link:focus {
     top: 8px;
-    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline: var(--focus-ring-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
 
@@ -280,6 +358,50 @@
     -webkit-background-clip: text;
     background-clip: text;
     pointer-events: none;
+  }
+
+  /* Light chrome: the same metal in graphite, lit from above, so the name
+     reads on a pale title bar. Dark islands keep the silver. */
+  [data-theme="light"] .nexus-wordmark {
+    background-image: linear-gradient(
+      165deg,
+      #3b4252 0%,
+      #1d2331 36%,
+      #0c1017 62%,
+      #2b3341 86%,
+      #4a5364 100%
+    );
+    filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.9))
+      drop-shadow(0 1px 1px rgba(16, 18, 28, 0.16));
+  }
+  [data-theme="light"] .nexus-wordmark::after {
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.28) 0%,
+      rgba(255, 255, 255, 0) 45%
+    );
+  }
+  [data-theme="light"] .nexus-dark-island .nexus-wordmark {
+    background-image: linear-gradient(
+      165deg,
+      #ffffff 0%,
+      #e8ecf4 22%,
+      #a8b0bc 48%,
+      #6a7280 72%,
+      #c8d0dc 88%,
+      #f0f4f8 100%
+    );
+    filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.18))
+      drop-shadow(0 2px 0 rgba(0, 0, 0, 0.55))
+      drop-shadow(0 3px 1px rgba(0, 0, 0, 0.35))
+      drop-shadow(0 0 12px rgba(0, 200, 255, 0.12));
+  }
+  [data-theme="light"] .nexus-dark-island .nexus-wordmark::after {
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.55) 0%,
+      rgba(255, 255, 255, 0) 42%
+    );
   }
 
   .nexus-mark {
@@ -863,15 +985,10 @@
     background: rgba(0, 200, 255, 0.1) !important;
     box-shadow: 0 0 0 1px rgba(0, 200, 255, 0.12);
   }
-  .daily-chip:focus-visible {
-    outline: 2px solid rgba(0, 200, 255, 0.55);
-    outline-offset: 2px;
-  }
+  .daily-chip:focus-visible,
   .daily-chip.is-active:focus-visible {
-    outline-color: rgba(0, 200, 255, 0.75);
-    box-shadow:
-      0 0 0 1px rgba(0, 200, 255, 0.18),
-      0 0 12px rgba(0, 200, 255, 0.14);
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
   }
   .daily-chip.daily-chip--day {
     border-radius: 8px;
@@ -890,12 +1007,10 @@
   .month-cal-cell--empty {
     pointer-events: none;
   }
-  .month-cal-cell:focus-visible {
-    outline: 2px solid rgba(0, 200, 255, 0.55);
-    outline-offset: 1px;
-  }
+  .month-cal-cell:focus-visible,
   .month-cal-cell.is-active:focus-visible {
-    outline-color: rgba(0, 200, 255, 0.75);
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: 1px;
   }
   .month-calendar {
     color: var(--text-primary);
@@ -930,10 +1045,20 @@
     color: var(--text-primary);
   }
 
+  [data-theme="light"] .tree-item:hover {
+    background: var(--fill-hover);
+  }
+
   .tree-item.is-active {
-    background: rgba(0, 200, 255, 0.1);
+    background: rgba(0, 200, 255, 0.14);
     color: var(--text-primary);
-    border-color: rgba(0, 200, 255, 0.22);
+    border-color: transparent;
+    box-shadow: inset 3px 0 0 #5ad8ff;
+  }
+
+  [data-theme="light"] .tree-item.is-active {
+    background: var(--accent-dim);
+    box-shadow: inset 3px 0 0 var(--accent);
   }
 
   /* Icon button */
@@ -1101,8 +1226,8 @@
 }
 
 .graph-chrome:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .graph-loading-ring {
@@ -1128,11 +1253,11 @@
   height: 28px;
   padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.45);
-  color: var(--text-secondary);
-  font-size: 10.5px;
-  font-weight: 550;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(4, 6, 10, 0.9);
+  color: #e8eef6;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.01em;
   backdrop-filter: blur(12px);
 }
@@ -1156,6 +1281,15 @@
   font: inherit;
   outline: none;
 }
+/* The chip wears the ring; the native select does not draw a second box. */
+.graph-chip-select:focus-within {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.graph-chip-select select:focus,
+.graph-chip-select select:focus-visible {
+  outline: none;
+}
 .graph-inspector {
   position: absolute;
   z-index: 20;
@@ -1164,14 +1298,14 @@
   width: min(280px, calc(100% - 20px));
   padding: 10px 12px;
   border-radius: 14px;
-  background: rgba(8, 10, 14, 0.88);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.06));
+  background: rgba(5, 7, 12, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   box-shadow:
-    0 16px 48px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 0 28px color-mix(in srgb, var(--accent) 12%, transparent);
+    0 16px 48px rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  color: #f2f6fb;
 }
 .graph-chrome--panel .graph-inspector {
   width: min(240px, calc(100% - 16px));
@@ -1185,11 +1319,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 1px 8px;
-  font-size: 10.5px;
-  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f2f6fb;
+}
+.graph-count {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(4, 6, 10, 0.92);
+}
+.graph-count-text {
+  color: #f2f6fb;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 .graph-link-chip:hover {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
@@ -1225,8 +1370,8 @@
     animation: noteFadeIn var(--duration-base) var(--motion-ease) both;
   }
   @keyframes noteFadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   /* Soft Visual ↔ Source / note switch */
@@ -1236,8 +1381,8 @@
     animation: editorSurfaceIn var(--duration-base) var(--motion-ease) both;
   }
   @keyframes editorSurfaceIn {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .first-run-coach {
@@ -1330,7 +1475,9 @@
   }
 
   /* Graph host canvas fill */
-  .graph-host canvas {
+  .graph-host canvas,
+  .graph-host canvas:focus,
+  .graph-host canvas:focus-visible {
     outline: none;
   }
 
@@ -1363,8 +1510,12 @@
   .chip-btn:focus-visible,
   .primary-btn:focus-visible,
   .ghost-btn:focus-visible {
-    outline: 2px solid rgba(0, 200, 255, 0.55);
-    outline-offset: 2px;
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .primary-btn:focus-visible {
+    outline-color: var(--focus-ring-on-fill);
   }
 
   .cmdk-item[aria-selected="true"] {
@@ -1771,6 +1922,55 @@
   box-shadow: none;
   overflow: visible;
   z-index: 0;
+  pointer-events: none;
+}
+.nexus-canvas-group .nexus-canvas-grip,
+.nexus-canvas-group .nexus-canvas-resize,
+.nexus-canvas-group p {
+  pointer-events: auto;
+}
+.nexus-canvas-note-render {
+  min-height: 0;
+  flex: 1;
+  width: 100%;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.nexus-canvas-note-render h1,
+.nexus-canvas-note-render h2,
+.nexus-canvas-note-render h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+.nexus-canvas-note-render p,
+.nexus-canvas-note-render ul,
+.nexus-canvas-note-render ol,
+.nexus-canvas-note-render blockquote {
+  margin: 0 0 6px;
+}
+.nexus-canvas-note-render ul,
+.nexus-canvas-note-render ol {
+  padding-left: 1.1em;
+}
+.nexus-canvas-edge-hit {
+  position: absolute;
+  z-index: 40;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 40%, var(--panel-solid));
+  padding: 0;
+  cursor: pointer;
+}
+.nexus-canvas-edge-hit.is-selected {
+  background: #7dd3fc;
+  border-color: #7dd3fc;
 }
 .nexus-canvas-grip {
   display: flex;
@@ -1815,8 +2015,8 @@
 }
 .nexus-canvas-port {
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   border: 0;
   background: transparent;
@@ -1828,13 +2028,14 @@
 .nexus-canvas-port::after {
   content: "";
   position: absolute;
-  inset: 6px;
+  inset: 12px;
   border-radius: 999px;
-  border: 1.5px solid var(--accent);
+  border: 2px solid var(--accent);
   background: var(--panel-solid);
 }
 .nexus-canvas-card.is-selected .nexus-canvas-port {
   opacity: 1;
+  pointer-events: auto;
 }
 .nexus-canvas-card:hover .nexus-canvas-port,
 .nexus-canvas-card.is-ports .nexus-canvas-port,
@@ -1842,10 +2043,10 @@
   opacity: 1;
   pointer-events: auto;
 }
-.nexus-canvas-port.is-top { top: -18px; left: 50%; transform: translateX(-50%); }
-.nexus-canvas-port.is-bottom { bottom: -18px; left: 50%; transform: translateY(0) translateX(-50%); }
-.nexus-canvas-port.is-left { left: -18px; top: 50%; transform: translateY(-50%); }
-.nexus-canvas-port.is-right { right: -18px; top: 50%; transform: translateY(-50%); }
+.nexus-canvas-port.is-top { top: -22px; left: 50%; transform: translateX(-50%); }
+.nexus-canvas-port.is-bottom { bottom: -22px; left: 50%; transform: translateY(0) translateX(-50%); }
+.nexus-canvas-port.is-left { left: -22px; top: 50%; transform: translateY(-50%); }
+.nexus-canvas-port.is-right { right: -22px; top: 50%; transform: translateY(-50%); }
 .nexus-canvas-port.is-live::after,
 .nexus-canvas-port:hover::after {
   background: var(--accent);
@@ -1885,7 +2086,8 @@
   border-bottom: 2px solid color-mix(in srgb, var(--text-muted) 55%, transparent);
 }
 .nexus-embed,
-.nexus-query {
+.nexus-query,
+.nexus-note-list {
   margin: 0.85rem 0;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -1959,6 +2161,11 @@
   overflow: auto;
   padding: 20px 28px 48px;
 }
+/* The reading view takes focus only so the keys scroll it, like the editor it replaces. */
+[data-reading-view] .nexus-source-preview:focus,
+[data-reading-view] .nexus-source-preview:focus-visible {
+  outline: none;
+}
 .nexus-wikilink-hover {
   position: fixed;
   z-index: 96;
@@ -1983,3 +2190,521 @@
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }
 
+/* Surfaces that stay dark in the light theme keep the bright ring.
+   #5ad8ff on #16161a / #04060a is ~11:1. The page token would sink into them. */
+.nexus-dark-island,
+.month-cal-popover,
+.graph-chip,
+.graph-link-chip,
+.graph-inspector,
+.graph-chrome [data-graph-breadcrumb],
+.graph-chrome [aria-label="Graph mode"],
+.graph-chrome [data-graph-filter],
+.nexus-rename-input {
+  --focus-ring: #5ad8ff;
+}
+
+/* Unlayered so the ring wins over preflight and utility outline resets. */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Where you write, the caret is the focus mark; a ring there boxes in the page. */
+.ProseMirror.note-editor:focus-visible,
+.source-editor:focus-visible,
+.note-title-input:focus-visible {
+  outline: none;
+}
+.note-title-input,
+.nexus-mermaid-edit,
+.nexus-math-edit,
+.nexus-canvas-edit {
+  outline: none;
+}
+.nexus-mermaid-edit:focus-visible,
+.nexus-math-edit:focus-visible,
+.nexus-canvas-edit:focus-visible,
+.graph-host canvas:focus,
+.graph-host canvas:focus-visible {
+  outline: none;
+}
+
+/* Chrome text fields: one ring, same token. Pointer clicks on buttons do not match. */
+.nexus-field {
+  outline: none;
+}
+.nexus-field:focus-visible,
+.nexus-canvas-edge-input:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* A shell that only exists to move the cursor. The control inside wears the ring. */
+.nexus-focus-host:focus,
+.nexus-focus-host:focus-visible {
+  outline: none;
+}
+#main-content:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.icon-btn:focus-visible,
+.chip-btn:focus-visible,
+.primary-btn:focus-visible,
+.ghost-btn:focus-visible,
+button:focus-visible,
+[role="menuitem"]:focus-visible,
+[data-keyboard-focus="control"]:not(.nexus-search-field) {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: none;
+}
+.primary-btn:focus-visible,
+.graph-mode-pill[aria-pressed="true"]:focus-visible {
+  outline-color: var(--focus-ring-on-fill);
+}
+
+/* Tree cursor only while the list itself was reached from the keyboard. */
+[data-file-tree]:focus-visible .tree-item.is-focused,
+[data-file-tree]:focus-visible .tree-item[data-keyboard-focus="row"] {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Dark graph controls: inset so the ring sits on the chip, not the pale map. */
+.graph-chip:focus-visible,
+.graph-link-chip:focus-visible,
+.graph-mode-pill:focus-visible,
+.graph-chrome [data-graph-breadcrumb] button:focus-visible,
+.graph-chrome [aria-label="Graph mode"] button:focus-visible,
+.graph-chrome [data-graph-filter]:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.graph-mode-pill[aria-pressed="true"]:focus-visible {
+  outline-color: var(--focus-ring-on-fill);
+}
+
+/* Rebuild: a secondary action with a readable label, not the loudest thing in Settings. */
+.nexus-rebuild-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-dim);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.nexus-rebuild-btn:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: var(--accent);
+}
+.nexus-rebuild-btn:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Search field uses the same ring, inset so the palette cannot clip it. */
+.nexus-search-input {
+  caret-color: #5ad8ff;
+  color: #fff;
+  outline: none;
+}
+.nexus-search-field:focus-within,
+.nexus-search-field[data-keyboard-focus="control"] {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+/* One ring: the field carries it, so the text input inside does not draw a second box. */
+.nexus-search-input:focus,
+.nexus-search-input:focus-visible,
+.nexus-search-input[data-keyboard-focus="control"] {
+  outline: none;
+  box-shadow: none;
+}
+
+.nexus-settings-nav {
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #fff;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.nexus-settings-nav:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: none;
+}
+
+[data-confirm-message] {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+[data-testid="trash-status"] {
+  color: #fff;
+  background: #000;
+  border: 2px solid #5ad8ff;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Confirm copy stays white. The card stays dark even when the vault theme is light. */
+[data-nexus-confirm] [role="dialog"] {
+  background: #16161a;
+  color: #fff;
+}
+[data-nexus-confirm] [role="dialog"] h2 {
+  color: #fff;
+}
+
+/* Status line under the note: white on the dark editor. */
+.editor-status {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Section leads, empty link panels, and the first-run line stay white on dark. */
+[data-settings-lead],
+[data-panel-empty],
+[data-testid="tree-empty-folder-banner"],
+[data-testid="tree-empty-folder-status"] {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+[data-editor-empty] h2,
+[data-editor-empty] p,
+[data-testid="vault-first-run-list"] p {
+  color: #fff;
+}
+[data-testid="vault-first-run"],
+[data-editor-empty="vault"] h2 {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+
+/* Rename: one unmistakable field on a quiet row, with the two keys beside it. */
+.tree-item.is-renaming,
+.tree-item.is-renaming.is-focused,
+.tree-item.is-renaming[data-keyboard-focus="row"] {
+  outline: none;
+  background: rgba(90, 216, 255, 0.1);
+  box-shadow: inset 3px 0 0 #5ad8ff;
+}
+.nexus-rename-input {
+  background: #0a1216;
+  color: #fff;
+  font-weight: 600;
+  border: 2px solid var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 28%, transparent);
+  caret-color: #5ad8ff;
+  outline: none;
+}
+.nexus-rename-input:focus,
+.nexus-rename-input:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+.nexus-rename-input::selection {
+  background: rgba(90, 216, 255, 0.45);
+  color: #fff;
+}
+.nexus-rename-hint {
+  display: inline-flex;
+  gap: 3px;
+  margin-right: 4px;
+}
+.nexus-rename-hint kbd {
+  font: 700 10.5px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  color: #fff;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(90, 216, 255, 0.45);
+  background: rgba(90, 216, 255, 0.12);
+}
+
+/* Folder chevron turns instead of swapping glyphs. */
+.nexus-tree-chevron svg {
+  transition: transform 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.nexus-tree-chevron[data-open="1"] svg {
+  transform: rotate(90deg);
+}
+
+/* Dialogs arrive, they do not pop. */
+/* Movement only: the dialog is fully opaque on its first frame, so an early
+   screenshot or a fast reader never sees it half-faded. */
+@keyframes nexusDialogIn {
+  from {
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    transform: none;
+  }
+}
+.nexus-dialog-in {
+  animation: nexusDialogIn 170ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* A miss offers the next step. */
+.nexus-miss-actions button {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(90, 216, 255, 0.35);
+  background: rgba(90, 216, 255, 0.08);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.nexus-miss-actions button:hover {
+  background: rgba(90, 216, 255, 0.16);
+  border-color: rgba(90, 216, 255, 0.6);
+}
+.nexus-miss-actions button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+.nexus-keys-hint kbd {
+  font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+  color: #fff;
+  padding: 5px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* The editor head answers to its own width, not the window's. With both side
+   panels open the pane is narrow, so tool labels fold to icons before the
+   note title is clipped. */
+.nexus-editor-head {
+  container-type: inline-size;
+}
+.nexus-editor-title {
+  min-width: 8.5rem;
+}
+@container (max-width: 760px) {
+  .nexus-editor-head .editor-mode-cluster .chip-btn > span {
+    display: none;
+  }
+}
+@container (max-width: 620px) {
+  .nexus-editor-head .nexus-editor-when {
+    display: none;
+  }
+}
+
+/* Tree: the open note reads first, its folders stay findable, depth is felt. */
+.tree-item.is-active {
+  color: #fff;
+  font-weight: 600;
+}
+.tree-item.is-active-path > .nexus-tree-chevron,
+.tree-item.is-active-path .lucide-folder,
+.tree-item.is-active-path .lucide-folder-open {
+  color: #5ad8ff;
+}
+.tree-item.is-active-path {
+  color: var(--text-primary);
+}
+.tree-item[data-depth]:not([data-depth="0"])::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tree-guide-x, 0);
+  width: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  pointer-events: none;
+}
+[data-theme="light"] .tree-item[data-depth]:not([data-depth="0"])::before {
+  background: rgba(16, 18, 28, 0.08);
+}
+.tree-item {
+  transition:
+    background 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Status lines rise into place instead of appearing. */
+@keyframes nexusToastIn {
+  from {
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    transform: none;
+  }
+}
+.nexus-toast-in {
+  animation: nexusToastIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* One selection language: the chosen search result wears the same cyan bar as
+   the open note in the list. */
+.cmdk-item {
+  transition:
+    background 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.cmdk-item[aria-selected="true"],
+.cmdk-item[data-selected="true"] {
+  background: rgba(90, 216, 255, 0.12);
+  box-shadow: inset 3px 0 0 #5ad8ff;
+  color: #fff;
+}
+
+/* Settings: the section in view is underlined, whether or not its tab has focus. */
+.nexus-settings-nav {
+  position: relative;
+}
+.nexus-settings-nav[data-current="1"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -3px;
+  height: 2px;
+  border-radius: 2px;
+  background: #5ad8ff;
+}
+
+/* Dialogs are one solid dark surface in both themes. Their copy is set for dark
+   (white leads, white search text), so a light or see-through card hid the
+   Settings title behind whatever sat underneath. */
+.nexus-dark-island {
+  --text-primary: #f2f2f7;
+  --text-secondary: #b4b4bf;
+  --text-muted: #a0a0ad;
+  --bg-elevated: #1c1c21;
+  --bg-deepest: #0b0b0e;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: #2a2a30;
+  --glass-bg: #16161a;
+  --fill-hover: rgba(255, 255, 255, 0.06);
+  background: #16161a;
+  color: #f2f2f7;
+  color-scheme: dark;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-theme="light"] .nexus-dark-island.glass-elevated,
+.nexus-dark-island.glass-elevated {
+  background: #16161a;
+}
+.nexus-dark-island input:not(.nexus-search-input):not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+.nexus-dark-island textarea,
+.nexus-dark-island select {
+  background: #0f0f12;
+  color: #f2f2f7;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Key pills read at a glance: white on near-black with a clear light edge. */
+.nexus-rename-hint kbd {
+  font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: #0b0b0e;
+  border: 1.5px solid rgba(255, 255, 255, 0.72);
+  border-radius: 6px;
+  padding: 4px 7px;
+}
+.nexus-dark-island .nexus-rename-hint kbd {
+  font-size: 13px;
+  padding: 5px 9px;
+}
+.nexus-keys-hint kbd {
+  font: 700 13px/1 ui-sans-serif, system-ui, sans-serif;
+  color: #fff;
+  background: #0b0b0e;
+  border: 1.5px solid rgba(255, 255, 255, 0.72);
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+
+/* The white helper text above is for dark surfaces. In the light theme the same
+   lines sit on light panels, so they take the strong dark ink instead. Dialogs
+   are dark in both themes and keep their white copy. */
+/* Neon success green is for dark chrome. On the pale light title bar it
+   falls under 2:1, so On disk / Saved take a darker green that still reads. */
+[data-theme="light"] .nexus-disk-chip {
+  color: #146c36;
+  border-color: rgba(20, 108, 54, 0.35);
+  background-color: rgba(20, 108, 54, 0.1);
+}
+[data-theme="light"] .editor-status,
+[data-theme="light"] [data-panel-empty],
+[data-theme="light"] [data-testid="tree-empty-folder-banner"],
+[data-theme="light"] [data-testid="tree-empty-folder-status"],
+[data-theme="light"] [data-editor-empty] h2,
+[data-theme="light"] [data-editor-empty] p,
+[data-theme="light"] [data-testid="vault-first-run-list"] p,
+[data-theme="light"] [data-testid="vault-first-run"],
+[data-theme="light"] [data-testid="vault-first-run-invite"],
+[data-theme="light"] [data-testid="note-keys-hint"],
+[data-theme="light"] .tree-item.is-active {
+  color: #12141a;
+}
+[data-theme="light"] .nexus-keys-hint kbd,
+[data-theme="light"] .nexus-rename-hint kbd {
+  color: #12141a;
+  background: #ffffff;
+  border-color: rgba(18, 20, 26, 0.6);
+}
+[data-theme="light"] .nexus-dark-island .nexus-rename-hint kbd {
+  color: #fff;
+  background: #0b0b0e;
+  border-color: rgba(255, 255, 255, 0.72);
+}
+/* In a tree row the name field needs the width; the pills stay legible but compact. */
+.tree-item .nexus-rename-hint {
+  gap: 2px;
+}
+.tree-item .nexus-rename-hint kbd {
+  font-size: 11.5px;
+  padding: 3px 5px;
+}
+/* In a list row the empty-folder line has to fit beside the name and New note. */
+.tree-item [data-testid="tree-empty-folder-status"] {
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+}
+.nexus-empty-tag {
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+  color: var(--text-secondary);
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+}
+.nexus-tree-label {
+  container-type: inline-size;
+}
+/* Too narrow for name and tag: the name wins. */
+@container (max-width: 6.5rem) {
+  .nexus-empty-tag {
+    display: none;
+  }
+}

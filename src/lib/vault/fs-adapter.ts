@@ -1,6 +1,6 @@
 /**
  * Real local vault via File System Access API.
- * Notes are plain .md files on disk — Hermes-compatible.
+ * Notes are plain .md files on disk.
  * Supports full scan + incremental re-read of changed paths only.
  * Wave C: pure path-patch tree merge when change set is small.
  */
@@ -178,7 +178,7 @@ type WalkCollectOpts = {
   skipGetFileAfter?: number;
 };
 
-async function walkCollect(
+export async function walkCollect(
   root: FileSystemDirectoryHandle,
   onFile: (
     path: string,
@@ -187,7 +187,7 @@ async function walkCollect(
     file: File | null,
     handle: FileSystemFileHandle,
   ) => Promise<void>,
-  onDir: (path: string, name: string, parentPath: string) => void,
+  onDir: (path: string, name: string, parentPath: string) => void | Promise<void>,
   opts?: WalkCollectOpts,
 ) {
   let notes = 0;
@@ -197,11 +197,11 @@ async function walkCollect(
       if (handle.kind === "directory") {
         if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
         const path = relPath ? pathJoin(relPath, name) : name;
-        onDir(path, name, relPath);
+        await onDir(path, name, relPath);
         await walk(handle as FileSystemDirectoryHandle, path);
       } else if (
         handle.kind === "file" &&
-        name.toLowerCase().endsWith(".md")
+        (name.toLowerCase().endsWith(".md") || name.toLowerCase().endsWith(".canvas"))
       ) {
         notes += 1;
         if (opts?.maxNotes != null && notes > opts.maxNotes) {
@@ -241,6 +241,7 @@ export async function scanVault(
         kind: "note",
         parentId,
         mtime: file.lastModified,
+        size: file.size,
         content,
       };
       signatures[path] = `${file.lastModified}:${file.size}`;
@@ -296,6 +297,7 @@ export async function scanVaultMeta(
         kind: "note",
         parentId,
         mtime: file?.lastModified ?? 1,
+        ...(file ? { size: file.size } : {}),
       };
       signatures[path] = file
         ? `${file.lastModified}:${file.size}`
@@ -633,6 +635,57 @@ export async function pickVaultFolder(): Promise<FileSystemDirectoryHandle | nul
   }
 }
 
+/**
+ * Text files with `ext` directly inside `relDir` (hidden names skipped).
+ * Files over `maxBytes` come back with `text: null`. A missing folder is empty.
+ */
+export async function readFsaTextFilesIn(
+  root: FileSystemDirectoryHandle,
+  relDir: string,
+  ext: string,
+  maxBytes: number,
+): Promise<Array<{ name: string; text: string | null; size: number; error?: string }>> {
+  let dir: FileSystemDirectoryHandle;
+  try {
+    dir = await getDirAtPath(root, relDir, false);
+  } catch {
+    return [];
+  }
+  const out: Array<{ name: string; text: string | null; size: number; error?: string }> = [];
+  for await (const [name, handle] of dir.entries()) {
+    if (handle.kind !== "file" || name.startsWith(".") || !name.toLowerCase().endsWith(ext)) continue;
+    try {
+      const file = await (handle as FileSystemFileHandle).getFile();
+      out.push({ name, size: file.size, text: file.size > maxBytes ? null : await file.text() });
+    } catch (err) {
+      out.push({ name, size: 0, text: null, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return out;
+}
+
+const MAX_LISTED_BASE_FILES = 64;
+
+/** Vault-relative `*.base` paths, skipping hidden folders. Not part of the note catalog. */
+export async function listFsaBaseFiles(root: FileSystemDirectoryHandle): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (dir: FileSystemDirectoryHandle, relDir: string): Promise<void> => {
+    if (out.length >= MAX_LISTED_BASE_FILES) return;
+    for await (const [name, handle] of dir.entries()) {
+      if (out.length >= MAX_LISTED_BASE_FILES) return;
+      if (!name || name.startsWith(".")) continue;
+      if (handle.kind === "directory") {
+        if (SKIP_DIRS.has(name)) continue;
+        await walk(handle as FileSystemDirectoryHandle, relDir ? pathJoin(relDir, name) : name);
+      } else if (handle.kind === "file" && name.toLowerCase().endsWith(".base")) {
+        out.push(relDir ? pathJoin(relDir, name) : name);
+      }
+    }
+  };
+  await walk(root, "");
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
 /** List soft-deleted notes under `.trash/` (newest first). */
 export async function listFsaTrash(
   root: FileSystemDirectoryHandle,
@@ -642,7 +695,7 @@ export async function listFsaTrash(
     const trash = await root.getDirectoryHandle(".trash", { create: false });
     for await (const [name, handle] of trash.entries()) {
       if (handle.kind !== "file") continue;
-      if (!name.toLowerCase().endsWith(".md")) continue;
+      if (!name.toLowerCase().endsWith(".md") && !name.toLowerCase().endsWith(".canvas")) continue;
       const file = await (handle as FileSystemFileHandle).getFile();
       out.push({ relPath: `.trash/${name}`, mtime: file.lastModified });
     }

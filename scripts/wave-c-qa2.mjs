@@ -1,5 +1,9 @@
 import { chromium } from "playwright";
 import fs from "fs";
+import { artifactPath } from "./artifact-dir.mjs";
+
+const SHOTS = artifactPath("screenshots");
+fs.mkdirSync(SHOTS, { recursive: true });
 
 const url = "http://127.0.0.1:8080/";
 const browser = await chromium.launch({ headless: true });
@@ -67,7 +71,7 @@ if (!hasScale) {
   hasScale = /Vault scale|Memory budget|Automatic for all folder/i.test(settingsText);
 }
 
-await page.screenshot({ path: "/workspace/screenshots/wave-c-settings.png" });
+await page.screenshot({ path: `${SHOTS}/wave-c-settings.png` });
 
 // Pulse
 const pulse = page.getByRole("button", { name: /Pulse/i }).first();
@@ -116,7 +120,7 @@ if (conflictInject.ok) {
 }
 const bodyAfter = await page.locator("body").innerText();
 const hasStudio = /Conflict Studio|Keep mine|Take theirs/i.test(bodyAfter);
-await page.screenshot({ path: "/workspace/screenshots/wave-c-conflict.png" });
+await page.screenshot({ path: `${SHOTS}/wave-c-conflict.png` });
 
 // Mobile
 const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -131,7 +135,7 @@ const overflow = await mobile.evaluate(
   () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2,
 );
 const mText = await mobile.locator("body").innerText();
-await mobile.screenshot({ path: "/workspace/screenshots/wave-c-mobile.png" });
+await mobile.screenshot({ path: `${SHOTS}/wave-c-mobile.png` });
 
 const hardConsole = consoleErrors.filter(
   (e) => !/React state update on a component that hasn't mounted/i.test(e),
@@ -157,7 +161,7 @@ const report = {
   bodyLen: (await page.locator("body").innerText()).length,
   mobileLen: mText.length,
 };
-fs.writeFileSync("/workspace/screenshots/wave-c-qa2.json", JSON.stringify(report, null, 2));
+fs.writeFileSync(`${SHOTS}/wave-c-qa2.json`, JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
 await browser.close();
 process.exit(report.ok ? 0 : 2);

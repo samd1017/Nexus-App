@@ -11,13 +11,31 @@ import {
 } from "@/lib/vault/nav-history";
 import { openFindInNote, closeFindInNote } from "@/components/editor/FindInNoteBar";
 import { openCommandPalette } from "@/components/search/CommandPalette";
+import { setSwitcherOpen, toggleQuickSwitcher } from "@/lib/search/switcher-session";
 import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
+import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
+import { queueRevealEnter, revealFileList, revealInFlight } from "@/lib/chrome/reveal-list";
+import { startFirstNote, vaultHasNoNotes } from "@/lib/vault/first-note";
+import { scheduleEmptyNoteRename } from "@/lib/chrome/empty-folder-enter";
 import {
   matchHotkey,
   type HotkeyId,
 } from "@/lib/prefs/hotkeys";
+import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
+import { getFindFocusPane } from "@/lib/editor/find-target";
+import { focusEditorPane } from "@/lib/editor/pane-focus";
+
+/** Obsidian next/prev tab. Ctrl+Tab is reserved in some browsers; PageDown is the same chord. */
+function tabCycleDir(e: KeyboardEvent): 1 | -1 | null {
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod || e.altKey) return null;
+  if (e.key === "Tab") return e.shiftKey ? -1 : 1;
+  if (e.key === "PageDown" && !e.shiftKey) return 1;
+  if (e.key === "PageUp" && !e.shiftKey) return -1;
+  return null;
+}
 
 /** True if key matches letter (layout-safe: prefer e.code). */
 function isModLetter(e: KeyboardEvent, letter: string): boolean {
@@ -32,6 +50,7 @@ function isFactoryDesktopChord(e: KeyboardEvent): boolean {
   return (
     isModLetter(e, "o") ||
     isModLetter(e, "k") ||
+    (!e.shiftKey && isModLetter(e, "p")) ||
     isModLetter(e, "n") ||
     isModLetter(e, "g") ||
     isModLetter(e, "e") ||
@@ -58,7 +77,20 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     }
     case "search":
+      setSwitcherOpen(false);
       store.setCommandOpen(!store.commandOpen);
+      return true;
+    case "quickSwitcher":
+      toggleQuickSwitcher();
+      store.setCommandOpen(false);
+      return true;
+    case "searchVault":
+      if (store.commandOpen) store.setCommandOpen(false);
+      else openCommandPalette();
+      return true;
+    case "commandPalette":
+      if (store.commandOpen) store.setCommandOpen(false);
+      else openCommandPalette(">");
       return true;
     case "find": {
       if (!hasVault || !store.activeNoteId || overlayOpen) return false;
@@ -94,7 +126,7 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     case "toggleEditor":
       if (!hasVault || overlayOpen) return false;
-      store.toggleEditorMode();
+      store.toggleReadingView();
       return true;
     case "leftSidebar":
       if (!hasVault || overlayOpen || prefs.focusMode) return false;
@@ -106,11 +138,15 @@ function runHotkey(id: HotkeyId): boolean {
       return true;
     case "graph":
       if (!hasVault || overlayOpen || prefs.focusMode) return false;
+      if (document.querySelector('.nexus-canvas[data-canvas-focus="1"]')) return false;
       toggleGraphForViewport();
       return true;
     case "newNote":
       if (!hasVault || overlayOpen) return false;
-      store.createNote(null);
+      // The first note of a vault is made the same way as Enter makes it:
+      // off the map, into the list, with its name ready.
+      if (vaultHasNoNotes()) startFirstNote();
+      else store.createNote(focusedEmptyFolderId(), "Untitled");
       return true;
     case "daily":
       if (!hasVault || overlayOpen) return false;
@@ -144,12 +180,61 @@ function runHotkey(id: HotkeyId): boolean {
 export function KeyboardShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const cycleDir = tabCycleDir(e);
+      if (
+        cycleDir &&
+        !e.isComposing &&
+        document.documentElement.dataset.nexusHotkeyCapture !== "1" &&
+        !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
+      ) {
+        const store = useVaultStore.getState();
+        const prefs = usePrefsStore.getState();
+        if (!store.commandOpen && !prefs.settingsOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          const split = Boolean(store.settings.workspaceSplit && store.secondaryNoteId);
+          const pane = split ? getFindFocusPane() : "primary";
+          store.cycleNoteTab(pane, cycleDir);
+          focusEditorPane(pane);
+          return;
+        }
+      }
       // Hold-repeat floods notes; IME composition should not fire chords
       if (e.repeat || e.isComposing || e.defaultPrevented) return;
       if (document.documentElement.dataset.nexusHotkeyCapture === "1") return;
 
       const store = useVaultStore.getState();
       const prefs = usePrefsStore.getState();
+
+      // The board owns Ctrl/Cmd+G while it is focused. Local graph does not.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "g" &&
+        document.querySelector('.nexus-canvas[data-canvas-focus="1"]')
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        window.dispatchEvent(new CustomEvent("nexus-canvas-frame"));
+        return;
+      }
+
+      // Ctrl/Cmd+O is the note switcher. The native menu must not eat it.
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "o" &&
+        !e.repeat &&
+        !e.isComposing
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        useVaultStore.getState().setCommandOpen(false);
+        toggleQuickSwitcher();
+        return;
+      }
 
       // Desktop SSOT: native menu accelerators own factory chords unless remapped.
       const remapped = prefs.hotkeyOverrides ?? {};
@@ -168,8 +253,107 @@ export function KeyboardShortcuts() {
         return;
       }
 
+      // A folder picked in search is still landing in the list. Enter now is
+      // meant for that folder, even if the note has the cursor again; hold it
+      // until the folder is armed.
+      if (
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        revealInFlight() &&
+        !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
+      ) {
+        const t = e.target as HTMLElement | null;
+        const field = Boolean(
+          t?.closest?.("input, textarea, select, [data-testid='tree-rename']"),
+        );
+        if (!field && queueRevealEnter()) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+      }
+
+      // Enter in an empty vault starts the first note from anywhere, including
+      // the fullscreen folder map, where neither the list nor the editor pane is
+      // on screen to hear it. The list keeps its own Enter.
+      if (
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        vaultHasNoNotes() &&
+        !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
+      ) {
+        const t = e.target as HTMLElement | null;
+        const typing = Boolean(
+          t?.closest?.(
+            "input, textarea, select, button, a, [contenteditable='true'], [data-file-tree]",
+          ),
+        );
+        if (!typing) {
+          e.preventDefault();
+          startFirstNote();
+          return;
+        }
+      }
+
+      // F2 from the note renames it in the list. The list owns F2 on its own rows.
+      if (
+        e.key === "F2" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        store.activeNoteId &&
+        !prefs.settingsOpen &&
+        !store.commandOpen
+      ) {
+        const t = e.target as HTMLElement | null;
+        const tag = t?.tagName?.toLowerCase();
+        const inTree = Boolean(t?.closest?.("[data-file-tree]"));
+        const field = tag === "input" || tag === "textarea" || tag === "select";
+        if (
+          !inTree &&
+          !field &&
+          !document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")
+        ) {
+          e.preventDefault();
+          const id = store.activeNoteId;
+          const active = document.activeElement as HTMLElement | null;
+          if (active?.isContentEditable || active?.closest?.(".ProseMirror")) active.blur();
+          revealFileList(() => {
+            const safe =
+              typeof CSS !== "undefined" && typeof CSS.escape === "function"
+                ? CSS.escape(id)
+                : id.replace(/["\\]/g, "\\$&");
+            scheduleEmptyNoteRename(
+              id,
+              (noteId) => {
+                window.dispatchEvent(
+                  new CustomEvent("nexus-rename-node", { detail: noteId }),
+                );
+              },
+              () =>
+                Boolean(
+                  document.querySelector(
+                    `[data-testid="tree-rename"][data-rename-for="${safe}"]`,
+                  ),
+                ),
+            );
+          });
+          return;
+        }
+      }
+
       // Escape closes overlays / exits focus
       if (e.key === "Escape") {
+        if (document.querySelector("[data-nexus-confirm]")) return;
+        if (document.querySelector("[data-nexus-ctx-menu]")) return;
+        if (document.querySelector("[aria-label='New note template']")) return;
         if (document.documentElement.dataset.nexusShortcuts === "1") {
           return;
         }
@@ -200,6 +384,59 @@ export function KeyboardShortcuts() {
           store.setToast("Focus mode off");
           return;
         }
+        // Home: a note returns to the list. Search and dialogs already closed above.
+        const target = e.target as HTMLElement | null;
+        const active = document.activeElement as HTMLElement | null;
+        const inList = (el: HTMLElement | null) =>
+          Boolean(el && typeof el.closest === "function" && el.closest("[data-file-tree]"));
+        if (inList(target) || inList(active)) return;
+        // Only a modal owns Esc. The quick tour is not one.
+        if (document.querySelector("[role='dialog'][aria-modal='true']")) return;
+        const inNote = (el: HTMLElement | null) =>
+          Boolean(
+            el &&
+              typeof el.closest === "function" &&
+              (el.closest("[data-testid='nexus-editor']") ||
+                el.closest(".ProseMirror") ||
+                el.closest(".note-title-input") ||
+                el.isContentEditable === true),
+          );
+        // Esc always has a home: from the note, the side panel, an empty pane,
+        // or nowhere at all, it lands on the list.
+        const homeable = (el: HTMLElement | null) =>
+          !el ||
+          el === document.body ||
+          el === document.documentElement ||
+          inNote(el) ||
+          Boolean(
+            typeof el.closest === "function" &&
+              el.closest("[data-editor-empty], [data-right-panel]"),
+          );
+        if (!store.vaultId || !homeable(target) || !homeable(active)) return;
+        e.preventDefault();
+        // A collapsed list has no tree to land on. Let go of the note first so
+        // keys typed while the list opens do not edit it.
+        if (!document.querySelector("[data-file-tree]") && active && inNote(active)) {
+          active.blur();
+        }
+        revealFileList((tree) => {
+          window.dispatchEvent(new CustomEvent("nexus-list-home"));
+          const home = () => {
+            if (!tree.isConnected) return;
+            tree.focus({ preventScroll: true });
+            tree.setAttribute("data-tree-focused", "1");
+          };
+          home();
+          // The note can take the cursor back in the same turn. Land on the list after that.
+          const back = () => {
+            const now = document.activeElement as HTMLElement | null;
+            if (inList(now) || !inNote(now)) return;
+            home();
+          };
+          reclaimAfterFocus(back);
+          window.setTimeout(back, 48);
+        });
+        return;
       }
 
       // Delete active note (not while typing)
@@ -211,6 +448,8 @@ export function KeyboardShortcuts() {
         (e.key === "Backspace" &&
           (isAppleModPlatform() ? e.metaKey : mod));
       if (isDeleteChord) {
+        // The open board deletes a selected link or card. It must not trash the file.
+        if (document.querySelector('.nexus-canvas[data-canvas-focus="1"]')) return;
         const t = e.target as HTMLElement | null;
         const tag = t?.tagName?.toLowerCase();
         const editable =

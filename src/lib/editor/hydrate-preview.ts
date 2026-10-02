@@ -7,9 +7,11 @@ import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 import { markdownToHtml } from "@/lib/markdown/serialize";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { resolveWikilink } from "@/lib/graph/build-graph";
-import { searchWithOps } from "@/lib/search/query-ops";
-import { noteTitle } from "@/lib/vault/types";
-import type { VaultNode } from "@/lib/vault/types";
+import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
+import { NEXUS_QUERY_CAP, queryColumnLabel, runNexusQuery } from "@/lib/vault/nexus-query";
+import { loadTagExtras } from "@/lib/vault/nexus-query-tags";
+import { useVaultStore } from "@/lib/vault/store";
+import { noteTitle, type VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
 import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
 
@@ -88,11 +90,73 @@ async function renderMath(
   }
 }
 
-function renderEmbeds(
+/** The whole catalog's answer for an embed the loaded window does not have. */
+export type FindOutsideEmbed = (
+  noteTarget: string,
+) => Promise<
+  | { kind: "note"; node: VaultNode; body: string }
+  | { kind: "unread"; node: VaultNode }
+  | { kind: "miss" }
+  | { kind: "unsure" }
+>;
+
+const STILL_READING = '<p class="text-[var(--text-muted)]">Still reading the vault. This fills in when it can.</p>';
+
+/** At most this many embeds per render are looked up and read from disk. */
+export const OUTSIDE_EMBED_CAP = 12;
+
+function missingEmbedHtml(target: string): string {
+  return `<div class="nexus-embed-head"><span class="nexus-embed-missing">Missing embed ![[${escapeHtml(target || "note")}]]</span></div>`;
+}
+
+function fillEmbed(
+  el: HTMLElement,
+  note: VaultNode,
+  body: string | null,
+  target: string,
+  activeNoteId: string | null,
+): void {
+  const parts = parseWikilinkInner(target);
+  const sliceLabel = parts.blockId
+    ? `#^${parts.blockId}`
+    : parts.heading
+      ? `#${parts.heading}`
+      : "";
+  const selfFull =
+    note.id === activeNoteId && !parts.heading && !parts.blockId;
+  let bodyHtml = "";
+  if (body === null) {
+    bodyHtml = STILL_READING;
+  } else if (selfFull) {
+    bodyHtml =
+      '<p class="nexus-embed-missing">This note — add #Heading or #^block to embed a slice.</p>';
+  } else {
+    const sliced = sliceEmbedBody(body, parts.heading, parts.blockId);
+    try {
+      bodyHtml = markdownToHtml(
+        sliced.body.replace(/!\[\[[^\]]+\]\]/g, ""),
+      );
+    } catch {
+      bodyHtml = `<p>${escapeHtml((sliced.body || "").slice(0, 280))}</p>`;
+    }
+  }
+  el.innerHTML = `
+      <div class="nexus-embed-head">
+        <button type="button" class="min-w-0 truncate font-medium hover:underline" data-open-note="${escapeHtml(note.id)}" data-jump-heading="${escapeHtml(parts.heading || "")}" data-jump-block="${escapeHtml(parts.blockId || "")}">${escapeHtml(noteTitle(note))}${sliceLabel ? ` <span class="text-[var(--text-muted)]">${escapeHtml(sliceLabel)}</span>` : ""}</button>
+        <span class="ml-auto font-mono text-[10px] text-[var(--text-muted)]">![[${escapeHtml(target)}]]</span>
+      </div>
+      <div class="nexus-embed-body">${bodyHtml}</div>
+    `;
+}
+
+async function renderEmbeds(
   els: HTMLElement[],
   nodes: Record<string, VaultNode>,
   activeNoteId: string | null,
-): void {
+  cancelled: () => boolean,
+  findOutside?: FindOutsideEmbed,
+): Promise<void> {
+  const outside: { el: HTMLElement; target: string; noteTarget: string }[] = [];
   for (const el of els) {
     const target = (el.getAttribute("data-embed-target") || "").trim();
     const parts = parseWikilinkInner(target);
@@ -102,42 +166,28 @@ function renderEmbeds(
         ? nodes[activeNoteId]
         : null;
     const note = hit?.kind === "note" ? hit : null;
-    const sliceLabel = parts.blockId
-      ? `#^${parts.blockId}`
-      : parts.heading
-        ? `#${parts.heading}`
-        : "";
-    if (!note) {
-      el.innerHTML = `<div class="nexus-embed-head"><span class="nexus-embed-missing">Missing embed ![[${escapeHtml(target || "note")}]]</span></div>`;
-      continue;
-    }
-    const selfFull =
-      note.id === activeNoteId && !parts.heading && !parts.blockId;
-    let bodyHtml = "";
-    if (selfFull) {
-      bodyHtml =
-        '<p class="nexus-embed-missing">This note — add #Heading or #^block to embed a slice.</p>';
+    // A loaded row whose body is not read yet goes the same way as a miss.
+    const needsCatalog = findOutside && parts.noteTarget && (!note || note.content === undefined);
+    if (note && !needsCatalog) {
+      fillEmbed(el, note, note.content ?? "", target, activeNoteId);
+    } else if (needsCatalog && outside.length < OUTSIDE_EMBED_CAP) {
+      el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">Finding ![[${escapeHtml(target)}]]…</span></div>`;
+      outside.push({ el, target, noteTarget: parts.noteTarget });
+    } else if (needsCatalog) {
+      el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">![[${escapeHtml(target)}]] is not shown here. Open the note to read it.</span></div>`;
     } else {
-      const sliced = sliceEmbedBody(
-        note.content ?? "",
-        parts.heading,
-        parts.blockId,
-      );
-      try {
-        bodyHtml = markdownToHtml(
-          sliced.body.replace(/!\[\[[^\]]+\]\]/g, ""),
-        );
-      } catch {
-        bodyHtml = `<p>${escapeHtml((sliced.body || "").slice(0, 280))}</p>`;
-      }
+      el.innerHTML = missingEmbedHtml(target);
     }
-    el.innerHTML = `
-      <div class="nexus-embed-head">
-        <button type="button" class="min-w-0 truncate font-medium hover:underline" data-open-note="${escapeHtml(note.id)}" data-jump-heading="${escapeHtml(parts.heading || "")}" data-jump-block="${escapeHtml(parts.blockId || "")}">${escapeHtml(noteTitle(note))}${sliceLabel ? ` <span class="text-[var(--text-muted)]">${escapeHtml(sliceLabel)}</span>` : ""}</button>
-        <span class="ml-auto font-mono text-[10px] text-[var(--text-muted)]">![[${escapeHtml(target)}]]</span>
-      </div>
-      <div class="nexus-embed-body">${bodyHtml}</div>
-    `;
+  }
+  for (const item of outside) {
+    const found = await findOutside!(item.noteTarget).catch(() => ({ kind: "unsure" as const }));
+    if (cancelled()) return;
+    if (found.kind === "note") fillEmbed(item.el, found.node, found.body, item.target, activeNoteId);
+    else if (found.kind === "unread") fillEmbed(item.el, found.node, null, item.target, activeNoteId);
+    else if (found.kind === "miss") item.el.innerHTML = missingEmbedHtml(item.target);
+    else {
+      item.el.innerHTML = `<div class="nexus-embed-head"><span class="text-[var(--text-muted)]">Finding ![[${escapeHtml(item.target)}]]…</span></div><div class="nexus-embed-body">${STILL_READING}</div>`;
+    }
   }
 }
 
@@ -148,6 +198,10 @@ function renderQueries(
   for (const el of els) {
     const query = (el.getAttribute("data-query") || el.textContent || "").trim();
     const hits = query ? searchWithOps(nodes, query, 24) : [];
+    const unsupportedHint = unsupportedSearchHint(parseSearchOps(query));
+    const hintHtml = unsupportedHint
+      ? `<p class="nexus-query-empty" data-testid="query-unsupported-hint">${escapeHtml(unsupportedHint)}</p>`
+      : "";
     const list = hits.length
       ? `<ul class="space-y-1.5">${hits
           .map(
@@ -155,13 +209,101 @@ function renderQueries(
               `<li><button type="button" class="flex w-full flex-col items-start rounded-md px-1.5 py-1 text-left hover:bg-white/[0.04]" data-open-note="${escapeHtml(h.noteId)}"><span class="text-[13px] font-medium">${escapeHtml(h.title)}</span><span class="line-clamp-2 text-[11px] text-[var(--text-muted)]">${escapeHtml(h.snippet)}</span></button></li>`,
           )
           .join("")}</ul>`
-      : `<p class="nexus-query-empty">No matches. Try path:, folder:, file:, #tag, or -exclude.</p>`;
+      : `<p class="nexus-query-empty">No matches. Try path:, folder:, file:, #tag, tag:, OR, or -exclude.</p>`;
     el.innerHTML = `
       <div class="nexus-query-head">
         <span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query || "empty query")}</span>
         <span class="ml-auto text-[10px] text-[var(--text-muted)]">${hits.length} live</span>
       </div>
-      <div class="nexus-query-body">${list}</div>
+      <div class="nexus-query-body">${hintHtml}${list}</div>
+    `;
+  }
+}
+
+async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>): Promise<void> {
+  for (const el of els) {
+    const query = (el.getAttribute("data-query") || "").trim();
+    const extras = await loadTagExtras(query);
+    const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras);
+    const bits: string[] = [];
+    if (model.help) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(model.help)}. ${escapeHtml(model.footer)}</p>`,
+      );
+    }
+    if (model.error) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-error">${escapeHtml(model.error)}</p>`,
+      );
+    }
+    if (model.fieldNote) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-field-note">${escapeHtml(model.fieldNote)}</p>`,
+      );
+    }
+    if (!model.help && !model.error && model.rows.length === 0) {
+      const empty = model.tagsIncomplete
+        ? model.scanNote || "Couldn't read every tag from the index."
+        : "No notes match.";
+      bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(empty)}</p>`);
+    }
+    if (model.mode === "table" && model.rows.length) {
+      const fields = model.rows[0]?.fields ?? [];
+      const head = `<tr><th>Title</th><th>Path</th>${fields.map((field) => `<th>${escapeHtml(queryColumnLabel(field.name))}</th>`).join("")}</tr>`;
+      const body = model.rows
+        .map((r, index) => {
+          const cells = r.fields.map((field) => ` <span data-testid="nexus-query-field">${escapeHtml(field.value)}</span>`).join("");
+          const header = r.group != null && r.group !== model.rows[index - 1]?.group
+            ? `<tr data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}"><td colspan="${2 + r.fields.length}">${escapeHtml(r.group)}</td></tr>`
+            : "";
+          if (r.rows) {
+            const nested = r.rows
+              .map(
+                (child) =>
+                  `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(child.id)}"><span>${escapeHtml(child.title)}</span> <span>${escapeHtml(child.path)}</span></button></li>`,
+              )
+              .join("");
+            return `${header}<tr><td colspan="${2 + r.fields.length}"><ul data-testid="nexus-query-nested">${nested}</ul></td></tr>`;
+          }
+          return `${header}<tr><td colspan="${2 + r.fields.length}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${cells}</button></td></tr>`;
+        })
+        .join("");
+      bits.push(`<table>${head}${body}</table>`);
+    }
+    if (model.mode === "list" && model.rows.length) {
+      const items = model.rows
+        .map((r, index) => {
+          const header = r.group != null && r.group !== model.rows[index - 1]?.group
+            ? `<li data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}">${escapeHtml(r.group)}</li>`
+            : "";
+          if (r.rows) {
+            const nested = r.rows
+              .map(
+                (child) =>
+                  `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(child.id)}"><span>${escapeHtml(child.title)}</span><span>${escapeHtml(child.path)}</span></button></li>`,
+              )
+              .join("");
+            return `${header}<li><ul data-testid="nexus-query-nested">${nested}</ul></li>`;
+          }
+          return `${header}<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span>${r.link ? `<span>${escapeHtml(r.link)}</span>` : ""}</button></li>`;
+        })
+        .join("");
+      bits.push(`<ul>${items}</ul>`);
+    }
+    if (model.truncated) {
+      bits.push(
+        `<p class="nexus-query-empty" data-testid="nexus-query-cap">Stopped at ${NEXUS_QUERY_CAP}.</p>`,
+      );
+    }
+    if (model.scanNote && model.rows.length > 0) {
+      bits.push(`<p class="nexus-query-empty">${escapeHtml(model.scanNote)}</p>`);
+    }
+    bits.push(
+      `<p data-testid="nexus-query-footer">${escapeHtml(model.footer)}</p>`,
+    );
+    el.innerHTML = `
+      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query || "nexus-query")}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">nexus-query</span></div>
+      <div class="nexus-query-body">${bits.join("")}</div>
     `;
   }
 }
@@ -187,6 +329,7 @@ export async function hydratePreviewSpecials(
   nodes: Record<string, VaultNode>,
   activeNoteId: string | null,
   cancelled: () => boolean,
+  findOutside?: FindOutsideEmbed,
 ): Promise<void> {
   promoteLeftoverMermaidFences(root);
   const mermaidEls = Array.from(
@@ -203,10 +346,16 @@ export async function hydratePreviewSpecials(
   const queryEls = Array.from(
     root.querySelectorAll<HTMLElement>("[data-type='query']"),
   );
+  const nexusQueryEls = Array.from(
+    root.querySelectorAll<HTMLElement>("[data-type='nexus-query']"),
+  );
 
-  renderEmbeds(embedEls, nodes, activeNoteId);
+  const embeds = renderEmbeds(embedEls, nodes, activeNoteId, cancelled, findOutside);
   renderQueries(queryEls, nodes);
+  const nexus = renderNexusQueries(nexusQueryEls, nodes);
   await Promise.all([
+    embeds,
+    nexus,
     renderMermaid(mermaidEls, theme, cancelled),
     renderMath(mathEls, cancelled),
   ]);

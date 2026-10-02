@@ -1,12 +1,33 @@
 import { useEffect, useState } from "react";
 import { Network, Search, Link2, X, Sparkles } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   isFirstRunCoachDone,
   markFirstRunCoachDone,
 } from "@/lib/prefs/first-run";
 import { formatShortcut } from "@/lib/platform";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
+
+const hasNoteByMap = new WeakMap<object, boolean>();
+
+/**
+ * The selector runs on every store update, and enumerating a 500k-key map
+ * costs the whole map even when the first key is a note. Once per map.
+ */
+function nodeMapHasNote(nodes: Record<string, { kind?: string } | undefined>): boolean {
+  const hit = hasNoteByMap.get(nodes);
+  if (hit !== undefined) return hit;
+  let found = false;
+  for (const id in nodes) {
+    if (nodes[id]?.kind === "note") {
+      found = true;
+      break;
+    }
+  }
+  hasNoteByMap.set(nodes, found);
+  return found;
+}
 
 /**
  * Lightweight first-hour coach — appears once after the first vault opens.
@@ -17,9 +38,15 @@ export function FirstRunCoach() {
   const mode = useVaultStore((s) => s.mode);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
   const commandOpen = useVaultStore((s) => s.commandOpen);
+  const deleteAsking = useVaultStore((s) => Boolean(s.pendingDelete));
+  const settingsOpen = usePrefsStore((s) => s.settingsOpen);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const setToast = useVaultStore((s) => s.setToast);
   const [visible, setVisible] = useState(false);
+  const vaultEmpty = useVaultStore((s) => {
+    if (s.shellCatalog) return s.catalogNoteCount <= 0 && s.rootIds.length === 0;
+    return !nodeMapHasNote(s.nodes);
+  });
 
   useEffect(() => {
     if (!vaultId) {
@@ -30,12 +57,27 @@ export function FirstRunCoach() {
       setVisible(false);
       return;
     }
-    const t = window.setTimeout(() => setVisible(true), 700);
+    // A vault that opens empty is busy with its first note; the tour waits
+    // for a later open instead of covering the page being written.
+    const t = window.setTimeout(() => {
+      const s = useVaultStore.getState();
+      let empty = true;
+      if (s.shellCatalog) empty = s.catalogNoteCount <= 0 && s.rootIds.length === 0;
+      else for (const id in s.nodes) if (s.nodes[id]?.kind === "note") { empty = false; break; }
+      setVisible(!empty);
+    }, 700);
     return () => window.clearTimeout(t);
   }, [vaultId]);
 
-  // Don't cover fullscreen graph or the command palette
-  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen) return null;
+  // Seen empty once this session: that vault is busy with its first note.
+  const [emptyVaultId, setEmptyVaultId] = useState<string | null>(null);
+  useEffect(() => {
+    if (vaultEmpty && vaultId) setEmptyVaultId(vaultId);
+  }, [vaultEmpty, vaultId]);
+
+  // Don't cover fullscreen graph, search, Settings, or Trash. An empty vault shows
+  // its own first step (Enter starts a note); the tour waits for a first note.
+  if (!visible || !vaultId || graphMode === "fullscreen" || commandOpen || settingsOpen || deleteAsking || vaultEmpty || emptyVaultId === vaultId) return null;
 
   const dismiss = () => {
     markFirstRunCoachDone();
@@ -74,7 +116,7 @@ export function FirstRunCoach() {
   return (
     <div
       className="pointer-events-none fixed inset-x-0 bottom-0 z-[95] flex justify-center px-3 pb-[max(4.75rem,calc(3.25rem+env(safe-area-inset-bottom)))] sm:pb-5"
-      role="dialog"
+      role="region"
       aria-label="Quick tour"
     >
       <div className="pointer-events-auto first-run-coach glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] border border-[rgba(0,200,255,0.22)] shadow-[0_20px_60px_rgba(0,0,0,0.55),0_0_40px_rgba(0,200,255,0.08)]">
@@ -84,12 +126,12 @@ export function FirstRunCoach() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[13.5px] font-semibold text-[var(--text-primary)]">
-              {mode === "demo" ? "Demo vault — same instrument as disk" : "Three moves. Then it sticks."}
+              Three moves. Then it sticks.
             </div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-secondary)]">
               {mode === "demo"
-                ? "Search, heading links, dual pane, and Pulse. Simulate an agent write from the vault menu when you want the Grok loop."
-                : "Search or ask: your notes. Link [[Note#Heading]]. Watch Pulse when agents write the same folder."}
+                ? "Search the vault. Follow a [[link]]. The graph opens on this note. Folder Map is one click away."
+                : "Search or ask. Link a heading. Open the graph when you want the neighborhood."}
             </p>
           </div>
           <button

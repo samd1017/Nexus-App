@@ -2,22 +2,29 @@
 
 Nexus ships as a local-first web app and a **native desktop shell** powered by [Tauri 2](https://tauri.app) for **macOS** and **Windows**.
 
+**Build from source** ([Install & run from source](#install--run-from-source)) is the durable desktop path.
+
 ## Pre-built Alpha downloads
 
-Unsigned Alpha installers are published on [Releases](https://github.com/samd1017/Nexus-App/releases) when CI finishes.
+Unsigned installer assets exist on **[`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) only**:
 
-**These builds are not code-signed or notarized.** That is expected for Alpha.
+- macOS (Apple Silicon): [`Nexus_0.1.0_aarch64.dmg`](https://github.com/samd1017/Nexus-App/releases/download/v0.1.0-alpha/Nexus_0.1.0_aarch64.dmg)
+- Windows: [`Nexus_0.1.0_x64-setup.exe`](https://github.com/samd1017/Nexus-App/releases/download/v0.1.0-alpha/Nexus_0.1.0_x64-setup.exe)
 
-### macOS (Apple Silicon) — unsigned
+**Latest may be source-only.** The newer tag [`v0.1.1-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.1-alpha) has zero DMG/EXE assets. Do not open `/releases/latest` expecting installers. Files on the older `v0.1.0-alpha` tag whose names contain `0.1.1` are not Latest.
 
-1. Download the `.dmg`.
+Prefer [build from source](#install--run-from-source) over these pre-built files. **These builds are unsigned** (not notarized / not code-signed). That is expected for Alpha.
+
+### macOS (Apple Silicon) — unsigned, v0.1.0-alpha only
+
+1. Download `Nexus_0.1.0_aarch64.dmg` from the [`v0.1.0-alpha` release](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha).
 2. Open it and drag Nexus to Applications.
 3. First launch: right-click → **Open**, or System Settings → Privacy & Security → **Open Anyway**.
 4. Gatekeeper will warn about an unidentified developer. Confirm Open.
 
-### Windows — unsigned
+### Windows — unsigned, v0.1.0-alpha only
 
-1. Download the NSIS `.exe` installer.
+1. Download `Nexus_0.1.0_x64-setup.exe` from the [`v0.1.0-alpha` release](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha).
 2. If SmartScreen appears (“Windows protected your PC”), click **More info** → **Run anyway**.
 
 ### What would be needed for signed installs later
@@ -35,7 +42,7 @@ Until those are set up, users must approve the OS warnings once.
 
 - Native window (overlay title bar on macOS, native menus)
 - **Open Vault…** uses the native folder dialog
-- Notes are plain `.md` files on disk (Hermes-compatible)
+- Notes are plain `.md` files on disk
 - **OS-level folder watching** for external edits
 - **On-disk SQLite search index** (disposable cache under app data — not inside the vault)
 - Same UI as the browser product (editor, graph, settings, search)
@@ -87,14 +94,14 @@ Chrome in the browser is **not** this path. Chrome refuses ≥25k. SCALE READY i
 3. `npm install && npm run tauri:dev`
 4. Confirm the window is the Tauri shell (not `npm run dev` in Chrome).
 
-### Generate soak vaults
+### Generate large test vaults
 
 ```bash
 npm run soak:wave-e-desktop -- --notes 100000
 npm run soak:wave-e-desktop -- --notes 300000
 ```
 
-That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\…`) if missing, then prints the prove steps. Documents is inside the production `fs:scope` allow-list; a home-dir folder like `%USERPROFILE%\nexus-soak-100k` still works if you open it programmatically — Wave E registers that path with plugin-fs persisted-scope the same way **Open folder** does. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
+That writes `~/Documents/nexus-soak-100k` / `~/Documents/nexus-soak-300k` (Windows: `%USERPROFILE%\Documents\nexus-soak-100k` and `%USERPROFILE%\Documents\nexus-soak-300k`) if missing, then prints the prove steps. Documents is inside the production `fs:scope` allow-list. Wave E registers that folder with plugin-fs persisted-scope the same way **Open folder** does. Exit code **2** means no Tauri proof was collected — that is intentional. This command is not SCALE READY.
 
 ### Prove (must all hold) — honest phases
 
@@ -102,18 +109,18 @@ Cold 100k must **not** wait for every note body to enter FTS before the vault is
 
 | Phase | What works | Browse blocked? |
 |--------|------------|-----------------|
-| `ready-meta` | Tree, open notes, title/path FTS | No — this is “vault usable” |
-| `ready-fts-partial` | Short-head body search (768 chars; hub/cluster probes) | No |
-| `ready-fts` | Deep 8k-head FTS | No — background only |
+| `ready-meta` | Tree, open notes, title/path FTS for the open window | No — this is “vault usable”. It does not wait for the rest of the folder listing. |
+| `ready-fts-partial` | Titles and note text for the open window. The rest of the titles are still being listed | No |
+| `ready-fts` | The open window covered every note (a small vault) | No |
 
 1. Open the folder in `tauri:dev` (Welcome → Open folder), **or** DevTools:
 
    ```js
-   await __NEXUS_SOAK__.runWaveE("/Users/you/Documents/nexus-soak-100k")
+   await __NEXUS_SOAK__.runWaveE("~/Documents/nexus-soak-100k")
    ```
 
 2. First paint: tree/editor interactive in seconds. Banner may still say heads are filling. Palette heading includes **SQLite FTS5 BM25** (may append `· titles` / `· heads` until deep FTS finishes). Never `Memory FTS (capped)`.
-3. Search `hub` after the banner leaves “Cataloging notes…” — **16 Hub titles** should appear from the title seed (seconds), without waiting for note heads. Palette must not say “try again when Ready” once title search is on. Then `cluster` / `retrieval hub` once short heads start (Wave E polls; it does not wait for full 100k 8k-head fill). **Official vault only** (`npm run gen:soak-vault` / `SOAK-MANIFEST.json`). Unofficial Meeting-* folders with `hub_files=0` are a false alarm.
+3. When the banner says title search is on, search a title that is in the open folder. It should hit without waiting for the rest of the vault to be listed. A title in a folder the listing has not reached yet can miss, then hit on its own. Do not expect every Hub in a 100k vault at that moment. After the banner says Ready, open a note, scroll it, open the graph, and search a title that is already listed — those stay responsive while the remaining names are still being listed. `cluster` in a note you have not opened stays missing until you open that note. **Official vault only** (`npm run gen:soak-vault` / `SOAK-MANIFEST.json`). Unofficial Meeting-* folders with `hub_files=0` are a false alarm.
 4. Open 20 notes. UI stays responsive.
 5. Create a note, reload (or `await __NEXUS_SOAK__.reloadDesktop()`), confirm it is still on disk.
 
@@ -131,14 +138,16 @@ npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault %USERPROFILE%
 
 | Layer | What |
 |--------|------|
-| Rust | `vault_index_fill_from_disk` is **async** (blocking pool) and **phased**: walk → **title/path FTS seed** (priority folder + Hub-named files first, ~2k rows) → **`ready-meta` immediately** → parallel 768-char heads (remaining titles ride along) → deferred 8k heads. It does **not** write 100k empty-body FTS rows before search is live. Incremental: skip notes whose path+mtime+size already match at that `fill_depth`. While writing a head it extracts `[[wikilinks]]` into `link_edge`. A warm FTS index filled before that path gets a one-shot backfill from `note_fts` bodies (no JS hydrate). Emits `ready-meta` / `ready-fts-partial` / `done`. Dedicated writer connection so the UI/search mutex is not held. A second fill for the same DB **joins** the in-flight job (never `already running` as a user-visible failure). UI connections use a 15s busy timeout; close/wipe/rebuild wait out an in-flight fill. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. `vault_index_list_links` returns grouped edges for the JS link index. |
-| JS | `fillFromDisk({ settleAtPhase: "meta" })` returns when the title seed is live (`ready-meta`), not after a full catalog. Tree/editor do not wait for body FTS. Command palette treats `ready-meta` as title search live — empty results are not “try again when Ready” while heads fill. The invoke stays single-flight per DB — a remount joins the leader instead of painting a red banner. Banner keeps live `scanned / total` through later phases. After heads land, `listLinkGroups` seeds `vaultLinkIndex` so Graph → Links works without opening every note. Reopening the same desktop root reuses the live SQLite adapter (does not close mid-fill). Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
-| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `searchReady` means **ready-meta** (vault usable), not “100k bodies indexed”. `runWaveE` polls hub/cluster until short-head FTS is useful. `forceRebuild: true` re-reads heads in the background. Throws if fill errors. `__NEXUS_SOAK_LAST__.linkEdges` reports persisted wikilink count. |
+| Rust | `vault_index_fill_from_disk` is **async** (blocking pool) and **phased**: folders in name order, Hub-named files smallest first (`Hub 0` before later hubs in the same folder), until a first title page (`TITLE_READY_FLUSH`) → **`ready-meta` and `done` / Ready before the rest of the folder is listed** → deep heads for the open window, at most `EAGER_CONTENT_CAP` files. The remaining names are listed afterward and yield between batches. A later fill reads that same window again only where it is still shallow. It does **not** read a body for every remaining note, and it does **not** wait to stat every file before title search is useful. The open page may already have a short peek during the walk, capped once a few hundred notes already have a head. Incremental: skip notes whose path+mtime+size already match at that `fill_depth`. While writing a head it extracts `[[wikilinks]]` into `link_edge`. A warm FTS index filled before that path gets a one-shot backfill from `note_fts` bodies (no JS hydrate). Emits `ready-meta` and `done` together for that first page (`ready-fts-partial`), then `ready-fts-partial` again when the open-window heads land, then `catalog-counted` when the listing finishes. `done` on a large vault stays `ready-fts-partial`: titles plus the notes that were opened. Dedicated writer connection so the UI/search mutex is not held. A second fill for the same DB **joins** the in-flight job (never `already running` as a user-visible failure). UI connections use a 15s busy timeout; close/wipe/rebuild wait out an in-flight fill. PASSIVE WAL checkpoint only (no TRUNCATE). IDs via `desk_node_id`. `vault_index_list_links` returns grouped edges for the JS link index. Opening a note after Ready writes that note's deep head into SQLite. |
+| JS | `fillFromDisk({ settleAtPhase: "meta" })` returns when the title window is live (`ready-meta`), not after the folder has been listed. Tree/editor do not wait for body FTS or for the rest of the names. Command palette treats `ready-meta` as title search live — empty results are not “try again when Ready” while heads fill. The invoke stays single-flight per DB — a remount joins the leader instead of painting a red banner. Ready is the open window: later title batches do not put the banner back on a folder listing. When that listing finishes, the note count updates. After heads land, `listLinkGroups` seeds `vaultLinkIndex` so Graph → Links works without opening every note. Reopening the same desktop root reuses the live SQLite adapter (does not close mid-fill). Desktop does **not** fall back to a JS 100k head walk if native fill fails. |
+| Soak (DEV) | `__NEXUS_SOAK__.openDesktop(absPath)` / `runWaveE(absPath)` — registers `vault_register_root` (plugin-fs persisted-scope) before scan. `searchReady` means **ready-meta** (vault usable), not “100k bodies indexed”. `runWaveE` polls hub/cluster until short-head FTS is useful. `forceRebuild: true` re-reads heads in the background. Throws if fill errors. `__NEXUS_SOAK_LAST__.linkEdges` reports persisted wikilink count. `probeFirstRun()` returns first-run state (notes, list focus, rename field open/value/selected, active path, writing in note, last disk write error); over CDP call `probeFirstRunText()` for the same fields as a JSON string, or pass `returnByValue: true`, since a plain object comes back as a reference that prints as `{}`. `probeFirstRunText()` also reports `caretIn` (title or body) and `writeIntent`. `probeFolderText(name)` returns what the app holds for a folder by name or path: its children, catalog page counts, whether its row is marked empty, and whether it is armed for Enter. |
 | Tests | `npm run test:sqlite-fill` (banner/phase/settle + join/Open-gate rules). `npm run test:sqlite-fill-rust` (phased fill + 1k/10k timing + wikilink `link_edge` + in-flight join; GTK-free crate). `npm run test:first-open`. `npm run test:link-index` + `test:graph-empty` + `test:tree-expand`. |
 
 **Fill expectations (not SCALE READY):**
 
-- Cold 100k: tree/editor in **seconds**. Title/Hub search should be useful after the title seed (`ready-meta` — seconds to low tens of seconds, not a 20+ minute empty catalog). Short-head `cluster` / `retrieval hub` should follow as soon as the first head batches commit (Tower target under 15s). Full 8k-head FTS may still take minutes on HDD — **background only**, never a browse gate. Do **not** claim SCALE READY from one soak.
+- Cold 100k: tree/editor in **seconds**. `Hub 0` (in `00-Inbox`) should be searchable in that same band, before later folders are listed. The first page stays that size on a larger folder: Ready stops reading a fat folder once that page is in hand (it does not read every name there first), it does not stat every file in that folder, and it does not snapshot the catalog. The banner should say Ready with the open page, and it must not show the full note count at 100%. Reopening a catalog that already has a stored total does not count every row before that page, and it does not turn that reopen into a folder-permission error. The remaining names keep listing in the background in small batches that yield, with a checkpoint so the journal does not grow with the vault, and must not block open, scroll, graph, or title search. Reopening a vault whose titles are already searchable announces that page before it reads the folder again. Opening the index does not replay a journal larger than a checkpoint already saved in the database file; the fill catches up after the page. When that page was already searchable, Ready is the saved page and does not wait for the database file to open again. That page is drawn before the rest of the app finishes loading. Reopening draws that page as soon as the window has it, before the rest of the app is fetched. The time until the window appears is separate from Ready. Ready on that reopen is the saved page, as soon as the document has it. If the folder cannot be read, that page stays up. The next open keeps that page when the window was able to save it. That Ready line sits in the same band under the title as the line the window shows once the app is up. The window appears with that page already drawn. The Ready line under the title is large white type on black, the same words the app shows once it catches up, so the first frame reads as Ready. That includes the open that runs when the app starts, and a second open while the index is still opening in the background. The index file itself opens off the webview thread. The first launch after an upgrade, before that page is saved, still shows the first folder page from disk and does not open a large index file to paint it. That page stops after one bucket of names, so a flat folder of hundreds of thousands of files does not delay it, and Hub 0 is included when that file is there. A stored note total beside the index replaces the page count without opening the database. A filled vault does not list the folder again, rewrite names, or check every saved path after Ready. It also does not open a second writer or turn WAL mode on again, which would checkpoint the whole index. If the catalog cannot be read, Ready does not fall back to listing every file. Opening one note indexes that note. Titles on that page answer a search immediately. After Ready, a vault that is not filled yet still lists names in batches of 16 that commit and yield. A full-index merge and title/path index build do not run in front of the first keystroke. An empty title search after Ready is a miss, not a notice that search is still filling. A title the listing has not reached yet is missing until that batch lands. A body word in a note you have not opened stays missing until you open it. Do **not** claim SCALE READY from one soak.
+- A vault under Documents, Desktop, or Downloads is readable on every launch. Any other path is granted when that folder is opened, and the grant is repeated if the first read is refused. A soak folder outside those three (for example under `/workspace`) can still be refused after a relaunch when the desktop sandbox does not keep that grant; put that soak folder under Documents if the refusal remains.
+- Fill-harness timings (not a desktop window). Cancel at the first Ready page. A catalog already holding 500,000 rows: 2 ms empty vs 4 ms crowded, page still Hub 0 and at most 32 titles. Official shape (the soak layout, first bucket is a slice of the vault): 8,000 files 2 ms, 80,000 files 2 ms. That is the stand-in for a half-million-note official vault; a half-million-file tree was not opened. The first bucket of that vault is a few thousand names, inside the flat-directory stand-in above. One flat directory: 2,000 names and 40,000 names both reach Ready in 2 ms (Hub 0, first page only). Previously the 40,000-name folder took 88 ms because every name was read first. Background listing still visits every file afterward.
 - Re-open of the same unchanged 100k vault: **seconds** (stat + skip), not another hour.
 - Do not claim SCALE READY from this first-open architecture alone.
 | FS scope | Production capabilities allow Documents / Desktop / Downloads + app data. Programmatic path open grants that folder only (not `$HOME/**`). Forbidden reads fail the progress banner — they do not spin at scanned:0. |
@@ -177,7 +186,8 @@ GitHub Actions workflow: `.github/workflows/build-desktop.yml`
 
 - Triggers: new GitHub Release, or manual **Run workflow**
 - Produces macOS Apple Silicon `.dmg` and Windows NSIS `.exe`
-- Attaches assets to a **draft pre-release** (Alpha)
+- Attaches assets to a **draft pre-release** (Alpha) when that build finishes
+- A published tag can still be source-only. Installer assets are on `v0.1.0-alpha` only; `v0.1.1-alpha` has none. See [Pre-built Alpha downloads](#pre-built-alpha-downloads).
 
 ## Troubleshooting
 

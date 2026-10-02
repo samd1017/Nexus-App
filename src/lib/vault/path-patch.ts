@@ -39,7 +39,7 @@ export function expandPathsToNoteTargets(
   for (const raw of paths) {
     const p = normalizeVaultPath(raw);
     if (!p) continue;
-    if (p.toLowerCase().endsWith(".md")) {
+    if (p.toLowerCase().endsWith(".md") || p.toLowerCase().endsWith(".canvas")) {
       targetNotes.add(p);
       continue;
     }

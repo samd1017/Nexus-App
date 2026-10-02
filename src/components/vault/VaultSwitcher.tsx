@@ -11,6 +11,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
+import { getOpenProgress, subscribeOpenProgress } from "@/lib/vault/native-index";
+import { vaultSwitcherShowsIndexing } from "@/lib/vault/sqlite-fill-progress";
 import { isLargeMemoryVault } from "@/lib/vault/scale-flags";
 import {
   formatShortcut,
@@ -22,7 +24,7 @@ import { cn } from "@/lib/utils";
 /**
  * Finder-style vault menu:
  * Recents → Open → Create → Reveal → Close
- * Cloud / demo / Hermes are not primary destinations.
+ * Cloud and the demo are not primary destinations.
  */
 export function VaultSwitcher() {
   const vaultId = useVaultStore((s) => s.vaultId);
@@ -41,7 +43,21 @@ export function VaultSwitcher() {
   const closeVault = useVaultStore((s) => s.closeVault);
   const connecting = useVaultStore((s) => s.connecting);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
-  const openLocked = connecting || indexFillBusy;
+  const [bannerPhase, setBannerPhase] = useState(() => getOpenProgress().phase);
+  useEffect(
+    () =>
+      subscribeOpenProgress((p) => {
+        setBannerPhase((cur) => (cur === p.phase ? cur : p.phase));
+      }),
+    [],
+  );
+  // Indexing does not lock the menu. Only an open or close in progress does.
+  const openLocked = connecting;
+  const showIndexing = vaultSwitcherShowsIndexing({
+    connecting,
+    indexFillBusy,
+    bannerPhase,
+  });
 
   const [open, setOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -128,7 +144,7 @@ export function VaultSwitcher() {
             {vaultName || "Select vault"}
           </div>
           <div className="truncate text-[11px] text-[var(--text-muted)]">
-            {connecting ? "Working…" : indexFillBusy ? "Indexing…" : subtitle}
+            {connecting ? "Working…" : showIndexing ? "Indexing…" : subtitle}
           </div>
         </div>
         <ChevronDown
@@ -299,7 +315,7 @@ export function VaultSwitcher() {
                     <MenuRow
                       key={n}
                       icon={<HardDrive size={15} />}
-                      label={`Open soak ${n / 1000}k`}
+                      label={`Open large test vault ${n / 1000}k`}
                       disabled={openLocked}
                       onClick={() => {
                         if (openLocked) return;
@@ -375,7 +391,7 @@ export function VaultSwitcher() {
                   }
                   if (e.key === "Escape") setCreateOpen(false);
                 }}
-                className="mt-1.5 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none ring-[var(--accent)] focus:ring-1"
+                className="nexus-field mt-1.5 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[13px] text-[var(--text-primary)]"
                 placeholder="Nexus Vault"
               />
             </label>

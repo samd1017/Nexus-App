@@ -10,8 +10,9 @@ use std::time::Duration;
 
 use crate::fill_join::{fill_is_inflight, start_or_join, FillRole, JoinedFill};
 use crate::index_fill::{
-    fill_from_disk_with_opts, replace_source_links, FillOpts, FillUntil, IndexFillProgress,
-    IndexFillResult, DEFAULT_DEEP_HEAD, DEFAULT_SHORT_HEAD,
+    fill_from_disk_with_opts, mark_title_search_live, replace_source_links,
+    title_search_already_live, FillOpts, FillUntil, IndexFillProgress, IndexFillResult,
+    DEFAULT_DEEP_HEAD, DEFAULT_SHORT_HEAD, TITLE_READY_FLUSH,
 };
 
 pub const SCHEMA_VERSION: i32 = 3;
@@ -62,6 +63,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
   body,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+-- note_id is UNINDEXED in FTS5, so DELETE WHERE note_id scans the whole
+-- index. This side table makes replace/delete a rowid lookup.
+CREATE TABLE IF NOT EXISTS note_fts_row (
+  note_id TEXT PRIMARY KEY,
+  fts_rowid INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS vault_registry (
   vault_id TEXT PRIMARY KEY,
@@ -93,6 +100,8 @@ pub struct NoteMetaDto {
     pub parent_id: Option<String>,
     pub mtime: i64,
     pub size: Option<i64>,
+    #[serde(default)]
+    pub ctime: Option<i64>,
     pub content_hash: Option<String>,
     pub title: Option<String>,
     pub body_snippet: Option<String>,
@@ -173,13 +182,38 @@ pub fn resolve_index_path(app_data: &Path, vault_root: &str) -> PathBuf {
 }
 
 fn open_conn(db_path: &str) -> Result<Connection, String> {
+    open_conn_with(db_path, false)
+}
+
+/// The shell open. A file that is already WAL skips `journal_mode`, which
+/// can checkpoint a large database, and keeps a small cache until the fill
+/// tunes the writer after Ready.
+fn open_shell_conn(db_path: &str) -> Result<Connection, String> {
+    open_conn_with(db_path, true)
+}
+
+fn open_conn_with(db_path: &str, shell: bool) -> Result<Connection, String> {
     if let Some(parent) = Path::new(db_path).parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir index: {e}"))?;
     }
+    // Every open, including the fill writer. A second `journal_mode=WAL` on a
+    // file that is already WAL checkpoints the whole index and was the fixed
+    // cost before the first page.
+    let _ = crate::index_fill::discard_oversized_journal(Path::new(db_path));
+    let already_wal = crate::index_fill::sqlite_header_is_wal(Path::new(db_path));
     let conn = Connection::open(db_path).map_err(|e| format!("sqlite open: {e}"))?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY;",
-    )
+    let pragmas = if already_wal {
+        if shell {
+            "PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+        } else {
+            "PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+        }
+    } else if shell {
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+    } else {
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA journal_size_limit=8388608;"
+    };
+    conn.execute_batch(pragmas)
         .map_err(|e| format!("pragma: {e}"))?;
     // Readers (search / list_links) and the dedicated fill writer share the
     // file. Without a busy timeout the UI connection errors immediately and
@@ -193,6 +227,7 @@ fn open_conn(db_path: &str) -> Result<Connection, String> {
 fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) -> Result<(), String> {
     conn.execute_batch(DDL)
         .map_err(|e| format!("schema ddl: {e}"))?;
+    crate::index_fill::ensure_note_fts_row(conn);
 
     let ver: i32 = conn
         .query_row(
@@ -209,8 +244,10 @@ fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) ->
             "DELETE FROM link_edge;
              DELETE FROM tag_map;
              DELETE FROM note_meta;
-             DROP TABLE IF EXISTS note_fts;",
+             DROP TABLE IF EXISTS note_fts;
+             DROP TABLE IF EXISTS note_fts_row;",
         );
+        crate::shell_catalog::clear_catalog_counts(conn);
         conn.execute_batch(DDL)
             .map_err(|e| format!("schema migrate: {e}"))?;
     }
@@ -281,7 +318,6 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
 
     // Wave B: when body_snippet is None, preserve existing FTS body (meta-only reconcile)
     let body_update = note.body_snippet.clone();
-    let body_for_insert = body_update.clone().unwrap_or_default();
 
     // content_hash: only overwrite when provided
     if note.content_hash.is_some() {
@@ -326,29 +362,30 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
     }
 
     if let Some(body) = body_update {
-        conn.execute("DELETE FROM note_fts WHERE note_id = ?1", params![note.id])
+        crate::index_fill::replace_note_fts(conn, &note.id, &title, &note.path, &body)?;
+        // An opened note is the index for that file. Mark it deep so the
+        // next fill does not spend its window re-reading the same text.
+        if !body.is_empty() {
+            crate::index_fill::ensure_fill_depth_column(conn);
+            conn.execute(
+                "UPDATE note_meta SET fill_depth = ?1
+                 WHERE id = ?2 AND COALESCE(fill_depth, 0) < ?1",
+                params![crate::index_fill::FILL_DEPTH_DEEP, note.id],
+            )
             .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)",
-            params![note.id, title, note.path, body],
-        )
-        .map_err(|e| e.to_string())?;
+        }
     } else {
-        // Preserve existing body; refresh title/path only
+        // Preserve existing body; refresh title/path only.
         let old_body: String = conn
             .query_row(
-                "SELECT body FROM note_fts WHERE note_id = ?1",
+                "SELECT body FROM note_fts WHERE rowid = (
+                    SELECT fts_rowid FROM note_fts_row WHERE note_id=?1
+                 )",
                 params![note.id],
                 |r| r.get(0),
             )
             .unwrap_or_default();
-        conn.execute("DELETE FROM note_fts WHERE note_id = ?1", params![note.id])
-            .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO note_fts(note_id, title, path, body) VALUES (?1,?2,?3,?4)",
-            params![note.id, title, note.path, old_body],
-        )
-        .map_err(|e| e.to_string())?;
+        crate::index_fill::replace_note_fts(conn, &note.id, &title, &note.path, &old_body)?;
     }
 
     // Only replace links/tags when caller supplies them (None = leave previous)
@@ -377,8 +414,7 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
 }
 
 fn remove_note_tx(conn: &Connection, id: &str) -> Result<(), String> {
-    conn.execute("DELETE FROM note_fts WHERE note_id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    crate::index_fill::delete_note_fts(conn, id)?;
     conn.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id])
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id])
@@ -393,9 +429,11 @@ fn wipe_tx(conn: &Connection) -> Result<(), String> {
         "DELETE FROM link_edge;
          DELETE FROM tag_map;
          DELETE FROM note_meta;
-         DELETE FROM note_fts;",
+         DELETE FROM note_fts;
+         DELETE FROM note_fts_row;",
     )
     .map_err(|e| e.to_string())?;
+    crate::shell_catalog::clear_catalog_counts(conn);
     Ok(())
 }
 
@@ -461,57 +499,139 @@ fn search_tx(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchHit
     }
 
     let fts_q = fts_escape_query(q);
+    // Titles already committed in note_meta (first page, a folder opened
+    // before the walker, a discover batch) must match even when FTS has
+    // not indexed that row yet.
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if let Ok(suggested) = crate::shell_catalog::query_suggest(conn, q, limit) {
+        for hit in suggested {
+            if hit.kind != "note" || !seen.insert(hit.id.clone()) {
+                continue;
+            }
+            let title = if hit.title.is_empty() {
+                hit.name
+            } else {
+                hit.title
+            };
+            out.push(SearchHitDto {
+                note_id: hit.id,
+                path: hit.path,
+                title,
+                snippet: String::new(),
+                score: 110.0,
+                match_type: "title".into(),
+            });
+        }
+    }
     if fts_q.is_empty() {
-        return Ok(vec![]);
+        out.truncate(limit.max(0) as usize);
+        return Ok(out);
     }
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT f.note_id, f.path, f.title, snippet(note_fts, 3, '', '', '…', 12),
-                    bm25(note_fts)
-             FROM note_fts f
-             JOIN note_meta m ON m.id = f.note_id
-             WHERE note_fts MATCH ?1 AND m.deleted = 0 AND m.kind = 'note'
-             ORDER BY bm25(note_fts)
-             LIMIT ?2",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![fts_q, limit], |r| {
-            let title: String = r.get(2)?;
-            let path: String = r.get(1)?;
-            let snip: String = r.get(3)?;
-            let bm: f64 = r.get(4).unwrap_or(0.0);
-            let q_l = q.to_lowercase();
-            let title_l = title.to_lowercase();
-            let (score, match_type) = if title_l == q_l {
-                (120.0, "title")
-            } else if title_l.starts_with(&q_l) {
-                (100.0, "title")
-            } else if title_l.contains(&q_l) {
-                (80.0, "title")
-            } else if path.to_lowercase().contains(&q_l) {
-                (60.0, "title")
-            } else {
-                (40.0 + (-bm).max(0.0).min(20.0), "content")
-            };
-            Ok(SearchHitDto {
-                note_id: r.get(0)?,
-                path,
-                title,
-                snippet: snip,
-                score,
-                match_type: match_type.into(),
+    // Ranking every match of a common word at 500k notes takes seconds. The
+    // title hits above are already the answer then; the rank stops at its budget.
+    let fts_rows = crate::shell_catalog::with_time_budget(conn, crate::shell_catalog::SHELL_SEARCH_RANK_BUDGET, || -> Result<Vec<SearchHitDto>, String> {
+        let mut stmt = conn
+            .prepare(crate::shell_catalog::SEARCH_RANKED_SQL)
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![fts_q, limit], |r| {
+                let title: String = r.get(2)?;
+                let path: String = r.get(1)?;
+                let snip: String = r.get(3)?;
+                let bm: f64 = r.get(4).unwrap_or(0.0);
+                let q_l = q.to_lowercase();
+                let title_l = title.to_lowercase();
+                let (score, match_type) = if title_l == q_l {
+                    (120.0, "title")
+                } else if title_l.starts_with(&q_l) {
+                    (100.0, "title")
+                } else if title_l.contains(&q_l) {
+                    (80.0, "title")
+                } else if path.to_lowercase().contains(&q_l) {
+                    (60.0, "title")
+                } else {
+                    (40.0 + (-bm).max(0.0).min(20.0), "content")
+                };
+                Ok(SearchHitDto {
+                    note_id: r.get(0)?,
+                    path,
+                    title,
+                    snippet: snip,
+                    score,
+                    match_type: match_type.into(),
+                })
             })
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut out = Vec::new();
-    for row in rows.flatten() {
-        out.push(row);
+            .map_err(|e| e.to_string())?;
+        let mut kept = Vec::new();
+        for row in rows {
+            match row {
+                Ok(r) => kept.push(r),
+                Err(e) => return if kept.is_empty() { Err(e.to_string()) } else { Ok(kept) },
+            }
+        }
+        Ok(kept)
+    });
+    match fts_rows {
+        Ok(rows) => {
+            for row in rows {
+                if seen.insert(row.note_id.clone()) {
+                    out.push(row);
+                }
+            }
+        }
+        Err(err) if out.is_empty() => {
+            // The rank ran out of time: the same words unranked, which stop at the page.
+            let quick = crate::shell_catalog::with_time_budget(
+                conn,
+                crate::shell_catalog::SHELL_SEARCH_RANK_BUDGET,
+                || -> Result<Vec<SearchHitDto>, String> {
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT f.note_id, f.path, f.title FROM note_fts f
+                             JOIN note_meta m ON m.id = f.note_id
+                             WHERE note_fts MATCH ?1 AND m.deleted = 0 AND m.kind = 'note'
+                             LIMIT ?2",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let rows = stmt
+                        .query_map(params![fts_q, limit], |r| {
+                            Ok(SearchHitDto {
+                                note_id: r.get(0)?,
+                                path: r.get(1)?,
+                                title: r.get(2)?,
+                                snippet: String::new(),
+                                score: 40.0,
+                                match_type: "content".into(),
+                            })
+                        })
+                        .map_err(|e| e.to_string())?;
+                    let mut kept = Vec::new();
+                    for row in rows {
+                        match row {
+                            Ok(r) => kept.push(r),
+                            Err(_) => break,
+                        }
+                    }
+                    Ok(kept)
+                },
+            );
+            match quick {
+                Ok(rows) if !rows.is_empty() => {
+                    for row in rows {
+                        if seen.insert(row.note_id.clone()) {
+                            out.push(row);
+                        }
+                    }
+                }
+                _ => return Err(err),
+            }
+        }
+        Err(_) => {}
     }
     out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.truncate(limit.max(0) as usize);
     Ok(out)
 }
 
@@ -532,7 +652,7 @@ pub fn vault_index_path(app: tauri::AppHandle, vault_root: String) -> Result<Str
 }
 
 #[tauri::command]
-pub fn vault_index_open(
+pub async fn vault_index_open(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -547,6 +667,60 @@ pub fn vault_index_open(
         .map_err(|e| format!("app_data_dir: {e}"))?;
     let _ = crate::vault_scope::assert_index_db_path(&data, &db_path)?;
 
+    {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        if guard.conns.contains_key(&db_path) {
+            return Ok(IndexOpenResult {
+                ok: true,
+                schema_version: SCHEMA_VERSION,
+                kind: "sqlite".into(),
+            });
+        }
+    }
+
+    // Opening a filled index can spend tens of seconds in recovery or the
+    // first write. That work used to run on the webview thread, so Ready
+    // could not paint until it returned. The file opens on a blocking thread.
+    let path = db_path.clone();
+    let vid = vault_id.clone();
+    let root = vault_root.clone();
+    let conn = tauri::async_runtime::spawn_blocking(move || -> Result<Connection, String> {
+        let conn = open_shell_conn(&path)?;
+        let version: i32 = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let stored_root: Option<String> = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key = 'vault_root'",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        if version != SCHEMA_VERSION {
+            ensure_schema(&conn, &vid, root.as_deref())?;
+        } else if let Some(root) = root.as_deref() {
+            if stored_root.as_deref().is_some_and(|s| s != root) {
+                wipe_tx(&conn)?;
+                ensure_schema(&conn, &vid, Some(root))?;
+            }
+        }
+        conn.execute(
+            "INSERT INTO meta_kv(key, value) VALUES ('last_open_ms', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![now_ms().to_string()],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn)
+    })
+    .await
+    .map_err(|e| format!("sqlite open: {e}"))??;
+
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     if guard.conns.contains_key(&db_path) {
         return Ok(IndexOpenResult {
@@ -555,34 +729,6 @@ pub fn vault_index_open(
             kind: "sqlite".into(),
         });
     }
-    let conn = open_conn(&db_path)?;
-    // Schema only (no vault_root write yet)
-    ensure_schema(&conn, &vault_id, None)?;
-
-    // Wipe if this DB was bound to a different vault root
-    if let Some(root) = vault_root.as_deref() {
-        let stored: Option<String> = conn
-            .query_row(
-                "SELECT value FROM meta_kv WHERE key = 'vault_root'",
-                [],
-                |r| r.get(0),
-            )
-            .ok();
-        if let Some(s) = stored {
-            if s != root {
-                wipe_tx(&conn)?;
-            }
-        }
-        ensure_schema(&conn, &vault_id, Some(root))?;
-    }
-
-    conn.execute(
-        "INSERT INTO meta_kv(key, value) VALUES ('last_open_ms', ?1)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![now_ms().to_string()],
-    )
-    .map_err(|e| e.to_string())?;
-
     guard.conns.insert(db_path, conn);
     Ok(IndexOpenResult {
         ok: true,
@@ -591,7 +737,10 @@ pub fn vault_index_open(
     })
 }
 
-#[tauri::command]
+// Index and catalog commands run on the async runtime, not the main thread:
+// a sync command runs on the thread that also drives the window, so a slow
+// query or a busy-retry sleep froze scrolling and typing.
+#[tauri::command(async)]
 pub fn vault_index_close(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -603,10 +752,12 @@ pub fn vault_index_close(
     }
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     guard.conns.remove(&db_path);
+    drop_search_reader(&db_path);
+    stop_links_pass(&db_path);
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_wipe(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -615,6 +766,7 @@ pub fn vault_index_wipe(
     if fill_is_inflight(&db_path) {
         return Err("index fill in progress".into());
     }
+    stop_links_pass(&db_path);
     let conn = guard
         .conns
         .get(&db_path)
@@ -623,7 +775,7 @@ pub fn vault_index_wipe(
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_rebuild(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -652,7 +804,7 @@ pub fn vault_index_rebuild(
     stats_tx(conn)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_upsert(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -669,7 +821,7 @@ pub fn vault_index_upsert(
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_remove(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -684,19 +836,178 @@ pub fn vault_index_remove(
     Ok(OkResult { ok: true })
 }
 
-#[tauri::command]
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOpsClauseDto {
+    #[serde(default)]
+    pub rest: String,
+    #[serde(default)]
+    pub path_filter: String,
+    #[serde(default)]
+    pub folder_filter: String,
+    #[serde(default)]
+    pub file_filter: String,
+    #[serde(default)]
+    pub tag_filter: String,
+    #[serde(default)]
+    pub excludes: Vec<String>,
+}
+
+fn ops_hit_to_search(hit: crate::shell_catalog::SearchOpsHit) -> SearchHitDto {
+    let match_type = if hit.snippet.is_empty() || hit.snippet == hit.path {
+        "title"
+    } else {
+        "content"
+    };
+    SearchHitDto {
+        note_id: hit.note_id,
+        path: hit.path,
+        title: hit.title,
+        snippet: hit.snippet,
+        score: hit.score,
+        match_type: match_type.into(),
+    }
+}
+
+/// OR / path: / folder: / file: against SQLite, not the notes mounted in the window.
+#[tauri::command(async)]
+pub fn vault_index_search_ops(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    clauses: Vec<SearchOpsClauseDto>,
+    limit: Option<i64>,
+) -> Result<Vec<SearchHitDto>, String> {
+    let limit = limit.unwrap_or(16);
+    let clauses: Vec<crate::shell_catalog::SearchOpsClause> = clauses
+        .into_iter()
+        .map(|c| crate::shell_catalog::SearchOpsClause {
+            rest: c.rest,
+            path_filter: c.path_filter,
+            folder_filter: c.folder_filter,
+            file_filter: c.file_filter,
+            tag_filter: c.tag_filter,
+            excludes: c.excludes,
+        })
+        .collect();
+    let run = |conn: &Connection| {
+        crate::shell_catalog::search_note_ops(conn, &clauses, limit)
+            .map(|hits| hits.into_iter().map(ops_hit_to_search).collect())
+    };
+    if let Some(found) = with_search_reader(&db_path, |conn| run(conn)) {
+        return found;
+    }
+    with_shell_conn(&state, &db_path, |conn| run(conn))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskHitDto {
+    pub note_id: String,
+    pub path: String,
+    pub title: String,
+    pub line: i32,
+    pub text: String,
+    pub due: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPageDto {
+    pub tasks: Vec<TaskHitDto>,
+    pub next_rowid: i64,
+    pub scanned: i64,
+    pub done: bool,
+}
+
+#[tauri::command(async)]
+pub fn vault_index_task_page(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    after_rowid: Option<i64>,
+    note_budget: Option<i64>,
+) -> Result<TaskPageDto, String> {
+    let after = after_rowid.unwrap_or(0);
+    let budget = note_budget.unwrap_or(crate::task_scan::TASK_PAGE_DEFAULT);
+    let run = |conn: &Connection| {
+        crate::task_scan::scan_task_page(conn, after, budget).map(|page| TaskPageDto {
+            tasks: page
+                .tasks
+                .into_iter()
+                .map(|task| TaskHitDto {
+                    note_id: task.note_id,
+                    path: task.path,
+                    title: task.title,
+                    line: task.line,
+                    text: task.text,
+                    due: task.due,
+                })
+                .collect(),
+            next_rowid: page.next_rowid,
+            scanned: page.scanned,
+            done: page.done,
+        })
+    };
+    if let Some(found) = with_search_reader(&db_path, |conn| run(conn)) {
+        return found;
+    }
+    with_shell_conn(&state, &db_path, |conn| run(conn))
+}
+
+#[tauri::command(async)]
 pub fn vault_index_search(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
     query: String,
     limit: Option<i64>,
 ) -> Result<Vec<SearchHitDto>, String> {
-    let guard = state.lock().map_err(|e| e.to_string())?;
-    let conn = guard
-        .conns
-        .get(&db_path)
-        .ok_or_else(|| "index not open".to_string())?;
-    search_tx(conn, &query, limit.unwrap_or(40))
+    let limit = limit.unwrap_or(40);
+    // A ranked search can take its whole budget. On the shell connection that
+    // queued the next keystroke's title suggestions behind it.
+    if let Some(found) = with_search_reader(&db_path, |conn| search_tx(conn, &query, limit)) {
+        return found;
+    }
+    with_shell_conn(&state, &db_path, |conn| search_tx(conn, &query, limit))
+}
+
+fn search_readers() -> &'static Mutex<HashMap<String, Connection>> {
+    static READERS: OnceLock<Mutex<HashMap<String, Connection>>> = OnceLock::new();
+    READERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Full-text search on its own read-only connection (WAL readers do not block
+/// each other or the writer). Opened without the shell's journal handling,
+/// which must not run beside live connections. None when it cannot open.
+fn with_search_reader<T>(
+    db_path: &str,
+    f: impl FnOnce(&Connection) -> Result<T, String>,
+) -> Option<Result<T, String>> {
+    let mut guard = search_readers().lock().ok()?;
+    if !guard.contains_key(db_path) {
+        if !Path::new(db_path).is_file() {
+            return None;
+        }
+        let conn = Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .ok()?;
+        let _ = conn.execute_batch("PRAGMA cache_size=-8192; PRAGMA temp_store=MEMORY;");
+        guard.insert(db_path.to_string(), conn);
+    }
+    let conn = guard.get(db_path)?;
+    let _ = conn.busy_timeout(Duration::from_millis(crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS));
+    let out = f(conn);
+    if out.is_err() {
+        guard.remove(db_path);
+        return None;
+    }
+    Some(out)
+}
+
+fn drop_search_reader(db_path: &str) {
+    if let Ok(mut guard) = search_readers().lock() {
+        guard.remove(db_path);
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -707,7 +1018,7 @@ pub struct LinkGroupDto {
 }
 
 /// Seed the JS link index from persisted `link_edge` (no note bodies).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_list_links(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -741,7 +1052,7 @@ pub fn vault_index_list_links(
     Ok(groups)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_stats(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -756,7 +1067,7 @@ pub fn vault_index_stats(
 
 /// Wave B: list all note_meta (+ optional FTS body snippet) to hydrate the JS mirror
 /// without wiping SQLite on open.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_index_list(
     state: tauri::State<'_, SharedIndex>,
     db_path: String,
@@ -768,11 +1079,13 @@ pub fn vault_index_list(
         .get(&db_path)
         .ok_or_else(|| "index not open".to_string())?;
     let lim = limit.unwrap_or(500_000).max(1);
+    crate::index_fill::ensure_fill_depth_column(conn);
     let mut stmt = conn
         .prepare(
             "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, m.size,
                     m.content_hash, m.title,
-                    (SELECT f.body FROM note_fts f WHERE f.note_id = m.id LIMIT 1)
+                    (SELECT f.body FROM note_fts f WHERE f.note_id = m.id LIMIT 1),
+                    m.ctime
              FROM note_meta m
              WHERE m.deleted = 0
              ORDER BY m.path
@@ -792,6 +1105,7 @@ pub fn vault_index_list(
                 content_hash: r.get(7)?,
                 title: r.get(8)?,
                 body_snippet: r.get::<_, Option<String>>(9)?,
+                ctime: r.get(10)?,
                 tags: None,
                 link_targets: None,
             })
@@ -909,7 +1223,7 @@ fn fill_from_disk_job(
 
     let app_emit = app.clone();
     let db_cancel = db_path.to_string();
-    fill_from_disk_with_opts(
+    let result = fill_from_disk_with_opts(
         &mut conn,
         root_path,
         FillOpts {
@@ -922,15 +1236,133 @@ fn fill_from_disk_job(
         },
         || fill_is_cancelled(&db_cancel),
         |p| emit_fill_progress(&app_emit, p),
-    )
+    );
+    if result.is_ok() && !fill_is_cancelled(db_path) {
+        let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
+        start_links_pass(app.clone(), db_path.to_string(), vault_root.to_string());
+    }
+    result
 }
 
-/// Walk the vault on disk in phases: title/path FTS seed (`ready-meta`),
-/// short heads, then deeper heads. Desktop does not write every empty-body
-/// FTS row before title search is live. Runs on the blocking pool so the
-/// WebView stays responsive. Emits `vault-index-progress` (`ready-meta` /
-/// `ready-fts-partial` / `done`). Incremental: skip unchanged
-/// path+mtime+size at the already-reached depth.
+/// A vault whose titles were already searchable skips the fill, so its
+/// lookup indexes are built here, after Ready, on a short-lived writer, and
+/// the links pass carries on where it stopped.
+fn ensure_shell_indexes_later(app: tauri::AppHandle, db_path: String, vault_root: String) {
+    std::thread::spawn(move || {
+        let Ok(conn) = open_conn(&db_path) else { return };
+        if !crate::shell_catalog::shell_search_indexes_ready(&conn) {
+            let _ = crate::shell_catalog::ensure_shell_indexes(&conn);
+        }
+        drop(conn);
+        start_links_pass(app, db_path, vault_root);
+    });
+}
+
+fn links_passes() -> &'static Mutex<HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>> {
+    static PASSES: OnceLock<Mutex<HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>> =
+        OnceLock::new();
+    PASSES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogReconciledEvent {
+    db_path: String,
+    added: i64,
+    removed: i64,
+    notes: i64,
+    folders: i64,
+}
+
+/// A little after Ready, on its own writer: first bring the catalog in line
+/// with the folder (a filled index answers Ready without listing it), then
+/// read links and tags for the notes a fill did not open. One pass per index;
+/// a fill, close, or wipe stops it, and the links part resumes from its cursor.
+fn start_links_pass(app: tauri::AppHandle, db_path: String, vault_root: String) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let Ok(mut passes) = links_passes().lock() else { return };
+        if passes.contains_key(&db_path) {
+            return;
+        }
+        passes.insert(db_path.clone(), stop.clone());
+    }
+    let mine = stop.clone();
+    std::thread::spawn(move || {
+        // After Ready settles, and after the fill that started this pass has
+        // handed its result back.
+        std::thread::sleep(Duration::from_millis(2_000));
+        for _ in 0..30 {
+            if !fill_is_inflight(&db_path) || stop.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1_000));
+        }
+        let run = || -> Result<(), String> {
+            if stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path) {
+                return Ok(());
+            }
+            let mut conn = open_conn(&db_path)?;
+            let publish = |r: &crate::index_fill::CatalogReconcile| {
+                use tauri::Emitter;
+                let _ = app.emit(
+                    "vault-catalog-reconciled",
+                    CatalogReconciledEvent {
+                        db_path: db_path.clone(),
+                        added: r.added,
+                        removed: r.removed,
+                        notes: r.notes,
+                        folders: r.folders,
+                    },
+                );
+            };
+            let reconciled = crate::index_fill::reconcile_catalog_with_disk(
+                &mut conn,
+                Path::new(&vault_root),
+                || stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path),
+                |listed| publish(listed),
+            );
+            if reconciled.complete {
+                crate::shell_catalog::set_page_snapshot_notes(&db_path, reconciled.notes);
+                publish(&reconciled);
+            }
+            if crate::index_fill::link_coverage(&conn).complete {
+                return Ok(());
+            }
+            crate::index_fill::run_links_pass(
+                &mut conn,
+                Path::new(&vault_root),
+                || stop.load(Ordering::SeqCst) || fill_is_inflight(&db_path),
+                |_| {},
+            )?;
+            Ok(())
+        };
+        let _ = run();
+        if let Ok(mut passes) = links_passes().lock() {
+            if passes.get(&db_path).is_some_and(|flag| Arc::ptr_eq(flag, &mine)) {
+                passes.remove(&db_path);
+            }
+        }
+    });
+}
+
+fn stop_links_pass(db_path: &str) {
+    if let Ok(passes) = links_passes().lock() {
+        if let Some(flag) = passes.get(db_path) {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// Walk the vault on disk in phases. Title search for a fixed window is
+/// announced before the rest of the folder is listed. That listing continues
+/// afterward and yields between batches. Note text is read only for the
+/// open window. Emits `vault-index-progress` (`ready-meta` /
+/// `ready-fts-partial` / `done`, then `catalog-counted` when the listing
+/// finishes). Incremental: skip unchanged path+mtime+size at the
+/// already-reached depth.
 #[tauri::command]
 pub async fn vault_index_fill_from_disk(
     app: tauri::AppHandle,
@@ -959,7 +1391,105 @@ pub async fn vault_index_fill_from_disk(
         .clamp(256, 4_096) as usize;
     let force = force_rebuild.unwrap_or(false);
     let priority = priority_paths.unwrap_or_default();
+    // Titles from an earlier fill are already searchable. Say Ready before
+    // the writer connection, the large cache, and another folder read.
+    if !force {
+        let live = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let live = guard
+                .conns
+                .get(&db_path)
+                .map(title_search_already_live)
+                .unwrap_or(false);
+            if live {
+                if let Some(conn) = guard.conns.get_mut(&db_path) {
+                    mark_title_search_live(conn);
+                }
+            }
+            live
+        };
+        if live {
+            let page = TITLE_READY_FLUSH as i64;
+            emit_fill_progress(
+                &app,
+                &IndexFillProgress {
+                    db_path: db_path.clone(),
+                    scanned: page,
+                    total: 0,
+                    indexed: 0,
+                    skipped: 0,
+                    errors: 0,
+                    phase: "ready-meta".into(),
+                    message: Some("Title/path search ready".into()),
+                    search_state: "ready-meta".into(),
+                },
+            );
+            emit_fill_progress(
+                &app,
+                &IndexFillProgress {
+                    db_path: db_path.clone(),
+                    scanned: page,
+                    total: 0,
+                    indexed: 0,
+                    skipped: 0,
+                    errors: 0,
+                    phase: "done".into(),
+                    message: Some("Titles and open notes are searchable".into()),
+                    search_state: "ready-fts-partial".into(),
+                },
+            );
+            let stored: i64 = {
+                let guard = state.lock().map_err(|e| e.to_string())?;
+                guard
+                    .conns
+                    .get(&db_path)
+                    .and_then(|conn| {
+                        conn.query_row(
+                            "SELECT value FROM meta_kv WHERE key = 'shell_note_count'",
+                            [],
+                            |r| r.get::<_, String>(0),
+                        )
+                        .ok()
+                    })
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0)
+            };
+            let notes = if stored > 0 { stored } else { page };
+            if notes > page {
+                crate::shell_catalog::write_note_total_sidecar(&db_path, notes);
+                crate::shell_catalog::update_page_snapshot_notes(&db_path, notes);
+                emit_fill_progress(
+                    &app,
+                    &IndexFillProgress {
+                        db_path: db_path.clone(),
+                        scanned: notes,
+                        total: notes,
+                        indexed: 0,
+                        skipped: 0,
+                        errors: 0,
+                        phase: "catalog-counted".into(),
+                        message: None,
+                        search_state: "ready-fts-partial".into(),
+                    },
+                );
+            }
+            // The page is already searchable. Do not open a writer. That
+            // connection was setting WAL mode again and checkpointing the file.
+            if !fill_is_inflight(&db_path) {
+                ensure_shell_indexes_later(app.clone(), db_path.clone(), vault_root.clone());
+                return Ok(IndexFillResult {
+                    indexed: 0,
+                    skipped: notes,
+                    errors: 0,
+                    notes,
+                    edges: 0,
+                    search_state: "ready-fts-partial".into(),
+                });
+            }
+        }
+    }
     clear_fill_cancel(&db_path);
+    stop_links_pass(&db_path);
     match start_or_join(&db_path) {
         FillRole::Joiner(joiner) => {
             // Idempotent: await the in-flight writer. Progress events already
@@ -1007,5 +1537,553 @@ pub async fn vault_index_fill_from_disk(
 #[tauri::command]
 pub fn vault_index_fill_cancel(db_path: String) -> Result<OkResult, String> {
     request_fill_cancel(&db_path);
+    stop_links_pass(&db_path);
     Ok(OkResult { ok: true })
+}
+
+fn shell_busy_map(err: String) -> String {
+    let lower = err.to_lowercase();
+    if lower.contains("busy") || lower.contains("locked") {
+        "shell_busy".into()
+    } else {
+        err
+    }
+}
+
+fn shell_db_path(app: &tauri::AppHandle, vault_root: &str) -> Result<String, String> {
+    crate::vault_scope::register_and_grant(app, vault_root)?;
+    use tauri::Manager;
+    let data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let path = resolve_index_path(&data, vault_root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn ensure_shell_conn(
+    app: &tauri::AppHandle,
+    state: &mut IndexState,
+    vault_root: &str,
+) -> Result<String, String> {
+    let db_path = shell_db_path(app, vault_root)?;
+    attach_shell_db(state, &db_path, Some(vault_root))?;
+    Ok(db_path)
+}
+
+fn schema_version_of(conn: &Connection) -> i32 {
+    conn.query_row(
+        "SELECT value FROM meta_kv WHERE key = 'schema_version'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(0)
+}
+
+fn attach_shell_db(
+    state: &mut IndexState,
+    db_path: &str,
+    vault_root: Option<&str>,
+) -> Result<(), String> {
+    if state.conns.contains_key(db_path) {
+        return Ok(());
+    }
+    let conn = open_shell_conn(db_path)?;
+    if schema_version_of(&conn) != SCHEMA_VERSION {
+        ensure_schema(&conn, "shell", vault_root)?;
+    }
+    state.conns.insert(db_path.to_string(), conn);
+    Ok(())
+}
+
+/// Short lock waits. The index mutex is dropped before the sleep, so one
+/// busy read does not queue every other gesture behind it. After the budget
+/// the command returns `shell_busy` and the UI keeps the last page.
+fn with_shell_conn<T>(
+    state: &tauri::State<'_, SharedIndex>,
+    db_path: &str,
+    mut f: impl FnMut(&mut Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    {
+        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        if !guard.conns.contains_key(db_path) && Path::new(db_path).is_file() {
+            attach_shell_db(&mut guard, db_path, None)?;
+        }
+    }
+    let mut last = "shell_busy".to_string();
+    for attempt in 0..crate::shell_catalog::SHELL_BUSY_TRIES {
+        let outcome = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let conn = guard
+                .conns
+                .get_mut(db_path)
+                .ok_or_else(|| "index not open".to_string())?;
+            let _ = conn.busy_timeout(Duration::from_millis(
+                crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS,
+            ));
+            let result = f(conn);
+            let _ = conn.busy_timeout(Duration::from_millis(15_000));
+            result
+        };
+        match outcome {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                let mapped = shell_busy_map(err);
+                if mapped != "shell_busy" {
+                    return Err(mapped);
+                }
+                last = mapped;
+                if attempt + 1 < crate::shell_catalog::SHELL_BUSY_TRIES {
+                    std::thread::sleep(Duration::from_millis(
+                        crate::shell_catalog::shell_busy_sleep_ms(attempt),
+                    ));
+                }
+            }
+        }
+    }
+    Err(last)
+}
+
+/// Catalog the vault in-process and return either every note (small vault)
+/// or one bounded window. The full listing never crosses into the WebView
+/// when `materialize` is false.
+#[tauri::command(async)]
+pub fn vault_shell_mount(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedIndex>,
+    vault_root: String,
+    prefer_path: Option<String>,
+) -> Result<crate::shell_catalog::ShellMount, String> {
+    let db_path = shell_db_path(&app, &vault_root)?;
+    if let Some(mut snap) = crate::shell_catalog::read_page_snapshot(&db_path) {
+        if let Some(total) = crate::shell_catalog::read_note_total_sidecar(&db_path) {
+            crate::shell_catalog::apply_note_total(&mut snap, total);
+        }
+        snap.db_path = db_path;
+        return Ok(snap);
+    }
+    // A filled index is large. The first page is a few directory names, so
+    // this open does not wait on that file. The snapshot makes the next
+    // launch skip the directory as well.
+    let large = std::fs::metadata(&db_path)
+        .map(|m| m.len() >= 1024 * 1024)
+        .unwrap_or(false);
+    if large {
+        match crate::shell_catalog::mount_disk_window(
+            Path::new(&vault_root),
+            prefer_path.as_deref(),
+        ) {
+            Ok(mut disk) if !disk.rows.is_empty() => {
+                disk.db_path = db_path.clone();
+                if let Some(total) = crate::shell_catalog::read_note_total_sidecar(&db_path) {
+                    crate::shell_catalog::apply_note_total(&mut disk, total);
+                }
+                if disk.titles_live {
+                    let _ = crate::shell_catalog::write_page_snapshot(&db_path, &disk);
+                }
+                return Ok(disk);
+            }
+            Err(err) => return Err(err),
+            Ok(_) => {}
+        }
+    }
+    let db_path = {
+        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        ensure_shell_conn(&app, &mut guard, &vault_root)?
+    };
+    let allow_walk = !fill_is_inflight(&db_path);
+    // A first catalog (or a folder backfill) uses its own connection. Holding
+    // the UI connection across that walk queued every click behind it.
+    if allow_walk {
+        let counts = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let conn = guard
+                .conns
+                .get_mut(&db_path)
+                .ok_or_else(|| "index not open".to_string())?;
+            let _ = conn.busy_timeout(Duration::from_millis(
+                crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS,
+            ));
+            let counts = crate::shell_catalog::catalog_counts_fast(conn);
+            let _ = conn.busy_timeout(Duration::from_millis(15_000));
+            counts
+        };
+        if let Ok((notes, folders)) = counts {
+            if notes == 0 {
+                let mut writer = open_conn(&db_path)?;
+                crate::shell_catalog::clear_catalog_counts(&writer);
+                crate::shell_catalog::seed_first_page(
+                    &mut writer,
+                    Path::new(&vault_root),
+                    prefer_path.as_deref(),
+                )?;
+            } else if folders == 0 {
+                let mut writer = open_conn(&db_path)?;
+                crate::shell_catalog::clear_catalog_counts(&writer);
+                crate::shell_catalog::seed_folder_pages(
+                    &mut writer,
+                    Path::new(&vault_root),
+                    prefer_path.as_deref(),
+                )?;
+            }
+        }
+    }
+    let mut last_busy = String::new();
+    let mut mounted = None;
+    for attempt in 0..crate::shell_catalog::SHELL_BUSY_TRIES {
+        let outcome = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            let conn = guard
+                .conns
+                .get_mut(&db_path)
+                .ok_or_else(|| "index not open".to_string())?;
+            let _ = conn.busy_timeout(Duration::from_millis(
+                crate::shell_catalog::SHELL_BUSY_TIMEOUT_MS,
+            ));
+            // The folder walk already ran on `writer`, or fill owns the
+            // database. This lock only reads a page.
+            let result = crate::shell_catalog::mount_catalog(
+                conn,
+                Path::new(&vault_root),
+                prefer_path.as_deref(),
+                false,
+            );
+            let _ = conn.busy_timeout(Duration::from_millis(15_000));
+            result
+        };
+        match outcome {
+            Ok(value) => {
+                mounted = Some(value);
+                break;
+            }
+            Err(err) if shell_busy_map(err.clone()) == "shell_busy" => {
+                last_busy = "shell_busy".into();
+                if attempt + 1 < crate::shell_catalog::SHELL_BUSY_TRIES {
+                    std::thread::sleep(Duration::from_millis(
+                        crate::shell_catalog::shell_busy_sleep_ms(attempt),
+                    ));
+                }
+            }
+            Err(err) => return Err(shell_busy_map(err)),
+        }
+    }
+    let mut mounted = mounted.ok_or(last_busy)?;
+    mounted.db_path = db_path.clone();
+    if !mounted.pending {
+        let live = {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            guard
+                .conns
+                .get(&db_path)
+                .is_some_and(|conn| crate::index_fill::title_search_already_live(conn))
+        };
+        mounted.titles_live = live;
+        if live {
+            let _ = crate::shell_catalog::write_page_snapshot(&db_path, &mounted);
+        }
+    }
+    Ok(mounted)
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_children(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    parent_path: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<crate::shell_catalog::ShellPage, String> {
+    let limit = limit.unwrap_or(crate::shell_catalog::SHELL_CHILD_PAGE);
+    let offset = offset.unwrap_or(0);
+    let first = with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_children(conn, &parent_path, limit, offset)
+    })?;
+    // A folder the walker has not reached yet still has a page: list that
+    // directory on disk, outside the UI lock, then commit the rows.
+    if offset == 0 && first.rows.is_empty() {
+        let root = with_shell_conn(&state, &db_path, |conn| {
+            conn.query_row(
+                "SELECT value FROM meta_kv WHERE key='vault_root'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .ok();
+        if let Some(root) = root {
+            let listed = crate::shell_catalog::dir_page_rows(Path::new(&root), &parent_path, limit)
+                .unwrap_or_default();
+            if !listed.is_empty() {
+                let _ = with_shell_conn(&state, &db_path, |conn| {
+                    crate::shell_catalog::upsert_shell_rows(conn, listed.clone())
+                });
+                return with_shell_conn(&state, &db_path, |conn| {
+                    crate::shell_catalog::query_children(conn, &parent_path, limit, offset)
+                });
+            }
+        }
+    }
+    Ok(first)
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_level(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    parent_path: String,
+    max_nodes: Option<i64>,
+) -> Result<crate::shell_catalog::ShellLevel, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_level(
+            conn,
+            &parent_path,
+            max_nodes.unwrap_or(crate::shell_catalog::SHELL_GRAPH_MAX),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_ego(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    center_id: String,
+    hops: Option<i64>,
+    max_nodes: Option<i64>,
+) -> Result<crate::shell_catalog::ShellEgo, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_ego(
+            conn,
+            &center_id,
+            hops.unwrap_or(crate::shell_catalog::SHELL_EGO_HOPS),
+            max_nodes.unwrap_or(crate::shell_catalog::SHELL_EGO_MAX),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_note(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    id: String,
+) -> Result<Option<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_note(conn, &id)
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_backlinks(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    id: String,
+    limit: Option<i64>,
+) -> Result<crate::shell_catalog::ShellBacklinks, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_backlinks(
+            conn,
+            &id,
+            limit.unwrap_or(crate::shell_catalog::SHELL_BACKLINK_LIMIT),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_tags(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellTagCount>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_tags(
+            conn,
+            limit.unwrap_or(crate::shell_catalog::SHELL_TAG_LIMIT),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_tag_notes(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    tag: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_tag_notes(
+            conn,
+            &tag,
+            limit.unwrap_or(crate::shell_catalog::SHELL_TAG_NOTES_LIMIT),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_suggest(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellSuggestHit>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_suggest(
+            conn,
+            &query,
+            limit.unwrap_or(crate::shell_catalog::SHELL_SUGGEST_LIMIT),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_recent(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_recent(
+            conn,
+            limit.unwrap_or(crate::shell_catalog::SHELL_RECENT_LIMIT),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_forget(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    vault_root: String,
+    paths: Vec<String>,
+) -> Result<crate::shell_catalog::ShellForget, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::forget_missing_paths(conn, Path::new(&vault_root), &paths)
+    })
+}
+
+/// New notes and folders the watcher saw, written into the catalog so title
+/// search and the list have them without a rebuild. A running fill lists
+/// them itself, and the reconcile after it catches the rest.
+#[tauri::command(async)]
+pub fn vault_shell_admit(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    vault_root: String,
+    paths: Vec<String>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    if paths.is_empty() || fill_is_inflight(&db_path) {
+        return Ok(Vec::new());
+    }
+    with_shell_conn(&state, &db_path, |conn| {
+        let added = crate::index_fill::admit_new_paths(conn, Path::new(&vault_root), &paths);
+        if added.is_empty() {
+            return Ok(Vec::new());
+        }
+        crate::shell_catalog::query_by_paths(conn, &added)
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_paths(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    paths: Vec<String>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_by_paths(conn, &paths)
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_path_page(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    path_needle: Option<String>,
+    folder_needle: Option<String>,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_path_page(
+            conn,
+            path_needle.as_deref().unwrap_or(""),
+            folder_needle.as_deref().unwrap_or(""),
+            limit.unwrap_or(crate::shell_catalog::SHELL_PATH_LIMIT),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_orphans(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellRow>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_orphans(conn, limit.unwrap_or(24))
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_broken(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellBrokenLink>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_broken(conn, limit.unwrap_or(40))
+    })
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_known_norms(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    norms: Vec<String>,
+) -> Result<Vec<String>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_known_norms(conn, &norms)
+    })
+}
+
+/// The note a clicked wikilink names, from the whole catalog. Reads on the
+/// search connection so a fill holding the shell lock cannot stall the click.
+#[tauri::command(async)]
+pub fn vault_shell_resolve_link(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    target: String,
+) -> Result<crate::shell_catalog::ShellLinkResolve, String> {
+    if let Some(found) = with_search_reader(&db_path, |conn| {
+        crate::shell_catalog::query_resolve_link(conn, &target)
+    }) {
+        return found;
+    }
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_resolve_link(conn, &target)
+    })
+}
+
+/// How many notes have had their links and tags read (backlinks and tags
+/// panels say so until every note has).
+#[tauri::command(async)]
+pub fn vault_shell_link_coverage(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+) -> Result<crate::index_fill::LinkCoverage, String> {
+    with_shell_conn(&state, &db_path, |conn| Ok(crate::index_fill::link_coverage(conn)))
+}
+
+#[tauri::command(async)]
+pub fn vault_shell_mentions(
+    state: tauri::State<'_, SharedIndex>,
+    db_path: String,
+    phrase: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::shell_catalog::ShellMentionHead>, String> {
+    with_shell_conn(&state, &db_path, |conn| {
+        crate::shell_catalog::query_mention_heads(conn, &phrase, limit.unwrap_or(24))
+    })
 }

@@ -50,6 +50,16 @@ function parentKey(parentId: string | null): string {
   return parentId ?? "__root__";
 }
 
+/** Stable stand-in so a null store snapshot cannot throw inside Object.keys. */
+const EMPTY_NODE_MAP: Record<string, VaultNode> = {};
+
+function asNodeMap(
+  nodes: Record<string, VaultNode> | null | undefined,
+): Record<string, VaultNode> {
+  if (nodes && typeof nodes === "object") return nodes;
+  return EMPTY_NODE_MAP;
+}
+
 export class VaultStructuralIndex {
   /** parentId (or __root__) → sorted child ids */
   childrenByParent = new Map<string, string[]>();
@@ -181,7 +191,8 @@ export class VaultStructuralIndex {
   }
 
   /** Sync index to current nodes map. Patches when possible, full rebuild otherwise. */
-  sync(nodes: Record<string, VaultNode>): void {
+  sync(nodes: Record<string, VaultNode> | null | undefined): void {
+    nodes = asNodeMap(nodes);
     if (this.lastNodesRef === nodes) {
       if (this.pendingDirtyIds?.length && !this.applyHintedDirty(nodes, nodes)) {
         this.pendingDirtyIds = null;
@@ -194,6 +205,20 @@ export class VaultStructuralIndex {
       this.pendingDirtyIds = null;
       this.rebuild(nodes);
       return;
+    }
+
+    // Hints were recorded against the previous map. A vault switch
+    // (demo session → 45k) carries a short hint list and a huge size
+    // delta. Applying those hints would point lastNodesRef at the new
+    // map and skip the rebuild, so the tree walks a stale adjacency.
+    if (this.pendingDirtyIds?.length) {
+      let nextSize = 0;
+      for (const _k in nodes) nextSize += 1;
+      if (Math.abs(nextSize - this.nodeCount) > 64) {
+        this.pendingDirtyIds = null;
+        this.rebuild(nodes);
+        return;
+      }
     }
 
     const prev = this.lastNodesRef;
@@ -261,7 +286,9 @@ export class VaultStructuralIndex {
     this.rebuild(nodes);
   }
 
-  rebuild(nodes: Record<string, VaultNode>): void {
+  rebuild(nodes: Record<string, VaultNode> | null | undefined): void {
+    nodes = asNodeMap(nodes);
+    this.pendingDirtyIds = null;
     this.childrenByParent = new Map();
     this.pathToId = new Map();
     this.titleToIds = new Map();
@@ -591,9 +618,9 @@ export class VaultStructuralIndex {
 /** Process-wide index instance (one vault open at a time). */
 export const vaultIndex = new VaultStructuralIndex();
 
-/** Ensure index matches nodes; return it. */
+/** Ensure index matches nodes; return it. Null snapshots sync as an empty vault. */
 export function ensureVaultIndex(
-  nodes: Record<string, VaultNode>,
+  nodes: Record<string, VaultNode> | null | undefined,
 ): VaultStructuralIndex {
   vaultIndex.sync(nodes);
   return vaultIndex;

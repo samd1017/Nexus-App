@@ -63,6 +63,52 @@ rebuildLinkIndex(lazy);
 assert.equal(vaultLinkIndex.ready, false, "all-lazy rebuild does not fake ready");
 assert.equal(vaultLinkIndex.stats().edgeCount, 0);
 
+const loaded = {
+  a: {
+    id: "a",
+    path: "A.md",
+    name: "A.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[B]]",
+  },
+  b: {
+    id: "b",
+    path: "B.md",
+    name: "B.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[A]]",
+  },
+};
+rebuildLinkIndex(loaded);
+assert.equal(vaultLinkIndex.stats().edgeCount, 2);
+const stripped = {
+  a: { id: "a", path: "A.md", name: "A.md", kind: "note", parentId: null, mtime: 1 },
+  b: {
+    id: "b",
+    path: "B.md",
+    name: "B.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[A]]",
+  },
+};
+rebuildLinkIndex(stripped);
+assert.deepEqual(
+  vaultLinkIndex.getOutgoing("a"),
+  ["B"],
+  "a stripped body must keep the edges indexed before the strip",
+);
+
+const { ensureVaultIndex } = await import("../indexes.ts");
+ensureVaultIndex(null);
+ensureVaultIndex(undefined);
+assert.equal(ensureVaultIndex({}).noteCount, 0);
+
 const { buildEgoGraph } = await import("../../graph/build-graph.ts");
 seedLinkIndex([
   { sourceId: "hub", targets: ["Topic 1"] },
@@ -92,5 +138,72 @@ assert.ok(
   "seeded index must populate ego without hydrating bodies",
 );
 assert.ok(ego.edges.length >= 1);
+
+resetLinkIndex();
+vaultLinkIndex.setNoteLinks("only", "See [[Other Note]]\n");
+assert.equal(vaultLinkIndex.ready, false, "one saved note must not mark the map ready");
+assert.equal(vaultLinkIndex.coversNoteCount(2), false);
+assert.equal(vaultLinkIndex.stats().noteCount, 1);
+rebuildLinkIndex({
+  only: {
+    id: "only",
+    path: "Only.md",
+    name: "Only.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[Other Note]]\n",
+  },
+  other: {
+    id: "other",
+    path: "Other Note.md",
+    name: "Other Note.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "Back to [[Only]]\n",
+  },
+});
+assert.equal(vaultLinkIndex.coversNoteCount(2), true);
+assert.ok(vaultLinkIndex.getBacklinkSources("only").includes("other"));
+
+const { getBacklinks } = await import("../backlinks.ts");
+const { invalidateBacklinkIndex } = await import("../backlink-index.ts");
+resetLinkIndex();
+invalidateBacklinkIndex();
+const partial = {
+  only: {
+    id: "only",
+    path: "First Light.md",
+    name: "First Light.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "Hello\n",
+  },
+  plain: {
+    id: "plain",
+    path: "Linking Notes.md",
+    name: "Linking Notes.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[First Light]]\n",
+  },
+  block: {
+    id: "block",
+    path: "Heading.md",
+    name: "Heading.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+    content: "See [[First Light#^next-step]]\n",
+  },
+};
+vaultLinkIndex.setNoteLinks("only", partial.only.content);
+assert.equal(vaultLinkIndex.coversNoteCount(3), false);
+const titles = getBacklinks(partial.only, partial).map((b) => b.fromTitle);
+assert.ok(titles.includes("Linking Notes"), `plain link missing: ${titles}`);
+assert.ok(titles.includes("Heading"), `block link missing: ${titles}`);
 
 console.log("link-index.contract: ok");

@@ -1,5 +1,5 @@
 /**
- * Official soak vault writer — same tokens as generate-synthetic-vault.mjs.
+ * Large test vault writer — same tokens as generate-synthetic-vault.mjs.
  *
  * Probe words (every official vault): `hub`, `cluster`, `retrieval`.
  * Hub titles every 200 notes; every note body contains "Cluster hub".
@@ -7,10 +7,10 @@
  *   npm run gen:soak-vault -- --notes 100000 --out ~/Documents/nexus-soak-100k
  *   node scripts/gen-soak-vault.mjs --notes 100000 --out ./nexus-soak-100k
  *
- * Do not use a one-off generator that omits `hub`. The unofficial
- * /workspace/gen-soak-vault.mjs (not in this repo) wrote Meeting-* files
- * with cluster_files=100000 and hub_files=0 — `hub` search is a false alarm
- * on that folder. Probe that vault with `cluster` only, or regenerate.
+ * Do not use a one-off generator that omits `hub`. An unofficial generator
+ * wrote Meeting-* files with cluster_files=100000 and hub_files=0 — `hub`
+ * search is a false alarm on that folder. Probe that vault with `cluster`
+ * only, or regenerate with this script.
  */
 import { spawn } from "node:child_process";
 import path from "node:path";

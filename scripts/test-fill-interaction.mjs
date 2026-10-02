@@ -20,21 +20,26 @@ if (!process.env.NEXUS_TSX) {
 const {
   shouldDeferNoteBodyHydrate,
   shouldSkipDurableUpsertOnHydrate,
+  shouldIndexOpenedDesktopNote,
   shouldSkipBackgroundBodyHydrate,
   scheduleFillSafeHydrate,
 } = await import("../src/lib/vault/fill-interaction.ts");
 
 assert.equal(
   shouldDeferNoteBodyHydrate({ fillBusy: true }),
-  true,
-  "tree/graph select must not start a disk read while fill runs",
+  false,
+  "the open note reads from disk while fill runs",
 );
-assert.equal(shouldDeferNoteBodyHydrate({ fillBusy: false }), false);
+assert.equal(
+  shouldDeferNoteBodyHydrate({ fillBusy: false }),
+  false,
+  "an idle vault still reads the open note immediately",
+);
 
 assert.equal(
   shouldSkipBackgroundBodyHydrate({ fillBusy: true }),
   true,
-  "hover/embed must not pile onto fill I/O",
+  "hover must not pile onto fill I/O (embeds defer to idle)",
 );
 assert.equal(shouldSkipBackgroundBodyHydrate({ fillBusy: false }), false);
 
@@ -56,6 +61,21 @@ assert.equal(
   }),
   true,
   "empty JS mirror (slimNotes=0) must not upsert every desktop open",
+);
+
+assert.equal(
+  shouldIndexOpenedDesktopNote({ fillBusy: true, indexKind: "sqlite" }),
+  false,
+  "an open during fill must not start a second SQLite writer",
+);
+assert.equal(
+  shouldIndexOpenedDesktopNote({ fillBusy: false, indexKind: "sqlite" }),
+  true,
+  "after fill, opening a note indexes that note",
+);
+assert.equal(
+  shouldIndexOpenedDesktopNote({ fillBusy: false, indexKind: "memory" }),
+  false,
 );
 
 assert.equal(

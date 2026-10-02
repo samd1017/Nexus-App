@@ -1,0 +1,837 @@
+import { applyFrontmatter, parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
+import { parseWikilinkInner, stripCodeForLinkScan } from "@/lib/markdown/wikilinks";
+import { isCanvasPath } from "@/lib/vault/canvas";
+import {
+  compileNoteFormula,
+  runNoteFormula,
+  type FormulaLink,
+  type FormulaRefs,
+  type FormulaResult,
+  type FormulaRow,
+  type FormulaValue,
+} from "@/lib/vault/note-formula";
+import { extractTagsFromMarkdown } from "@/lib/vault/tags";
+
+export type NoteTableSource = {
+  id: string;
+  path: string;
+  name: string;
+  content?: string | null;
+  mtime?: number;
+  /** Catalog byte size, used when the body is not loaded. */
+  size?: number | null;
+  /** Created time in ms. */
+  ctime?: number;
+};
+
+function utf8Size(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** Loaded body wins, so an edit is not hidden behind a stale catalog size. */
+function sourceSize(note: NoteTableSource): number | null {
+  if (typeof note.content === "string") return utf8Size(note.content);
+  if (typeof note.size === "number" && Number.isFinite(note.size) && note.size >= 0) return note.size;
+  return null;
+}
+
+export type NoteLink = { id: string | null; title: string };
+
+export type NoteTableRow = {
+  id: string;
+  name: string;
+  path: string;
+  folder: string;
+  mtime: number;
+  props: Record<string, string>;
+  /** Wikilink or note-path values in each property, when the value points at notes. */
+  links: Record<string, NoteLink[]>;
+  /** One cell per formula column, keyed by column id. */
+  formulas: Record<string, FormulaCell>;
+};
+
+export type FormulaCell = {
+  /** Display value. Empty when the formula has no value or failed. */
+  value: string;
+  /** Why the formula failed for this note, shown in place of a value. */
+  error: string | null;
+  /** Numeric or date result as a number, so the column sorts by value. */
+  sort: number | null;
+  /** What `sort` means, so summaries know a date from a number. */
+  kind: "empty" | "text" | "number" | "date" | "boolean";
+  /** Set when the value is a note link or a list of only note links, so the cell can open them. */
+  links?: NoteLink[];
+  /** The typed result, so summary formulas see dates, lists, and links rather than text. */
+  raw?: FormulaValue;
+};
+
+export const SUMMARY_KIND_IDS = [
+  "count",
+  "filled",
+  "empty",
+  "unique",
+  "sum",
+  "average",
+  "median",
+  "min",
+  "max",
+  "range",
+  "stddev",
+  "earliest",
+  "latest",
+  "checked",
+  "unchecked",
+] as const;
+export type SummaryKind = (typeof SUMMARY_KIND_IDS)[number];
+
+export const CUSTOM_SUMMARY_PREFIX = "custom:";
+/** A built-in summary, or `custom:<name>` for a summary formula. */
+export type SummaryChoice = SummaryKind | `custom:${string}`;
+/** A summary formula: `values` is the column's values in each group. Shared by every view, like a .base file. */
+export type BasesSummaryFormula = { name: string; expr: string };
+export const MAX_SUMMARY_FORMULAS = 12;
+
+export function customSummary(name: string): SummaryChoice {
+  return `${CUSTOM_SUMMARY_PREFIX}${name}`;
+}
+
+export function customSummaryName(choice: SummaryChoice): string | null {
+  return choice.startsWith(CUSTOM_SUMMARY_PREFIX) ? choice.slice(CUSTOM_SUMMARY_PREFIX.length) : null;
+}
+
+/** Rows grouped by one column's value; `column` uses the same ids as sort. */
+export type BasesGroupBy = { column: string; dir: "asc" | "desc" };
+
+/** A formula column. `id` is stable across renames; `formula.<id>` reads it. */
+export type BasesFormula = { id: string; name: string; expr: string };
+
+export const MAX_FORMULA_COLUMNS = 8;
+export const FORMULA_COLUMN_PREFIX = "formula:";
+
+/** How many views a file can show. Views past this stay in the file, untouched. */
+export const MAX_BASE_VIEWS = 24;
+
+/** Stable id by position: the first two match the ids older files stored. */
+export function basesViewId(index: number): string {
+  if (index <= 0) return "all";
+  if (index === 1) return "saved";
+  return `v${index + 1}`;
+}
+
+/** A view with nothing set, for a slot the defaults do not cover. */
+export function emptyBasesView(id: string, name: string): BasesViewConfig {
+  return {
+    id,
+    name,
+    query: "",
+    folder: "",
+    column: "name",
+    dir: "asc",
+    formulas: [],
+    columns: [],
+    relations: [],
+    layout: "table",
+    groupBy: null,
+    summaries: {},
+  };
+}
+
+export type BasesViewConfig = {
+  id: string;
+  name: string;
+  query: string;
+  folder: string;
+  column: string;
+  dir: "asc" | "desc";
+  /** Formula columns, left to right. A column may read columns to its left. */
+  formulas: BasesFormula[];
+  /** Property columns to keep. Empty means every detected key. */
+  columns: string[];
+  /** Frontmatter keys stored as note links ([[Title]]). */
+  relations: string[];
+  /** Table spreadsheet or note cards. Same filters either way. */
+  layout: "table" | "cards";
+  groupBy: BasesGroupBy | null;
+  /** One summary per column id, shown under each group and under the whole view. */
+  summaries: Record<string, SummaryChoice>;
+};
+
+/** Vault file for the saved table. Not an Obsidian .base file. */
+export const NOTE_TABLE_FILE = ".nexus/note-table.json";
+
+export type BasesSession = {
+  activeId: string;
+  views: BasesViewConfig[];
+  summaryFormulas: BasesSummaryFormula[];
+};
+
+const MAX_ROWS = 400;
+const MAX_KEYS = 6;
+
+export function noteTableTitle(name: string): string {
+  return name.replace(/\.canvas$/i, "").replace(/\.md$/i, "").trim() || name;
+}
+
+export type LinkChoiceNote = { name: string; path: string };
+
+/** Exact title first, then prefix, then contains. Canvas files are not choices. */
+export function rankLinkChoices<T extends LinkChoiceNote>(notes: T[], query: string): T[] {
+  const q = query.trim().toLowerCase();
+  const ranked: { note: T; score: number }[] = [];
+  for (const note of notes) {
+    if (note.path.toLowerCase().endsWith(".canvas")) continue;
+    const title = noteTableTitle(note.name || note.path).toLowerCase();
+    const path = note.path.toLowerCase();
+    let score = 0;
+    if (!q) score = 1;
+    else if (title === q) score = 300;
+    else if (title.startsWith(q)) score = 200;
+    else if (title.includes(q)) score = 100;
+    else if (path.includes(q)) score = 50;
+    if (score) ranked.push({ note, score });
+  }
+  ranked.sort(
+    (a, b) =>
+      b.score - a.score ||
+      noteTableTitle(a.note.name || a.note.path).localeCompare(noteTableTitle(b.note.name || b.note.path)),
+  );
+  return ranked.slice(0, 8).map((row) => row.note);
+}
+
+/** Reading is only while visible rows are still loading. A loaded table is idle. */
+export function basesPropertiesReading(visibleMissing: number, hydrating: boolean): boolean {
+  return visibleMissing > 0 && hydrating;
+}
+
+export function noteTableFolder(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i <= 0 ? "" : path.slice(0, i);
+}
+
+/** Targets inside a property: [[Note]], [[Note|label]], or a note path. */
+export function relationTargets(value: string): string[] {
+  const found: string[] = [];
+  const re = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(value))) {
+    const target = (match[1] || "").trim();
+    if (target) found.push(target);
+  }
+  if (found.length) return found;
+  const plain = value.trim();
+  if (!plain) return [];
+  if (plain.includes("/") || /\.md$/i.test(plain)) return [plain.replace(/\.md$/i, "")];
+  return [];
+}
+
+export function resolveNoteLink(
+  target: string,
+  notes: { id: string; path: string; name: string }[],
+): NoteLink {
+  const needle = target.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
+  const base = needle.split("/").pop() || needle;
+  const hit = notes.find((note) => {
+    const path = note.path.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase();
+    const name = (note.name || "").replace(/\.md$/i, "").toLowerCase();
+    return path === needle || path.endsWith(`/${needle}`) || name === base || path.endsWith(`/${base}`);
+  });
+  const title = hit ? noteTableTitle(hit.name || hit.path) : noteTableTitle(base);
+  return { id: hit?.id ?? null, title };
+}
+
+function flowItem(item: string): string {
+  const raw = item.trim();
+  const text =
+    raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
+      ? raw.slice(1, -1)
+      : raw;
+  return /[,[\]"']|^\s|\s$/.test(text) ? JSON.stringify(text) : text;
+}
+
+/**
+ * One string per top-level key. A block list (`key:` then `- item` lines)
+ * reads as the flow list `[a, b]`, so formulas see the same list either way.
+ */
+export function noteTableProperties(content: string | null | undefined): Record<string, string> {
+  if (!content) return {};
+  const { yaml } = splitFrontmatter(content);
+  if (!yaml) return {};
+  const props: Record<string, string> = {};
+  const lines = yaml.split(/\r?\n/);
+  const fields = parseFrontmatterFields(yaml);
+  for (const field of fields) {
+    let value = field.value.replace(/^['"]|['"]$/g, "").trim();
+    if (!value) {
+      const at = lines.findIndex((line) => new RegExp(`^${field.key}\\s*:\\s*$`).test(line));
+      const items: string[] = [];
+      for (let i = at + 1; at >= 0 && i < lines.length; i += 1) {
+        const line = lines[i] ?? "";
+        if (!line.trim()) continue;
+        const item = /^\s+-\s*(.*)$/.exec(line);
+        if (!item) break;
+        if (item[1]?.trim()) items.push(flowItem(item[1]));
+      }
+      if (items.length) value = `[${items.join(", ")}]`;
+    }
+    if (!value) continue;
+    props[field.key] = value;
+  }
+  return props;
+}
+
+export function defaultBasesSession(): BasesSession {
+  return {
+    activeId: "all",
+    views: [
+      {
+        id: "all",
+        name: "All notes",
+        query: "",
+        folder: "",
+        column: "name",
+        dir: "asc",
+        formulas: [{ id: "formula", name: "Formula", expr: "file.mtime" }],
+        columns: [],
+        relations: [],
+        layout: "table",
+        groupBy: null,
+        summaries: {},
+      },
+      {
+        id: "saved",
+        name: "Saved view",
+        query: "",
+        folder: "",
+        column: "name",
+        dir: "asc",
+        formulas: [{ id: "formula", name: "Formula", expr: 'if(status, status, "—")' }],
+        columns: [],
+        relations: ["related"],
+        layout: "table",
+        groupBy: null,
+        summaries: {},
+      },
+    ],
+    summaryFormulas: [],
+  };
+}
+
+/** Identifier for `formula.<id>`: lowercase letters, digits, and underscores, unique in the view. */
+export function formulaKey(name: string, taken: Iterable<string>): string {
+  const used = new Set([...taken].map((id) => id.toLowerCase()));
+  let base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!base) base = "formula";
+  if (/^\d/.test(base)) base = `f_${base}`;
+  base = base.slice(0, 40);
+  if (!used.has(base)) return base;
+  for (let n = 2; ; n += 1) {
+    const next = `${base}_${n}`;
+    if (!used.has(next)) return next;
+  }
+}
+
+export function formulaColumnId(id: string): string {
+  return `${FORMULA_COLUMN_PREFIX}${id}`;
+}
+
+function asFormulas(raw: unknown): BasesFormula[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BasesFormula[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_FORMULA_COLUMNS) break;
+    if (!item || typeof item !== "object") continue;
+    const f = item as Partial<BasesFormula>;
+    const name = typeof f.name === "string" && f.name.trim() ? f.name.trim().slice(0, 60) : "Formula";
+    const expr = typeof f.expr === "string" ? f.expr : "";
+    const wanted = typeof f.id === "string" && /^[a-z_][a-z0-9_]*$/.test(f.id) ? f.id : name;
+    const id = wanted === f.id && !out.some((o) => o.id === wanted) ? wanted : formulaKey(wanted, out.map((o) => o.id));
+    out.push({ id, name, expr });
+  }
+  return out;
+}
+
+function asView(raw: unknown, fallback: BasesViewConfig): BasesViewConfig {
+  const row = raw && typeof raw === "object" ? (raw as Partial<BasesViewConfig> & { formula?: unknown }) : {};
+  const formulas = Array.isArray(row.formulas)
+    ? asFormulas(row.formulas)
+    : typeof row.formula === "string"
+      ? row.formula.trim()
+        ? [{ id: "formula", name: "Formula", expr: row.formula }]
+        : []
+      : fallback.formulas.map((f) => ({ ...f }));
+  let column = typeof row.column === "string" && row.column ? row.column : fallback.column;
+  if (column === "formula") column = formulas[0] ? formulaColumnId(formulas[0].id) : "name";
+  if (column.startsWith(FORMULA_COLUMN_PREFIX) && !formulas.some((f) => formulaColumnId(f.id) === column)) {
+    column = "name";
+  }
+  return {
+    id: fallback.id,
+    name: typeof row.name === "string" && row.name.trim() ? row.name : fallback.name,
+    query: typeof row.query === "string" ? row.query : fallback.query,
+    folder: typeof row.folder === "string" ? row.folder : fallback.folder,
+    column,
+    dir: row.dir === "desc" ? "desc" : "asc",
+    formulas,
+    columns: Array.isArray(row.columns)
+      ? row.columns.filter((key): key is string => typeof key === "string" && key.trim().length > 0)
+      : fallback.columns,
+    relations: Array.isArray(row.relations)
+      ? row.relations.filter((key): key is string => typeof key === "string" && /^[A-Za-z_][\w-]*$/.test(key))
+      : fallback.relations,
+    layout: row.layout === "cards" ? "cards" : "table",
+    groupBy: asGroupBy(row.groupBy, formulas),
+    summaries: asSummaries(row.summaries, formulas),
+  };
+}
+
+/** A column id the view can still show: built-ins, any property key, or one of its formulas. */
+export function isViewColumn(column: string, formulas: BasesFormula[]): boolean {
+  if (!column.trim()) return false;
+  if (column.startsWith(FORMULA_COLUMN_PREFIX)) return formulas.some((f) => formulaColumnId(f.id) === column);
+  return true;
+}
+
+function asGroupBy(raw: unknown, formulas: BasesFormula[]): BasesGroupBy | null {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw as Partial<BasesGroupBy>;
+  if (typeof g.column !== "string" || !isViewColumn(g.column, formulas)) return null;
+  return { column: g.column, dir: g.dir === "desc" ? "desc" : "asc" };
+}
+
+export function asSummaryKind(raw: unknown): SummaryKind | null {
+  return typeof raw === "string" && (SUMMARY_KIND_IDS as readonly string[]).includes(raw) ? (raw as SummaryKind) : null;
+}
+
+/** A built-in kind, or `custom:<name>` with a name; a name with no formula shows that error in its cell. */
+export function asSummaryChoice(raw: unknown): SummaryChoice | null {
+  const kind = asSummaryKind(raw);
+  if (kind) return kind;
+  if (typeof raw !== "string" || !raw.startsWith(CUSTOM_SUMMARY_PREFIX)) return null;
+  const name = raw.slice(CUSTOM_SUMMARY_PREFIX.length).trim();
+  return name ? customSummary(name) : null;
+}
+
+/** Names are trimmed, unique, and never a built-in summary's name, so `.base` reads them back the same. */
+export function summaryFormulaNameProblem(name: string, others: string[]): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "Name the summary formula.";
+  if (trimmed.length > 60) return "Keep the name under 60 characters.";
+  if ((SUMMARY_KIND_IDS as readonly string[]).includes(trimmed.toLowerCase().replace(/[\s_-]+/g, ""))) {
+    return `“${trimmed}” is a built-in summary; pick another name.`;
+  }
+  if (others.some((other) => other.trim().toLowerCase() === trimmed.toLowerCase())) return `Another summary formula is named “${trimmed}”.`;
+  return null;
+}
+
+export function asSummaryFormulas(raw: unknown): BasesSummaryFormula[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BasesSummaryFormula[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_SUMMARY_FORMULAS) break;
+    if (!item || typeof item !== "object") continue;
+    const row = item as Partial<BasesSummaryFormula>;
+    const name = typeof row.name === "string" ? row.name.trim() : "";
+    if (!name || out.some((f) => f.name.toLowerCase() === name.toLowerCase())) continue;
+    out.push({ name: name.slice(0, 60), expr: typeof row.expr === "string" ? row.expr : "" });
+  }
+  return out;
+}
+
+function asSummaries(raw: unknown, formulas: BasesFormula[]): Record<string, SummaryChoice> {
+  const out: Record<string, SummaryChoice> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [column, kind] of Object.entries(raw as Record<string, unknown>)) {
+    const valid = asSummaryChoice(kind);
+    if (valid && isViewColumn(column, formulas)) out[column] = valid;
+  }
+  return out;
+}
+
+/** Write one note-link onto a frontmatter property. Other fields and the body stay. */
+export function withNoteRelation(content: string, key: string, title: string): string {
+  const name = title.trim();
+  if (!/^[A-Za-z_][\w-]*$/.test(key) || !name) return content;
+  const source = content || "";
+  const current = noteTableProperties(source)[key] ?? "";
+  const titles = relationTargets(current).map((target) => target.split("/").pop() || target);
+  if (!titles.some((item) => item.toLowerCase() === name.toLowerCase())) titles.push(name);
+  const value = titles.map((item) => `[[${item}]]`).join(" ");
+  const block = /^(\uFEFF?---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(source);
+  if (block) {
+    // Replace only this key's lines so block lists and comments elsewhere survive.
+    const lines = (block[2] ?? "").split(/\r?\n/);
+    const at = lines.findIndex((line) => new RegExp(`^${key}\\s*:`).test(line));
+    if (at < 0) lines.push(`${key}: ${value}`);
+    else {
+      let end = at + 1;
+      while (end < lines.length && /^\s+\S/.test(lines[end] ?? "")) end += 1;
+      lines.splice(at, end - at, `${key}: ${value}`);
+    }
+    const eol = (block[1] ?? "").endsWith("\r\n") ? "\r\n" : "\n";
+    return `${block[1]}${lines.join(eol)}${block[3]}${source.slice(block[0].length)}`;
+  }
+  const { yaml } = splitFrontmatter(source);
+  const fields = yaml ? parseFrontmatterFields(yaml) : [];
+  const next = fields.filter((field) => field.key !== key);
+  next.push({ key, value });
+  return applyFrontmatter(source, next);
+}
+
+/** `formula` keeps the first column's expression so older Nexus builds still open the file. */
+export function serializeNoteTableFile(session: BasesSession): string {
+  const views = session.views.map((view) => ({ ...view, formula: view.formulas[0]?.expr ?? "" }));
+  return `${JSON.stringify({ kind: "nexus-note-table", version: 2, activeId: session.activeId, views }, null, 2)}\n`;
+}
+
+/** Session views. An older single-view blob stays on All notes. */
+export function parseBasesSession(raw: string | null): BasesSession {
+  const base = defaultBasesSession();
+  if (!raw) return base;
+  try {
+    const parsed = JSON.parse(raw) as Partial<BasesSession> & Partial<BasesViewConfig>;
+    if (Array.isArray(parsed.views)) {
+      const rawList = parsed.views.filter((v) => !!v && typeof v === "object");
+      const allRaw = rawList.find((v) => v.id === "all") ?? rawList[0];
+      const savedRaw = rawList.find((v) => v.id === "saved") ?? (rawList[0] === allRaw ? rawList[1] : rawList[0]);
+      const rest = rawList.filter((v) => v !== allRaw && v !== savedRaw);
+      const ordered = [allRaw, savedRaw, ...rest].filter((v) => !!v).slice(0, MAX_BASE_VIEWS);
+      const views = ordered.map((raw, i) => {
+        const fallback = base.views[i] ?? emptyBasesView(basesViewId(i), `View ${i + 1}`);
+        const view = asView(raw, fallback);
+        view.id = basesViewId(i);
+        return view;
+      });
+      while (views.length < 2) views.push(structuredClone(base.views[views.length] as BasesViewConfig));
+      const wanted = (parsed as { activeId?: unknown }).activeId;
+      return {
+        activeId: typeof wanted === "string" && views.some((view) => view.id === wanted) ? wanted : "all",
+        views,
+        summaryFormulas: asSummaryFormulas((parsed as { summaryFormulas?: unknown }).summaryFormulas),
+      };
+    }
+    if (typeof parsed.query === "string" || typeof parsed.folder === "string") {
+      base.views[0] = asView(parsed, base.views[0]);
+      base.views[0].id = "all";
+      if (!base.views[0].formulas.length) base.views[0].formulas = defaultBasesSession().views[0].formulas;
+    }
+  } catch {
+    /* keep defaults */
+  }
+  return base;
+}
+
+/** One formula for every row. An empty formula is not a column. */
+export function evalNoteFormula(row: FormulaRow, source: string, now = Date.now()): FormulaResult {
+  return runNoteFormula(compileNoteFormula(source), row, now);
+}
+
+export type FormulaColumnStatus = {
+  id: string;
+  name: string;
+  parseError: string | null;
+  /** Notes this column failed on, and the first reason. */
+  failed: number;
+  firstFailure: string | null;
+};
+
+export function formulaStatusLine(status: FormulaColumnStatus[]): string | null {
+  const broken = status.filter((s) => !s.parseError && s.failed);
+  if (!broken.length) return null;
+  return broken
+    .map((s) => `“${s.name}” failed on ${s.failed} note${s.failed === 1 ? "" : "s"}: ${s.firstFailure}`)
+    .join(" · ");
+}
+
+function cellKind(result: FormulaResult): FormulaCell["kind"] {
+  const raw = result.raw;
+  if (result.error || raw === null || raw === "" || (Array.isArray(raw) && !raw.length)) return "empty";
+  if (typeof raw === "number") return "number";
+  if (typeof raw === "boolean") return "boolean";
+  if (typeof raw === "object" && !Array.isArray(raw) && raw.kind === "date") return "date";
+  return "text";
+}
+
+type LinkResolver = (target: string) => NoteLink;
+
+/** Same matching as resolveNoteLink, indexed once so a table of many links stays fast. */
+function noteLinkResolver(catalog: { id: string; path: string; name: string }[]): LinkResolver {
+  const byPath = new Map<string, { id: string; path: string; name: string }>();
+  const byName = new Map<string, { id: string; path: string; name: string }>();
+  for (const note of catalog) {
+    const path = note.path.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase();
+    if (!byPath.has(path)) byPath.set(path, note);
+    const name = (note.name || "").replace(/\.md$/i, "").toLowerCase();
+    if (name && !byName.has(name)) byName.set(name, note);
+    const base = path.split("/").pop() || path;
+    if (!byName.has(base)) byName.set(base, note);
+  }
+  return (target) => {
+    const needle = target.replace(/\\/g, "/").replace(/\.md$/i, "").replace(/^\/+/, "").trim().toLowerCase();
+    const base = needle.split("/").pop() || needle;
+    const hit =
+      byPath.get(needle) ??
+      (needle.includes("/") ? catalog.find((note) => note.path.replace(/\.md$/i, "").toLowerCase().endsWith(`/${needle}`)) : undefined) ??
+      byName.get(base);
+    return { id: hit?.id ?? null, title: hit ? noteTableTitle(hit.name || hit.path) : noteTableTitle(base) };
+  };
+}
+
+function cellLinks(raw: FormulaResult["raw"], resolve: LinkResolver): NoteLink[] | undefined {
+  const items = Array.isArray(raw) ? raw : raw === null ? [] : [raw];
+  const present = items.filter((item) => item !== null && item !== "");
+  if (!present.length) return undefined;
+  const links: NoteLink[] = [];
+  for (const item of present) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return undefined;
+    if (item.kind === "file") {
+      links.push({ id: item.id, title: item.name || item.target });
+      continue;
+    }
+    if (item.kind !== "link") return undefined;
+    const noteTarget = parseWikilinkInner(item.target).noteTarget;
+    const hit = resolve(noteTarget || item.target);
+    links.push({ id: hit.id, title: item.display || (hit.id ? hit.title : item.target) });
+  }
+  return links;
+}
+
+/** A wikilink never spans lines, so a stray `[[` in text does not swallow the next real link. */
+const LINE_WIKILINK = /\[\[([^\]\n]+)\]\]/g;
+
+/** Wikilinks a note makes, once per target. Embeds (![[…]]) and code are not links. */
+function noteOutlinks(content: string): FormulaLink[] {
+  const out: FormulaLink[] = [];
+  const seen = new Set<string>();
+  const source = stripCodeForLinkScan(content);
+  for (const match of source.matchAll(LINE_WIKILINK)) {
+    if (source[(match.index ?? 0) - 1] === "!") continue;
+    const link = parseWikilinkInner(match[1] ?? "");
+    if (!link.noteTarget) continue;
+    const target = link.noteTarget.replace(/\.md$/i, "");
+    const key = target.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ target, display: link.alias });
+  }
+  return out;
+}
+
+/** Frontmatter `tags` plus #tags in the body, lowercased, without `#`. */
+function noteTags(content: string, props: Record<string, string>): string[] {
+  const tags = new Set(extractTagsFromMarkdown(splitFrontmatter(content).body));
+  const raw = (props.tags ?? props.tag ?? "").trim();
+  const list = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
+  for (const part of list.split(/[,\s]+/)) {
+    const tag = part.replace(/^["']|["']$/g, "").replace(/^#/, "").trim().toLowerCase();
+    if (tag) tags.add(tag);
+  }
+  return [...tags].sort();
+}
+
+export function buildNoteTable(
+  notes: NoteTableSource[],
+  folderPrefix = "",
+  formulas: BasesFormula[] = [],
+  now = Date.now(),
+): {
+  rows: NoteTableRow[];
+  keys: string[];
+  truncated: boolean;
+  formulaStatus: FormulaColumnStatus[];
+} {
+  const prefix = folderPrefix.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const counts = new Map<string, number>();
+  const rows: NoteTableRow[] = [];
+  let truncated = false;
+  const columns = formulas.slice(0, MAX_FORMULA_COLUMNS).map((f) => ({ f, compiled: compileNoteFormula(f.expr) }));
+  const formulaStatus: FormulaColumnStatus[] = columns.map(({ f, compiled }) => ({
+    id: f.id,
+    name: f.name,
+    parseError: compiled.error,
+    failed: 0,
+    firstFailure: null,
+  }));
+  const catalog = notes
+    .filter((note) => note.path && !isCanvasPath(note.path))
+    .map((note) => ({ id: note.id, path: note.path, name: note.name || note.path }));
+  const resolve = noteLinkResolver(catalog);
+  const outlinkCache = new Map<string, FormulaLink[]>();
+  const outlinksOf = (note: NoteTableSource): FormulaLink[] => {
+    let hit = outlinkCache.get(note.id);
+    if (!hit) {
+      hit = noteOutlinks(note.content || "");
+      outlinkCache.set(note.id, hit);
+    }
+    return hit;
+  };
+  // Backlinks come from every loaded note, not only the rows in this folder.
+  let backlinkIndex: Map<string, FormulaLink[]> | null = null;
+  const backlinksOf = (id: string): FormulaLink[] => {
+    if (!backlinkIndex) {
+      const index = new Map<string, FormulaLink[]>();
+      for (const source of notes) {
+        if (!source.path || isCanvasPath(source.path) || !source.content) continue;
+        const seen = new Set<string>();
+        for (const link of outlinksOf(source)) {
+          const hit = resolve(link.target);
+          if (!hit.id || hit.id === source.id || seen.has(hit.id)) continue;
+          seen.add(hit.id);
+          const list = index.get(hit.id) ?? [];
+          list.push({ target: source.path.replace(/\.md$/i, ""), display: noteTableTitle(source.name || source.path) });
+          index.set(hit.id, list);
+        }
+      }
+      for (const list of index.values()) list.sort((a, b) => (a.display ?? "").localeCompare(b.display ?? ""));
+      backlinkIndex = index;
+    }
+    return backlinkIndex.get(id) ?? [];
+  };
+  for (const note of notes) {
+    if (!note.path || isCanvasPath(note.path)) continue;
+    if (prefix && note.path !== prefix && !note.path.startsWith(`${prefix}/`)) continue;
+    if (rows.length >= MAX_ROWS) {
+      truncated = true;
+      break;
+    }
+    const props = noteTableProperties(note.content);
+    const links: Record<string, NoteLink[]> = {};
+    for (const key of Object.keys(props)) {
+      counts.set(key, (counts.get(key) || 0) + 1);
+      const targets = relationTargets(props[key] || "");
+      if (targets.length) links[key] = targets.map((target) => resolveNoteLink(target, catalog));
+    }
+    const built = {
+      name: noteTableTitle(note.name || note.path.split("/").pop() || note.path),
+      path: note.path,
+      folder: noteTableFolder(note.path),
+      mtime: note.mtime || 0,
+      size: sourceSize(note),
+      ctime: note.ctime || 0,
+      props,
+    };
+    const refs: FormulaRefs = new Map();
+    const cells: Record<string, FormulaCell> = {};
+    let tags: string[] | null = null;
+    const fileAt = (target: string) => {
+      const noteTarget = parseWikilinkInner(target).noteTarget || target;
+      const hit = resolve(noteTarget);
+      if (!hit.id) return null;
+      const source = notes.find((item) => item.id === hit.id);
+      const stored = (source?.path ?? noteTarget).replace(/\\/g, "/");
+      const props = typeof source?.content === "string" ? noteTableProperties(source.content) : {};
+      return {
+        kind: "file" as const,
+        id: hit.id,
+        target: stored.replace(/\.md$/i, ""),
+        name: hit.title,
+        path: stored,
+        props,
+        size: source ? sourceSize(source) : null,
+        ctime: source?.ctime || 0,
+        mtime: source?.mtime || 0,
+      };
+    };
+    const formulaRow: FormulaRow = {
+      ...built,
+      refs,
+      outlinks: () => outlinksOf(note),
+      backlinks: () => backlinksOf(note.id),
+      tags: () => (tags ??= noteTags(note.content || "", props)),
+      fileAt,
+      linksAt: (target) => {
+        const file = fileAt(target);
+        if (!file) return null;
+        const source = notes.find((item) => item.id === file.id);
+        if (!source || typeof source.content !== "string") return null;
+        return outlinksOf(source);
+      },
+    };
+    columns.forEach(({ f, compiled }, index) => {
+      const computed = runNoteFormula(compiled, formulaRow, now);
+      const cellLinkList = computed.error ? undefined : cellLinks(computed.raw, resolve);
+      cells[f.id] = {
+        value: computed.error ? "" : computed.value,
+        error: computed.error,
+        sort: computed.sort,
+        kind: cellKind(computed),
+        raw: computed.error ? null : computed.raw,
+        ...(cellLinkList ? { links: cellLinkList } : {}),
+      };
+      const entry = computed.error ? { error: computed.error } : { value: computed.raw };
+      refs.set(f.id.toLowerCase(), entry);
+      if (!refs.has(f.name.toLowerCase())) refs.set(f.name.toLowerCase(), entry);
+      const status = formulaStatus[index];
+      if (status && computed.error && !compiled.error) {
+        status.failed += 1;
+        status.firstFailure ??= computed.error;
+      }
+    });
+    rows.push({ id: note.id, ...built, links, formulas: cells });
+  }
+  const keys = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, MAX_KEYS)
+    .map(([key]) => key);
+  return { rows, keys, truncated, formulaStatus };
+}
+
+export function filterNoteRows(rows: NoteTableRow[], query: string): NoteTableRow[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter((row) => {
+    if (row.name.toLowerCase().includes(q)) return true;
+    if (row.path.toLowerCase().includes(q)) return true;
+    if (row.folder.toLowerCase().includes(q)) return true;
+    for (const value of Object.values(row.props)) {
+      if (value.toLowerCase().includes(q)) return true;
+    }
+    for (const cell of Object.values(row.formulas)) {
+      if (cell.value.toLowerCase().includes(q)) return true;
+    }
+    for (const group of Object.values(row.links)) {
+      if (group.some((link) => link.title.toLowerCase().includes(q))) return true;
+    }
+    return false;
+  });
+}
+
+/** Keep rows whose typed relation columns link a note matching the query. */
+export function filterRowsByRelation(rows: NoteTableRow[], query: string, keys: string[]): NoteTableRow[] {
+  const q = query.trim().toLowerCase();
+  if (!q || !keys.length) return rows;
+  return rows.filter((row) =>
+    keys.some((key) => (row.links[key] || []).some((link) => link.title.toLowerCase().includes(q))),
+  );
+}
+
+export function sortNoteRows(
+  rows: NoteTableRow[],
+  column: string,
+  dir: "asc" | "desc",
+): NoteTableRow[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const formulaId = column.startsWith(FORMULA_COLUMN_PREFIX) ? column.slice(FORMULA_COLUMN_PREFIX.length) : null;
+  const value = (row: NoteTableRow) => {
+    if (column === "name") return row.name;
+    if (column === "folder") return row.folder;
+    if (column === "path") return row.path;
+    if (formulaId !== null) return row.formulas[formulaId]?.value ?? "";
+    return row.props[column] || "";
+  };
+  return [...rows].sort((a, b) => {
+    if (formulaId !== null) {
+      const as = a.formulas[formulaId]?.sort ?? null;
+      const bs = b.formulas[formulaId]?.sort ?? null;
+      if (as !== null && bs !== null) return (as - bs) * sign;
+    }
+    const av = value(a);
+    const bv = value(b);
+    if (!av && bv) return 1;
+    if (av && !bv) return -1;
+    return av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" }) * sign;
+  });
+}

@@ -56,7 +56,40 @@ const EMPTY: CanvasDoc = { cards: [], edges: [], cam: { x: 40, y: 40, k: 1 }, sn
 const FENCE_RE = /````canvas\r?\n([\s\S]*?)\r?\n````/;
 const GRID = 24;
 
-export function isCanvasNote(md: string): boolean {
+export function isCanvasPath(path: string | null | undefined): boolean {
+  return !!path && path.toLowerCase().endsWith(".canvas");
+}
+
+/** Title shown on a file card: the vault file name, not a rendered heading. */
+export function canvasNoteTitle(path: string, name?: string | null): string {
+  const file = (name && name.trim()) || path.split("/").pop() || path;
+  const title = file.replace(/\.canvas$/i, "").replace(/\.md$/i, "").trim();
+  return title || "Missing note";
+}
+
+/** A vault file the tree should open: Markdown or a canvas board. */
+export function isVaultNoteFileName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n.endsWith(".md") || n.endsWith(".canvas");
+}
+
+export function emptyCanvasFile(): string {
+  return `${JSON.stringify({ nodes: [], edges: [] }, null, 2)}\n`;
+}
+
+function looksLikeCanvasJson(md: string): boolean {
+  const trimmed = (md || "").trim();
+  if (!trimmed.startsWith("{")) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as { nodes?: unknown; cards?: unknown };
+    return Array.isArray(parsed.nodes) || Array.isArray(parsed.cards);
+  } catch {
+    return false;
+  }
+}
+
+export function isCanvasNote(md: string, path?: string | null): boolean {
+  if (isCanvasPath(path)) return true;
   const { yaml } = splitFrontmatter(md);
   if (yaml) {
     const fields = parseFrontmatterFields(yaml);
@@ -64,7 +97,7 @@ export function isCanvasNote(md: string): boolean {
       return true;
     }
   }
-  return FENCE_RE.test(md);
+  return FENCE_RE.test(md) || looksLikeCanvasJson(md);
 }
 
 export function newCardId(): string {
@@ -145,6 +178,14 @@ export function normalizeCanvasDoc(raw: unknown): CanvasDoc {
 }
 
 export function parseCanvasDoc(md: string): CanvasDoc {
+  const trimmed = (md || "").trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      return normalizeCanvasDoc(JSON.parse(trimmed));
+    } catch {
+      return { ...EMPTY, cards: [], edges: [] };
+    }
+  }
   const m = md.match(FENCE_RE);
   if (!m) return { ...EMPTY, cards: [], edges: [] };
   try {
@@ -152,6 +193,14 @@ export function parseCanvasDoc(md: string): CanvasDoc {
   } catch {
     return { ...EMPTY, cards: [], edges: [] };
   }
+}
+
+/** Write the board back in the same shape the file already uses. */
+export function serializeCanvas(md: string, doc: CanvasDoc, path?: string | null): string {
+  if (isCanvasPath(path) || looksLikeCanvasJson(md)) {
+    return `${JSON.stringify(toObsidianCanvas(doc), null, 2)}\n`;
+  }
+  return writeCanvasDoc(md, doc);
 }
 
 function slimCard(c: CanvasCard): Record<string, unknown> {
@@ -302,6 +351,55 @@ export function toObsidianCanvas(doc: CanvasDoc): {
       ...(e.color ? { color: e.color } : {}),
     })),
   };
+}
+
+/** Wrap the selected non-frame cards. Returns null when fewer than two can be framed. */
+export function frameAroundCards(
+  cards: CanvasCard[],
+  ids: string[],
+  frameId: string,
+): CanvasCard[] | null {
+  const picked = ids
+    .map((id) => cards.find((c) => c.id === id))
+    .filter((c): c is CanvasCard => !!c && c.kind !== "group");
+  if (picked.length < 2) return null;
+  const pad = 28;
+  const group: CanvasCard = {
+    id: frameId,
+    kind: "group",
+    text: "Frame",
+    x: Math.min(...picked.map((c) => c.x)) - pad,
+    y: Math.min(...picked.map((c) => c.y)) - pad,
+    w: Math.max(...picked.map((c) => c.x + c.w)) - Math.min(...picked.map((c) => c.x)) + pad * 2,
+    h: Math.max(...picked.map((c) => c.y + c.h)) - Math.min(...picked.map((c) => c.y)) + pad * 2,
+    color: "6",
+  };
+  return [group, ...cards];
+}
+
+/** Link the first two selected cards. Returns null when they are already linked or fewer than two. */
+export function edgeBetweenSelected(
+  doc: CanvasDoc,
+  ids: string[],
+  edgeId: string,
+): CanvasEdge | null {
+  const picked = ids
+    .map((id) => doc.cards.find((c) => c.id === id))
+    .filter((c): c is CanvasCard => !!c && c.kind !== "group");
+  const a = picked[0];
+  const b = picked[1];
+  if (!a || !b) return null;
+  const exists = doc.edges.some(
+    (edge) =>
+      (edge.from === a.id && edge.to === b.id) || (edge.from === b.id && edge.to === a.id),
+  );
+  if (exists) return null;
+  return { id: edgeId, from: a.id, to: b.id, fromSide: "right", toSide: "left" };
+}
+
+/** Drop one edge. Cards stay. */
+export function withoutEdge(doc: CanvasDoc, edgeId: string): CanvasDoc {
+  return { ...doc, edges: doc.edges.filter((edge) => edge.id !== edgeId) };
 }
 
 export function cardAnchor(card: CanvasCard, side: CanvasSide = "right"): { x: number; y: number } {

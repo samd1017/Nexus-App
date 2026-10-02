@@ -5,7 +5,8 @@
  */
 import { build } from "esbuild";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { artifactPath } from "./artifact-dir.mjs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
@@ -125,9 +126,9 @@ const report = {
   rows,
   largestGreen: [...rows].reverse().find((r) => r.ok)?.notes ?? 0,
 };
-const dest = "/opt/cursor/artifacts/stress/bench-synthetic.json";
+const dest = artifactPath("stress", "bench-synthetic.json");
 try {
-  mkdirSync("/opt/cursor/artifacts/stress", { recursive: true });
+  mkdirSync(dirname(dest), { recursive: true });
   writeFileSync(dest, JSON.stringify(report, null, 2));
 } catch {
   writeFileSync(join(root, "bench-synthetic.json"), JSON.stringify(report, null, 2));

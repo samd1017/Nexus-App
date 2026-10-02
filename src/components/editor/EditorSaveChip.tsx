@@ -87,7 +87,7 @@ export function EditorSaveChip() {
   if (flashSaved) {
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full border border-[rgba(48,209,88,0.35)] bg-[rgba(48,209,88,0.1)] px-2.5 py-0.5 text-[11px] text-[var(--success)]"
+        className="nexus-disk-chip inline-flex items-center gap-1 rounded-full border border-[rgba(48,209,88,0.35)] bg-[rgba(48,209,88,0.1)] px-2.5 py-0.5 text-[11px] text-[var(--success)]"
         title={
           mode === "demo"
             ? "Demo changes stay in this browser session"

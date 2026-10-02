@@ -5,6 +5,24 @@
 
 import type { VaultNode } from "./types";
 
+/** Bumped when a lazy body lands on the existing nodes map (same object). */
+let bodyGen = 0;
+const bodyGenListeners = new Set<() => void>();
+
+export function bumpBodyGen(): void {
+  bodyGen += 1;
+  for (const listener of bodyGenListeners) listener();
+}
+
+export function getBodyGen(): number {
+  return bodyGen;
+}
+
+export function subscribeBodyGen(listener: () => void): () => void {
+  bodyGenListeners.add(listener);
+  return () => bodyGenListeners.delete(listener);
+}
+
 /** True when note body is known in memory (including empty string). */
 export function isContentLoaded(node: VaultNode | null | undefined): boolean {
   if (!node || node.kind !== "note") return false;

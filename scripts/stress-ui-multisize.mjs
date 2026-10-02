@@ -8,10 +8,11 @@
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:8080/";
-const OUT = "/opt/cursor/artifacts/stress/ui-multisize.json";
-const SHOT_DIR = "/opt/cursor/artifacts/stress/shots";
+const OUT = artifactPath("stress", "ui-multisize.json");
+const SHOT_DIR = artifactPath("stress", "shots");
 const COMMON_OP_MS = 1000;
 const SWITCH_P95_MS = 700;
 const OPEN_OK_MS = 30000;

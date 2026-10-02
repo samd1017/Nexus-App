@@ -2,14 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { normalizeLineEndings } from "@/lib/markdown/purity";
 import { registerSourceFlush } from "@/lib/editor/flush";
+import { rememberPaneScroll, recallPaneScroll } from "@/lib/editor/pane-scroll";
+import { writeFocusPending } from "@/lib/editor/write-intent";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import {
   buildSuggestItems,
   coordsAtTextareaCaret,
   detectOpenWikilinkInText,
   insertWikilinkInSource,
+  suggestItemsFromHits,
   type WikilinkSuggestItem,
 } from "@/lib/editor/wikilink-suggest";
+import { fetchShellSuggest, onShellCatalogWake } from "@/lib/vault/shell-catalog";
 import { dailyNotePath, upgradeSparseDailySkeleton } from "@/lib/vault/templates";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import {
@@ -125,10 +129,36 @@ export function SourceEditor({
       setSuggestOpen(false);
       return;
     }
-    const items = buildSuggestItems(
-      useVaultStore.getState().nodes,
-      open.query,
-    );
+    const live = useVaultStore.getState();
+    if (live.shellCatalog && live.shellDbPath) {
+      const q = open.query;
+      const db = live.shellDbPath;
+      setSuggestOpen(true);
+      setSuggestQuery(q);
+      setSuggestFrom(open.from);
+      setSuggestTo(open.to);
+      setSuggestSelected(0);
+      const ta = taRef.current;
+      if (ta) setSuggestRect(coordsAtTextareaCaret(ta, open.to));
+      const paint = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
+        if (!hits || suggestQueryRef.current !== q) return;
+        setSuggestItems(suggestItemsFromHits(hits));
+      };
+      void fetchShellSuggest(db, q).then((hits) => {
+        if (suggestQueryRef.current !== q) return;
+        if (!hits) {
+          const stop = onShellCatalogWake(() => {
+            stop();
+            if (suggestQueryRef.current !== q) return;
+            void fetchShellSuggest(db, q).then(paint);
+          });
+          return;
+        }
+        paint(hits);
+      });
+      return;
+    }
+    const items = buildSuggestItems(live.nodes, open.query);
     setSuggestOpen(true);
     setSuggestQuery(open.query);
     setSuggestFrom(open.from);
@@ -218,6 +248,9 @@ export function SourceEditor({
       useVaultStore.getState().nodes[noteId]?.content ?? content ?? "",
     );
     const noteChanged = noteIdRef.current !== noteId;
+    if (noteChanged && taRef.current && noteIdRef.current) {
+      rememberPaneScroll(pane, noteIdRef.current, taRef.current.scrollTop);
+    }
     if (noteChanged) {
       noteIdRef.current = noteId;
       dirtyRef.current = false;
@@ -226,6 +259,14 @@ export function SourceEditor({
       valueRef.current = live;
       emitLive(live);
       setSuggestOpen(false);
+      const restoreId = noteId;
+      window.requestAnimationFrame(() => {
+        const ta = taRef.current;
+        if (!ta || noteIdRef.current !== restoreId) return;
+        const path = useVaultStore.getState().nodes[restoreId]?.path;
+        if (writeFocusPending(path)) return;
+        ta.scrollTop = recallPaneScroll(pane, restoreId);
+      });
       return;
     }
     if (dirtyRef.current) {
@@ -237,7 +278,20 @@ export function SourceEditor({
     setValue(live);
     valueRef.current = live;
     emitLive(live);
-  }, [noteId, content, emitLive]);
+  }, [noteId, content, emitLive, pane]);
+
+  useEffect(() => {
+    const y = recallPaneScroll(pane, noteId);
+    if (y <= 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta || noteIdRef.current !== noteId || ta.scrollTop > 1) return;
+      const path = useVaultStore.getState().nodes[noteId]?.path;
+      if (writeFocusPending(path)) return;
+      ta.scrollTop = y;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [noteId, pane]);
 
   // Morning autofocus: today's daily + empty Focus — once per note open
   useEffect(() => {
@@ -453,6 +507,7 @@ export function SourceEditor({
             }
             if (e.key === "Escape") {
               e.preventDefault();
+              e.stopPropagation();
               setSuggestOpen(false);
             }
           }}

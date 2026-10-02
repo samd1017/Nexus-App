@@ -58,11 +58,39 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
   const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
-    const onUp = () => bump();
+    let raf = 0;
+    let sig = "";
+    const onUp = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (editor.isDestroyed) return;
+        const sel = editor.state.selection;
+        const next = [
+          sel.from,
+          sel.to,
+          editor.isActive("bold"),
+          editor.isActive("italic"),
+          editor.isActive("heading", { level: 1 }),
+          editor.isActive("heading", { level: 2 }),
+          editor.isActive("heading", { level: 3 }),
+          editor.isActive("bulletList"),
+          editor.isActive("orderedList"),
+          editor.isActive("taskList"),
+          editor.isActive("table"),
+          editor.isActive("codeBlock"),
+          editor.isActive("blockquote"),
+        ].join(":");
+        if (next === sig) return;
+        sig = next;
+        bump();
+      });
+    };
     editor.on("selectionUpdate", onUp);
     editor.on("transaction", onUp);
     editor.on("focus", onUp);
     return () => {
+      if (raf) cancelAnimationFrame(raf);
       editor.off("selectionUpdate", onUp);
       editor.off("transaction", onUp);
       editor.off("focus", onUp);

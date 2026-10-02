@@ -1,6 +1,6 @@
 /**
  * Native desktop vault via Tauri 2 plugins (fs + dialog).
- * Path-based, Hermes-compatible plain Markdown on disk.
+ * Path-based plain Markdown on disk.
  * Only used when running inside the Tauri shell.
  */
 
@@ -17,6 +17,11 @@ import {
   expandPathsToNoteTargets,
   type NotePathOp,
 } from "./path-patch";
+import {
+  isDesktopFileRel,
+  mkdirTargetForFolder,
+  mkdirTargetForWrite,
+} from "./desktop-write-path";
 import {
   shouldRetainWatchScan,
   watchPollIntervalMs,
@@ -106,17 +111,37 @@ function basename(p: string): string {
  * (same grant dialog `open({ directory: true, recursive: true })` performs),
  * then probe `readDir` so Wave E fails loudly instead of scanning 0 forever.
  */
+async function grantDesktopVaultRoot(root: string): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("vault_register_root", { root });
+}
+
 export async function ensureDesktopVaultFsScope(root: string): Promise<void> {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("vault_register_root", { root });
+    await grantDesktopVaultRoot(root);
   } catch (err) {
     if (isForbiddenFsError(err)) {
       throw new DesktopFsForbiddenError(root, err);
     }
     console.warn("[nexus] vault_register_root failed", root, err);
   }
-  await assertDesktopRootReadable(root);
+  try {
+    await assertDesktopRootReadable(root);
+  } catch (err) {
+    if (!(err instanceof DesktopFsForbiddenError) && !isForbiddenFsError(err)) {
+      throw err;
+    }
+    // Relaunch: grant the same folder again, then re-read. A vault under
+    // Documents, Desktop, or Downloads is already allowed by the app.
+    try {
+      await grantDesktopVaultRoot(root);
+    } catch (grantErr) {
+      if (isForbiddenFsError(grantErr)) {
+        throw new DesktopFsForbiddenError(root, grantErr);
+      }
+    }
+    await assertDesktopRootReadable(root);
+  }
 }
 
 export async function assertDesktopRootReadable(root: string): Promise<void> {
@@ -248,6 +273,7 @@ async function walkNotes(
     abs: string,
     mtime: number,
     size: number,
+    ctime: number,
   ) => Promise<void>,
   onDir: (relPath: string, name: string, parentRel: string) => void,
   onProgress?: (scanned: number) => void,
@@ -281,7 +307,7 @@ async function walkNotes(
     } else if (
       // Wave S3: only .md notes loaded; non-md files skipped during vault scans
       entry.isFile &&
-      name.toLowerCase().endsWith(".md")
+      (name.toLowerCase().endsWith(".md") || name.toLowerCase().endsWith(".canvas"))
     ) {
       const rel = relDir ? pathJoin(relDir, name) : name;
       const abs = joinRoot(root, rel);
@@ -292,7 +318,12 @@ async function walkNotes(
             ? meta.mtime
             : new Date(meta.mtime).getTime()
           : Date.now();
-        await onFile(rel, name, relDir, abs, mtime, Number(meta.size ?? 0));
+        const birth = meta.birthtime
+          ? typeof meta.birthtime === "number"
+            ? meta.birthtime
+            : new Date(meta.birthtime).getTime()
+          : 0;
+        await onFile(rel, name, relDir, abs, mtime, Number(meta.size ?? 0), Number.isFinite(birth) ? birth : 0);
         count.n += 1;
         if (onProgress && (count.n === 1 || count.n % 250 === 0)) {
           onProgress(count.n);
@@ -315,7 +346,7 @@ export async function scanDesktopVault(root: string): Promise<VaultScan> {
   await walkNotes(
     root,
     "",
-    async (path, name, parentPath, abs, mtime, size) => {
+    async (path, name, parentPath, abs, mtime, size, ctime) => {
       const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
       const id = nodeId(path);
       let content: string | undefined;
@@ -336,6 +367,8 @@ export async function scanDesktopVault(root: string): Promise<VaultScan> {
         kind: "note",
         parentId,
         mtime,
+        size,
+        ...(ctime ? { ctime } : {}),
         content,
       };
       signatures[path] = `${mtime}:${size}`;
@@ -399,19 +432,62 @@ export async function scanDesktopSignatures(
   return signatures;
 }
 
+type DesktopStat = { isFile?: boolean; isDirectory?: boolean };
+
+function fsErrorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isFileExistsError(err: unknown): boolean {
+  return /file exists|os error 17|already exists/i.test(fsErrorText(err));
+}
+
+async function statKind(
+  stat: (path: string) => Promise<DesktopStat>,
+  abs: string,
+): Promise<"file" | "dir" | "missing"> {
+  try {
+    const meta = await stat(abs);
+    if (meta.isDirectory) return "dir";
+    if (meta.isFile) return "file";
+    return "missing";
+  } catch {
+    return "missing";
+  }
+}
+
+/**
+ * Create a directory. An existing directory is success. An existing file
+ * is not a directory create — callers overwrite that file instead.
+ */
+async function mkdirDesktopDir(
+  mkdir: (path: string, options?: { recursive?: boolean }) => Promise<void>,
+  stat: (path: string) => Promise<DesktopStat>,
+  abs: string,
+): Promise<void> {
+  const kind = await statKind(stat, abs);
+  if (kind === "dir" || kind === "file") return;
+  try {
+    await mkdir(abs, { recursive: true });
+  } catch (err) {
+    if (!isFileExistsError(err)) throw err;
+    const after = await statKind(stat, abs);
+    if (after === "dir" || after === "file") return;
+    throw err;
+  }
+}
+
 export async function writeDesktopNote(
   root: string,
   relPath: string,
   content: string,
 ): Promise<void> {
-  const { writeTextFile, mkdir } = await import("@tauri-apps/plugin-fs");
-  const parts = relPath.replace(/\\/g, "/").split("/").filter(Boolean);
-  parts.pop();
-  if (parts.length) {
-    const dir = joinRoot(root, parts.join("/"));
-    await mkdir(dir, { recursive: true });
-  }
-  await writeTextFile(joinRoot(root, relPath), content);
+  const { writeTextFile, mkdir, stat } = await import("@tauri-apps/plugin-fs");
+  const dest = joinRoot(root, relPath);
+  const destKind = await statKind(stat, dest);
+  const parent = mkdirTargetForWrite(relPath, destKind === "file");
+  if (parent) await mkdirDesktopDir(mkdir, stat, joinRoot(root, parent));
+  await writeTextFile(dest, content);
 }
 
 /** List soft-deleted notes under `.trash/` (newest first). */
@@ -430,7 +506,7 @@ export async function listDesktopTrash(
     const out: Array<{ relPath: string; mtime: number }> = [];
     for (const e of entries) {
       if (!e.name || e.isDirectory) continue;
-      if (!e.name.toLowerCase().endsWith(".md")) continue;
+      if (!e.name.toLowerCase().endsWith(".md") && !e.name.toLowerCase().endsWith(".canvas")) continue;
       const full = joinRoot(root, pathJoin(".trash", e.name));
       let mtime = Date.now();
       try {
@@ -451,12 +527,121 @@ export async function listDesktopTrash(
   }
 }
 
+/**
+ * Text files with `ext` directly inside `relDir` (hidden names skipped).
+ * Files over `maxBytes` come back with `text: null` and are not read.
+ * A missing folder is an empty list.
+ */
+export async function readDesktopTextFilesIn(
+  root: string,
+  relDir: string,
+  ext: string,
+  maxBytes: number,
+): Promise<Array<{ name: string; text: string | null; size: number; error?: string }>> {
+  const { readDir, readTextFile, stat } = await import("@tauri-apps/plugin-fs");
+  let entries;
+  try {
+    entries = await readDir(joinRoot(root, relDir));
+  } catch {
+    return [];
+  }
+  const out: Array<{ name: string; text: string | null; size: number; error?: string }> = [];
+  for (const e of entries) {
+    if (!e.name || e.isDirectory || e.name.startsWith(".")) continue;
+    if (!e.name.toLowerCase().endsWith(ext)) continue;
+    const full = joinRoot(root, pathJoin(relDir, e.name));
+    try {
+      const size = Number((await stat(full)).size) || 0;
+      out.push({ name: e.name, size, text: size > maxBytes ? null : await readTextFile(full) });
+    } catch (err) {
+      out.push({ name: e.name, size: 0, text: null, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return out;
+}
+
+/**
+ * The folder at `relPath`, when it is on disk. The catalog learns folders from
+ * the notes inside them, so an empty folder is only found here.
+ */
+export async function statDesktopFolder(
+  root: string,
+  relPath: string,
+): Promise<{ mtime: number } | null> {
+  const rel = relPath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!rel || rel.split("/").some((part) => !part || part.startsWith("."))) return null;
+  try {
+    const { stat } = await import("@tauri-apps/plugin-fs");
+    const s = await stat(joinRoot(root, rel));
+    if (!s.isDirectory) return null;
+    const m = s.mtime ? (typeof s.mtime === "number" ? s.mtime : new Date(s.mtime).getTime()) : 0;
+    return { mtime: Number.isFinite(m) ? m : 0 };
+  } catch {
+    return null;
+  }
+}
+
+const MAX_LISTED_BASE_FILES = 64;
+
+/** Vault-relative `*.base` paths, skipping hidden folders. Not part of the note catalog. */
+export async function listDesktopBaseFiles(root: string): Promise<string[]> {
+  const { readDir } = await import("@tauri-apps/plugin-fs");
+  const out: string[] = [];
+  const walk = async (relDir: string): Promise<void> => {
+    if (out.length >= MAX_LISTED_BASE_FILES) return;
+    let entries;
+    try {
+      entries = await readDir(joinRoot(root, relDir));
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (out.length >= MAX_LISTED_BASE_FILES) return;
+      const name = entry.name;
+      if (!name || name.startsWith(".")) continue;
+      if (entry.isDirectory) {
+        if (SKIP_DIRS.has(name)) continue;
+        await walk(relDir ? pathJoin(relDir, name) : name);
+      } else if (entry.isFile && name.toLowerCase().endsWith(".base")) {
+        out.push(relDir ? pathJoin(relDir, name) : name);
+      }
+    }
+  };
+  await walk("");
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+/** Notes and folders directly inside `relPath` on disk (hidden entries skipped), or null. */
+export async function countDesktopFolderEntries(
+  root: string,
+  relPath: string,
+): Promise<{ notes: number; folders: number } | null> {
+  try {
+    const { readDir } = await import("@tauri-apps/plugin-fs");
+    const entries = await readDir(joinRoot(root, relPath));
+    let notes = 0;
+    let folders = 0;
+    for (const e of entries) {
+      if (!e.name || e.name.startsWith(".")) continue;
+      if (e.isDirectory) folders += 1;
+      else if (e.name.toLowerCase().endsWith(".md")) notes += 1;
+      else if (e.name.toLowerCase().endsWith(".canvas")) notes += 1;
+    }
+    return { notes, folders };
+  } catch {
+    return null;
+  }
+}
+
 export async function createDesktopFolder(
   root: string,
   relPath: string,
 ): Promise<void> {
-  const { mkdir } = await import("@tauri-apps/plugin-fs");
-  await mkdir(joinRoot(root, relPath), { recursive: true });
+  const { mkdir, stat } = await import("@tauri-apps/plugin-fs");
+  const abs = joinRoot(root, relPath);
+  const target = mkdirTargetForFolder(relPath, await statKind(stat, abs));
+  if (!target || isDesktopFileRel(target)) return;
+  await mkdirDesktopDir(mkdir, stat, joinRoot(root, target));
 }
 
 export async function deleteDesktopPath(
@@ -505,7 +690,7 @@ export async function scanDesktopVaultMeta(
   await walkNotes(
     root,
     "",
-    async (path, name, parentPath, _abs, mtime, size) => {
+    async (path, name, parentPath, _abs, mtime, size, ctime) => {
       const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
       const id = nodeId(path);
       nodes[id] = {
@@ -515,6 +700,8 @@ export async function scanDesktopVaultMeta(
         kind: "note",
         parentId,
         mtime,
+        size,
+        ...(ctime ? { ctime } : {}),
         // content omitted — unloaded
       };
       signatures[path] = `${mtime}:${size}`;
@@ -696,7 +883,7 @@ export function startDesktopWatch(
   root: string,
   onChange: (scan: VaultScan, changedPaths?: string[]) => void,
   intervalMs = 900,
-  opts?: { metaOnly?: boolean },
+  opts?: { metaOnly?: boolean; shellWindow?: boolean; onPaths?: (paths: string[]) => void },
 ): { stop: () => void; acknowledge: () => void } {
   const metaOnly = !!opts?.metaOnly;
   let lastSig = "";
@@ -746,6 +933,35 @@ export function startDesktopWatch(
   };
 
   void (async () => {
+    if (opts?.shellWindow) {
+      // Do not signature-walk or copy the catalog into JS. OS notify only.
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const { listen } = await import("@tauri-apps/api/event");
+        const ping = await invoke<string>("vault_index_ping");
+        if (typeof ping !== "string" || !ping.startsWith("nexus-vault-index")) return;
+        const started = await invoke<{ watchId: string }>("vault_watch_start", {
+          root,
+          metaOnly: true,
+        });
+        watchId = started?.watchId ?? null;
+        if (!watchId || stopped) return;
+        usingNative = true;
+        unlisten = await listen<{
+          watchId: string;
+          kind: string;
+          paths: string[];
+        }>("nexus-vault-fs", (ev) => {
+          if (stopped) return;
+          const p = ev.payload;
+          if (watchId && p.watchId && p.watchId !== watchId) return;
+          if (p.paths?.length) opts.onPaths?.(p.paths);
+        });
+      } catch (err) {
+        console.warn("[nexus] shell catalog watch unavailable", err);
+      }
+      return;
+    }
     try {
       const sigs = await scanDesktopSignatures(root);
       lastSig = sigMapHash(sigs);
@@ -853,6 +1069,7 @@ export function startDesktopWatch(
     },
     acknowledge: () => {
       suppressUntil = Date.now() + 1800;
+      if (opts?.shellWindow) return;
       void scanDesktopSignatures(root)
         .then((s) => {
           lastSig = JSON.stringify(s);
@@ -874,13 +1091,11 @@ export async function writeDesktopBinary(
   relPath: string,
   data: Uint8Array,
 ): Promise<void> {
-  const { writeFile, mkdir } = await import("@tauri-apps/plugin-fs");
-  const parts = relPath.replace(/\\/g, "/").split("/").filter(Boolean);
-  parts.pop();
-  if (parts.length) {
-    await mkdir(joinRoot(root, parts.join("/")), { recursive: true });
-  }
-  await writeFile(joinRoot(root, relPath), data);
+  const { writeFile, mkdir, stat } = await import("@tauri-apps/plugin-fs");
+  const dest = joinRoot(root, relPath);
+  const parent = mkdirTargetForWrite(relPath, (await statKind(stat, dest)) === "file");
+  if (parent) await mkdirDesktopDir(mkdir, stat, joinRoot(root, parent));
+  await writeFile(dest, data);
 }
 
 export async function readDesktopBinary(

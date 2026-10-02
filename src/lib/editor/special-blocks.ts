@@ -8,6 +8,27 @@ function escapeAttr(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function decodeCodeText(raw: string): string {
+  return raw
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** ```nexus-query``` → a note list. Not the search ```query``` block. */
+export function promoteNexusQueryBlocks(html: string): string {
+  if (!html || !/nexus-query/i.test(html)) return html;
+  return html.replace(
+    /<pre>\s*<code\b[^>]*class="[^"]*language-nexus-query[^"]*"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+    (_full, body: string) => {
+      const src = decodeCodeText(body).replace(/\n$/, "");
+      return `<div data-type="nexus-query" data-query="${escapeAttr(src)}" class="nexus-note-list"></div>`;
+    },
+  );
+}
+
 export function promoteQueryBlocks(html: string): string {
   if (!html || !/query/i.test(html)) return html;
   if (typeof DOMParser === "undefined") return html;

@@ -1,35 +1,28 @@
 /**
- * Stable FileTree structure tick — mirrors graph-tick.ts.
+ * Stable FileTree structure tick.
  *
- * NEVER call ensureVaultIndex inside a Zustand selector. Zustand v5
- * (useSyncExternalStore) + a selector that mutates module globals can force
- * Maximum update depth / forceStoreRerender (seen under Graph + heavy vault).
+ * getSnapshot must be pure. Calling ensureVaultIndex here mutates
+ * structureGeneration between React's render read and the passive
+ * useSyncExternalStore check, which forceStoreRerenders until
+ * "Maximum update depth" (hot 45k open, FileTree already mounted).
+ * Flatten and the editor note-count memo index on their own.
  */
 
 import { useSyncExternalStore } from "react";
 import { useVaultStore } from "@/lib/vault/store";
-import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
 
-let cachedNodesRef: Record<string, unknown> | null = null;
+let seenNodes: object | null = null;
+let seenRoots: string[] | null = null;
+let epoch = 0;
 let cachedTick = "0";
 
-function syncIndexIfNeeded(): void {
-  const nodes = useVaultStore.getState().nodes as Record<string, unknown>;
-  if (nodes === cachedNodesRef) return;
-  ensureVaultIndex(nodes as Parameters<typeof ensureVaultIndex>[0]);
-  cachedNodesRef = nodes;
-}
-
 export function getTreeStructureTickSnapshot(): string {
-  syncIndexIfNeeded();
   const s = useVaultStore.getState();
-  const struct = vaultIndex.structureGeneration;
-  const count = vaultIndex.nodeCount;
-  // rootIds identity matters for flatten; join is cheap vs scanning nodes
-  const roots = s.rootIds.join("\0");
-  const next = `${struct}:${count}:${roots}`;
-  if (next === cachedTick) return cachedTick;
-  cachedTick = next;
+  if (s.nodes === seenNodes && s.rootIds === seenRoots) return cachedTick;
+  seenNodes = s.nodes;
+  seenRoots = s.rootIds;
+  epoch += 1;
+  cachedTick = String(epoch);
   return cachedTick;
 }
 
@@ -47,6 +40,8 @@ export function useTreeStructureTick(): string {
 }
 
 export function resetTreeTickCache(): void {
-  cachedNodesRef = null;
+  seenNodes = null;
+  seenRoots = null;
+  epoch = 0;
   cachedTick = "0";
 }

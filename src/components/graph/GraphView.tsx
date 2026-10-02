@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type KeyboardEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type KeyboardEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
-import SpriteText from "three-spritetext";
+import { createInstrumentNode } from "@/lib/graph/instrument-node";
 import { useVaultStore } from "@/lib/vault/store";
-import { resolveGraphData, type GraphViewMode } from "@/lib/graph/build-graph";
+import { resolveGraphData, type GraphViewMode, type ResolvedGraphData } from "@/lib/graph/build-graph";
+import { emptyShellGraph, graphFromShellEgo, graphFromShellLevel, pinFolderLayout } from "@/lib/graph/shell-graph";
+import { folderLevelCounts, folderLevelShowsVaultTotal } from "@/lib/graph/level-counts";
+import { fetchShellBacklinks, fetchShellEgo, fetchShellLevel } from "@/lib/vault/shell-catalog";
 import { folderIdFromBrowsePath } from "@/lib/graph/folder-graph";
 import { getContentLinkSig } from "@/lib/markdown/wikilinks";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
@@ -37,7 +40,7 @@ import {
   isPhoneViewport,
 } from "@/lib/layout/viewport";
 import { GraphChrome } from "@/components/graph/GraphChrome";
-import { inspectGraphNote } from "@/lib/graph/graph-inspect";
+import { inspectGraphNote, type GraphInspectLink } from "@/lib/graph/graph-inspect";
 import {
   applyGraphFilters,
   filtersAreIdle,
@@ -47,6 +50,15 @@ import {
   type GraphFilterState,
 } from "@/lib/graph/graph-filters";
 import { graphEmptyCopy } from "@/lib/graph/graph-empty";
+import { startFirstNote } from "@/lib/vault/first-note";
+import { clampToDrawBudget, drawnStats, recordDrawn } from "@/lib/graph/draw-budget";
+import { clearLabelTextures, releaseSharedSpheres, updateGraphLod } from "@/lib/graph/planet-lod";
+import { releaseLinkStyles } from "@/lib/graph/link-style";
+import { LinkBatch } from "@/lib/graph/link-batch";
+import { createRenderGovernor, type RenderGovernor } from "@/lib/graph/render-governor";
+
+/** Stable empty map so a null store snapshot cannot throw during graph render. */
+const EMPTY_GRAPH_NODES: Record<string, VaultNode> = {};
 
 interface Props {
   mode: "panel" | "fullscreen";
@@ -70,10 +82,37 @@ type GNode = {
   x?: number;
   y?: number;
   z?: number;
+  fx?: number;
+  fy?: number;
+  fz?: number;
   __threeObj?: THREE.Object3D;
 };
 
 type NeighborhoodMode = "all" | "1hop" | "2hop" | "3hop";
+
+/**
+ * The open vault's total in the graph badge. The scene reads the count once
+ * per render so fill ticks do not rebuild it; this line subscribes, so a vault
+ * switch or a recount shows at once instead of the last vault's number.
+ */
+function VaultTotal({
+  fallback,
+  shown,
+  kind,
+}: {
+  fallback: number;
+  shown: number;
+  kind: "in" | "of";
+}) {
+  const total = useVaultStore((s) => (s.shellCatalog ? s.catalogNoteCount : fallback));
+  if (total <= shown) return null;
+  return (
+    <span data-testid="graph-vault-total">
+      <span className="mx-1.5 opacity-40">·</span>
+      {kind === "of" ? `of ${total.toLocaleString()}` : `${total.toLocaleString()} in vault`}
+    </span>
+  );
+}
 
 function hopCount(mode: NeighborhoodMode): 1 | 2 | 3 {
   if (mode === "2hop") return 2;
@@ -112,10 +151,16 @@ function hopKeepSet(
 
 const LOD_SEGMENT_THRESHOLD = 250;
 const LOD_CAP = 400;
+const LINK_OPACITY = 0.95;
+/** Idle orbit waits out the opening zoom-to-fit, then a short quiet. */
+const IDLE_ORBIT_START_S = 3.2;
+const IDLE_ORBIT_QUIET_MS = 1600;
+const IDLE_ORBIT_SPEED = 0.55;
 
 type GLink = {
   source: string | GNode;
   target: string | GNode;
+  __lineObj?: THREE.Object3D;
 };
 
 function accentRgb(): { r: number; g: number; b: number } {
@@ -139,25 +184,6 @@ function physicsParams(intensity: PhysicsIntensity) {
   return { charge: -85, distance: 36, velocity: 0.3, alpha: 0.02 };
 }
 
-
-/** G3: stronger folder hue separation via distinct HSL palette slots */
-function tagTintColor(tag: string, desktopBoost: boolean): THREE.Color {
-  return folderTintColor(`tag:${tag || "__none__"}`, desktopBoost);
-}
-
-function folderTintColor(folder: string, desktopBoost: boolean): THREE.Color {
-  let h = 2166136261;
-  const key = folder || "__root__";
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const hues = [205, 160, 285, 35, 125, 330, 50, 240, 15, 175];
-  const hue = hues[Math.abs(h) % hues.length] / 360;
-  const sat = desktopBoost ? 0.42 : 0.36;
-  const light = desktopBoost ? 0.4 : 0.34;
-  return new THREE.Color().setHSL(hue, sat, light);
-}
 
 function buildStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -199,9 +225,9 @@ function buildStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
     (m.material as THREE.MeshBasicMaterial).color.multiplyScalar(intensity);
     scene.add(m);
   };
-  addPanel(0xe8eef6, 1.8, 18, 14, [20, 12, 10], -0.6);
-  addPanel(0x7a8a9e, 0.75, 14, 12, [-18, 4, -8], 0.7);
-  addPanel(0x4a5a6a, 0.45, 20, 8, [0, -14, 5], 0);
+  addPanel(0xc5ced8, 0.42, 18, 14, [20, 12, 10], -0.6);
+  addPanel(0x6a7684, 0.28, 14, 12, [-18, 4, -8], 0.7);
+  addPanel(0x3a4450, 0.18, 20, 8, [0, -14, 5], 0);
 
   const env = pmrem.fromScene(scene, 0.03).texture;
   pmrem.dispose();
@@ -331,9 +357,52 @@ function paintGalaxyTexture(full: boolean): THREE.CanvasTexture {
 }
 
 /**
- * Single sky sphere — fine galaxy field, slow drift.
- * Dual shells doubled noise and made stars look chunky.
+ * Stars as real points at three distances, in front of a dim galaxy shell.
+ * Orbiting the map moves the near shell more than the far one.
  */
+function starShell(
+  count: number,
+  radius: number,
+  thickness: number,
+  size: number,
+  opacity: number,
+): THREE.Points {
+  const pos = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = radius + (Math.random() - 0.5) * thickness;
+    const th = Math.random() * Math.PI * 2;
+    const ph = Math.acos(2 * Math.random() - 1);
+    pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+    pos[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th) * 0.72;
+    pos[i * 3 + 2] = r * Math.cos(ph);
+    const roll = Math.random();
+    const mag = 0.55 + Math.random() * 0.45;
+    const blue = roll > 0.88;
+    col[i * 3] = mag * (blue ? 0.72 : 0.9);
+    col[i * 3 + 1] = mag * (blue ? 0.84 : 0.93);
+    col[i * 3 + 2] = mag;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const pts = new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      size,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      fog: false,
+    }),
+  );
+  pts.frustumCulled = false;
+  pts.renderOrder = -20;
+  return pts;
+}
+
 function buildSpaceBackdrop(
   scene: THREE.Scene,
   mode: "panel" | "fullscreen",
@@ -344,7 +413,7 @@ function buildSpaceBackdrop(
 
   const tex = paintGalaxyTexture(full);
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(full ? 3000 : 2400, 64, 40),
+    new THREE.SphereGeometry(full ? 4200 : 3400, 64, 40),
     new THREE.MeshBasicMaterial({
       map: tex,
       side: THREE.BackSide,
@@ -357,7 +426,16 @@ function buildSpaceBackdrop(
   sky.renderOrder = -50;
   sky.frustumCulled = false;
   root.add(sky);
-  layers.push({ obj: sky, speed: 0.0009 });
+  layers.push({ obj: sky, speed: 0.00035 });
+
+  // Outside the largest folder ring (radius grows with the page, up to ~800).
+  const near = starShell(full ? 420 : 260, 1280, 220, full ? 7.5 : 6.2, 0.9);
+  const mid = starShell(full ? 700 : 420, 1900, 280, full ? 5.2 : 4.4, 0.72);
+  const far = starShell(full ? 900 : 520, 2700, 360, full ? 3.4 : 2.8, 0.55);
+  root.add(near, mid, far);
+  layers.push({ obj: near, speed: 0.008 });
+  layers.push({ obj: mid, speed: 0.0032 });
+  layers.push({ obj: far, speed: 0.0011 });
 
   scene.add(root);
   scene.fog = null;
@@ -365,11 +443,98 @@ function buildSpaceBackdrop(
   return { root, layers };
 }
 
-function truncateLabel(name: string, max = 22): string {
-  const clean = name.replace(/\s+/g, " ").trim();
-  if (clean.length <= max) return clean;
-  return clean.slice(0, max - 1) + "…";
+/**
+ * WebKit pointerup/pointercancel can reach OrbitControls with a tracked
+ * pointer and no stored position. The control then throws on `position.x`
+ * while React is committing the graph, and the panel becomes
+ * "Graph hit a display error."
+ */
+function guardOrbitPointer(graph: ForceGraph3DInstance) {
+  const controls = graph.controls() as {
+    domElement?: HTMLElement | null;
+    connect?: (element: HTMLElement) => void;
+    disconnect?: () => void;
+    _onPointerUp?: ((event: PointerEvent) => void) & { nexusGuard?: boolean };
+    _getSecondPointerPosition?: ((event: PointerEvent) => { x: number; y: number }) & {
+      nexusGuard?: boolean;
+    };
+    _pointers?: number[];
+    _pointerPositions?: Record<number, { x: number; y: number } | undefined>;
+  } | null;
+  if (!controls) return;
+  const el = controls.domElement ?? null;
+  // connect() already bound pointercancel to the raw handler. Detach first
+  // so the rebound listeners are the guards, not the throwing originals.
+  let detached = false;
+  if (el && typeof controls.disconnect === "function") {
+    try {
+      controls.disconnect();
+      detached = true;
+    } catch {
+      detached = false;
+    }
+  }
+  const originalSecond = controls._getSecondPointerPosition;
+  if (originalSecond && !originalSecond.nexusGuard) {
+    const wrappedSecond = function (
+      this: {
+        _pointers?: number[];
+        _pointerPositions?: Record<number, { x: number; y: number } | undefined>;
+      },
+      event: PointerEvent,
+    ) {
+      const position = originalSecond.call(this, event);
+      if (position && Number.isFinite(position.x) && Number.isFinite(position.y)) {
+        return position;
+      }
+      return { x: event.pageX || 0, y: event.pageY || 0 };
+    };
+    wrappedSecond.nexusGuard = true;
+    controls._getSecondPointerPosition = wrappedSecond;
+  }
+  const original = controls._onPointerUp;
+  if (original && !original.nexusGuard) {
+    const wrapped = function (
+      this: {
+        _pointers?: number[];
+        _pointerPositions?: Record<number, { x: number; y: number } | undefined>;
+      },
+      event: PointerEvent,
+    ) {
+      const positions = this._pointerPositions;
+      if (positions && this._pointers) {
+        for (const id of this._pointers) {
+          if (!positions[id]) {
+            positions[id] = { x: event.pageX || 0, y: event.pageY || 0 };
+          }
+        }
+      }
+      try {
+        original.call(this, event);
+      } catch (err) {
+        const name =
+          err && typeof err === "object" && "name" in err ? String(err.name) : "";
+        const message = err instanceof Error ? err.message : String(err);
+        // Synthetic pointerup has no stored position (NotFoundError on capture,
+        // TypeError on position.x). Swallow that miss; keep real faults.
+        const knownMiss =
+          name === "NotFoundError" ||
+          (name === "TypeError" && /reading 'x'/.test(message));
+        if (!knownMiss) console.warn("[nexus] graph pointer", err);
+      }
+    };
+    wrapped.nexusGuard = true;
+    controls._onPointerUp = wrapped;
+  }
+  if (detached && el && typeof controls.connect === "function") {
+    try {
+      controls.connect(el);
+    } catch (err) {
+      console.warn("[nexus] graph pointer", err);
+    }
+  }
 }
+
 
 function linkIds(link: GLink): [string, string] {
   const s =
@@ -393,65 +558,6 @@ function buildNeighbors(links: GLink[]): Map<string, Set<string>> {
   return m;
 }
 
-function makeLabel(
-  text: string,
-  opts: {
-    active: boolean;
-    hover: boolean;
-    dim: boolean;
-    full: boolean;
-    radius: number;
-  },
-): THREE.Object3D {
-  const { active, hover, dim, full, radius } = opts;
-  const label = new SpriteText(text) as SpriteText & {
-    position: THREE.Vector3;
-    material: THREE.SpriteMaterial;
-  };
-
-  label.fontFace =
-    typeof document !== "undefined"
-      ? getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
-        "system-ui, sans-serif"
-      : "system-ui, sans-serif";
-  label.fontWeight = active || hover ? "bold" : "normal";
-  label.fontSize = 120;
-  label.color = active
-    ? "#f4f7fb"
-    : hover
-      ? "#e8eef6"
-      : dim
-        ? "#6a7280"
-        : "#c0c8d4";
-  label.backgroundColor = "rgba(0,0,0,0)";
-  label.padding = 2;
-  label.borderWidth = 0;
-  label.borderRadius = 0;
-  label.strokeWidth = active || hover ? 0.28 : 0.2;
-  label.strokeColor = "#000000";
-
-  const th = active
-    ? full
-      ? 3.2
-      : 2.4
-    : hover
-      ? full
-        ? 2.8
-        : 2.1
-      : full
-        ? 2.2
-        : 1.7;
-  label.textHeight = th;
-  label.position.y = radius + th * 0.65 + (full ? 0.4 : 0.25);
-  label.renderOrder = active || hover ? 20 : 8;
-  label.material.depthTest = false;
-  label.material.depthWrite = false;
-  label.material.transparent = true;
-  label.material.opacity = active ? 1 : hover ? 0.98 : dim ? 0.45 : 0.82;
-  label.material.sizeAttenuation = true;
-
-  return label;
-}
 
 function createOrb(
   node: GNode,
@@ -467,176 +573,21 @@ function createOrb(
   lowDetail = false,
   colorBy: "folder" | "tag" = "folder",
 ): THREE.Object3D {
-  const group = new THREE.Group();
-  const isGhost = !!node.ghost;
-  const isAggregate = node.kind === "aggregate" || !!node.aggregate;
-  const isFolderNode = node.kind === "folder";
-  const isActive = node.id === activeId;
-  const isHover = node.id === hoverId;
-  const isHub = !isGhost && !isAggregate && node.degree >= 3;
-  const inFocus =
-    !focusId || node.id === focusId || (neighbors?.has(node.id) ?? false);
-  const dim = !!focusId && !inFocus && dimStrength > 0;
-  const full = mode === "fullscreen";
-  const panel = mode === "panel";
-  // G5 LOD segments
-  const segs = lowDetail
-    ? isGhost
-      ? 12
-      : full
-        ? 28
-        : 20
-    : isGhost
-      ? full
-        ? 32
-        : 24
-      : full
-        ? 72
-        : 56;
-  const sizeBoost = desktopBoost ? 1.14 : 1;
-
-  const base = (full ? 3.15 : panel ? 2.55 : 2.4) * sizeBoost;
-  const rank = isActive || isHover ? 1 : isHub || isFolderNode ? 0.84 : 0.68;
-  const radius =
-    base +
-    Math.pow(Math.max(1, node.val), 0.55) * (full ? 1.75 : 1.4) * rank +
-    (isActive || isHover ? 0.5 : 0);
-
-  let bodyColor =
-    colorBy === "tag" && node.tag
-      ? tagTintColor(node.tag, desktopBoost)
-      : folderTintColor(node.folder, desktopBoost);
-  if (node.ghost) {
-    bodyColor = new THREE.Color(desktopBoost ? 0x2a323c : 0x222830);
-  } else if (isAggregate) {
-    bodyColor = bodyColor.clone().multiplyScalar(0.55);
-  } else if (isActive || isHover) {
-    bodyColor = bodyColor
-      .clone()
-      .lerp(new THREE.Color(desktopBoost ? 0x5c6678 : 0x4a5260), 0.55);
-  } else if (isHub || isFolderNode) {
-    bodyColor = bodyColor
-      .clone()
-      .lerp(new THREE.Color(desktopBoost ? 0x4a5466 : 0x3c4452), 0.35);
-  }
-
-  if (dim) {
-    bodyColor.multiplyScalar(1 - dimStrength * 0.5);
-  }
-
-  const bodyOpacity = dim
-    ? Math.max(0.08, 1 - dimStrength * 0.92)
-    : isGhost
-      ? 0.38
-      : isAggregate
-        ? 0.48
-        : 1;
-
-  let emissive = accent.clone().multiplyScalar(desktopBoost ? 0.22 : 0.12);
-  let emissiveIntensity = desktopBoost ? 0.055 : 0.028;
-  if (isActive || isHover) {
-    emissive = accent.clone();
-    emissiveIntensity = desktopBoost ? 0.16 : 0.1;
-  } else if (neighbors?.has(node.id)) {
-    emissive = accent.clone().multiplyScalar(0.55);
-    emissiveIntensity = desktopBoost ? 0.1 : 0.055;
-  }
-
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, segs, segs),
-    new THREE.MeshPhysicalMaterial({
-      color: bodyColor,
-      metalness: desktopBoost ? 0.88 : 0.94,
-      roughness: isActive || isHover
-        ? 0.14
-        : isHub || isFolderNode
-          ? 0.22
-          : 0.3,
-      clearcoat: isActive || isHover
-        ? 0.75
-        : isFolderNode
-          ? Math.min(0.72, (desktopBoost ? 0.55 : 0.42) + 0.08)
-          : desktopBoost
-            ? 0.55
-            : 0.42,
-      clearcoatRoughness: isActive || isHover ? 0.06 : 0.16,
-      transparent: dim || isGhost || isAggregate,
-      opacity: bodyOpacity,
-      depthWrite: !(dim || isGhost || isAggregate),
-      transmission: 0,
-      specularIntensity: isActive || isHover ? 1.5 : desktopBoost ? 1.35 : 1.15,
-      specularColor: new THREE.Color(0xe8eef6),
-      emissive,
-      emissiveIntensity,
-      envMapIntensity: isActive || isHover
-        ? desktopBoost
-          ? 1.85
-          : 1.55
-        : isHub
-          ? desktopBoost
-            ? 1.45
-            : 1.2
-          : desktopBoost
-            ? 1.3
-            : 1.05,
-      side: THREE.FrontSide,
-    }),
+  return createInstrumentNode(
+    node,
+    activeId,
+    hoverId,
+    focusId,
+    neighbors,
+    dimStrength,
+    mode,
+    accent,
+    showLabel,
+    desktopBoost,
+    lowDetail,
+    colorBy,
   );
-  body.renderOrder = dim && dimStrength > 0.5 ? 0 : 1;
-  group.add(body);
-
-  if (!dim || dimStrength < 0.4) {
-    const shell = new THREE.Mesh(
-      new THREE.SphereGeometry(
-        radius * 1.045,
-        Math.min(segs, 48),
-        Math.min(segs, 48),
-      ),
-      new THREE.MeshBasicMaterial({
-        color: accent.clone().multiplyScalar(desktopBoost ? 0.55 : 0.35),
-        transparent: true,
-        opacity: desktopBoost ? 0.09 : 0.05,
-        depthWrite: false,
-        side: THREE.BackSide,
-      }),
-    );
-    shell.renderOrder = 0;
-    group.add(shell);
-  }
-
-  if (isActive || isHover) {
-    const tube = radius * 0.014;
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(radius * 1.08, tube, 12, full ? 88 : 64),
-      new THREE.MeshPhysicalMaterial({
-        color: accent.clone().lerp(new THREE.Color(0xd0d8e4), 0.3),
-        metalness: 0.92,
-        roughness: 0.14,
-        emissive: accent.clone(),
-        emissiveIntensity: isHover && !isActive ? 0.32 : 0.24,
-        envMapIntensity: 1.25,
-      }),
-    );
-    ring.rotation.x = Math.PI / 2;
-    ring.renderOrder = 2;
-    group.add(ring);
-  }
-
-  if (showLabel) {
-    group.add(
-      makeLabel(truncateLabel(node.name, full ? 24 : 18), {
-        active: isActive,
-        hover: isHover,
-        dim,
-        full,
-        radius,
-      }),
-    );
-  }
-
-  return group;
 }
-
 
 /** W5: mutate materials on existing orbs — avoids full nodeThreeObject rebuild on hover */
 function tintOrbHover(
@@ -647,37 +598,26 @@ function tintOrbHover(
   if (!obj) return;
   obj.traverse((child) => {
     const mesh = child as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const mat = mesh.material as THREE.MeshPhysicalMaterial & {
+    if (!mesh.isMesh || !mesh.userData.nexusCore) return;
+    const mat = mesh.material as THREE.Material & {
+      color?: THREE.Color;
+      uniforms?: { uColor?: { value: THREE.Color } };
       userData: Record<string, unknown>;
     };
-    if (!mat || typeof mat.emissiveIntensity !== "number") return;
+    const color = mat.uniforms?.uColor?.value ?? mat.color;
+    if (!color) return;
+    void accent;
     if (on) {
       if (mat.userData.__w5HoverBase == null) {
-        mat.userData.__w5HoverBase = {
-          ei: mat.emissiveIntensity,
-          rough: mat.roughness,
-          er: mat.emissive?.r ?? 0,
-          eg: mat.emissive?.g ?? 0,
-          eb: mat.emissive?.b ?? 0,
-        };
+        mat.userData.__w5HoverBase = color.clone();
       }
-      mat.emissiveIntensity = Math.max(mat.emissiveIntensity, 0.14);
-      if (mat.emissive) mat.emissive.copy(accent);
-      if (typeof mat.roughness === "number") {
-        mat.roughness = Math.min(mat.roughness, 0.16);
-      }
-      mat.needsUpdate = true;
+      const base = mat.userData.__w5HoverBase as THREE.Color;
+      color.copy(base).multiplyScalar(1.1);
     } else {
-      const b = mat.userData.__w5HoverBase as
-        | { ei: number; rough: number; er: number; eg: number; eb: number }
-        | undefined;
+      const b = mat.userData.__w5HoverBase as THREE.Color | undefined;
       if (!b) return;
-      mat.emissiveIntensity = b.ei;
-      if (mat.emissive) mat.emissive.setRGB(b.er, b.eg, b.eb);
-      if (typeof mat.roughness === "number") mat.roughness = b.rough;
+      color.copy(b);
       delete mat.userData.__w5HoverBase;
-      mat.needsUpdate = true;
     }
   });
 }
@@ -795,6 +735,13 @@ function applyLodCap(
   return { nodes, links, lowDetail: true };
 }
 
+/** GPU copies of shared planet, plate and link resources belong to one renderer. */
+function releaseSharedGraphResources() {
+  clearLabelTextures();
+  releaseSharedSpheres();
+  releaseLinkStyles();
+}
+
 function cancelCameraFly(graph: ForceGraph3DInstance | null) {
   if (!graph) return;
   try {
@@ -874,7 +821,7 @@ function graphHintText(
     : "Orbit · Zoom · Pan · Hover for details · Click to open";
 }
 
-export function GraphView({ mode, className }: Props) {
+export const GraphView = memo(function GraphView({ mode, className }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -885,7 +832,9 @@ export function GraphView({ mode, className }: Props) {
   const graphTick = useGraphTick();
   // Read nodes only on render forced by graphTick / other selectors — not a
   // continuous subscription to the whole map (avoids body-hydrate thrash).
-  const nodes = useVaultStore.getState().nodes;
+  const rawNodes = useVaultStore.getState().nodes;
+  const nodes =
+    rawNodes && typeof rawNodes === "object" ? rawNodes : EMPTY_GRAPH_NODES;
   const deferredNodes = useDeferredValue(nodes);
   void graphTick;
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
@@ -898,7 +847,6 @@ export function GraphView({ mode, className }: Props) {
   const accentPreset = usePrefsStore((s) => s.accentPreset);
   const accentCustom = usePrefsStore((s) => s.accentCustom);
   const reducedMotion = usePrefsStore((s) => s.reducedMotion);
-  const createNote = useVaultStore((s) => s.createNote);
   const setCommandOpen = useVaultStore((s) => s.setCommandOpen);
   const [hoverName, setHoverName] = useState<string | null>(null);
   const [hoverTip, setHoverTip] = useState<{
@@ -932,6 +880,10 @@ export function GraphView({ mode, className }: Props) {
   const userInteractingRef = useRef(false);
   const lastInteractAtRef = useRef(0);
   const restyleEdgesRef = useRef<() => void>(() => {});
+  const governorRef = useRef<RenderGovernor | null>(null);
+  const linkBatchRef = useRef<LinkBatch<GLink> | null>(null);
+  /** Zoom-to-fit when a new layout settles, not after every restyle. */
+  const layoutFitPendingRef = useRef(false);
   const lastGraphTopoKeyRef = useRef<string | null>(null);
   const lastGraphDataRef = useRef<{ nodes: GNode[]; links: GLink[] } | null>(
     null,
@@ -939,6 +891,16 @@ export function GraphView({ mode, className }: Props) {
   const prevGraphScopeRef = useRef<string | null>(null);
   const graphScopeMode = useVaultStore((s) => s.graphScopeMode ?? "vault");
   const graphBrowsePath = useVaultStore((s) => s.graphBrowsePath ?? "");
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  // Read on this render only. Subscribing would rebuild the scene on every
+  // fill tick. Scope changes and the idle refresh below re-render first.
+  const catalogNoteCount = useVaultStore.getState().catalogNoteCount;
+  const catalogFolderCount = useVaultStore.getState().catalogFolderCount;
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  const [graphRefresh, setGraphRefresh] = useState(0);
+  const fillWasBusyRef = useRef(false);
+  const [shellResolved, setShellResolved] = useState<ResolvedGraphData | null>(null);
   const enterGraphFolder = useVaultStore((s) => s.enterGraphFolder);
   const enterGraphEgo = useVaultStore((s) => s.enterGraphEgo);
   const returnFromGraphEgo = useVaultStore((s) => s.returnFromGraphEgo);
@@ -977,17 +939,24 @@ export function GraphView({ mode, className }: Props) {
   activeRef.current = activeNoteId;
   neighborhoodRef.current = neighborhood;
   colorByRef.current = colorBy;
-  const desktopBoost = isDesktopShell();
+  // Dev probes can ask for the desktop shell's render settings in a browser.
+  const desktopBoost =
+    isDesktopShell() ||
+    (import.meta.env.DEV &&
+      typeof window !== "undefined" &&
+      (window as unknown as { __NEXUS_GRAPH_DESKTOP__?: boolean }).__NEXUS_GRAPH_DESKTOP__ === true);
 
   const vaultNoteCount = useMemo(() => {
+    if (shellCatalog) return catalogNoteCount;
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
     return idx.noteCount;
-  }, [deferredNodes]);
+  }, [deferredNodes, shellCatalog, catalogNoteCount]);
 
   const vaultFolderCount = useMemo(() => {
+    if (shellCatalog) return catalogFolderCount;
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
     return idx.folderCount;
-  }, [deferredNodes]);
+  }, [deferredNodes, shellCatalog, catalogFolderCount]);
 
   const particlesLive = scaleParticlesEnabled(
     vaultNoteCount,
@@ -999,6 +968,9 @@ export function GraphView({ mode, className }: Props) {
   // Mode-gated fingerprint — folder uses O(level) child signature (not O(N) links,
   // and not structureGeneration which can bump on content-only body evicts).
   const graphStructureKey = useMemo(() => {
+    if (shellCatalog) {
+      return `shell:${graphBrowsePath}:${graphScopeMode}:${egoCenterId ?? ""}:${graphRefresh}`;
+    }
     const large = shouldUseFolderGraph(vaultNoteCount);
     const idx = ensureVaultIndex(deferredNodes as Record<string, VaultNode>);
     if (large && graphScopeMode !== "ego") {
@@ -1036,9 +1008,45 @@ export function GraphView({ mode, className }: Props) {
     graphScopeMode,
     egoCenterId,
     graphTick,
+    shellCatalog,
+    graphRefresh,
   ]);
 
+  useEffect(() => {
+    if (indexFillBusy) {
+      fillWasBusyRef.current = true;
+      return;
+    }
+    if (!fillWasBusyRef.current) return;
+    fillWasBusyRef.current = false;
+    setGraphRefresh((n) => n + 1);
+  }, [indexFillBusy]);
+
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath) {
+      setShellResolved(null);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      if (graphScopeMode === "ego" && egoCenterId) {
+        const ego = await fetchShellEgo(shellDbPath, egoCenterId, 2, 400);
+        if (cancelled || !ego) return;
+        setShellResolved(graphFromShellEgo(ego, catalogNoteCount));
+        return;
+      }
+      const level = await fetchShellLevel(shellDbPath, graphBrowsePath || "", 320);
+      if (cancelled || !level) return;
+      setShellResolved(graphFromShellLevel(level, catalogNoteCount));
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [shellCatalog, shellDbPath, graphBrowsePath, graphScopeMode, egoCenterId, graphRefresh]);
+
   const resolved = useMemo(() => {
+    if (shellCatalog) return shellResolved ?? emptyShellGraph(catalogNoteCount);
     return resolveGraphData(deferredNodes as Record<string, VaultNode>, {
       noteCount: vaultNoteCount,
       activeNoteId: graphScopeMode === "ego" ? egoCenterId : activeNoteId,
@@ -1050,9 +1058,11 @@ export function GraphView({ mode, className }: Props) {
     });
     // Folder/vault keys already ignore the active note; ego keys include it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphStructureKey, graphBrowsePath, graphScopeMode]);
+  }, [graphStructureKey, graphBrowsePath, graphScopeMode, shellCatalog, shellResolved, catalogNoteCount]);
 
   const graphModeResolved: GraphViewMode = resolved.mode;
+  const graphModeRef = useRef(graphModeResolved);
+  graphModeRef.current = graphModeResolved;
 
   const tagColorNodes =
     colorBy === "tag" || tagFilter ? deferredNodes : null;
@@ -1067,33 +1077,35 @@ export function GraphView({ mode, className }: Props) {
         }
       }
     }
+    const nodes = resolved.nodes.map((n) => ({
+      id: n.id,
+      name: n.title,
+      val:
+        n.val ??
+        Math.max(
+          1,
+          (n.noteCount ?? n.degree ?? 0) + (n.kind === "folder" ? 1 : 1),
+        ),
+      preview: n.preview,
+      path: n.path,
+      degree: n.degree,
+      folder: n.folder ?? "",
+      tag: tagByNote.get(n.id) || "",
+      ghost: n.ghost,
+      ghostTarget: n.ghostTarget,
+      kind: n.kind,
+      noteCount: n.noteCount,
+      aggregate: n.aggregate,
+    })) as GNode[];
     return {
-      nodes: resolved.nodes.map((n) => ({
-        id: n.id,
-        name: n.title,
-        val:
-          n.val ??
-          Math.max(
-            1,
-            (n.noteCount ?? n.degree ?? 0) + (n.kind === "folder" ? 1 : 1),
-          ),
-        preview: n.preview,
-        path: n.path,
-        degree: n.degree,
-        folder: n.folder ?? "",
-        tag: tagByNote.get(n.id) || "",
-        ghost: n.ghost,
-        ghostTarget: n.ghostTarget,
-        kind: n.kind,
-        noteCount: n.noteCount,
-        aggregate: n.aggregate,
-      })) as GNode[],
+      nodes:
+        graphModeResolved === "folder" ? pinFolderLayout(nodes) : nodes,
       links: resolved.edges.map((e) => ({
         source: e.source,
         target: e.target,
       })) as GLink[],
     };
-  }, [resolved, colorBy, tagColorNodes]);
+  }, [resolved, colorBy, tagColorNodes, graphModeResolved]);
 
   useEffect(() => {
     neighborMapRef.current = buildNeighbors(data.links);
@@ -1136,10 +1148,15 @@ export function GraphView({ mode, className }: Props) {
     return !data.nodes.some((n) => n.id === activeNoteId);
   }, [graphModeResolved, activeNoteId, data.nodes]);
 
-  // Honest folder badge totals: prefer true level children over drawn subset
-  const badgeFolderCount =
-    stats.childFolderCount || stats.shownFolderCount || 0;
-  const badgeNoteCount = stats.childNoteCount || stats.shownNoteCount || 0;
+  // This level’s own children. An empty folder stays 0, not the vault total.
+  const levelCounts = folderLevelCounts(
+    stats.childFolderCount,
+    stats.childNoteCount,
+    stats.shownFolderCount,
+    stats.shownNoteCount,
+  );
+  const badgeFolderCount = levelCounts.folders;
+  const badgeNoteCount = levelCounts.notes;
 
   // Folder hues live on the orbs only — no multi-chip legend (clutters large vaults).
 
@@ -1168,7 +1185,7 @@ export function GraphView({ mode, className }: Props) {
       ? null
       : activeNoteId;
 
-  const displayData = useMemo(() => {
+  const filteredData = useMemo(() => {
     let base: { nodes: GNode[]; links: GLink[] } = data;
     if (graphModeResolved === "folder") {
       hopKeepRef.current = null;
@@ -1211,6 +1228,15 @@ export function GraphView({ mode, className }: Props) {
     graphFilter,
     activeNoteId,
   ]);
+
+  const displayData = useMemo(
+    () => clampToDrawBudget(filteredData, activeNoteId),
+    [filteredData, activeNoteId],
+  );
+  // The engine starts a frame after its effect. Data that landed in between
+  // skipped the push (no engine yet), so the engine seeds from the latest.
+  const displayDataRef = useRef(displayData);
+  displayDataRef.current = displayData;
 
   /** G1: 2x export with footer */
   const exportPng = useCallback(() => {
@@ -1307,11 +1333,6 @@ export function GraphView({ mode, className }: Props) {
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
     const phys = physicsParams(physicsIntensity);
-    const particleCount = particlesLive
-      ? mode === "panel"
-        ? 1
-        : 3
-      : 0;
 
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
@@ -1372,19 +1393,21 @@ export function GraphView({ mode, className }: Props) {
       const [s, t] = linkIds(link);
       const hover = hoverRef.current;
       const active = activeRef.current;
+      const steel = "176,184,194";
+      const thin = mode === "fullscreen" ? 0.26 : 0.18;
 
       if (hover) {
         const hot = s === hover || t === hover;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.92)`,
-            width: mode === "fullscreen" ? 1.35 : 1.0,
-            particles: particleCount > 0 ? particleCount + 1 : 0,
+            color: `rgba(${ar},${ag},${ab},0.7)`,
+            width: thin + 0.16,
+            particles: 0,
           };
         }
         return {
-          color: `rgba(${ar},${ag},${ab},0.05)`,
-          width: mode === "fullscreen" ? 0.2 : 0.14,
+          color: `rgba(${steel},0.14)`,
+          width: thin * 0.55,
           particles: 0,
         };
       }
@@ -1393,27 +1416,21 @@ export function GraphView({ mode, className }: Props) {
         const hot = s === active || t === active;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.62)`,
-            width: mode === "fullscreen" ? 0.9 : 0.65,
-            particles: particleCount,
+            color: `rgba(${ar},${ag},${ab},0.5)`,
+            width: thin + 0.08,
+            particles: 0,
           };
         }
         return {
-          color:
-            mode === "fullscreen"
-              ? `rgba(${ar},${ag},${ab},0.14)`
-              : `rgba(${ar},${ag},${ab},0.11)`,
-          width: mode === "fullscreen" ? 0.36 : 0.28,
+          color: `rgba(${steel},0.22)`,
+          width: thin * 0.7,
           particles: 0,
         };
       }
 
       return {
-        color:
-          mode === "fullscreen"
-            ? `rgba(${ar},${ag},${ab},0.28)`
-            : `rgba(${ar},${ag},${ab},0.2)`,
-        width: mode === "fullscreen" ? 0.48 : 0.36,
+        color: `rgba(${steel},${mode === "fullscreen" ? 0.46 : 0.4})`,
+        width: thin,
         particles: 0,
       };
     };
@@ -1422,8 +1439,8 @@ export function GraphView({ mode, className }: Props) {
       g.linkColor((link) => edgeStyle(link as GLink).color)
         .linkWidth((link) => edgeStyle(link as GLink).width)
         .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles)
-        .linkDirectionalParticleWidth(0.55)
-        .linkDirectionalParticleSpeed(0.004)
+        .linkDirectionalParticleWidth(0.35)
+        .linkDirectionalParticleSpeed(0.006)
         .linkDirectionalParticleColor(() => {
           const mix = (c: number) => Math.round(c * 0.45 + 255 * 0.55);
           return `rgb(${mix(ar)},${mix(ag)},${mix(ab)})`;
@@ -1431,7 +1448,9 @@ export function GraphView({ mode, className }: Props) {
     };
     restyleEdgesRef.current = () => {
       const g = graphRef.current;
-      if (g) applyEdgeStyles(g);
+      if (!g) return;
+      linkBatchRef.current?.restyle((g.graphData()?.links ?? []) as GLink[]);
+      governorRef.current?.kick();
     };
 
     const graph = new ForceGraph3D(el, {
@@ -1448,7 +1467,7 @@ export function GraphView({ mode, className }: Props) {
       .showNavInfo(false)
       .enableNodeDrag(true)
       .enableNavigationControls(true)
-      .cooldownTicks(desktopBoost ? 48 : 64)
+      .cooldownTicks(graphModeRef.current === "folder" ? 0 : desktopBoost ? 20 : 36)
       .warmupTicks(0)
       .nodeId("id")
       .nodeLabel(() => "")
@@ -1457,7 +1476,7 @@ export function GraphView({ mode, className }: Props) {
       .nodeOpacity(1)
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
       .nodeThreeObjectExtend(false)
-      .linkOpacity(0.95)
+      .linkOpacity(LINK_OPACITY)
       .onNodeClick((n: object) => {
         const node = n as GNode;
         if (!node?.id) return;
@@ -1474,14 +1493,14 @@ export function GraphView({ mode, className }: Props) {
             .replace(/^\/+|\/+$/g, "");
           // Enter folder if aggregate points at a path we aren't browsing
           if (folderPath && folderPath !== browsing) {
-            const hit = Object.values(st.nodes).find(
+            const hit = Object.values(st.nodes ?? {}).find(
               (x) => x.kind === "folder" && x.path === folderPath,
             );
             if (hit) {
               st.enterGraphFolder?.(folderPath);
               st.setToast?.(
                 omitted > 0
-                  ? `Entered folder · ${omitted}+ items may still be capped`
+                  ? `Entered folder · ${omitted} more on the next level`
                   : "Entered folder",
               );
               setLiveRegion(`Entered ${folderPath}`);
@@ -1490,8 +1509,8 @@ export function GraphView({ mode, className }: Props) {
           }
           st.setToast?.(
             omitted > 0
-              ? `Not expanded — ${omitted} more item${omitted === 1 ? "" : "s"} hidden by the folder map cap. Enter a folder or open a note for links.`
-              : "Not expanded — folder map is capped. Enter a folder or open a note for links.",
+              ? `${omitted} more on this level. Enter a folder, or open a note to fly its links.`
+              : "Enter a folder, or open a note to fly its links.",
           );
           setLiveRegion("Aggregate not expanded");
           return;
@@ -1518,7 +1537,7 @@ export function GraphView({ mode, className }: Props) {
             st.setRightOpen(true);
           }
         }
-        ensureVaultIndex(st.nodes);
+        ensureVaultIndex(st.nodes ?? {});
         const noteCount = vaultIndex.noteCount;
         if (shouldUseFolderGraph(noteCount)) {
           st.enterGraphEgo?.({ returnPath: st.graphBrowsePath || "" });
@@ -1588,7 +1607,7 @@ export function GraphView({ mode, className }: Props) {
             }
           }
           // Link colors only — do NOT reassign nodeThreeObject / full refresh
-          applyEdgeStyles(g);
+          restyleEdgesRef.current();
         };
 
         if (hoverThrottleRef.current != null) {
@@ -1598,18 +1617,28 @@ export function GraphView({ mode, className }: Props) {
       })
       .onBackgroundClick(() => setHintVisible(false));
 
+    const linkBatch = new LinkBatch<GLink>(graph.scene(), LINK_OPACITY, (link) => edgeStyle(link));
+    linkBatchRef.current = linkBatch;
+    graph
+      .linkThreeObject(linkBatch.placeholder)
+      .linkPositionUpdate((_obj, { start, end }, link) => linkBatch.place(link as GLink, start, end));
+
+    guardOrbitPointer(graph);
     applyEdgeStyles(graph);
+    // Oblique view so the orbit reads as depth. zoomToFit keeps this direction.
+    try {
+      graph.cameraPosition({ x: 95, y: 72, z: 168 }, { x: 0, y: 0, z: 0 }, 0);
+    } catch {
+      /* ok */
+    }
 
     let envMap: THREE.Texture | null = null;
     try {
       const renderer = graph.renderer();
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = desktopBoost ? 1.32 : 1.12;
+      renderer.toneMappingExposure = 1;
       renderer.setPixelRatio(
-        Math.min(
-          Math.max(window.devicePixelRatio || 1, desktopBoost ? 1.5 : 1),
-          2.5,
-        ),
+        Math.min(window.devicePixelRatio || 1, desktopBoost ? 1 : 2),
       );
       if ("outputColorSpace" in renderer) {
         (renderer as THREE.WebGLRenderer).outputColorSpace =
@@ -1642,22 +1671,16 @@ export function GraphView({ mode, className }: Props) {
       });
       remove.forEach((l) => scene.remove(l));
 
-      const ambI = desktopBoost ? 0.28 : 0.14;
-      const hemiI = desktopBoost ? 0.55 : 0.38;
-      const keyI = desktopBoost ? 1.45 : 1.15;
-      const ambient = new THREE.AmbientLight(0x5a6474, ambI);
-      const hemi = new THREE.HemisphereLight(0x2a3a50, 0x03050a, hemiI);
-      const key = new THREE.DirectionalLight(0xf0f4f8, keyI);
+      const ambI = desktopBoost ? 0.5 : 0.4;
+      const hemiI = desktopBoost ? 0.28 : 0.22;
+      const keyI = desktopBoost ? 0.62 : 0.52;
+      const ambient = new THREE.AmbientLight(0x8a93a0, ambI);
+      const hemi = new THREE.HemisphereLight(0x243040, 0x05070a, hemiI);
+      const key = new THREE.DirectionalLight(0xd5dde6, keyI);
       key.position.set(60, 95, 45);
-      const fill = new THREE.DirectionalLight(
-        0x4a5a70,
-        desktopBoost ? 0.58 : 0.42,
-      );
+      const fill = new THREE.DirectionalLight(0x4a5a70, 0.24);
       fill.position.set(-55, 10, -40);
-      const rim = new THREE.DirectionalLight(
-        0xb0c8e0,
-        desktopBoost ? 0.48 : 0.32,
-      );
+      const rim = new THREE.DirectionalLight(0x9aabbc, 0.14);
       rim.position.set(-40, 30, -60);
 
       scene.add(ambient, hemi, key, fill, rim);
@@ -1728,14 +1751,34 @@ export function GraphView({ mode, className }: Props) {
     const t0 = performance.now();
     const drift = () => {
       if (cancelled) return;
-      const t = (performance.now() - t0) * 0.001;
+      const now = performance.now();
+      const t = (now - t0) * 0.001;
       for (const layer of parallaxLayers) {
         layer.obj.rotation.y = t * layer.speed;
       }
+      // The sky and the idle orbit move every frame here.
+      governorRef.current?.kick();
+      try {
+        const controls = graph.controls() as {
+          autoRotate?: boolean;
+          autoRotateSpeed?: number;
+        } | null;
+        if (controls) {
+          const idle =
+            !userInteractingRef.current &&
+            now - lastInteractAtRef.current > IDLE_ORBIT_QUIET_MS &&
+            t > IDLE_ORBIT_START_S;
+          controls.autoRotate = idle;
+          if (idle) controls.autoRotateSpeed = IDLE_ORBIT_SPEED;
+        }
+      } catch {
+        /* ok */
+      }
       raf = requestAnimationFrame(drift);
     };
-    // Honor reduced motion — skip sky drift animation
-    if (!usePrefsStore.getState().reducedMotion) {
+    // A side-panel graph that drifts every frame steals the editor's scroll.
+    // Fullscreen can keep the sky moving. The panel stays still after layout.
+    if (!usePrefsStore.getState().reducedMotion && mode === "fullscreen") {
       raf = requestAnimationFrame(drift);
     }
 
@@ -1751,8 +1794,7 @@ export function GraphView({ mode, className }: Props) {
       setHoverTip(null);
       el.style.cursor = "grab";
       try {
-        const g = graphRef.current;
-        if (g) applyEdgeStyles(g);
+        restyleEdgesRef.current();
       } catch {
         /* ok */
       }
@@ -1812,36 +1854,136 @@ export function GraphView({ mode, className }: Props) {
     };
     el.addEventListener("wheel", onWheelZoom, { passive: false, capture: true });
 
+    const governor = createRenderGovernor({
+      pause: () => graph.pauseAnimation(),
+      resume: () => graph.resumeAnimation(),
+    });
+    governorRef.current = governor;
+    const wake = () => governor.kick();
+    const wakeEvents = ["pointerdown", "pointermove", "pointerup", "wheel", "touchstart", "touchmove"];
+    for (const type of wakeEvents) {
+      el.addEventListener(type, wake, { passive: true, capture: true });
+    }
+    // Camera moves, data swaps and rebuilds run inside the render loop, so
+    // they restart it. Getters (no arguments) are read every frame and do not.
+    const callable = graph as unknown as Record<string, (...args: unknown[]) => unknown>;
+    for (const name of ["zoomToFit", "cameraPosition", "graphData", "refresh", "d3ReheatSimulation"]) {
+      const original = callable[name];
+      if (typeof original !== "function") continue;
+      const always = name === "refresh" || name === "d3ReheatSimulation";
+      callable[name] = function (this: unknown, ...args: unknown[]) {
+        if (always || args.length > 0) governor.kick();
+        return original.apply(this, args);
+      };
+    }
+    graph.onEngineTick(() => governor.kick());
+    const sceneForLod = graph.scene();
+    sceneForLod.onBeforeRender = (renderer, _scene, camera) => {
+      linkBatch.sync((graph.graphData()?.links ?? []) as GLink[]);
+      const lod = updateGraphLod(
+        (graph.graphData()?.nodes ?? []) as GNode[],
+        camera,
+        renderer.domElement.height,
+      );
+      governor.frame(camera.matrixWorld.elements, lod.labelsPending > 0);
+    };
+
     graphRef.current = graph;
     setEngineReady(true);
+
+    if (import.meta.env.DEV) {
+      (window as unknown as { __NEXUS_GRAPH__?: unknown }).__NEXUS_GRAPH__ = {
+        stats: () => {
+          const r = graph.renderer() as THREE.WebGLRenderer;
+          const d = graph.graphData();
+          return {
+            mode: graphModeRef.current,
+            nodes: d.nodes.length,
+            links: d.links.length,
+            calls: r.info.render.calls,
+            triangles: r.info.render.triangles,
+            geometries: r.info.memory.geometries,
+            textures: r.info.memory.textures,
+            programs: r.info.programs?.length ?? 0,
+            pixelRatio: r.getPixelRatio(),
+            frame: r.info.render.frame,
+            paused: governor.paused,
+            drawn: drawnStats(),
+          };
+        },
+        instance: graph,
+        browse: (path: string) => useVaultStore.getState().enterGraphFolder?.(path),
+        ego: (id: string) => {
+          const st = useVaultStore.getState();
+          st.setActiveNote(id);
+          st.enterGraphEgo?.({ returnPath: st.graphBrowsePath || "" });
+        },
+      };
+    }
 
     const ro = new ResizeObserver(() => {
       if (!hostRef.current || !graphRef.current) return;
       const { width, height } = hostRef.current.getBoundingClientRect();
       graphRef.current.width(width).height(height);
+      governor.kick();
     });
     ro.observe(el);
     const { width, height } = el.getBoundingClientRect();
     graph.width(width).height(height);
-    graph.graphData(displayData);
-    lastGraphTopoKeyRef.current = graphTopologyKey(
-      displayData.nodes,
-      displayData.links,
-    );
-    lastGraphDataRef.current = displayData;
+    const seed = displayDataRef.current;
+    try {
+      layoutFitPendingRef.current = true;
+      graph.graphData(seed);
+      recordDrawn(seed.nodes.length, seed.links.length);
+      if (graphModeRef.current === "folder") {
+        const sim = graph as ForceGraph3DInstance & {
+          d3Alpha?: (a: number) => ForceGraph3DInstance;
+        };
+        sim.cooldownTicks(0);
+        sim.d3Alpha?.(0);
+      }
+    } catch (err) {
+      console.warn("[nexus] graph data", err);
+    }
+    lastGraphTopoKeyRef.current = graphTopologyKey(seed.nodes, seed.links);
+    lastGraphDataRef.current = seed;
 
     const fitMs = usePrefsStore.getState().reducedMotion ? 0 : 650;
     const zoomTimer = window.setTimeout(() => {
       try {
-        graph.zoomToFit(fitMs, mode === "fullscreen" ? 70 : 48);
+        graph.zoomToFit(fitMs, mode === "fullscreen" ? 120 : 72);
       } catch {
         /* ok */
       }
     }, usePrefsStore.getState().reducedMotion ? 80 : 900);
 
+    let engineFitTimer = 0;
+    graph.onEngineStop(() => {
+      // Every prop change briefly resumes the engine; only a new layout fits.
+      if (!layoutFitPendingRef.current) return;
+      layoutFitPendingRef.current = false;
+      // This runs inside the layout tick, before new orbs have been placed.
+      // Measure the fit once this frame has positioned them.
+      window.clearTimeout(engineFitTimer);
+      engineFitTimer = window.setTimeout(() => {
+        if (cancelled || userInteractingRef.current) return;
+        if (recentlyInteracted(lastInteractAtRef.current, performance.now())) return;
+        try {
+          graph.scene().updateMatrixWorld();
+          graph.zoomToFit(
+            usePrefsStore.getState().reducedMotion ? 0 : 800,
+            mode === "fullscreen" ? 140 : 88,
+          );
+        } catch {
+          /* ok */
+        }
+      }, 0);
+    });
+
     teardown = () => {
       cancelled = true;
       window.clearTimeout(zoomTimer);
+      window.clearTimeout(engineFitTimer);
       cancelAnimationFrame(raf);
 
 
@@ -1854,6 +1996,12 @@ export function GraphView({ mode, className }: Props) {
       el.removeEventListener("pointerdown", hideHint);
       el.removeEventListener("pointercancel", clearPointerHover);
       el.removeEventListener("wheel", onWheelZoom, true);
+      for (const type of wakeEvents) el.removeEventListener(type, wake, true);
+      governor.dispose();
+      linkBatch.dispose();
+      if (linkBatchRef.current === linkBatch) linkBatchRef.current = null;
+      if (governorRef.current === governor) governorRef.current = null;
+      sceneForLod.onBeforeRender = () => {};
       interactCleanup?.();
       flyGenRef.current += 1;
       if (zoomRaf) cancelAnimationFrame(zoomRaf);
@@ -1877,6 +2025,11 @@ export function GraphView({ mode, className }: Props) {
             else if (mat) mat.dispose();
           });
         }
+      } catch {
+        /* ok */
+      }
+      try {
+        releaseSharedGraphResources();
       } catch {
         /* ok */
       }
@@ -1925,17 +2078,33 @@ export function GraphView({ mode, className }: Props) {
     };
     lastGraphDataRef.current = displayData;
     lastGraphTopoKeyRef.current = nextKey;
-    graphRef.current.graphData(merged);
+    const liveIds = new Set(merged.nodes.map((n) => n.id));
+    for (const id of nodeObjMapRef.current.keys()) {
+      if (!liveIds.has(id)) nodeObjMapRef.current.delete(id);
+    }
     try {
-      // Soft continue — do not reheat the whole simulation on every swap.
+      layoutFitPendingRef.current = true;
+      graphRef.current.graphData(merged);
+      recordDrawn(merged.nodes.length, merged.links.length);
+    } catch (err) {
+      console.warn("[nexus] graph data", err);
+    }
+    try {
       const sim = graphRef.current as ForceGraph3DInstance & {
         d3Alpha?: (a: number) => ForceGraph3DInstance;
+        cooldownTicks?: (n: number) => ForceGraph3DInstance;
       };
-      sim.d3Alpha?.(0.06);
+      if (graphModeResolved === "folder") {
+        sim.cooldownTicks?.(0);
+        sim.d3Alpha?.(0);
+      } else {
+        sim.cooldownTicks?.(desktopBoost ? 20 : 36);
+        sim.d3Alpha?.(0.08);
+      }
     } catch {
       /* ok */
     }
-  }, [displayData]);
+  }, [displayData, graphModeResolved, desktopBoost]);
 
   /** Debounced zoomToFit after folder path / scope change (skip first mount) */
   useEffect(() => {
@@ -1951,7 +2120,7 @@ export function GraphView({ mode, className }: Props) {
       const g = graphRef.current;
       if (!g) return;
       try {
-        g.zoomToFit(420, mode === "fullscreen" ? 70 : 48);
+        g.zoomToFit(420, mode === "fullscreen" ? 120 : 72);
       } catch {
         /* ok */
       }
@@ -1968,7 +2137,7 @@ export function GraphView({ mode, className }: Props) {
       const g = graphRef.current;
       if (!g) return;
       try {
-        g.zoomToFit(280, mode === "fullscreen" ? 70 : 48);
+        g.zoomToFit(280, mode === "fullscreen" ? 120 : 72);
       } catch {
         /* ok */
       }
@@ -2035,12 +2204,6 @@ export function GraphView({ mode, className }: Props) {
     if (!graphRef.current) return;
     const { r: ar, g: ag, b: ab } = accentRgb();
     const accent = new THREE.Color(ar / 255, ag / 255, ab / 255);
-    const particleCount = particlesLive
-      ? mode === "panel"
-        ? 1
-        : 3
-      : 0;
-
     const focusId = () => hoverRef.current || activeRef.current;
     const dimStrength = () => {
       if (hoverRef.current) return 1;
@@ -2097,18 +2260,20 @@ export function GraphView({ mode, className }: Props) {
     const edgeStyle = (link: GLink) => {
       const [s, t] = linkIds(link);
       const hover = hoverRef.current;
+      const steel = "176,184,194";
+      const thin = mode === "fullscreen" ? 0.26 : 0.18;
       if (hover) {
         const hot = s === hover || t === hover;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.92)`,
-            width: mode === "fullscreen" ? 1.35 : 1.0,
-            particles: particleCount > 0 ? particleCount + 1 : 0,
+            color: `rgba(${ar},${ag},${ab},0.7)`,
+            width: thin + 0.16,
+            particles: 0,
           };
         }
         return {
-          color: `rgba(${ar},${ag},${ab},0.05)`,
-          width: mode === "fullscreen" ? 0.2 : 0.14,
+          color: `rgba(${steel},0.14)`,
+          width: thin * 0.55,
           particles: 0,
         };
       }
@@ -2116,26 +2281,20 @@ export function GraphView({ mode, className }: Props) {
         const hot = s === activeRef.current || t === activeRef.current;
         if (hot) {
           return {
-            color: `rgba(${ar},${ag},${ab},0.62)`,
-            width: mode === "fullscreen" ? 0.9 : 0.65,
-            particles: particleCount,
+            color: `rgba(${ar},${ag},${ab},0.5)`,
+            width: thin + 0.08,
+            particles: 0,
           };
         }
         return {
-          color:
-            mode === "fullscreen"
-              ? `rgba(${ar},${ag},${ab},0.14)`
-              : `rgba(${ar},${ag},${ab},0.11)`,
-          width: mode === "fullscreen" ? 0.36 : 0.28,
+          color: `rgba(${steel},0.22)`,
+          width: thin * 0.7,
           particles: 0,
         };
       }
       return {
-        color:
-          mode === "fullscreen"
-            ? `rgba(${ar},${ag},${ab},0.28)`
-            : `rgba(${ar},${ag},${ab},0.2)`,
-        width: mode === "fullscreen" ? 0.48 : 0.36,
+        color: `rgba(${steel},${mode === "fullscreen" ? 0.46 : 0.4})`,
+        width: thin,
         particles: 0,
       };
     };
@@ -2144,10 +2303,10 @@ export function GraphView({ mode, className }: Props) {
     restyleEdgesRef.current = () => {
       const g = graphRef.current;
       if (!g) return;
-      g.linkColor((link) => edgeStyle(link as GLink).color)
-        .linkWidth((link) => edgeStyle(link as GLink).width)
-        .linkDirectionalParticles((link) => edgeStyle(link as GLink).particles);
+      linkBatchRef.current?.restyle((g.graphData()?.links ?? []) as GLink[]);
+      governorRef.current?.kick();
     };
+    if (linkBatchRef.current) linkBatchRef.current.style = (link) => edgeStyle(link);
     graphRef.current
       .nodeThreeObject((n: object) => paintOrb(n as GNode))
       .linkColor((link) => edgeStyle(link as GLink).color)
@@ -2176,10 +2335,41 @@ export function GraphView({ mode, className }: Props) {
   }, [activeNoteId]);
 
   const inspectId = hoverTip?.id || activeNoteId;
-  const inspect = useMemo(
-    () => inspectGraphNote(useVaultStore.getState().nodes, inspectId, 6),
+  const baseInspect = useMemo(
+    () =>
+      inspectGraphNote(
+        useVaultStore.getState().nodes ?? EMPTY_GRAPH_NODES,
+        inspectId,
+        6,
+      ),
     [inspectId, graphTick],
   );
+  const [shellInn, setShellInn] = useState<{ links: GraphInspectLink[]; total: number } | null>(null);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || !inspectId) {
+      setShellInn(null);
+      return;
+    }
+    let cancel = false;
+    void fetchShellBacklinks(shellDbPath, inspectId).then((page) => {
+      if (cancel) return;
+      setShellInn({
+        total: page?.total ?? 0,
+        links: (page?.rows ?? []).slice(0, 6).map((row) => ({
+          id: row.fromId,
+          title: row.fromTitle,
+          path: row.fromPath,
+        })),
+      });
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, inspectId]);
+  const inspect =
+    shellCatalog && baseInspect && shellInn
+      ? { ...baseInspect, inn: shellInn.links, inCount: shellInn.total }
+      : baseInspect;
   const tagOptions = useMemo(
     () => tagFilterOptions(displayData.nodes),
     [displayData.nodes],
@@ -2263,9 +2453,11 @@ export function GraphView({ mode, className }: Props) {
         <>
           <span className="text-[var(--accent)] opacity-90">Folder map</span>
           <span className="mx-1.5 opacity-40">·</span>
-          {badgeFolderCount} folder{badgeFolderCount === 1 ? "" : "s"}
+          <span data-testid="graph-level-folders">{badgeFolderCount} folder{badgeFolderCount === 1 ? "" : "s"}</span>
           <span className="mx-1.5 opacity-40">·</span>
-          {badgeNoteCount} note{badgeNoteCount === 1 ? "" : "s"}
+          <span data-testid="graph-level-notes" data-level-notes={badgeNoteCount}>
+            {badgeNoteCount} note{badgeNoteCount === 1 ? "" : "s"}
+          </span>
           {stats.levelPath ? (
             <>
               <span className="mx-1.5 opacity-40">·</span>
@@ -2277,26 +2469,24 @@ export function GraphView({ mode, className }: Props) {
               this level
             </>
           )}
-          {stats.capped ? (
-            <>
-              <span className="mx-1.5 opacity-40">·</span>
-              capped
-            </>
+          {folderLevelShowsVaultTotal(stats.levelPath) ? (
+            <VaultTotal fallback={vaultNoteCount} shown={badgeNoteCount} kind="in" />
           ) : null}
         </>
       ) : graphModeResolved === "ego" || isPartialVaultGraph ? (
         <>
           <span className="text-[var(--accent)] opacity-90">Near active</span>
           <span className="mx-1.5 opacity-40">·</span>
-          {vaultLinkIndex.ready ? (
+          {shellCatalog || vaultLinkIndex.ready ? (
             <>
               {realNoteCount} note{realNoteCount === 1 ? "" : "s"}
               <span className="mx-1.5 opacity-40">·</span>
               {realLinkCount} link{realLinkCount === 1 ? "" : "s"}
-              {vaultNoteCount > realNoteCount ? (
+              <VaultTotal fallback={vaultNoteCount} shown={realNoteCount} kind="of" />
+              {shellCatalog && realLinkCount === 0 && indexFillBusy ? (
                 <>
                   <span className="mx-1.5 opacity-40">·</span>
-                  of {vaultNoteCount.toLocaleString()}
+                  links still filling
                 </>
               ) : null}
             </>
@@ -2325,8 +2515,12 @@ export function GraphView({ mode, className }: Props) {
     vaultNoteCount,
     drawnNodeCount: displayData.nodes.length,
     activeNoteId,
-    linkIndexReady: vaultLinkIndex.ready,
-    linkEdgeCount: vaultLinkIndex.stats().edgeCount,
+    linkIndexReady: shellCatalog ? true : vaultLinkIndex.ready,
+    linkEdgeCount: shellCatalog
+      ? realLinkCount
+      : vaultLinkIndex.stats().edgeCount,
+    catalogBacked: shellCatalog,
+    linksStillFilling: Boolean(shellCatalog && indexFillBusy),
     hasFilters: Boolean(graphQuery || tagFilter || folderFilter || orphansOnly),
     folderHasPath: Boolean(stats.levelPath || graphBrowsePath),
   });
@@ -2339,7 +2533,8 @@ export function GraphView({ mode, className }: Props) {
         <button
           type="button"
           className="primary-btn min-h-8 px-3 text-[12px]"
-          onClick={() => createNote(null, "Untitled")}
+          data-testid="graph-empty-new-note"
+          onClick={() => startFirstNote()}
         >
           <FilePlus2 size={13} />
           New note
@@ -2446,9 +2641,9 @@ export function GraphView({ mode, className }: Props) {
     >
       <div
         ref={hostRef}
-        className="relative z-[1] min-h-0 flex-1 touch-none outline-none"
+        className="relative z-[1] min-h-0 flex-1 touch-none"
         aria-hidden="true"
       />
     </GraphChrome>
   );
-}
+});

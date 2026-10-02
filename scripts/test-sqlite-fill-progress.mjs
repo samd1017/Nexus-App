@@ -22,16 +22,29 @@ const {
   isEmptyNativeFillFailure,
   isFillSettlePhase,
   sqliteEngineShortLabel,
+  fillCountLabel,
+  fillProgressRatio,
+  openProgressTail,
+  honestFillTotal,
+  mergeCatalogAndFtsHits,
   sqliteFillPhaseMessage,
   isTitleSearchLive,
   isNoteHeadSearchLive,
+  MEMORY_FTS_ENGINE_LABEL,
+  MEMORY_SEARCH_CAP_NOTE,
+  memorySearchIsPartial,
   searchEmptyStateMessage,
+  searchEmptyStatus,
+  searchStateFromPhase,
   sqliteFillProgressMessage,
   sqliteFillReadyMessage,
+  sqliteFillSettledMessage,
   isInFlightFillError,
   isIndexFillProgressPhase,
   shouldJoinDesktopFill,
   shouldBlockDesktopOpen,
+  shouldWaitForInflightFill,
+  vaultSwitcherShowsIndexing,
 } = await import("../src/lib/vault/sqlite-fill-progress.ts");
 
 assert.equal(
@@ -82,12 +95,31 @@ assert.equal(
   }),
   false,
 );
+assert.equal(
+  isEmptyNativeFillFailure({
+    noteCount: 100000,
+    indexed: 0,
+    notes: 0,
+    skipped: 0,
+    scanned: 32,
+  }),
+  false,
+  "a warm index that already showed the first page is not a scope failure",
+);
 
 assert.equal(
   sqliteFillReadyMessage(100000, 100000),
   "Ready · SQLite FTS5 BM25 (unchanged)",
 );
 assert.equal(sqliteFillReadyMessage(0, 100000), "Ready · SQLite FTS5 BM25");
+assert.equal(
+  sqliteFillSettledMessage("ready-fts-partial", 0, 100000),
+  "Ready · titles and open notes",
+);
+assert.equal(
+  sqliteFillSettledMessage("ready-fts", 0, 12),
+  "Ready · SQLite FTS5 BM25",
+);
 
 assert.equal(
   isInFlightFillError(new Error("index fill already running for this vault")),
@@ -134,13 +166,27 @@ assert.equal(
   "no join when fill is idle",
 );
 assert.equal(
+  shouldWaitForInflightFill({ fillInFlight: true, searchReady: false }),
+  true,
+  "an open still waits when titles are not live yet",
+);
+assert.equal(
+  shouldWaitForInflightFill({ fillInFlight: true, searchReady: true }),
+  false,
+  "a filled page does not wait for the background index open",
+);
+assert.equal(
+  shouldWaitForInflightFill({ fillInFlight: false, searchReady: false }),
+  false,
+);
+assert.equal(
   shouldBlockDesktopOpen({
     currentRoot: "/vault/Notes",
     nextRoot: "/vault/Other",
     fillInFlight: true,
   }),
-  true,
-  "different folder Open during fill is blocked",
+  false,
+  "indexing does not block opening another folder",
 );
 assert.equal(
   shouldBlockDesktopOpen({
@@ -156,19 +202,109 @@ assert.equal(
     nextRoot: "/vault/Notes",
     fillInFlight: true,
   }),
+  false,
+  "a fill with no current root still does not block Open",
+);
+assert.equal(
+  vaultSwitcherShowsIndexing({
+    connecting: false,
+    indexFillBusy: true,
+    bannerPhase: "indexing",
+  }),
   true,
-  "no current root + fill still blocks a second Open",
+);
+assert.equal(
+  vaultSwitcherShowsIndexing({
+    connecting: false,
+    indexFillBusy: true,
+    bannerPhase: "ready",
+  }),
+  false,
+  "Ready already on the banner — the card does not say Indexing",
+);
+assert.equal(
+  vaultSwitcherShowsIndexing({
+    connecting: true,
+    indexFillBusy: true,
+    bannerPhase: "indexing",
+  }),
+  false,
 );
 
+assert.equal(
+  searchStateFromPhase("meta"),
+  "idle",
+  "the path walk must not claim FTS titles are on",
+);
+assert.equal(searchStateFromPhase("ready-meta"), "ready-meta");
+assert.equal(advanceSearchIndexState("idle", "meta"), "idle");
+assert.equal(advanceSearchIndexState("idle", "ready-meta"), "ready-meta");
+
+assert.equal(honestFillTotal(24064, 1), null);
+assert.equal(honestFillTotal(1, 1), null);
+assert.equal(honestFillTotal(0, 10001), null);
+assert.equal(honestFillTotal(32768, 100002), 100002);
+assert.equal(fillProgressRatio(24064, 1), null);
+assert.equal(fillProgressRatio(1, 1), null);
+assert.equal(fillProgressRatio(0, 10001), null);
+assert.ok(Math.abs((fillProgressRatio(32768, 100002) ?? 0) - 32768 / 100002) < 1e-9);
+assert.equal(openProgressTail("ready", 100006, 100006).includes("100%"), false);
+assert.equal(openProgressTail("ready", 100006, null).includes("%"), false);
+assert.match(openProgressTail("ready", 32, null), /32 notes/);
+assert.match(openProgressTail("indexing", 500, 1000), /50%/);
+
+const lying = sqliteFillPhaseMessage({
+  phase: "meta",
+  scanned: 24064,
+  total: 1,
+  skipped: 0,
+  indexed: 24064,
+});
+assert.match(lying, /cataloging notes/i);
+assert.equal(lying.includes("title search on"), false);
+assert.equal(lying.includes("/ 1"), false);
+assert.match(lying, /24,064 so far/);
+
+assert.equal(
+  sqliteFillPhaseMessage({
+    phase: "fts-partial",
+    scanned: 0,
+    total: 10001,
+    skipped: 0,
+    indexed: 10001,
+  }).includes("0 /"),
+  false,
+  "heads fill must not flash 0 / N after the tree is usable",
+);
 assert.match(
   sqliteFillPhaseMessage({
-    phase: "meta",
+    phase: "fts",
+    scanned: 32768,
+    total: 100002,
+    skipped: 0,
+    indexed: 32768,
+  }),
+  /32,768 \/ 100,002/,
+);
+assert.match(
+  sqliteFillPhaseMessage({
+    phase: "ready-meta",
     scanned: 100000,
     total: 100000,
     skipped: 0,
     indexed: 100000,
   }),
   /title search on/,
+);
+assert.equal(
+  sqliteFillPhaseMessage({
+    phase: "meta",
+    scanned: 100000,
+    total: 100000,
+    skipped: 0,
+    indexed: 100000,
+  }).includes("title search on"),
+  false,
 );
 assert.match(
   sqliteFillPhaseMessage({
@@ -179,6 +315,21 @@ assert.match(
     indexed: 12800,
   }),
   /note heads/,
+);
+assert.match(fillCountLabel(12800, 100000), /12,800 \/ 100,000/);
+
+const hub = { noteId: "desk_Hub", path: "00-Inbox/00/Hub 0.md" };
+const merged = mergeCatalogAndFtsHits(
+  [hub],
+  [],
+  16,
+);
+assert.equal(merged.length, 1);
+assert.equal(merged[0].path, hub.path);
+assert.equal(
+  mergeCatalogAndFtsHits([hub], [{ noteId: "desk_Hub", path: hub.path }, { noteId: "other", path: "Topic.md" }], 16)
+    .length,
+  2,
 );
 assert.equal(isFillSettlePhase("ready-meta", "meta"), true);
 assert.equal(
@@ -193,10 +344,15 @@ assert.equal(
   "ready-fts-partial",
 );
 assert.equal(advanceSearchIndexState("ready-fts-partial", "done"), "ready-fts");
+assert.equal(
+  advanceSearchIndexState("ready-fts-partial", "done", "ready-fts-partial"),
+  "ready-fts-partial",
+  "a capped fill must not claim every note body is indexed",
+);
 assert.equal(advanceSearchIndexState("ready-fts", "meta"), "ready-fts");
 assert.equal(sqliteEngineShortLabel("ready-meta"), "SQLite FTS5 BM25 · titles");
 assert.equal(sqliteEngineShortLabel("ready-fts-partial"), "SQLite FTS5 BM25 · heads");
-assert.equal(sqliteEngineShortLabel("ready-fts"), "SQLite FTS5 BM25");
+assert.equal(sqliteEngineShortLabel("ready-fts"), "SQLite FTS5 BM25 · titles+bodies");
 
 assert.equal(isTitleSearchLive("idle"), false);
 assert.equal(isTitleSearchLive("ready-meta"), true);
@@ -209,9 +365,32 @@ assert.match(
   /still reading files/,
 );
 assert.match(
+  searchEmptyStateMessage({
+    titleSearchLive: false,
+    headsReady: false,
+    catalogSearch: true,
+  }),
+  /catalog yet/,
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: false,
+    headsReady: false,
+    catalogSearch: true,
+  }).includes("when Ready"),
+  false,
+);
+assert.equal(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }),
-  /title matches|Note-head/,
-  "after title seed, empty hub must not say wait until Ready",
+  "No notes match.",
+  "after title seed, an empty result is a miss, not a still-filling lock",
+);
+assert.equal(
+  searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }).includes(
+    "still filling",
+  ),
+  false,
+  "palette must not say note-head search is still filling once titles are live",
 );
 assert.equal(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: false }).includes(
@@ -222,7 +401,127 @@ assert.equal(
 );
 assert.match(
   searchEmptyStateMessage({ titleSearchLive: true, headsReady: true }),
-  /current search index/,
+  /No notes match/,
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: false,
+    failed: true,
+  }),
+  "Search did not finish. Try again.",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: true,
+    pending: true,
+  }),
+  "Looking through notes…",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: false,
+    pending: true,
+  }).includes("No notes match."),
+  false,
+  "a lookup in flight must not say the search already missed",
+);
+assert.match(
+  searchEmptyStateMessage({
+    titleSearchLive: false,
+    headsReady: false,
+    pending: true,
+  }),
+  /still reading files/,
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: false,
+    pending: false,
+    failed: false,
+  }),
+  "No notes match.",
+);
+assert.equal(
+  MEMORY_FTS_ENGINE_LABEL,
+  "Memory FTS (capped)",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: true,
+    memoryCapped: true,
+  }),
+  `No notes match. ${MEMORY_SEARCH_CAP_NOTE}`,
+);
+assert.equal(
+  MEMORY_SEARCH_CAP_NOTE,
+  "Showing top matches while the index fills (browser cap).",
+);
+assert.equal(
+  searchEmptyStateMessage({
+    titleSearchLive: true,
+    headsReady: true,
+    memoryCapped: true,
+    pending: true,
+  }),
+  "Looking through notes…",
+);
+assert.equal(
+  memorySearchIsPartial({
+    engineId: "memory-fts-capped",
+    hitCount: 16,
+    pageLimit: 16,
+  }),
+  true,
+);
+assert.equal(
+  memorySearchIsPartial({
+    engineId: "sqlite-fts5-bm25",
+    hitCount: 16,
+    pageLimit: 16,
+  }),
+  false,
+);
+assert.equal(
+  memorySearchIsPartial({
+    engineId: "memory-fts-capped",
+    hitCount: 3,
+    pageLimit: 16,
+  }),
+  false,
+);
+{
+  const { readFileSync } = await import("node:fs");
+  const backend = readFileSync("src/lib/search/search-backend.ts", "utf8");
+  assert.match(backend, /uiLabel:\s*MEMORY_FTS_ENGINE_LABEL/);
+  const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
+  assert.match(palette, /const engineBit = searchEngine\.uiLabel/);
+  assert.equal(palette.includes('uiLabel: "In this vault"'), false);
+}
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: false, memorySearch: true }),
+  "miss",
+  "a finished memory search with no hit is a miss, not still reading",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: true, memorySearch: false }),
+  "miss",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: false, memorySearch: false }),
+  "reading",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: true, pending: true }),
+  "pending",
+);
+assert.equal(
+  searchEmptyStatus({ titleSearchLive: true, failed: true }),
+  "failed",
 );
 
 {

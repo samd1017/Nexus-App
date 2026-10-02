@@ -127,3 +127,29 @@ export function wikilinkContext(markdown: string, start: number, end: number, ra
   if (to < markdown.length) s = s + "…";
   return s;
 }
+
+/**
+ * Turn a raw mention snippet into a sentence a person can scan.
+ * Wikilinks become their visible label. Heading marks, emphasis, and
+ * table pipes stay out of the way.
+ */
+export function presentLinkContext(raw: string): string {
+  let s = raw.replace(
+    /!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,
+    (_m, target: string, alias?: string) => (alias || target).trim(),
+  );
+  // A snippet window can slice a wikilink in half. Drop the dangling half.
+  s = s.replace(/!?\[\[[^\]]*$/g, "");
+  s = s.replace(/^…?\[[^\]]*\]\]\s*/g, "…");
+  s = s.replace(/^[^[]*\]\]\s*/g, "");
+  s = s.replace(/#{1,6}\s+/g, "");
+  s = s.replace(/>\s*\[![A-Za-z]+\]\s*/g, "");
+  s = s.replace(/(^|\s)>\s+/g, "$1");
+  s = s.replace(/\s+[-–]\s+/g, " · ");
+  s = s.replace(/\*\*|__|~~|`/g, "");
+  s = s.replace(/(^|\s)[*_](.+?)[*_](?=\s|$)/g, "$1$2");
+  s = s.replace(/\s*\|\s*/g, " · ");
+  s = s.replace(/(^|[·\s])[-+]\s+/g, "$1");
+  s = s.replace(/\s+/g, " ").replace(/\s*·\s*·\s*/g, " · ").trim();
+  return s.replace(/^[·\s]+|[·\s]+$/g, "");
+}

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
+import { clearWriteFocus, takeHeldWrite, writeFocusPending } from "@/lib/editor/write-intent";
+import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
 import StarterKit from "@tiptap/starter-kit";
 import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
-import Placeholder from "@tiptap/extension-placeholder";
+import { SafePlaceholder } from "@/lib/editor/safe-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { VaultImage } from "@/lib/editor/vault-image";
@@ -14,10 +16,14 @@ import {
   handleVisualPaste,
 } from "@/lib/editor/paste-import";
 import {
+  getFindFocusPane,
   registerVisualFindAdapter,
   setFindFocusPane,
   type FindMatch,
 } from "@/lib/editor/find-target";
+import { rememberPaneScroll, recallPaneScroll } from "@/lib/editor/pane-scroll";
+import { noteOpenGesture } from "@/lib/vault/note-tabs";
+import { isMacOS } from "@/lib/platform";
 import { findMatchesInPmDoc } from "@/lib/editor/find-pm";
 import { FindHighlight } from "@/lib/editor/find-highlight";
 import { HighlightMark } from "@/lib/editor/highlight-mark";
@@ -26,6 +32,7 @@ import { Mermaid } from "@/lib/editor/mermaid-node";
 import { MathBlock, MathInline } from "@/lib/editor/math-node";
 import { Embed } from "@/lib/editor/embed-node";
 import { QueryBlock } from "@/lib/editor/query-node";
+import { NexusQueryBlock } from "@/lib/editor/nexus-query-node";
 import {
   detectSlashCommand,
   ensureEditableGaps,
@@ -45,6 +52,7 @@ import {
   markdownWithWikilinksToHtml,
   htmlDocToMarkdown,
 } from "@/lib/markdown/serialize";
+import { splitFrontmatter } from "@/lib/editor/frontmatter";
 import { useVaultStore } from "@/lib/vault/store";
 import {
   dailyNotePath,
@@ -54,7 +62,7 @@ import {
 import { cn } from "@/lib/utils";
 import { buildWikilinkIndex, resolveWikilink } from "@/lib/graph/build-graph";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
-import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
+import { openWikilink, type LinkJump } from "@/lib/editor/open-wikilink";
 import { shouldUseFolderGraph } from "@/lib/vault/scale-flags";
 import {
   isOnlySerializationNoise,
@@ -67,8 +75,10 @@ import {
   coordsAtPos,
   detectOpenWikilink,
   insertWikilinkSuggestion,
+  suggestItemsFromHits,
   type WikilinkSuggestItem,
 } from "@/lib/editor/wikilink-suggest";
+import { fetchShellSuggest, onShellCatalogWake } from "@/lib/vault/shell-catalog";
 import { EditorToolbar } from "./EditorToolbar";
 import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import { SlashMenu } from "./SlashMenu";
@@ -99,7 +109,12 @@ function lostSpecialMarkdown(prev: string, next: string): boolean {
   return false;
 }
 
-function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) {
+function openWikilinkTarget(
+  target: string,
+  event?: Event,
+  hostNoteId?: string,
+  editorPane: "primary" | "secondary" = "primary",
+) {
   const state = useVaultStore.getState();
   // Persist current editor first so graph/backlinks update immediately
   try {
@@ -107,58 +122,35 @@ function openWikilinkTarget(target: string, event?: Event, hostNoteId?: string) 
   } catch {
     /* ignore */
   }
-  const parts = parseWikilinkInner(target);
   const ev = event as MouseEvent | undefined;
-  const pane =
-    ev && (ev.altKey || (ev.metaKey && ev.shiftKey))
-      ? ("secondary" as const)
-      : ("primary" as const);
-  const jump = {
-    heading: parts.heading,
-    blockId: parts.blockId,
-    pane,
-  };
-  const hostId = hostNoteId || state.activeNoteId;
-  const hit = parts.noteTarget
-    ? resolveWikilink(parts.noteTarget, state.nodes)
-    : hostId
-      ? state.nodes[hostId]
-      : null;
-  const activateNote = (id: string) => {
-    const noteCount = ensureVaultIndex(state.nodes).noteCount;
+  const gesture = noteOpenGesture(ev ?? {}, { mac: isMacOS() });
+  const split = Boolean(state.settings.workspaceSplit && state.secondaryNoteId);
+  const pane = gesture === "secondary" ? "secondary" : editorPane || (split ? getFindFocusPane() : "primary");
+  const activateNote = (id: string, jump: LinkJump) => {
+    const live = useVaultStore.getState();
+    const noteCount = ensureVaultIndex(live.nodes).noteCount;
     // Large vaults: wikilink open → ego neighborhood (does not thrash setActiveNote scope)
     if (shouldUseFolderGraph(noteCount) && pane !== "secondary") {
-      state.enterGraphEgo?.({ returnPath: state.graphBrowsePath || "" });
+      live.enterGraphEgo?.({ returnPath: live.graphBrowsePath || "" });
     }
-    state.setActiveNote(id, jump);
+    live.setActiveNote(id, { ...jump, pane, newTab: gesture === "new" });
   };
-  if (!hit) {
-    const title = (parts.noteTarget || "").trim();
-    if (!title) {
-      state.setToast(`No note found for [[${target}]]`);
-      return;
-    }
-    const created = state.createNote(null, title, { activate: false });
-    if (created) {
-      state.setToast(`Created “${title}”`);
-      activateNote(created);
-      return;
-    }
-    state.setToast(`No note found for [[${target}]]`);
-    return;
-  }
-  if (hit.kind === "folder") {
-    if (!state.expandedFolders.includes(hit.id)) {
-      state.toggleFolder(hit.id);
-    }
-    const child = Object.values(state.nodes)
-      .filter((n) => n.parentId === hit.id && n.kind === "note")
-      .sort((a, b) => a.name.localeCompare(b.name))[0];
-    if (child) activateNote(child.id);
-    else state.setToast(`Opened folder “${hit.name}”`);
-    return;
-  }
-  activateNote(hit.id);
+  void openWikilink(target, {
+    hostId: hostNoteId || state.activeNoteId,
+    pane,
+    open: activateNote,
+    onFolder: (folder, jump) => {
+      const live = useVaultStore.getState();
+      if (!live.expandedFolders.includes(folder.id)) {
+        live.toggleFolder(folder.id);
+      }
+      const child = Object.values(live.nodes)
+        .filter((n) => n.parentId === folder.id && n.kind === "note")
+        .sort((a, b) => a.name.localeCompare(b.name))[0];
+      if (child) activateNote(child.id, jump);
+      else live.setToast(`Opened folder “${folder.name}”`);
+    },
+  });
 }
 
 /**
@@ -177,6 +169,97 @@ function hasEmptyFocusBullet(markdown: string): boolean {
 }
 
 /** Place caret in first empty paragraph under ## Focus, else focus end of first list item. */
+/** A new note is often only its title heading. Writing starts on the line below it. */
+function placeCaretForWriting(ed: Editor): void {
+  if (ed.isDestroyed) return;
+  try {
+    const { doc, selection } = ed.state;
+    const inHeading = selection.$from.parent.type.name === "heading";
+    if (ed.isFocused && !inHeading) return;
+    if (!ed.isFocused) {
+      // The reader already moved on (a field, a dialog). Let them. The list
+      // row the name was typed in does not count: moving in the list with
+      // keys or a click ends the request in write-intent. Nor does the name
+      // field itself, which still has focus for a frame after it commits.
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        active !== document.body &&
+        !active.closest?.("[data-testid='tree-rename']") &&
+        active.closest?.(
+          "input, textarea, select, [role='dialog'], [data-nexus-confirm], [cmdk-root]",
+        )
+      ) {
+        clearWriteFocus();
+        return;
+      }
+    }
+    caretToWritingLine(ed);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * The caret on the first line under the title, or at the end. TipTap's focus()
+ * moves the selection now but the cursor only a frame later; a paste or key
+ * sent the moment a name is set runs before that frame, into whatever still
+ * has focus. Take the cursor now as well.
+ */
+function caretToWritingLine(ed: Editor): void {
+  const { doc } = ed.state;
+  if (doc.lastChild?.type.name === "heading") {
+    ed.chain().insertContentAt(doc.content.size, { type: "paragraph" }).focus("end").run();
+  } else {
+    ed.commands.focus("end");
+  }
+  ed.view.focus();
+}
+
+/**
+ * A click below the last line of a note that ends in a heading (a new note is
+ * only its title) would put the caret at the end of the title. It starts a
+ * line under the title instead. True when it handled the click.
+ */
+function clickBelowTitle(ed: Editor, e: MouseEvent): boolean {
+  if (ed.isDestroyed || e.button !== 0 || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return false;
+  const last = ed.state.doc.lastChild;
+  if (last?.type.name !== "heading") return false;
+  const lastDom = ed.view.dom.lastElementChild as HTMLElement | null;
+  if (!lastDom) return false;
+  if (e.clientY <= lastDom.getBoundingClientRect().bottom + 2) return false;
+  e.preventDefault();
+  caretToWritingLine(ed);
+  return true;
+}
+
+/**
+ * Writes what was typed or pasted for this note before its editor had the
+ * cursor, at the writing line under the title, as a normal edit so it saves.
+ * `busy` is true while the editor is refilling from the store.
+ */
+function writeHeldText(
+  ed: Editor,
+  path: string | null | undefined,
+  busy?: () => boolean,
+  tries = 0,
+): void {
+  if (ed.isDestroyed || !path) return;
+  if (busy?.()) {
+    if (tries < 30) requestAnimationFrame(() => writeHeldText(ed, path, busy, tries + 1));
+    return;
+  }
+  const text = takeHeldWrite(path);
+  if (!text) return;
+  try {
+    const inHeading = ed.state.selection.$from.parent.type.name === "heading";
+    if (!ed.isFocused || inHeading) caretToWritingLine(ed);
+    if (!ed.view.pasteText(text)) ed.commands.insertContent(text);
+  } catch {
+    /* editor went away mid-write; the text was already taken */
+  }
+}
+
 function morningAutofocusEditor(ed: Editor): void {
   let afterFocus = false;
   let targetPos: number | null = null;
@@ -221,11 +304,19 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
   const editorFontSize = usePrefsStore((s) => s.editorFontSize);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const applying = useRef(false);
+  const selectionSigRef = useRef("");
   const userEdited = useRef(false);
   const baselineMd = useRef(upgradeSparseDailySkeleton(content || ""));
   const lastWrittenRef = useRef(baselineMd.current);
   const noteIdRef = useRef(noteId);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef(content);
+  // Bumps so a note switch does not apply a stale setContent.
+  const contentApplyGen = useRef(0);
+  /** Path of the note this editor last showed, for saves after a re-key. */
+  const notePathRef = useRef<string | null>(null);
+  // Follow renames of the note this editor is showing.
+  if (notePath && noteIdRef.current === noteId) notePathRef.current = notePath;
   /** Morning autofocus: once per note id open */
   const morningFocusedFor = useRef<string | null>(null);
   contentRef.current = content;
@@ -346,10 +437,35 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       setSuggestOpen(false);
       return;
     }
-    const items = buildSuggestItems(
-      useVaultStore.getState().nodes,
-      open.query,
-    );
+    const live = useVaultStore.getState();
+    if (live.shellCatalog && live.shellDbPath) {
+      const q = open.query;
+      const db = live.shellDbPath;
+      setSuggestOpen(true);
+      setSuggestQuery(q);
+      setSuggestFrom(open.from);
+      setSuggestTo(open.to);
+      setSuggestSelected(0);
+      setSuggestRect(coordsAtPos(ed, open.to));
+      const paint = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
+        if (!hits || suggestQueryRef.current !== q) return;
+        setSuggestItems(suggestItemsFromHits(hits));
+      };
+      void fetchShellSuggest(db, q).then((hits) => {
+        if (suggestQueryRef.current !== q) return;
+        if (!hits) {
+          const stop = onShellCatalogWake(() => {
+            stop();
+            if (suggestQueryRef.current !== q) return;
+            void fetchShellSuggest(db, q).then(paint);
+          });
+          return;
+        }
+        paint(hits);
+      });
+      return;
+    }
+    const items = buildSuggestItems(live.nodes, open.query);
     setSuggestOpen(true);
     setSuggestQuery(open.query);
     setSuggestFrom(open.from);
@@ -383,8 +499,25 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     (ed: Editor, opts?: { force?: boolean }) => {
       // Mid setContent: skip unless force flush after real user input
       if (applying.current && !(opts?.force && userEdited.current)) return;
+      // Navigation and unmount also call commit. The visual doc omits
+      // properties, so an unedited flush would save the body and drop them.
+      if (!userEdited.current) return;
       if (!ed || ed.isDestroyed) return;
-      const id = noteIdRef.current;
+      let id = noteIdRef.current;
+      // A rescan can re-key a renamed note. Save into the note that now has the
+      // path this editor was showing, instead of an id that no longer exists.
+      {
+        const nodesNow = useVaultStore.getState().nodes;
+        const path = notePathRef.current;
+        if (!nodesNow[id] && path) {
+          for (const nid in nodesNow) {
+            if (nodesNow[nid]?.kind === "note" && nodesNow[nid]?.path === path) {
+              id = nid;
+              break;
+            }
+          }
+        }
+      }
       let serialized: string;
       try {
         serialized = htmlDocToMarkdown(ed.view.dom as HTMLElement);
@@ -393,6 +526,11 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       }
       const prev =
         useVaultStore.getState().nodes[id]?.content ?? baselineMd.current;
+      const { yaml } = splitFrontmatter(prev);
+      if (yaml != null) {
+        const bodyOut = serialized.replace(/^\n+/, "");
+        serialized = `---\n${yaml.replace(/\n+$/, "")}\n---\n\n${bodyOut}`;
+      }
       const edited = userEdited.current;
       const noise = isOnlySerializationNoise(prev, serialized);
 
@@ -438,7 +576,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
           undoRedo: { depth: 2 },
         }),
         StyledBulletList,
-        Placeholder.configure({
+        SafePlaceholder.configure({
           showOnlyCurrent: true,
           includeChildren: true,
           placeholder: ({ editor, pos }) => {
@@ -482,7 +620,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         TableCell,
         Wikilink.configure({
           onOpen: (target, event) =>
-            openWikilinkTarget(target, event, noteIdRef.current),
+            openWikilinkTarget(target, event, noteIdRef.current, pane),
         }),
         HighlightMark,
         Callout,
@@ -491,6 +629,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         MathInline,
         Embed,
         QueryBlock,
+        NexusQueryBlock,
         FindHighlight,
       ],
       content: markdownWithWikilinksToHtml(
@@ -503,6 +642,10 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
           spellcheck: spellCheck ? "true" : "false",
         },
         handleDOMEvents: {
+          mousedown: (_view, event) => {
+            const ed = editorRef.current;
+            return ed ? clickBelowTitle(ed, event) : false;
+          },
           click: (_view, event) => {
             const a = (event.target as HTMLElement | null)?.closest?.("a[href]");
             if (!(a instanceof HTMLAnchorElement)) return false;
@@ -667,6 +810,12 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       },
       onSelectionUpdate: ({ editor: ed }) => {
         if (applying.current) return;
+        // WebKit fires selectionchange while the note scrolls. An unchanged
+        // caret must not walk suggest/slash on every frame.
+        const sel = ed.state.selection;
+        const sig = `${sel.from}:${sel.to}`;
+        if (sig === selectionSigRef.current) return;
+        selectionSigRef.current = sig;
         refreshSuggest(ed);
         refreshSlash(ed);
       },
@@ -787,9 +936,33 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     return () => registerVisualFindAdapter(null, pane);
   }, [editor, pane]);
 
+  // The store holds a body this editor has not shown yet (the renamed title,
+  // a rescan). Held text waits for it, or the refill would write over it.
+  const refillPending = useCallback(() => {
+    if (applying.current) return true;
+    const body = useVaultStore.getState().nodes[noteIdRef.current]?.content;
+    if (body === undefined) return false;
+    if (body === baselineMd.current || body === lastWrittenRef.current) return false;
+    return !isOnlySerializationNoise(baselineMd.current, body);
+  }, []);
+
   // Turn leftover empty `-` Focus/Later bullets into tasks, then sync.
   // Keep one TipTap instance across notes — remounting @45k is a 0.7–1.1s hitch.
   useEffect(() => {
+    const previousNoteId = noteIdRef.current;
+    const switchedNote = previousNoteId !== noteId;
+    if (switchedNote && scrollRef.current && previousNoteId) {
+      rememberPaneScroll(pane, previousNoteId, scrollRef.current.scrollTop);
+    }
+    const restoreScroll = () => {
+      const port = scrollRef.current;
+      if (!port) return;
+      const path = useVaultStore.getState().nodes[noteId]?.path;
+      if (writeFocusPending(path)) return;
+      const y = recallPaneScroll(pane, noteId);
+      if (!switchedNote && (y <= 0 || port.scrollTop > 1)) return;
+      port.scrollTop = y;
+    };
     if (noteIdRef.current !== noteId && editor && !editor.isDestroyed) {
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
@@ -804,6 +977,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       morningFocusedFor.current = null;
     }
     noteIdRef.current = noteId;
+    notePathRef.current = useVaultStore.getState().nodes[noteId]?.path ?? notePathRef.current;
     try {
       if (editor && !editor.isDestroyed) {
         editor.view.dom.setAttribute("data-note-id", noteId);
@@ -816,26 +990,54 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       userEdited.current = false;
       updateNoteContent(noteId, incoming, { source: true });
     }
-    if (!editor || editor.isDestroyed) return;
+    if (!editor || editor.isDestroyed) {
+      restoreScroll();
+      return;
+    }
     if (userEdited.current) {
       const external =
         incoming !== lastWrittenRef.current &&
         !isOnlySerializationNoise(incoming, lastWrittenRef.current);
-      if (!external) return;
+      if (!external) {
+        restoreScroll();
+        return;
+      }
       userEdited.current = false;
     }
-    if (isOnlySerializationNoise(baselineMd.current, incoming)) return;
+    if (isOnlySerializationNoise(baselineMd.current, incoming)) {
+      restoreScroll();
+      return;
+    }
     applying.current = true;
     baselineMd.current = incoming;
     lastWrittenRef.current = incoming;
     contentRef.current = incoming;
     const html = markdownWithWikilinksToHtml(incoming);
-    editor.commands.setContent(html, { emitUpdate: false });
-    requestAnimationFrame(() => {
-      paintEditorExtras(editor);
-      applying.current = false;
+    // TipTap mounts React node views with flushSync. Doing that inside this
+    // effect is a React lifecycle, and React 19 logs "flushSync was called
+    // from inside a lifecycle method" on every note switch. A microtask is
+    // outside the commit, so the paint still happens before the next frame.
+    const applyGen = ++contentApplyGen.current;
+    const noteAtSchedule = noteId;
+    queueMicrotask(() => {
+      if (applyGen !== contentApplyGen.current) return;
+      if (noteIdRef.current !== noteAtSchedule) return;
+      if (editor.isDestroyed) return;
+      applying.current = true;
+      editor.commands.setContent(html, { emitUpdate: false });
+      const pathAtApply = useVaultStore.getState().nodes[noteAtSchedule]?.path;
+      if (writeFocusPending(pathAtApply)) {
+        placeCaretForWriting(editor);
+      }
+      requestAnimationFrame(() => {
+        if (applyGen !== contentApplyGen.current) return;
+        paintEditorExtras(editor);
+        applying.current = false;
+        writeHeldText(editor, pathAtApply, refillPending);
+        restoreScroll();
+      });
     });
-  }, [editor, content, noteId, updateNoteContent, commit]);
+  }, [editor, content, noteId, pane, updateNoteContent, commit, refillPending]);
 
   // Morning autofocus: today's daily with empty Focus bullet — once per note open
   useEffect(() => {
@@ -858,6 +1060,64 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
     }, 40);
     return () => window.clearTimeout(t);
   }, [editor, noteId, content]);
+
+  // A note that was just named in the list hands the cursor to its body. The
+  // request is kept by path, so an editor that mounts or refills a moment later
+  // for the same note (a desktop rename is also a file rename) still takes it.
+  useEffect(() => {
+    if (!editor) return;
+    const pathNow = () => useVaultStore.getState().nodes[noteId]?.path ?? null;
+    const writeTimers: number[] = [];
+    let reclaims = 0;
+    const begin = () => {
+      writeHeldText(editor, pathNow(), refillPending);
+      if (!writeFocusPending(pathNow())) return;
+      reclaims = 0;
+      // The renamed title rewrites the body a moment later, and a folder rescan
+      // can refill it after that. The content apply above places the caret
+      // again after each refill; these cover a refill that changes nothing.
+      const place = () => {
+        if (writeFocusPending(pathNow())) placeCaretForWriting(editor);
+      };
+      place();
+      writeTimers.push(
+        window.setTimeout(place, 180),
+        window.setTimeout(place, 420),
+        window.setTimeout(place, 900),
+        window.setTimeout(place, 1800),
+        window.setTimeout(place, 3200),
+      );
+    };
+    // Nothing but the reader moves the cursor off the body while the request
+    // lasts. A click or a navigation key ends the request first (write-intent),
+    // so what is left is the list or the page taking it on its own.
+    const takeBack = () => {
+      if (!writeFocusPending(pathNow()) || reclaims >= 8) return;
+      const active = document.activeElement as HTMLElement | null;
+      const drifted =
+        !active ||
+        active === document.body ||
+        active === document.documentElement ||
+        Boolean(
+          active.closest?.("[data-file-tree]") &&
+            !active.closest?.("[data-testid='tree-rename']:not([data-rename-closing])"),
+        );
+      if (!drifted) return;
+      reclaims += 1;
+      placeCaretForWriting(editor);
+    };
+    const onFocusMove = () => reclaimAfterFocus(takeBack);
+    begin();
+    window.addEventListener("nexus-write-note", begin);
+    window.addEventListener("focusin", onFocusMove, true);
+    window.addEventListener("focusout", onFocusMove, true);
+    return () => {
+      window.removeEventListener("nexus-write-note", begin);
+      window.removeEventListener("focusin", onFocusMove, true);
+      window.removeEventListener("focusout", onFocusMove, true);
+      for (const t of writeTimers) window.clearTimeout(t);
+    };
+  }, [editor, noteId]);
 
   useEffect(() => {
     if (!editor) return;
@@ -987,7 +1247,10 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       }}
     >
       <EditorToolbar editor={editor} />
-      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6">
+      <div
+        ref={scrollRef}
+        className="editor-scrollport relative min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4 md:px-10 md:py-6"
+      >
         <div className={cn("mx-auto max-w-[720px]", isDaily && "daily-visual")}>
           <EditorContent editor={editor} />
         </div>

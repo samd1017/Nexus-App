@@ -2,6 +2,41 @@
 
 **Goal:** Comfortably handle **300k–500k** notes on Desktop (plain-folder markdown), with headroom beyond. Web = demo/QA only. Mobile later via shared DurableIndex schema.
 
+The interactive shell does not hold the catalog. See [SHELL-CATALOG.md](./SHELL-CATALOG.md) and [VAULT-CONTRACT.md](./VAULT-CONTRACT.md). A large desktop vault keeps a window of notes in the renderer and asks SQLite for the next page. A large browser folder uses the same window and still refuses above the Chrome cap. The metadata RAM budget below is the old in-memory mirror, not the shell path.
+
+## Scale continuum (product law)
+
+Nexus is one product from a handful of notes through about 500,000. Same craft. There is no toy mode that breaks at scale, and no enterprise mode that feels heavy or empty on a small vault. The switch is automatic. Drawing 500k orbs is the wrong picture: the folder map and the ego neighborhood stay buttery, and a 12-note vault still gets the full galaxy.
+
+| Band | Vault | Flawless means |
+|------|--------|----------------|
+| Small | a handful, under 400 notes | Instant open. Full note graph, not a folder stub. First-run is the product. No dead chrome. |
+| Mid | ~20k–45k | No freezes. Links and backlinks match the notes. Graph Exit and HUD stay solid. Folder map or ego, not every note. |
+| Huge | ~100k–500k desktop | Cold open is useful in seconds. Search fills progressively without freezing the UI. Graph stays inside the folder budget (320) and the ego budget (400). Clicks stay snappy while the index fills. |
+
+This law binds the release gates:
+
+- **Gate A — reliability.** The graph does not throw, and `[[wikilinks]]` are indexed before large-vault bodies are stripped. AppShell stays the real shell.
+- **Gate B — craft.** Prove the same craft on a demo/small vault and on a large test vault before calling craft done.
+- **Gate C — scale.** Cold open and progressive keyword search at 100k. Honest retrieval (no fake semantic rank). Desktop is the 500k path. The browser stays capped.
+- **Gate D — human pass.** A human pass on both ends of the continuum. Stay draft until that pass.
+
+Browser vaults refuse around 25k notes. A 500k vault is a desktop folder.
+
+## Honest limits (measured)
+
+These are the budgets the app actually uses, and what has been opened.
+
+| Vault | What you see | Status |
+|-------|----------------|--------|
+| Under 400 notes | Full note graph. Not a folder stub. | Demo vault, checked. |
+| 400 notes and up | Folder map, at most 320 nodes, or an ego neighborhood, at most 400 nodes and 2 hops. | 45k in-browser seed draws a folder map (9 folders, 0 note orbs) and an ego of the open note. |
+| Browser folder | Warns around 15,000 notes. Refuses at 25,000. | Cap in `chrome-fsa-cap.ts`. The 45k seed is a dev fixture, not a Chrome folder. |
+| Desktop 100k | Cold open stays usable while search heads fill. SQLite FTS5 BM25. Folder map, not one orb per note. | `npm run test:scale-gate` (inside `qa:gate`) fills 100,001 notes. Ready must beat 8s (the 10k title-seed ceiling). The body fill must finish in 90s. Title suggest, a rare body token, and a 200-row shell page must each beat 120ms (the shell rank budget). |
+| Desktop 500k | Same path as 100k: folder map or ego, progressive FTS, bodies on demand. | `npm run qa:gate:500k` uses the same Ready and search ceilings and a 480s fill ceiling. It is not part of every `qa:gate` run. |
+
+A hot 45k open (demo session, then the large seed, graph panel still mounted) used to loop React until "Maximum update depth." The file-tree and graph snapshots no longer touch the vault index during render. Fresh and hot opens of that seed stay up.
+
 ---
 
 ## Public-release plan (99%)
@@ -109,7 +144,10 @@ Disk vaults always:
 2. **Lazy body hydrate** + automatic LRU memory budget
 3. **DurableIndex** — two different engines, do not conflate:
    - **Desktop Tauri:** SQLite FTS5 BM25 via `searchFtsAsync` (≤50ms target)
-   - **Web / FSA / this VM:** in-memory inverted index, **800-candidate cap** (not BM25). Palette heading always shows `Memory FTS (capped)`.
+   - **Web / FSA:** in-memory inverted index, **800-candidate cap** and **800-posting cap** (not BM25). The palette Notes heading stays `Memory FTS (capped)` for that path, including an empty search (`Notes · Memory FTS (capped) · no matches`).
+     - Empty: `No notes match. Showing top matches while the index fills (browser cap).`
+     - Partial (a full palette page on this engine): `Showing top matches while the index fills (browser cap).`
+     - Desktop SQLite FTS5 BM25 keeps `SQLite FTS5 BM25` (plus `· titles` or `· heads` while the fill is in progress, then `· titles+bodies` once note text is indexed) and does not use the browser-cap sentence. Body words are indexed after Ready, including notes that have not been opened.
    - **FSA/disk Ready means search is filled:** after the meta scan, a second pass reads a 2k file head into FTS and drops the string. Store nodes stay meta-only. Do not mark Ready after metadata alone.
 4. **Ego graph** (neighborhood)
 5. **Virtualized file tree**
@@ -155,7 +193,7 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 
 ## Decision log
 
-1. **Markdown-on-disk remains canonical** (Hermes-compatible).
+1. **Markdown-on-disk remains canonical** (plain files).
 2. **Desktop is the 100k–500k primary path** (SQLite FTS5). Chrome in the browser is **≤20,000 notes** (warn 15k, refuse 25k). Not 50k.
 3. **One scale-safe path** — no user Large Vault Mode toggle.
 4. **Indexes are derived** — safe to wipe and rebuild from files.
@@ -168,8 +206,8 @@ See [`docs/GRAPH-FOLDER-HIERARCHY.md`](./GRAPH-FOLDER-HIERARCHY.md).
 
 | Path | Purpose |
 |------|---------|
-| `fixtures/large-test-vault.zip` | Source archive (unzip for desktop **Open folder…**) |
-| `public/large-test-vault/*` | Prebuilt seed for in-app **Open 45k test vault** |
+| `fixtures/large-test-vault.zip` | Optional local archive under gitignored `fixtures/`. Unzip for desktop **Open folder…**. Do not commit. |
+| `public/large-test-vault/*` | Local gitignored seed for in-app **Open 45k test vault**. Generate on disk. Do not commit. |
 | `src/lib/vault/large-test-vault.ts` | Loader → `openLargeTestVault()` |
 
 Welcome CTA opens the seed in the real app shell so graph/tree/search can be QA’d without picking a folder. Session creates/edits on that seed stay in a **browser overlay** (not files); the title bar says `Test · this browser` and the banner offers **Open a folder**. Disk vaults write markdown; do not treat overlay remount as SCALE READY.

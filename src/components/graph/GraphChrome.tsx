@@ -89,7 +89,7 @@ function ModePill({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition",
+        "graph-mode-pill rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition",
         active
           ? "bg-[var(--accent)] text-black shadow-[0_0_16px_rgba(0,200,255,0.22)]"
           : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]",
@@ -141,36 +141,35 @@ export function GraphChrome(props: GraphChromeProps) {
           data-graph-progress
         >
           <div className="graph-loading-ring" aria-hidden />
-          <p className="text-[13px] font-medium tracking-wide text-[var(--text-secondary)]">
-            {props.viewMode === "folder" ? "Laying out folder map" : "Laying out orbs"}
+          <p className="text-[13px] font-medium tracking-wide text-[#f2f6fb]">
+            {props.viewMode === "folder" ? "Laying out the folder map" : "Drawing links"}
           </p>
-          <p className="text-[11px] text-[var(--text-muted)]">
+          <p className="text-[12px] text-[#d5dce8]">
             {props.largeVault
-              ? "Capped view — never the whole vault as orbs"
-              : "Wikilinks become the constellation"}
+              ? "This view shows one folder"
+              : "Lines are links between notes"}
           </p>
         </div>
       ) : null}
 
       <div className="pointer-events-none absolute left-2.5 right-2.5 top-2.5 z-10 flex flex-col gap-1.5 md:left-3 md:right-3 md:top-3">
-        {fs ? (
-          <button
-            type="button"
-            data-exit-graph
-            className="pointer-events-auto flex h-9 w-fit shrink-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[var(--accent)] px-3 text-[13px] font-semibold text-black shadow-[0_0_24px_rgba(0,200,255,0.28)] hover:brightness-110"
-            title={`Exit fullscreen graph (${formatShortcut("Esc")} or ${formatShortcut("Mod+G")})`}
-            aria-label="Exit graph"
-            onClick={() => exitGraphForViewport()}
-          >
-            <Minimize2 size={15} />
-            <span>Exit graph</span>
-            <kbd className="ml-0.5 rounded border border-black/20 bg-black/15 px-1 py-px text-[10px] font-medium text-black/80">
-              Esc
-            </kbd>
-          </button>
-        ) : null}
-
         <div className="flex min-w-0 items-center gap-1.5">
+          {fs ? (
+            <button
+              type="button"
+              data-exit-graph
+              className="graph-chip pointer-events-auto shrink-0 border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[color-mix(in_srgb,var(--accent)_16%,rgba(0,0,0,0.62))] text-[var(--accent)]"
+              title={`Exit fullscreen graph (${formatShortcut("Esc")} or ${formatShortcut("Mod+G")})`}
+              aria-label="Exit graph"
+              onClick={() => exitGraphForViewport()}
+            >
+              <Minimize2 size={12} />
+              <span>Exit</span>
+              <kbd className="rounded border border-white/20 px-1 py-px text-[10px] font-medium text-[#d5dce8]">
+                Esc
+              </kbd>
+            </button>
+          ) : null}
           {props.largeVault ? (
             <div
               className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded-full border border-white/[0.07] bg-black/50 p-0.5 backdrop-blur-md"
@@ -179,7 +178,7 @@ export function GraphChrome(props: GraphChromeProps) {
             >
               <ModePill
                 active={props.viewMode === "folder"}
-                label="Map"
+                label="Folder Map"
                 onClick={props.onVaultMap}
               />
               <ModePill
@@ -191,13 +190,13 @@ export function GraphChrome(props: GraphChromeProps) {
           ) : (
             <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/[0.07] bg-black/50 px-2.5 py-1 backdrop-blur-md">
               <Network size={11} className="text-[var(--accent)] opacity-80" />
-              <span className="text-[11px] font-semibold tracking-wide text-[var(--text-secondary)]">
+              <span className="text-[12px] font-semibold tracking-wide text-[#f2f6fb]">
                 Notes
               </span>
             </div>
           )}
-          <div className="pointer-events-none min-w-0 flex-1 truncate rounded-full border border-white/[0.06] bg-black/40 px-2.5 py-1 backdrop-blur-sm">
-            <span className="text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
+          <div className="graph-count pointer-events-none min-w-0 flex-1 truncate rounded-full border px-2.5 py-1 backdrop-blur-sm">
+            <span className="graph-count-text">
               {props.badge}
             </span>
           </div>
@@ -206,12 +205,12 @@ export function GraphChrome(props: GraphChromeProps) {
         {props.viewMode === "folder" || props.crumbs.length > 0 ? (
           <nav
             data-graph-breadcrumb
-            className="pointer-events-auto flex min-w-0 flex-wrap items-center gap-0.5 rounded-full border border-white/[0.06] bg-black/40 px-2 py-0.5 backdrop-blur-sm"
+            className="pointer-events-auto flex min-w-0 flex-wrap items-center gap-0.5 rounded-full border border-white/[0.14] bg-[rgba(4,6,10,0.92)] px-2 py-0.5 backdrop-blur-sm"
             aria-label="Folder map path"
           >
             <button
               type="button"
-              className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--accent)] hover:bg-white/5"
+              className="min-h-7 rounded-full px-2 py-1 text-[12px] font-semibold tracking-wide text-[var(--accent)] hover:bg-white/5"
               onClick={props.onVaultMap}
             >
               Vault
@@ -220,10 +219,10 @@ export function GraphChrome(props: GraphChromeProps) {
               const path = props.crumbs.slice(0, i + 1).join("/");
               return (
                 <span key={path} className="flex items-center gap-0.5">
-                  <span className="opacity-30">/</span>
+                  <span className="text-[#d5dce8] opacity-70">/</span>
                   <button
                     type="button"
-                    className="max-w-[96px] truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]"
+                    className="max-w-[8rem] min-h-7 truncate rounded-full px-2 py-1 text-[12px] font-semibold tracking-wide text-[#f2f6fb] hover:bg-white/5"
                     onClick={() => props.onEnterFolder(path)}
                   >
                     {seg}
@@ -238,14 +237,14 @@ export function GraphChrome(props: GraphChromeProps) {
           <label className="relative flex min-w-0 flex-1 items-center">
             <Search
               size={11}
-              className="pointer-events-none absolute left-2 text-[var(--text-muted)]"
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#d5dce8]"
             />
             <input
               ref={props.filterInputRef}
               value={props.query}
               onChange={(e) => props.onQuery(e.target.value)}
               placeholder="Filter this view"
-              className="h-7 w-full min-w-[7rem] rounded-full border border-white/[0.08] bg-black/45 pl-6 pr-2 text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]/40"
+              className="nexus-field h-8 w-full min-w-[7rem] rounded-full border border-white/[0.16] bg-[rgba(4,6,10,0.92)] pl-7 pr-2 text-[12.5px] font-medium text-[#f2f6fb] placeholder:text-[#c5ceda]"
               aria-label="Filter graph"
               data-graph-filter
             />
@@ -259,7 +258,7 @@ export function GraphChrome(props: GraphChromeProps) {
               onClick={props.onToggleGhosts}
             >
               <Ghost size={11} />
-              <span className="hidden sm:inline">Ghosts</span>
+              <span className="hidden sm:inline">Missing</span>
             </button>
           ) : null}
           {props.orphansAvailable ? (
@@ -389,33 +388,33 @@ export function GraphChrome(props: GraphChromeProps) {
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="truncate text-[12.5px] font-semibold tracking-wide text-[var(--text-primary)]">
+              <p className="truncate text-[13.5px] font-semibold tracking-wide text-[#f7fbff]">
                 {inspect.title}
               </p>
               {inspect.path ? (
-                <p className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">
+                <p className="mt-0.5 truncate text-[12px] text-[#d7e0ea]">
                   {inspect.path}
                 </p>
               ) : null}
             </div>
-            <span className="shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-px text-[9.5px] uppercase tracking-wider text-[var(--text-muted)]">
+            <span className="shrink-0 rounded-full border border-white/20 bg-white/[0.08] px-1.5 py-px text-[10.5px] font-semibold uppercase tracking-wider text-[#e7edf4]">
               {inspect.kind}
             </span>
           </div>
           {inspect.kind === "note" ? (
-            <p className="mt-1.5 text-[10.5px] text-[var(--text-secondary)]">
+            <p className="mt-1.5 text-[12.5px] font-medium text-[#f2f6fb]">
               <span className="text-[var(--accent)]">{inspect.outCount}</span> out
-              <span className="mx-1.5 opacity-40">·</span>
+              <span className="mx-1.5 text-[#d5dce8]">·</span>
               <span className="text-[var(--accent)]">{inspect.inCount}</span> in
             </p>
           ) : inspect.kind === "folder" ? (
-            <p className="mt-1.5 text-[10.5px] text-[var(--text-muted)]">
+            <p className="mt-1.5 text-[12px] text-[#e7edf4]">
               Click the orb to enter this level
             </p>
           ) : null}
           {inspect.out.length > 0 ? (
             <div className="mt-2">
-              <p className="mb-1 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#d7e0ea]">
                 Out
               </p>
               <div className="flex flex-wrap gap-1">
@@ -434,7 +433,7 @@ export function GraphChrome(props: GraphChromeProps) {
           ) : null}
           {inspect.inn.length > 0 ? (
             <div className="mt-2">
-              <p className="mb-1 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#d7e0ea]">
                 In
               </p>
               <div className="flex flex-wrap gap-1">
@@ -456,7 +455,7 @@ export function GraphChrome(props: GraphChromeProps) {
 
       {props.hintVisible || fs ? (
         <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-10 flex justify-center px-3">
-          <div className="rounded-full border border-white/[0.07] bg-black/55 px-3 py-1 text-[10px] tracking-wide text-[var(--text-muted)] backdrop-blur-md">
+          <div className="rounded-full border border-white/[0.14] bg-[rgba(4,6,10,0.92)] px-3 py-1 text-[11.5px] font-medium tracking-wide text-[#e7edf4] backdrop-blur-md">
             {props.hintVisible
               ? props.hint
               : `Esc or Exit graph · ${formatShortcut("J")}/${formatShortcut("K")} notes · / filter`}

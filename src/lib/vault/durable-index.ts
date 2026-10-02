@@ -20,6 +20,7 @@ import {
   DURABLE_INDEX_SCHEMA_VERSION as CONTRACT_SCHEMA_VERSION,
   DURABLE_INDEX_SQL as CONTRACT_SQL,
   DURABLE_INDEX_CONTRACT,
+  DURABLE_INDEX_REBUILD_RULES,
   MOBILE_VAULT_PATHS as CONTRACT_MOBILE_PATHS,
   DESKTOP_INDEX_PATHS as CONTRACT_DESKTOP_PATHS,
   assertContractInvariants,
@@ -55,6 +56,8 @@ export interface DurableNoteMeta {
   parentId: string | null;
   mtime: number;
   size?: number;
+  /** Created time in ms, when the file or the first write recorded one. */
+  ctime?: number;
   contentHash?: string;
   title?: string;
   /** Optional body snippet for FTS (loaded notes only) */
@@ -95,12 +98,29 @@ export interface DurableIndex {
     removed: number;
   };
   upsertNote(meta: DurableNoteMeta): void;
+  /**
+   * Desktop only: write one opened note into SQLite. Does not copy the
+   * body into the in-memory mirror.
+   */
+  upsertSearchBody?(meta: DurableNoteMeta): void;
   removeNote(id: string): void;
   listNoteMeta(): DurableNoteMeta[];
   /** O(1) meta lookup — used for unloaded-body search snippets */
   getNoteMeta(id: string): DurableNoteMeta | undefined;
   searchFts(query: string, limit?: number): SearchHit[];
   searchFtsAsync?(query: string, limit?: number): Promise<SearchHit[]>;
+  /** Desktop: OR / path: / folder: / file: against SQLite, not the mounted window. */
+  searchOpsAsync?(
+    clauses: Array<{
+      rest: string;
+      pathFilter: string;
+      folderFilter: string;
+      fileFilter: string;
+      tagFilter: string;
+      excludes: string[];
+    }>,
+    limit?: number,
+  ): Promise<SearchHit[]>;
   stats(): {
     notes: number;
     folders: number;
@@ -138,6 +158,7 @@ export interface DurableIndex {
     errors: number;
     notes: number;
     edges?: number;
+    scanned?: number;
     searchState?: string;
   }>;
   /** Persisted wikilink groups — desktop seeds the JS link index without bodies. */
@@ -286,7 +307,10 @@ class MemoryDurableIndex implements DurableIndex {
 
   private indexOneNode(n: VaultNode): { folders: number; edges: number; tags: number } {
     if (n.kind === "folder") return { folders: 1, edges: 0, tags: 0 };
-    const body = n.content !== undefined ? n.content.slice(0, 4000) : undefined;
+    const body =
+      n.content !== undefined
+        ? n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.bodySnippetMaxChars)
+        : undefined;
     const tags = n.content !== undefined ? extractTags(n.content) : [];
     const links = n.content !== undefined ? extractWikilinkTargets(n.content) : [];
     const meta: DurableNoteMeta = {
@@ -563,6 +587,24 @@ class MemoryDurableIndex implements DurableIndex {
           if (candidateIds.length >= MEMORY_FTS_CANDIDATE_CAP) break;
         }
       }
+    } else if (
+      candidateIds.length < limit &&
+      tokens.length > 0 &&
+      (lists.length !== tokens.length || candidateIds.length === 0)
+    ) {
+      // Slim indexing drops digit tokens (Brief-41936), and a vault above the
+      // full-scan cap never walks titles. An identifier query then says
+      // "no notes match" while that note is on screen. Title and path only.
+      const have = new Set(candidateIds);
+      for (const n of this.notes.values()) {
+        if (have.has(n.id)) continue;
+        const title = (n.title ?? n.name).toLowerCase();
+        if (title.includes(q) || n.path.toLowerCase().includes(q)) {
+          candidateIds.push(n.id);
+          have.add(n.id);
+          if (candidateIds.length >= limit) break;
+        }
+      }
     }
 
     const scored: Array<{
@@ -679,8 +721,10 @@ export async function openDurableIndexForVault(opts: {
   vaultId: string;
   mode: string;
   vaultRoot?: string | null;
+  /** When the shell mount already opened this file, skip the path lookup. */
+  dbPath?: string | null;
 }): Promise<DurableIndex | null> {
-  const { vaultId, mode, vaultRoot } = opts;
+  const { vaultId, mode, vaultRoot, dbPath } = opts;
   if (mode !== "fsa" && mode !== "desktop" && mode !== "sandbox") {
     closeDurableIndex();
     return null;
@@ -689,9 +733,11 @@ export async function openDurableIndexForVault(opts: {
   // Prefer native SQLite on desktop when vault root is known
   if (mode === "desktop" && vaultRoot) {
     try {
-      const { openNativeSqliteIndex, NativeSqliteDurableIndex } = await import(
-        "./native-sqlite-index"
-      );
+      const {
+        openNativeSqliteIndex,
+        openNativeSqliteIndexFromKnownPath,
+        NativeSqliteDurableIndex,
+      } = await import("./native-sqlite-index");
       if (
         active instanceof NativeSqliteDurableIndex &&
         active.ready &&
@@ -705,7 +751,10 @@ export async function openDurableIndexForVault(opts: {
       if (active?.ready) {
         closeDurableIndex();
       }
-      const native = await openNativeSqliteIndex(vaultId, vaultRoot);
+      const native =
+        (dbPath
+          ? await openNativeSqliteIndexFromKnownPath(vaultId, vaultRoot, dbPath)
+          : null) ?? (await openNativeSqliteIndex(vaultId, vaultRoot));
       if (native) {
         active = native;
         return native;
@@ -773,6 +822,29 @@ export async function rebuildDurableIndexFromNodesAsync(
   idx.rebuildFromNodes(nodes);
 }
 
+/**
+ * Desktop search is SQLite. Opening a note writes that note's deep head
+ * there. The background fill does not read the rest of the vault to do it.
+ */
+export function indexOpenedDesktopNote(n: VaultNode): void {
+  if (!active?.ready || active.kind !== "sqlite" || n.kind !== "note") return;
+  if (n.content === undefined || !active.upsertSearchBody) return;
+  const body = n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.desktopOpenNoteChars);
+  active.upsertSearchBody({
+    id: n.id,
+    path: n.path,
+    name: n.name,
+    kind: "note",
+    parentId: n.parentId,
+    mtime: n.mtime,
+    title: noteTitle(n),
+    bodySnippet: body,
+    contentHash: simpleHash(body),
+    tags: extractTags(body),
+    linkTargets: extractWikilinkTargets(body),
+  });
+}
+
 export function upsertDurableNoteFromNode(n: VaultNode): void {
   if (!active?.ready || n.kind !== "note") return;
   const stats = active.stats();
@@ -794,7 +866,9 @@ export function upsertDurableNoteFromNode(n: VaultNode): void {
     return;
   }
   const body =
-    n.content !== undefined ? n.content.slice(0, 4000) : undefined;
+    n.content !== undefined
+      ? n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.bodySnippetMaxChars)
+      : undefined;
   active.upsertNote({
     id: n.id,
     path: n.path,
@@ -830,7 +904,7 @@ export function createMemoryDurableIndex(): DurableIndex {
 export function noteMetaFromNode(n: VaultNode): DurableNoteMeta {
   const body =
     n.kind === "note" && n.content !== undefined
-      ? n.content.slice(0, 4000)
+      ? n.content.slice(0, DURABLE_INDEX_REBUILD_RULES.bodySnippetMaxChars)
       : undefined;
   return {
     id: n.id,
@@ -839,6 +913,8 @@ export function noteMetaFromNode(n: VaultNode): DurableNoteMeta {
     kind: n.kind,
     parentId: n.parentId,
     mtime: n.mtime,
+    size: n.kind === "note" && typeof n.content === "string" ? new TextEncoder().encode(n.content).length : n.size,
+    ctime: n.ctime,
     title: n.kind === "note" ? noteTitle(n) : n.name,
     bodySnippet: body,
     contentHash: body !== undefined ? simpleHash(body) : undefined,

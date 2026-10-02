@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { Settings, X, Cloud } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Settings, X, Cloud, RotateCcw } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import {
   ACCENT_PRESETS,
@@ -10,7 +10,6 @@ import {
   type AccentPreset,
   type Density,
   type PhysicsIntensity,
-  type ThemeMode,
 } from "@/lib/prefs/preferences";
 import {
   HOTKEY_LABELS,
@@ -27,6 +26,10 @@ import {
 } from "@/lib/cloud/oauth";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
 import { NexusMark, NexusWordmark, NEXUS_NAME, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
+import { ConfirmDialog } from "@/components/chrome/ConfirmDialog";
+import { CssSnippetsSettings, ThemePicker } from "@/components/settings/AppearanceThemes";
+import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
+import { memoryLine } from "@/lib/settings/memory-copy";
 import { useVaultStore } from "@/lib/vault/store";
 import { rebuildDurableIndexFromNodes } from "@/lib/vault/durable-index";
 import {
@@ -34,6 +37,7 @@ import {
   rebuildIndexedSearch,
 } from "@/lib/search/indexed-search";
 import { ensureVaultIndex, vaultIndex } from "@/lib/vault/indexes";
+import { SEARCH_OPERATOR_HELP } from "@/lib/search/query-ops";
 import type { BodyCacheStats } from "@/lib/vault/body-cache";
 import type { VaultMode } from "@/lib/vault/types";
 import { formatShortcut, isAppleModPlatform, canOpenLocalVaultFolder } from "@/lib/platform";
@@ -42,12 +46,16 @@ function MemoryBudgetStatus({
   open,
   vaultId,
   mode,
+  totalNotes,
 }: {
   open: boolean;
   vaultId: string | null;
   mode: VaultMode;
+  /** Whole-vault count, or -1 while a large vault is still being counted. */
+  totalNotes: number;
 }) {
   const dirtyCount = useVaultStore((s) => s.dirtyNoteIds.length);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const [bodyStats, setBodyStats] = useState<BodyCacheStats | null>(null);
 
@@ -63,16 +71,18 @@ function MemoryBudgetStatus({
   return (
     <div className="mt-2 border-t border-[var(--border)] pt-2">
       <div className="text-[12px] font-medium text-[var(--text-secondary)]">
-        Memory budget
+        Notes in memory
       </div>
-      <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
-        {!vaultId
-          ? "Automatic when a folder vault is open"
-          : !bodyStats || bodyStats.max === 0
-            ? "Automatic · full in-memory (demo / browser vault)"
-            : bodyStats.underPressure
-              ? `Automatic · releasing pressure · In memory: ${bodyStats.loaded} / ${bodyStats.max} bodies (over soft cap) · Protected: ${bodyStats.protected} (active + unsaved) — unsaved notes stay loaded`
-              : `Automatic · note text kept only for recent and open notes · In memory: ${bodyStats.loaded} / ${bodyStats.max} bodies · Protected: ${bodyStats.protected} (active + unsaved)`}
+      <p
+        className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]"
+        data-testid="settings-memory-line"
+      >
+        {memoryLine({
+          vaultOpen: Boolean(vaultId),
+          stats: bodyStats,
+          total: totalNotes,
+          onDemand: mode === "desktop" || mode === "fsa" || shellCatalog,
+        })}
       </p>
     </div>
   );
@@ -93,7 +103,7 @@ export function SettingsPanel() {
   const connectCloud = useVaultStore((s) => s.connectCloud);
   const disconnectCloud = useVaultStore((s) => s.disconnectCloud);
   const openFolderAsVault = useVaultStore((s) => s.openFolderAsVault);
-  const openLocked = useVaultStore((s) => s.connecting || s.indexFillBusy);
+  const openLocked = useVaultStore((s) => s.connecting);
   const openConflictStudio = useVaultStore((s) => s.openConflictStudio);
   const getConflictItems = useVaultStore((s) => s.getConflictItems);
   const conflictCount = useSyncExternalStore(
@@ -101,39 +111,148 @@ export function SettingsPanel() {
     () => getConflictItems?.()?.length ?? 0,
     () => 0,
   );
-  // Read published index count outside a mutating Zustand selector
-  const noteCount = useSyncExternalStore(
-    (onStoreChange) => useVaultStore.subscribe(onStoreChange),
-    () => {
-      ensureVaultIndex(useVaultStore.getState().nodes);
-      return vaultIndex.noteCount;
-    },
-    () => 0,
-  );
+  const nodes = useVaultStore((s) => s.nodes);
+  // Index during render, not inside getSnapshot. A snapshot that calls
+  // ensureVaultIndex can change between React's two reads and loop.
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const catalogNoteCount = useVaultStore((s) => s.catalogNoteCount);
+  // A paged catalog keeps only part of the vault in memory. The catalog count
+  // is the whole folder, the same number Ready reports.
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  // -1 means a large vault whose total has not been reported yet. The loaded
+  // page is not the vault, so it is never shown as the count.
+  const noteCount = useMemo(() => {
+    if (!vaultId) return 0;
+    if (shellCatalog) return catalogNoteCount > 0 ? catalogNoteCount : -1;
+    ensureVaultIndex(nodes);
+    return vaultIndex.noteCount;
+  }, [nodes, vaultId, shellCatalog, catalogNoteCount]);
+  const countStillGrowing = shellCatalog && indexFillBusy && noteCount > 0;
+  const noteCountLabel =
+    noteCount < 0
+      ? "Counting notes…"
+      : countStillGrowing
+        ? `${noteCount.toLocaleString()} notes so far`
+        : `${noteCount.toLocaleString()} notes`;
 
   const [customDraft, setCustomDraft] = useState(prefs.accentCustom);
   const [recordingHotkey, setRecordingHotkey] = useState<HotkeyId | null>(null);
+  const [confirmKind, setConfirmKind] = useState<null | "reset" | "rebuild">(null);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [stayHint, setStayHint] = useState(false);
+  const [currentSection, setCurrentSection] = useState("appearance");
+
+  // The tab for the section in view carries a cyan underline, so the reader
+  // knows where they are after scrolling or leaving the tabs.
+  useEffect(() => {
+    if (!open) return;
+    const body = dialogRef.current?.querySelector<HTMLElement>("[data-settings-scroll]");
+    if (!body) return;
+    const pick = () => {
+      const top = body.getBoundingClientRect().top;
+      const sections = Array.from(
+        body.querySelectorAll<HTMLElement>("[data-settings-section]"),
+      );
+      if (!sections.length) return;
+      let next = sections[0].dataset.settingsSection ?? "appearance";
+      const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
+      if (atEnd) {
+        next = sections[sections.length - 1].dataset.settingsSection ?? next;
+      } else {
+        for (const el of sections) {
+          if (el.getBoundingClientRect().top - top <= 48) {
+            next = el.dataset.settingsSection ?? next;
+          }
+        }
+      }
+      setCurrentSection((cur) => (cur === next ? cur : next));
+    };
+    pick();
+    body.addEventListener("scroll", pick, { passive: true });
+    return () => body.removeEventListener("scroll", pick);
+  }, [open]);
+  const stayTimerRef = useRef(0);
+
+  useEffect(() => () => window.clearTimeout(stayTimerRef.current), []);
+
+  const holdAfterBackdrop = () => {
+    const root = dialogRef.current;
+    if (root && !root.contains(document.activeElement)) {
+      root
+        .querySelector<HTMLElement>('[data-settings-nav="appearance"]')
+        ?.focus({ preventScroll: true });
+    }
+    setStayHint(true);
+    window.clearTimeout(stayTimerRef.current);
+    stayTimerRef.current = window.setTimeout(() => setStayHint(false), 2800);
+  };
 
   useEffect(() => {
     if (open) setCustomDraft(prefs.accentCustom);
   }, [open, prefs.accentCustom]);
 
   useEffect(() => {
+    const onOpen = () => {
+      setOpen(true);
+      setConfirmKind("rebuild");
+    };
+    window.addEventListener("nexus-open-rebuild", onOpen);
+    return () => window.removeEventListener("nexus-open-rebuild", onOpen);
+  }, [setOpen]);
+
+  useEffect(() => {
     if (!open) return;
+    // Search sits above Settings; opening Settings from the menu while search
+    // is up would otherwise look like nothing happened.
+    if (useVaultStore.getState().commandOpen) useVaultStore.getState().setCommandOpen(false);
     const root = dialogRef.current;
     // Focus dialog container on open
     const prev = document.activeElement as HTMLElement | null;
+    let releaseFocus = () => {};
     if (root) {
       if (!root.hasAttribute("tabindex")) root.tabIndex = -1;
-      root.focus({ preventScroll: true });
+      // Rebuild confirm focuses Cancel itself. Do not pull that focus back.
+      // Otherwise land on Appearance — a real section, not the empty dialog shell.
+      if (!document.querySelector("[data-nexus-confirm]")) {
+        document
+          .getElementById("settings-section-appearance")
+          ?.scrollIntoView({ block: "start" });
+      }
+      releaseFocus = holdOpenFocus(
+        root,
+        () =>
+          root.querySelector<HTMLElement>('[data-settings-nav="appearance"]'),
+        () => Boolean(document.querySelector("[data-nexus-confirm]")),
+      );
     }
     const onKey = (e: KeyboardEvent) => {
+      // Rebuild / Reset own the keyboard until they close.
+      if (document.querySelector("[data-nexus-confirm]")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         setOpen(false);
         return;
+      }
+      // R opens Rebuild from anywhere in Settings that is not a text field.
+      if (
+        (e.key === "r" || e.key === "R") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        const t = e.target as HTMLElement | null;
+        const tag = t?.tagName?.toLowerCase();
+        const typing =
+          tag === "input" ||
+          tag === "textarea" ||
+          tag === "select" ||
+          t?.isContentEditable === true;
+        if (!typing) {
+          e.preventDefault();
+          setConfirmKind("rebuild");
+        }
       }
       // Simple focus trap — Tab cycles within dialog
       if (e.key !== "Tab" || !root) return;
@@ -148,23 +267,27 @@ export function SettingsPanel() {
         root.focus();
         return;
       }
-      const first = list[0];
+      const first =
+        root.querySelector<HTMLElement>('[data-settings-nav="appearance"]') ??
+        list[0];
       const last = list[list.length - 1];
       const active = document.activeElement as HTMLElement | null;
       if (e.shiftKey) {
-        if (!active || active === first || !root.contains(active)) {
+        if (!active || active === first || active === root || !root.contains(active)) {
           e.preventDefault();
           last.focus();
         }
-      } else if (!active || active === last || !root.contains(active)) {
+      } else if (!active || active === root || active === last || !root.contains(active)) {
         e.preventDefault();
         first.focus();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => {
+      releaseFocus();
       window.removeEventListener("keydown", onKey);
       prev?.focus?.({ preventScroll: true });
+      requestAnimationFrame(() => restoreFocusOrList(prev));
     };
   }, [open, setOpen]);
 
@@ -209,11 +332,15 @@ export function SettingsPanel() {
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/55 backdrop-blur-[2px]"
-        aria-label="Close settings"
-        onClick={() => setOpen(false)}
+      <div
+        aria-hidden
+        data-settings-backdrop
+        className="absolute inset-0 bg-[var(--overlay)] backdrop-blur-[2px]"
+        onMouseDown={(e) => {
+          // A click behind Settings is not a dismiss. Keep the cursor inside.
+          e.preventDefault();
+          holdAfterBackdrop();
+        }}
       />
       <div
         ref={dialogRef}
@@ -221,34 +348,133 @@ export function SettingsPanel() {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)] outline-none"
+        className="nexus-dialog-in nexus-focus-host nexus-dark-island glass-elevated relative z-10 flex max-h-[min(720px,90dvh)] w-full max-w-[440px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--border)] shadow-[var(--shadow-elevated)]"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(255,255,255,0.08)] bg-white/[0.03] text-[var(--accent)]">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--accent-dim)] text-[var(--accent)]">
             <Settings size={16} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="text-[15px] font-semibold tracking-tight">
+            <h2 id={titleId} className="text-[17px] font-bold tracking-tight text-white" data-testid="settings-title">
               Settings
             </h2>
-            <p className="text-[12px] text-[var(--text-muted)]">
-              Preferences for this device
-            </p>
+            {stayHint ? (
+              <p
+                role="status"
+                data-testid="settings-stay-hint"
+                className="text-[12px] font-semibold text-white"
+              >
+                Settings stay open. Esc or Close leaves.
+              </p>
+            ) : (
+              <p className="text-[12px] text-[var(--text-muted)]">
+                Preferences for this device
+              </p>
+            )}
           </div>
+          <span
+            className="nexus-rename-hint items-center text-[13px] font-semibold text-white"
+            data-testid="settings-esc-hint"
+            aria-hidden
+          >
+            <kbd>Esc</kbd>
+            <span className="ml-1.5 self-center">closes</span>
+          </span>
           <button
             type="button"
-            className="icon-btn"
+            className="icon-btn !h-9 !w-9"
             onClick={() => setOpen(false)}
             aria-label="Close"
           >
             <X size={16} />
           </button>
         </div>
+        <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-5 py-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium text-[var(--text-primary)]">Search index</div>
+            <p className="text-[12px] leading-snug text-[var(--text-muted)]">
+              Your notes stay where they are.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="nexus-rebuild-btn"
+            data-testid="settings-rebuild"
+            data-settings-rebuild
+            aria-label="Rebuild search"
+            title="Opens a confirm. Enter on Cancel leaves search as it is."
+            onClick={() => setConfirmKind("rebuild")}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              setConfirmKind("rebuild");
+            }}
+          >
+            <RotateCcw size={13} aria-hidden />
+            Rebuild search
+          </button>
+        </div>
 
-        <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-5 py-5">
+        <div
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--border)] px-4 py-2"
+          role="tablist"
+          aria-label="Settings sections"
+          data-testid="settings-sections"
+        >
+          {(
+            [
+              ["appearance", "Appearance"],
+              ["editor", "Editor"],
+              ["graph", "Graph"],
+              ["vault", "Vault"],
+            ] as const
+          ).map(([id, label], index, all) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={currentSection === id}
+              data-current={currentSection === id ? "1" : undefined}
+              className="nexus-settings-nav"
+              data-settings-nav={id}
+              data-testid={`settings-nav-${id}`}
+              onClick={() => {
+                document
+                  .getElementById(`settings-section-${id}`)
+                  ?.scrollIntoView({ block: "start" });
+              }}
+              onKeyDown={(e) => {
+                const prev = e.key === "ArrowLeft" || e.key === "ArrowUp";
+                const next = e.key === "ArrowRight" || e.key === "ArrowDown";
+                if (!prev && !next) return;
+                e.preventDefault();
+                const step = prev ? -1 : 1;
+                const target = all[(index + step + all.length) % all.length];
+                document
+                  .getElementById(`settings-section-${target[0]}`)
+                  ?.scrollIntoView({ block: "start" });
+                document
+                  .querySelector<HTMLElement>(
+                    `[data-settings-nav="${target[0]}"]`,
+                  )
+                  ?.focus();
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="settings-body min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4" data-settings-scroll>
           {/* Appearance */}
-          <Section title="Appearance">
-            <Label>Accent color</Label>
+          <Section title="Appearance" sectionId="appearance">
+            <p
+              data-settings-lead="appearance"
+              className="text-[15px] font-semibold leading-snug text-white"
+            >
+              Color, theme, snippets, and density apply as soon as you pick them.
+            </p>
+            <Label className="mt-4">Accent color</Label>
             <div className="mt-2 flex flex-wrap gap-2">
               {(Object.keys(ACCENT_PRESETS) as Exclude<AccentPreset, "custom">[]).map(
                 (key) => {
@@ -264,11 +490,11 @@ export function SettingsPanel() {
                         "flex h-9 items-center gap-2 rounded-full border px-3 text-[12.5px] transition",
                         selected
                           ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--text-primary)]"
-                          : "border-[var(--border)] bg-white/[0.02] text-[var(--text-secondary)] hover:border-[rgba(255,255,255,0.14)]",
+                          : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:bg-[var(--fill-hover)]",
                       )}
                     >
                       <span
-                        className="h-3.5 w-3.5 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.12)]"
+                        className="h-3.5 w-3.5 rounded-full shadow-[0_0_0_1px_var(--border-strong)]"
                         style={{ background: p.hex }}
                       />
                       {p.label}
@@ -291,7 +517,7 @@ export function SettingsPanel() {
                   "flex h-9 items-center gap-2 rounded-full border px-3 text-[12.5px] transition",
                   prefs.accentPreset === "custom"
                     ? "border-[var(--accent)] bg-[var(--accent-dim)]"
-                    : "border-[var(--border)] bg-white/[0.02] text-[var(--text-secondary)]",
+                    : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]",
                 )}
               >
                 <span
@@ -301,7 +527,7 @@ export function SettingsPanel() {
                 Custom
               </button>
               <input
-                className="h-9 min-w-0 flex-1 rounded-[10px] border border-[var(--border)] bg-white/[0.03] px-3 font-mono text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field h-9 min-w-0 flex-1 rounded-[10px] border border-[var(--border)] bg-[var(--bg-primary)] px-3 font-mono text-[12.5px] text-[var(--text-primary)]"
                 value={customDraft}
                 placeholder="#00C8FF"
                 spellCheck={false}
@@ -320,16 +546,8 @@ export function SettingsPanel() {
             </div>
 
             <Label className="mt-5">Theme</Label>
-            <Segmented
-              className="mt-2"
-              value={prefs.theme ?? "dark"}
-              options={[
-                { value: "dark", label: "Dark" },
-                { value: "light", label: "Light" },
-                { value: "system", label: "System" },
-              ]}
-              onChange={(v) => updatePrefs({ theme: v as ThemeMode })}
-            />
+            <ThemePicker />
+            <CssSnippetsSettings open={open} />
 
             <Label className="mt-5">Interface density</Label>
             <Segmented
@@ -368,8 +586,14 @@ export function SettingsPanel() {
           </Section>
 
           {/* Editor */}
-          <Section title="Editor">
-            <Label>Default mode</Label>
+          <Section title="Editor" sectionId="editor">
+            <p
+              data-settings-lead="editor"
+              className="text-[15px] font-semibold leading-snug text-white"
+            >
+              How a note opens, and how large the type is while you write.
+            </p>
+            <Label className="mt-4">Default mode</Label>
             <Segmented
               className="mt-2"
               value={prefs.defaultEditorMode}
@@ -414,8 +638,14 @@ export function SettingsPanel() {
           </Section>
 
           {/* Graph */}
-          <Section title="Graph">
-            <Label>Default view</Label>
+          <Section title="Graph" sectionId="graph">
+            <p
+              data-settings-lead="graph"
+              className="text-[15px] font-semibold leading-snug text-white"
+            >
+              Keep the graph in the side panel, or leave it hidden until you open it.
+            </p>
+            <Label className="mt-4">Default view</Label>
             <Segmented
               className="mt-2"
               value={prefs.defaultGraphView}
@@ -446,8 +676,49 @@ export function SettingsPanel() {
           </Section>
 
           {/* Vault */}
-          <Section title="Vault & Files">
+          <Section title="Vault & Files" sectionId="vault">
+            <p
+              data-settings-lead="vault"
+              className="text-[15px] font-semibold leading-snug text-white"
+            >
+              Deleting a note asks first. The folder stays on this device.
+            </p>
+            <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/60 px-3 py-2.5">
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                Vault scale
+              </div>
+              <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                A large folder opens the same way as a small one. Search is ready
+                for the notes on screen first.
+                {noteCount < 0 ? (
+                  <>
+                    {" "}
+                    <span className="text-[var(--text-primary)]" data-testid="settings-note-count">
+                      {noteCountLabel}
+                    </span>{" "}
+                    The total appears once the folder has been listed.
+                  </>
+                ) : noteCount > 0 ? (
+                  <>
+                    {" "}
+                    This vault has{" "}
+                    <span className="text-[var(--text-primary)]" data-testid="settings-note-count">
+                      {noteCountLabel}
+                    </span>
+                    {mode === "demo"
+                      ? ". These are sample notes, not saved to a folder."
+                      : mode === "local"
+                        ? ". They stay in this browser until you open a folder."
+                        : ". Note text loads when you open it."}
+                  </>
+                ) : (
+                  <> This vault has no notes yet. Enter starts a note.</>
+                )}
+              </p>
+              <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} totalNotes={noteCount} />
+            </div>
             <ToggleRow
+              className="mt-3"
               label="Confirm before delete"
               description="Ask before removing notes or folders"
               checked={prefs.confirmDelete}
@@ -460,31 +731,6 @@ export function SettingsPanel() {
               checked={prefs.openLastVault}
               onChange={(v) => updatePrefs({ openLastVault: v })}
             />
-            <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/60 px-3 py-2.5">
-              <div className="text-[13px] font-medium text-[var(--text-primary)]">
-                Vault scale
-              </div>
-              <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
-                Designed for large folders. Open is progressive (metadata first).
-                Search uses an on-disk index on desktop.
-                {noteCount > 0 ? (
-                  <>
-                    {" "}
-                    This vault:{" "}
-                    <span className="text-[var(--text-secondary)]">
-                      {noteCount.toLocaleString()} notes
-                    </span>
-                    {mode === "demo"
-                      ? " (demo — sample vault, not on disk)"
-                      : mode === "local"
-                        ? " (in-memory)"
-                        : " (bodies load as you open notes)"}
-                    .
-                  </>
-                ) : null}
-              </p>
-              <MemoryBudgetStatus open={open} vaultId={vaultId} mode={mode} />
-            </div>
             <div className="mt-4">
               <div className="text-[13px] font-medium text-[var(--text-primary)]">
                 Daily notes folder
@@ -494,7 +740,7 @@ export function SettingsPanel() {
               </p>
               <input
                 type="text"
-                className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                className="nexus-field mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)]"
                 value={prefs.dailyFolder}
                 spellCheck={false}
                 aria-label="Daily notes folder"
@@ -506,35 +752,9 @@ export function SettingsPanel() {
                 }}
               />
             </div>
-            <div className="mt-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[13px] font-medium text-[var(--text-primary)]">
-                    Rebuild search index
-                  </div>
-                  <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
-                    Refresh titles and snippets if search looks stale
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="ghost-btn shrink-0 text-[12px]"
-                  onClick={() => {
-                    const st = useVaultStore.getState();
-                    invalidateIndexedSearch();
-                    rebuildIndexedSearch(st.nodes);
-                    rebuildDurableIndexFromNodes(
-                      st.vaultId,
-                      st.nodes,
-                      Boolean(st.vaultId),
-                    );
-                    st.setToast("Search index rebuilt");
-                  }}
-                >
-                  Rebuild
-                </button>
-              </div>
-            </div>
+            <p className="mt-4 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+              Rebuild search is the button under the title. Your notes stay where they are.
+            </p>
             <div className="mt-3">
 
               <div className="flex items-start justify-between gap-3">
@@ -547,7 +767,7 @@ export function SettingsPanel() {
                   </p>
                 </div>
                 <select
-                  className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12.5px] text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                  className="nexus-field shrink-0 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-[12.5px] text-[var(--text-primary)]"
                   value={prefs.launchNoteMode ?? (prefs.openTodayOnLaunch ? "today" : "last")}
                   onChange={(e) =>
                     updatePrefs({
@@ -566,31 +786,16 @@ export function SettingsPanel() {
             </div>
           </Section>
 
-          <Section title="Agents & Grok">
+          <Section title="External agents">
             <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-              Humans and agents share the same folder of Markdown. Point Grok,
-              Cursor, or any script at this vault. Nexus watches the disk,
-              shows writes in Pulse, and opens Conflict Studio when you and an
-              agent edit the same note at once.
+              An agent can write Markdown in this same folder. Nexus notices the
+              new file and opens a side-by-side compare if you were editing it too.
             </p>
-            <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-              <li>Open a real folder (or stay in the demo vault).</li>
-              <li>
-                Have an agent write a <span className="font-mono">.md</span> file
-                — or run <strong>Simulate agent write</strong> from the vault
-                menu / command palette.
-              </li>
-              <li>
-                Open Pulse. To practice a conflict, edit{" "}
-                <span className="font-mono">Systems/Hermes Pulse.md</span> then
-                simulate again — Keep mine / Take theirs.
-              </li>
-            </ol>
             {vaultId ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  className="min-h-9 rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
                   onClick={() => {
                     useVaultStore.getState().simulateHermesWrite();
                     useVaultStore.getState().openPulseRail?.();
@@ -601,7 +806,7 @@ export function SettingsPanel() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-1.5 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  className="min-h-9 rounded-lg border border-[var(--border)] bg-[var(--fill-subtle)] px-3 text-[12.5px] text-[var(--text-primary)] hover:border-[var(--accent)]"
                   onClick={() => {
                     useVaultStore.getState().practiceAgentConflict();
                     useVaultStore.getState().openPulseRail?.();
@@ -617,8 +822,8 @@ export function SettingsPanel() {
               </p>
             )}
             <p className="mt-3 text-[11.5px] leading-snug text-[var(--text-muted)]">
-              No API keys live in Nexus. Grok Bot and external agents write
-              files on disk. Keep notes in clean Markdown so diffs stay honest.
+              No API keys live in Nexus. External tools write files on disk.
+              Keep notes in clean Markdown so diffs stay honest.
             </p>
           </Section>
 
@@ -791,41 +996,45 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Search & Ask"
-                body={`${formatShortcut("K")} opens search. Prefix ask: or ?  for a grounded answer with citations. Operators: path: folder: file: #tag -exclude is:orphan. Trash restore is in the sidebar, the delete toast, and ${formatShortcut("K")} trash / is:deleted.`}
+                body={`${formatShortcut("K")} opens search. Prefix ask: or ?  for a grounded answer with citations. ${SEARCH_OPERATOR_HELP} Trash restore is in the sidebar, the delete toast, and ${formatShortcut("K")} trash / is:deleted.`}
+              />
+              <HelpItem
+                title="Tasks"
+                body="Built-in Tasks lists unchecked - [ ] and * [ ] lines. A 📅 YYYY-MM-DD on the line is the due date and wins. Otherwise a note due: YYYY-MM-DD applies to open tasks on that note. Due today and Overdue filter incomplete tasks by that date. Upcoming keeps incomplete tasks whose due date is after today. No due keeps incomplete tasks with no calendar date. Priority markers ⏫ 🔼 🔽 ⏬ ❗ are read from the line. High keeps incomplete tasks marked ⏫ or ❗. Med keeps incomplete tasks marked 🔽. Low keeps incomplete tasks marked ⏬. A 🔁 plus a rule, such as every day, is a recurrence label. Recurring keeps those incomplete tasks. Completing a recurring row schedules the next due when the rule is every day, every week, every month, or every year, including a count such as every 2 weeks. The date on the line wins over the note due:. A row with no recurrence only marks the line done. Dataview queries are not supported. Open a row to jump to that note. The box marks the line done in the file."
               />
               <HelpItem
                 title="Graph"
-                body="The graph maps [[wikilinks]] and a folder map for large vaults: folder spheres open a level; notes open and show links near the active note. Small vaults still show every note. Click a node to open it."
+                body={`${formatShortcut("G")} always opens the Local graph: this note and the notes it links, even after Folder Map. Folder Map stays one click on the graph bar and opens the 3D vault, where folder spheres open a level. Small vaults still show every note there. Click a node to open it.`}
               />
               <HelpItem
                 title="Cloud"
                 body="Built-in sync watches your vault folder. Put it in Dropbox, Drive, OneDrive, iCloud, or Syncthing — no Nexus account. Conflicts open in Conflict Studio."
               />
               <HelpItem
-                title="Hermes, Grok & agents"
-                body={`External apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Practice agent conflict from the vault menu, Pulse, Settings → Agents, or ${formatShortcut("K")}.`}
+                title="External agents"
+                body={`Other apps edit the same .md files. Pulse lists writes. Conflict Studio resolves overlaps. Practice a conflict from the vault menu, Pulse, Settings → External agents, or ${formatShortcut("K")}.`}
               />
               <HelpItem
                 title="Desktop"
                 body={
                   isAppleModPlatform()
-                    ? `The desktop app (Tauri) opens a real folder and watches it. Reveal in Finder shows that folder. Open Settings with ${formatShortcut(",")}.`
-                    : `The desktop app (Tauri) opens a real folder and watches it. Reveal in your file manager shows that folder. Open Settings with ${formatShortcut(",")}.`
+                    ? `Nexus on this computer opens a real folder and notices when files change. Reveal in Finder shows that folder. Open Settings with ${formatShortcut(",")}.`
+                    : `Nexus on this computer opens a real folder and notices when files change. Reveal in your file manager shows that folder. Open Settings with ${formatShortcut(",")}.`
                 }
               />
               <HelpItem
                 title="Local folder (browser)"
-                body="Chrome or Edge: Open… uses the File System Access API and remembers the directory handle in IndexedDB. After a reload the browser still asks you to re-grant access — that is a browser permission gate, not a Nexus account. This Cloud Agent VM does not exercise FSA or Tauri; on your machine, Open… (Chromium) or the desktop build is the local-folder path."
+                body="In Chrome or Edge, Open… asks for a folder and remembers it. After a reload the browser asks you to allow that folder again. Nexus on this computer opens the same folder without that extra step."
               />
             </div>
-            <p className="mt-3 text-[11.5px] text-[var(--text-muted)]">
-              Everyday reference — deeper guides can grow as the product matures.
+            <p className="mt-3 text-[12.5px] text-[var(--text-secondary)]">
+              Short answers for everyday use.
             </p>
           </Section>
 
           {/* About */}
           <Section title="About">
-            <div className="flex items-start gap-3 rounded-[14px] border border-[var(--border)] bg-white/[0.02] p-3.5">
+            <div className="flex items-start gap-3 rounded-[14px] border border-[var(--border)] bg-[var(--fill-subtle)] p-3.5">
               <NexusMark size={36} className="text-[var(--text-primary)]" />
               <div className="min-w-0">
                 <NexusWordmark size="md" showMark={false} />
@@ -834,6 +1043,9 @@ export function SettingsPanel() {
                 </div>
                 <p className="mt-1.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
                   Local-first Markdown notes for humans and agents.
+                </p>
+                <p className="mt-1 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                  No plugin API in this beta — plain Markdown, built-in query blocks, and a Tasks list.
                 </p>
                 <div className="mt-1 text-[12px] text-[var(--text-muted)]">
                   Version {NEXUS_VERSION}
@@ -851,7 +1063,7 @@ export function SettingsPanel() {
                 </div>
                 <div>
                   <span className="text-[var(--text-muted)]">Notes · </span>
-                  {noteCount}
+                  {noteCount < 0 ? "counting…" : noteCountLabel.replace(/ notes/, "")}
                 </div>
               </div>
             ) : (
@@ -861,18 +1073,62 @@ export function SettingsPanel() {
             )}
           </Section>
 
-          <button
-            type="button"
-            className="ghost-btn w-full justify-center text-[12.5px]"
-            onClick={() => {
-              resetPrefs();
-              setCustomDraft(DEFAULT_CUSTOM);
-            }}
-          >
-            Reset to defaults
-          </button>
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                Reset settings
+              </div>
+              <p className="mt-0.5 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                Appearance, editor, and shortcuts go back to their originals. This vault stays.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="ghost-btn !h-9 shrink-0 px-3 text-[13px] !text-[var(--danger)]"
+              data-settings-reset
+              onClick={() => setConfirmKind("reset")}
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmKind !== null}
+        danger={confirmKind === "reset"}
+        initialFocus="cancel"
+        testId={confirmKind === "rebuild" ? "rebuild-confirm" : undefined}
+        title={confirmKind === "rebuild" ? "Rebuild search?" : "Reset settings?"}
+        message={
+          confirmKind === "rebuild"
+            ? "Refresh search for this vault. Notes on disk stay as they are. A large vault can take a moment."
+            : "Restore appearance, editor, and shortcuts to their original settings. This vault stays as it is."
+        }
+        confirmLabel={confirmKind === "rebuild" ? "Rebuild" : "Reset"}
+        returnTo={
+          confirmKind === "rebuild" ? '[data-testid="settings-rebuild"]' : undefined
+        }
+        onCancel={() => {
+          setConfirmKind(null);
+        }}
+        onConfirm={() => {
+          if (confirmKind === "rebuild") {
+            const st = useVaultStore.getState();
+            invalidateIndexedSearch();
+            rebuildIndexedSearch(st.nodes);
+            rebuildDurableIndexFromNodes(
+              st.vaultId,
+              st.nodes,
+              Boolean(st.vaultId),
+            );
+            st.setToast("Search index rebuilt");
+          } else if (confirmKind === "reset") {
+            resetPrefs();
+            setCustomDraft(DEFAULT_CUSTOM);
+          }
+          setConfirmKind(null);
+        }}
+      />
     </div>
   );
 }
@@ -892,11 +1148,11 @@ function HelpItem({
   body: string;
 }) {
   return (
-    <div className="rounded-[12px] border border-[var(--border)] bg-white/[0.02] px-3 py-2.5">
+    <div className="rounded-[12px] border border-[var(--border)] bg-[var(--fill-subtle)] px-3 py-2.5">
       <div className="text-[12.5px] font-semibold text-[var(--text-primary)]">
         {title}
       </div>
-      <p className="mt-1 text-[12px] leading-snug text-[var(--text-muted)]">
+      <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
         {body}
       </p>
     </div>
@@ -905,14 +1161,19 @@ function HelpItem({
 
 function Section({
   title,
+  sectionId,
   children,
 }: {
   title: string;
+  sectionId?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section>
-      <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+    <section
+      id={sectionId ? `settings-section-${sectionId}` : undefined}
+      data-settings-section={sectionId}
+    >
+      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
         {title}
       </h3>
       {children}
@@ -953,7 +1214,7 @@ function Segmented({
   return (
     <div
       className={cn(
-        "flex rounded-[10px] border border-[var(--border)] bg-white/[0.02] p-0.5",
+        "flex rounded-[10px] border border-[var(--border)] bg-[var(--fill-subtle)] p-0.5",
         className,
       )}
     >
@@ -961,6 +1222,7 @@ function Segmented({
         <button
           key={o.value}
           type="button"
+          aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
             "min-h-8 flex-1 rounded-[8px] px-2 text-[12.5px] font-medium transition",
@@ -1016,8 +1278,8 @@ function ToggleRow({
         aria-describedby={description ? descId : undefined}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
-          checked ? "bg-[var(--accent)]" : "bg-white/[0.12]",
+          "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200",
+          checked ? "bg-[var(--accent)]" : "bg-[var(--switch-off)]",
         )}
       >
         <span

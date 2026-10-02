@@ -14,7 +14,10 @@ import type {
   VaultSettings,
 } from "./types";
 import { DEFAULT_SETTINGS, noteTitle, parentPath, pathJoin } from "./types";
-import { buildBlankVault, buildDemoVault, HERMES_SAMPLE_NOTE } from "./demo-vault";
+import { AGENT_SAMPLE_NOTE, buildBlankVault, buildDemoVault } from "./demo-vault";
+import { shouldSkipLaunchNote } from "./launch-note";
+import { keepIdsByPath, keepRecentLocalBodies, keepRenamedShellIds } from "./stable-ids";
+import { writeIntentState } from "@/lib/editor/write-intent";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import {
   buildSyntheticVault,
@@ -26,9 +29,19 @@ import {
   partializeVaultPersist,
   type ScaleRemount,
 } from "./persist-policy";
+import {
+  closeNoteTab as closeTabList,
+  cycleNoteTab as cycleTabList,
+  openNoteTab,
+  reorderNoteTabs as reorderTabList,
+  settlePaneTabs,
+  tabsEqual,
+} from "./note-tabs";
 import { preferCleanWrite } from "@/lib/markdown/serialize";
 import { flushActiveEditors } from "@/lib/editor/flush";
+import { setFindFocusPane } from "@/lib/editor/find-target";
 import { slugifyTitle } from "@/lib/utils";
+import { emptyCanvasFile, isCanvasNote, isCanvasPath } from "./canvas";
 import {
   clearDirectoryHandle,
   createFolderOnDisk,
@@ -41,7 +54,6 @@ import {
   renamePathOnDisk,
   saveDirectoryHandle,
   scanVault,
-  scanVaultMeta,
   writeNoteFile,
   readNoteFile,
   readNoteFileHead,
@@ -63,6 +75,8 @@ import {
   readDesktopNote,
   listDesktopTrash,
   deskNodeId,
+  assertDesktopRootReadable,
+  countDesktopFolderEntries,
 } from "./tauri-adapter";
 import {
   DesktopFsForbiddenError,
@@ -106,6 +120,14 @@ import {
   markdownFingerprint,
 } from "@/lib/markdown/purity";
 import { recordNoteVisit, recentNoteIdsForVault } from "./visit-history";
+import {
+  loadTabSession,
+  pathIndex,
+  resolveTabList,
+  saveTabSession,
+  type TabSession,
+} from "./tab-session";
+import { recallPaneScroll, rememberPaneScroll } from "@/lib/editor/pane-scroll";
 import { trackVisit } from "./session-recents";
 import { pushNav, resetNavHistory } from "./nav-history";
 import { clearPulse, pushPulse } from "./pulse";
@@ -132,6 +154,15 @@ import {
 } from "./body-archive";
 import { yieldToUi } from "./yield-ui";
 import {
+  DESKTOP_ROOT_STORAGE_KEY,
+  rememberSavedPage,
+  SAVED_PAGE_READY_MESSAGE,
+  savedPageBannerUp,
+  savedPageTitlesLive,
+  takePrefetchedDesktopShell,
+} from "./desktop-boot";
+import { publishReadyClock } from "./ready-clock";
+import {
   applyLargeVaultOverlay,
   clearLargeVaultOverlay,
   flushLargeVaultOverlay,
@@ -151,21 +182,23 @@ import {
   getSearchIndexState,
   isEmptyNativeFillFailure,
   setSearchIndexState,
+  honestFillTotal,
   sqliteFillPhaseMessage,
   sqliteFillReadyMessage,
+  sqliteFillSettledMessage,
   isInFlightFillError,
-  FILL_IN_PROGRESS_TOAST,
-  shouldBlockDesktopOpen,
+  isTitleSearchLive,
   shouldJoinDesktopFill,
+  shouldWaitForInflightFill,
 } from "./sqlite-fill-progress";
 import { isNativeFillInFlight } from "./native-sqlite-index";
 import {
   shouldDeferNoteBodyHydrate,
   shouldSkipDurableUpsertOnHydrate,
+  shouldIndexOpenedDesktopNote,
 } from "./fill-interaction";
-import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseFolderGraph } from "./scale-flags";
+import { isLargeMemoryVault, shouldLazyBodies, shouldUseDurableIndex, shouldUseEgoGraph, shouldUseFolderGraph } from "./scale-flags";
 import {
-  CHROME_FSA_GETFILE_MAX,
   CHROME_FSA_NOTE_CAP,
   allowForcedLargeFsa,
   chromeFsaLimitKind,
@@ -180,6 +213,7 @@ import {
   getDurableIndex,
   openDurableIndexForVault,
   upsertDurableNoteFromNode,
+  indexOpenedDesktopNote,
   syncDurableIndexFromNodes,
   removeDurableNote,
   rebuildDurableIndexFromNodesAsync,
@@ -218,14 +252,39 @@ import {
 } from "./conflicts";
 import type { TrashEntry } from "./trash";
 import { trashEntryFromRel } from "./trash";
-import { assertBodyLoaded } from "./content";
+import { assertBodyLoaded, bumpBodyGen } from "./content";
 import {
-  nativeMetaWalk,
-  vaultScanFromNodeMeta,
   setOpenProgress,
   getOpenProgress,
   isIndexFillInFlight,
 } from "./native-index";
+import { admitBrowserPaths, closeBrowserShell, indexOpenBrowserNote, mountBrowserShell } from "./browser-shell";
+import {
+  BROWSER_SHELL_DB,
+  SHELL_CATALOG_OFF,
+  SHELL_CHILD_PAGE,
+  SHELL_FULL_MAX_NOTES,
+  SHELL_ROOT_KEY,
+  dropShellIds,
+  fetchShellChildren,
+  fetchShellAdmit,
+  fetchShellForget,
+  fetchShellNote,
+  fetchShellByPaths,
+  fetchShellSearch,
+  mergeShellRows,
+  onShellCatalogReconciled,
+  wakeShellCatalog,
+  adoptBootShell,
+  mountShellCatalog,
+  nodesFromShellRows,
+  pageHidden,
+  shellParentKeyForPath,
+  shellParentPath,
+  shellSessionFromMount,
+  type ShellMount,
+  type ShellRow,
+} from "./shell-catalog";
 import { invalidateVaultTagsCache } from "./tags";
 import { recordNoteRevision, getNoteRevision, clearNoteHistory } from "./note-history";
 
@@ -235,7 +294,9 @@ export type RightTab =
   | "graph"
   | "pulse"
   | "attachments"
-  | "history";
+  | "history"
+  | "tasks"
+  | "outgoing";
 export type ToastAction =
   | { label: string; kind: "open-pulse" }
   | { label: string; kind: "restore-trash"; trashPath: string };
@@ -251,8 +312,10 @@ export type OpenNoteOpts = {
   heading?: string | null;
   blockId?: string | null;
   pane?: EditorPaneRole | "auto";
-  /** Skip nav-history push (secondary pane / history restore). */
+  /** Skip nav-history push (secondary pane / history restore / tab switch). */
   silent?: boolean;
+  /** Keep the current tab and open this note beside it. */
+  newTab?: boolean;
 };
 
 export type UpdateNoteOpts = {
@@ -264,6 +327,8 @@ export type CreateNoteOpts = {
   content?: string;
   raw?: boolean;
   template?: NoteTemplateId;
+  /** `.canvas` creates a canvas file. Anything else stays a Markdown note. */
+  extension?: ".md" | ".canvas";
 };
 export type CreateFolderOpts = { expand?: boolean };
 export type DailyNoteOpts = { silent?: boolean };
@@ -286,6 +351,10 @@ export type VaultStore = {
   rootIds: string[];
   activeNoteId: string | null;
   secondaryNoteId: string | null;
+  /** Notes open in the main pane, left to right. Session only. */
+  primaryTabs: string[];
+  /** Notes open in the second pane. Session only. */
+  secondaryTabs: string[];
   pendingJump: NoteJump | null;
   settings: VaultSettings;
   expandedFolders: string[];
@@ -318,6 +387,19 @@ export type VaultStore = {
   graphEgoReturnPath: string | null;
   /** Ticket to remount a large in-memory vault after reload (nodes never persisted). */
   scaleRemount: ScaleRemount | null;
+  /** Desktop large vault: `nodes` is a window, catalog lives in SQLite. */
+  shellCatalog: boolean;
+  catalogNoteCount: number;
+  catalogFolderCount: number;
+  shellDbPath: string | null;
+  /** Parent id → notes/folders not loaded into `nodes`. `__root__` is the vault root. */
+  shellUnloaded: Record<string, number>;
+  /** Parent id → rows already fetched for that parent. */
+  shellLoaded: Record<string, number>;
+  /** Bumps while fill commits so tags and deferred pages refresh. */
+  shellLiveTick: number;
+  /** Obsidian's reading view: the open note rendered, no editor. Not persisted. */
+  readingView: boolean;
 
   bootstrap: () => Promise<void>;
   openDemoVault: () => void;
@@ -339,6 +421,11 @@ export type VaultStore = {
   toggleWorkspaceSplit: () => void;
   closeSecondaryPane: () => void;
   swapWorkspacePanes: () => void;
+  /** Close one tab. The neighbor becomes active. The last secondary tab closes the split. */
+  closeNoteTab: (pane: EditorPaneRole, id: string) => string | null;
+  reorderNoteTabs: (pane: EditorPaneRole, fromId: string, toId: string) => void;
+  /** Move to the next or previous tab in that pane. Returns the note now showing. */
+  cycleNoteTab: (pane: EditorPaneRole, dir: 1 | -1) => string | null;
   clearPendingJump: () => void;
   restoreNoteRevision: (noteId: string, revId: string) => boolean;
   toggleFolder: (id: string) => void;
@@ -350,6 +437,8 @@ export type VaultStore = {
   setEditorMode: (mode: EditorMode) => void;
   setGraphMode: (mode: GraphMode) => void;
   toggleEditorMode: () => void;
+  setReadingView: (on: boolean) => void;
+  toggleReadingView: () => void;
   toggleLeft: () => void;
   toggleRight: () => void;
   toggleGraphFullscreen: () => void;
@@ -362,6 +451,7 @@ export type VaultStore = {
     title?: string,
     opts?: CreateNoteOpts,
   ) => string | null;
+  createCanvas: (parentId: string | null, title?: string) => string | null;
   createFolder: (
     parentId: string | null,
     name?: string,
@@ -402,6 +492,11 @@ export type VaultStore = {
   getActiveNote: () => VaultNode | null;
   getChildren: (parentId: string | null) => VaultNode[];
   ensureNoteBody: (id: string) => Promise<string | null>;
+  loadShellChildren: (parentId: string) => Promise<void>;
+  settleFolderForEnter: (folderId: string) => Promise<void>;
+  ingestShellRows: (rows: ShellRow[]) => void;
+  refreshShellPaths: (paths: string[]) => void;
+  reloadShellParent: (parentId: string) => Promise<void>;
   flushDirty: () => Promise<void>;
   getBodyMemoryStats: () => BodyCacheStats;
   trimBodyCache: (opts?: { aggressive?: boolean }) => number;
@@ -435,6 +530,7 @@ const GRAPH_SCOPE_DEFAULTS = {
   graphEgoReturnPath: null as string | null,
   secondaryNoteId: null as string | null,
   pendingJump: null as NoteJump | null,
+  ...SHELL_CATALOG_OFF,
 };
 
 
@@ -466,6 +562,71 @@ let mockDiskBodies: Map<string, string> | null = null;
 let diskSearchReady = false;
 /** In-flight body hydrates — dedupe concurrent ensureNoteBody */
 let bodyHydrateInflight = new Map<string, Promise<string | null>>();
+const missingBodyIds = new Set<string>();
+// Paths this app created, renamed, or wrote in the last few seconds. A folder
+// rescan or a disk read that races those writes must not replace or drop the
+// text the app holds for them: it is newer than anything on disk.
+const localWrites = new Map<string, { at: number; bodies: string[] }>();
+const LOCAL_WRITE_TRUST_MS = 10_000;
+
+function markLocalWrite(path: string | null | undefined, body?: string, from?: string): void {
+	if (!path) return;
+	const prior = localWrites.get(path)?.bodies ?? [];
+	const carried = from ? (localWrites.get(from)?.bodies ?? []) : [];
+	const bodies = [...carried, ...prior];
+	if (typeof body === "string") bodies.push(body);
+	localWrites.set(path, { at: Date.now(), bodies: bodies.slice(-6) });
+}
+
+/** True when the app itself wrote this path moments ago. */
+export function wroteHereRecently(path: string | null | undefined): boolean {
+	if (!path) return false;
+	const entry = localWrites.get(path);
+	if (!entry) return false;
+	if (Date.now() - entry.at > LOCAL_WRITE_TRUST_MS) {
+		localWrites.delete(path);
+		return false;
+	}
+	return true;
+}
+
+/**
+ * The rescan's copy of a path the app just wrote is only the app's own older
+ * write (or no body at all). A body the app never wrote is an outside edit and
+ * goes through the normal conflict handling instead.
+ */
+export function diskCopyIsOurs(path: string, diskBody: string | undefined): boolean {
+	if (!wroteHereRecently(path)) return false;
+	if (diskBody === undefined) return true;
+	const bodies = localWrites.get(path)?.bodies ?? [];
+	const want = diskBody.replace(/\s+$/, "");
+	return bodies.some((b) => b === diskBody || b.replace(/\s+$/, "") === want);
+}
+const failedBodyIds = new Set<string>();
+
+export function isMissingFileError(e: unknown): boolean {
+	const msg = (e instanceof Error ? `${e.name} ${e.message}` : String(e ?? "")).toLowerCase();
+	return (
+		msg.includes("notfounderror") ||
+		msg.includes("not found") ||
+		msg.includes("no such file") ||
+		msg.includes("os error 2") ||
+		msg.includes("enoent") ||
+		msg.includes("could not be found") ||
+		msg.includes("cannot find the file") ||
+		msg.includes("note not loaded")
+	);
+}
+
+/** The last read of this note failed because its file is gone, not a transient error. */
+export function noteFileIsMissing(id: string): boolean {
+	return missingBodyIds.has(id);
+}
+
+/** The last read of this note came back empty-handed, so panels stop waiting on it. */
+export function noteBodyFailed(id: string): boolean {
+	return failedBodyIds.has(id);
+}
 /** Conflict pair cache — invalidated by structureGeneration / nodes ref */
 let _conflictPairsCache: ConflictPair[] | null = null;
 let _conflictPairsStructGen = -1;
@@ -496,6 +657,8 @@ let pendingExternal: { nodes: Record<string, VaultNode>; rootIds: string[] } | n
 const demoSaveTimers = new Map<string, number>();
 /** path → fingerprint of external body already shelved as .conflict-* */
 let shelvedConflicts = new Map<string, string>();
+/** One in-flight page fetch per tree parent. */
+const shellPageInflight = new Set<string>();
 type StageBuf = {
 	nodes: Record<string, VaultNode>;
 	rootIds: string[];
@@ -511,9 +674,11 @@ async function resyncFromDiskAfterError() {
 	lastDiskResyncAt = now;
 	try {
 		if (desktopRoot) {
+			if (useVaultStore.getState().shellCatalog) return;
 			const { scan } = await loadDiskVaultScan("desktop");
 			useVaultStore.getState().applyExternalSnapshot(scan.nodes, scan.rootIds);
 		} else if (fsaRoot) {
+			if (useVaultStore.getState().shellCatalog) return;
 			const { scan } = await loadDiskVaultScan("fsa");
 			useVaultStore.getState().applyExternalSnapshot(scan.nodes, scan.rootIds);
 		}
@@ -604,6 +769,24 @@ function patchVaultIndex(nodes: Record<string, VaultNode>, dirtyIds: string[]) {
 		idx.sync(nodes);
 	} catch {}
 }
+function stageCommit(s: StageBuf): Partial<VaultStore> {
+	const cur = useVaultStore.getState();
+	const patch: Partial<VaultStore> = {
+		nodes: s.nodes,
+		rootIds: s.rootIds,
+		expandedFolders: s.expandedFolders,
+		dirtyNoteIds: s.dirtyNoteIds,
+		activeNoteId: s.activeNoteId,
+	};
+	if (s.activeNoteId !== cur.activeNoteId) {
+		const opened = s.activeNoteId
+			? openNoteTab(cur.primaryTabs ?? [], cur.activeNoteId, s.activeNoteId, "replace")
+			: { tabs: [] as string[], activeId: null as string | null };
+		patch.activeNoteId = opened.activeId;
+		patch.primaryTabs = opened.tabs;
+	}
+	return patch;
+}
 function scheduleStageFlush(set: (partial: Partial<VaultStore>) => void) {
 	if (stageTimer) return;
 	stageTimer = setTimeout(() => {
@@ -611,13 +794,7 @@ function scheduleStageFlush(set: (partial: Partial<VaultStore>) => void) {
 		const s = stageBuf;
 		stageBuf = null;
 		if (!s) return;
-		set({
-			nodes: s.nodes,
-			rootIds: s.rootIds,
-			expandedFolders: s.expandedFolders,
-			dirtyNoteIds: s.dirtyNoteIds,
-			activeNoteId: s.activeNoteId
-		});
+		set(stageCommit(s));
 	}, CREATE_BATCH_MS);
 }
 function flushStageNow(set: (partial: Partial<VaultStore>) => void) {
@@ -628,16 +805,10 @@ function flushStageNow(set: (partial: Partial<VaultStore>) => void) {
 	const s = stageBuf;
 	stageBuf = null;
 	if (!s) return;
-	set({
-		nodes: s.nodes,
-		rootIds: s.rootIds,
-		expandedFolders: s.expandedFolders,
-		dirtyNoteIds: s.dirtyNoteIds,
-		activeNoteId: s.activeNoteId
-	});
+	set(stageCommit(s));
 }
 /** Cancel module-level vault timers/buffers (close or switch vault). */
-function cancelVaultModuleState() {
+function cancelVaultModuleState(opts?: { keepFill?: boolean }) {
 	vaultGen += 1;
 	if (stageTimer) {
 		clearTimeout(stageTimer);
@@ -657,12 +828,14 @@ function cancelVaultModuleState() {
 	shelvedConflicts.clear();
 	bodyHydrateInflight.clear();
 	mockDiskBodies = null;
-	diskSearchReady = false;
-	setSearchIndexState("idle");
-	try {
-		const idx = getDurableIndex();
-		if (idx?.cancelFill) void idx.cancelFill();
-	} catch {}
+	if (!opts?.keepFill) {
+		diskSearchReady = false;
+		setSearchIndexState("idle");
+		try {
+			const idx = getDurableIndex();
+			if (idx?.cancelFill) void idx.cancelFill();
+		} catch {}
+	}
 	_conflictPairsCache = null;
 	_conflictPairsStructGen = -1;
 	_conflictPairsNodesRef = null;
@@ -788,6 +961,34 @@ async function mergeLargeVaultOverlay(
 	return { rootIds: nextRoots, applied, noteCount };
 }
 
+/** Paged browser search lives in the local catalog. Reconciling the window would shrink it. */
+function browserCatalogOwnsSearch(): boolean {
+	const live = useVaultStore.getState();
+	return live.shellCatalog && live.shellDbPath === BROWSER_SHELL_DB;
+}
+
+/**
+ * The browser catalog is the window. Ready is that page, not a second copy
+ * of every note in the tab.
+ */
+function announceBrowserCatalogReady(): void {
+	diskSearchReady = true;
+	if (getSearchIndexState() === "idle") setSearchIndexState("ready-meta");
+	const live = useVaultStore.getState();
+	if (live.catalogNoteCount > 0) setBodyCacheNoteCount(live.catalogNoteCount);
+	if (getOpenProgress().phase === "ready") return;
+	let pageNotes = 0;
+	for (const id in live.nodes) {
+		if (live.nodes[id]?.kind === "note") pageNotes += 1;
+	}
+	setOpenProgress({
+		phase: "ready",
+		scanned: Math.max(1, Math.min(32, pageNotes || 1)),
+		totalHint: null,
+		message: SAVED_PAGE_READY_MESSAGE,
+	});
+}
+
 function maybeSyncDurableIndex(
 	vaultId: string | null,
 	mode: VaultMode,
@@ -797,11 +998,16 @@ function maybeSyncDurableIndex(
 		// Desktop SQLite is filled from disk in Rust. Reconciling 100k–300k
 		// meta rows from JS is an IPC storm and is not the Wave E path.
 		if (getDurableIndex()?.kind === "sqlite") return;
+		if (browserCatalogOwnsSearch()) return;
 		syncDurableIndexFromNodes(vaultId, nodes, shouldUseDurableIndex(mode, vaultId));
 	} catch {}
 }
 /** Prefer SQLite on desktop; memory on FSA/sandbox. Large-test local uses memory FTS. */
-async function prepareDurableIndex(vaultId: string | null, mode: VaultMode) {
+async function prepareDurableIndex(
+	vaultId: string | null,
+	mode: VaultMode,
+	dbPath?: string | null,
+) {
 	if (!vaultId || !shouldUseDurableIndex(mode, vaultId)) {
 		closeDurableIndex();
 		return;
@@ -811,7 +1017,8 @@ async function prepareDurableIndex(vaultId: string | null, mode: VaultMode) {
 		await openDurableIndexForVault({
 			vaultId,
 			mode,
-			vaultRoot: root
+			vaultRoot: root,
+			dbPath,
 		});
 		invalidateIndexedSearch();
 	} catch {}
@@ -840,11 +1047,29 @@ async function seedLinkIndexFromDurable(
 	} | null,
 	opts?: { allowEmpty?: boolean },
 ): Promise<number> {
+	// A shell window must not copy every link edge into the WebView.
+	// Ego and backlinks for that mode query SQLite per note.
+	if (useVaultStore.getState().shellCatalog) {
+		vaultLinkIndex.markPending();
+		return 0;
+	}
 	if (!index?.listLinkGroups) return 0;
 	try {
 		const groups = await index.listLinkGroups();
 		if (!groups.length && !opts?.allowEmpty) return 0;
-		return seedLinkIndex(groups).edgeCount;
+		const seeded = seedLinkIndex(groups);
+		// A note created while the index was filling (today's daily) is in the
+		// store and not in the edge list. Put its loaded body back so one new
+		// file does not make the map look incomplete.
+		const nodes = useVaultStore.getState().nodes;
+		if (nodes) {
+			for (const n of Object.values(nodes)) {
+				if (n.kind !== "note" || n.content === undefined) continue;
+				if (vaultLinkIndex.outgoing.has(n.id)) continue;
+				vaultLinkIndex.setNoteLinks(n.id, n.content);
+			}
+		}
+		return seeded.edgeCount;
 	} catch (err) {
 		console.warn("[nexus] seed link index failed", err);
 		return 0;
@@ -857,6 +1082,12 @@ let diskSearchInflight: Promise<{
 	skipped: boolean;
 }> | null = null;
 let diskSearchInflightRoot: string | null = null;
+/** Root whose native FTS fill is still running after the UI promise settled. */
+let desktopFillRoot: string | null = null;
+
+function rememberedDesktopFillRoot(): string | null {
+	return desktopRoot || diskSearchInflightRoot || desktopFillRoot;
+}
 
 function vaultFillBusy(): boolean {
 	return (
@@ -867,9 +1098,18 @@ function vaultFillBusy(): boolean {
 	);
 }
 
-/** Open / remount is locked while connecting or a healthy fill is running. */
+/** The switcher locks only while a vault is opening or closing. Indexing stays in the background. */
 export function vaultOpenLocked(): boolean {
-	return useVaultStore.getState().connecting || vaultFillBusy();
+	return useVaultStore.getState().connecting;
+}
+
+/** Notes already on screen get a SQLite deep head once fill has stopped. */
+function indexLoadedDesktopNotes(): void {
+	const idx = getDurableIndex();
+	if (idx?.kind !== "sqlite") return;
+	for (const n of Object.values(useVaultStore.getState().nodes)) {
+		if (n.kind === "note" && n.content !== undefined) indexOpenedDesktopNote(n);
+	}
 }
 
 function diskFillPriorityPaths(): string[] {
@@ -895,8 +1135,8 @@ function diskFillPriorityPaths(): string[] {
 /**
  * After meta-only disk mount: seed titles/paths into SQLite and settle at
  * ready-meta after the first searchable batch (not a 100k empty-body
- * catalog), then fill short/deep heads in the background. Tree/editor are
- * already interactive — this must not gate vault-usable on full 100k FTS.
+ * catalog), then index note text for the open window. Tree/editor are
+ * already interactive — this must not gate vault-usable on a full-vault read.
  */
 async function completeDiskSearchIndex(opts?: {
 	forceRebuild?: boolean;
@@ -907,6 +1147,7 @@ async function completeDiskSearchIndex(opts?: {
 	skipped: boolean;
 }> {
 	const root = desktopRoot || "";
+	if (root) desktopFillRoot = root;
 	if (
 		diskSearchInflight &&
 		diskSearchInflightRoot === root &&
@@ -917,17 +1158,22 @@ async function completeDiskSearchIndex(opts?: {
 	const run = runCompleteDiskSearchIndex(opts);
 	diskSearchInflight = run;
 	diskSearchInflightRoot = root;
-	useVaultStore.setState({ indexFillBusy: true });
+	// Ready is already the announcement. Do not raise Indexing over it.
+	if (getOpenProgress().phase !== "ready" && !diskSearchReady) {
+		useVaultStore.setState({ indexFillBusy: true });
+	}
 	try {
 		return await run;
 	} finally {
 		if (diskSearchInflight === run) {
 			diskSearchInflight = null;
 			diskSearchInflightRoot = null;
-			// Keep Open locked while background FTS (after ready-meta) still writes.
-			if (!isNativeFillInFlight() && !isIndexFillInFlight()) {
+			const pageReady = getOpenProgress().phase === "ready" || diskSearchReady;
+			const fillQuiet = !isNativeFillInFlight() && !isIndexFillInFlight();
+			if (pageReady || fillQuiet) {
 				useVaultStore.setState({ indexFillBusy: false });
 			}
+			if (fillQuiet) desktopFillRoot = null;
 		}
 	}
 }
@@ -942,20 +1188,28 @@ async function runCompleteDiskSearchIndex(opts?: {
 }> {
 	const gen = vaultGen;
 	const st = useVaultStore.getState();
+	if (browserCatalogOwnsSearch()) {
+		announceBrowserCatalogReady();
+		return { indexed: 0, errors: 0, skipped: true };
+	}
 	if (!shouldUseDurableIndex(st.mode, st.vaultId)) {
 		return { indexed: 0, errors: 0, skipped: true };
 	}
 	if (!canReadDiskSearchHeads()) {
-		setOpenProgress({
-			phase: "ready",
-			scanned: 0,
-			totalHint: null,
-			message: "Ready · title search only",
-		});
+		if (!savedPageStatusHeld()) {
+			setOpenProgress({
+				phase: "ready",
+				scanned: 0,
+				totalHint: null,
+				message: "Ready · title search only",
+			});
+		}
 		return { indexed: 0, errors: 0, skipped: true };
 	}
-	let noteCount = 0;
-	for (const id in st.nodes) if (st.nodes[id]?.kind === "note") noteCount += 1;
+	let noteCount = st.shellCatalog ? st.catalogNoteCount : 0;
+	if (!st.shellCatalog) {
+		for (const id in st.nodes) if (st.nodes[id]?.kind === "note") noteCount += 1;
+	}
 	setBodyCacheNoteCount(noteCount);
 	const sqlite = getDurableIndex();
 	if (
@@ -963,17 +1217,21 @@ async function runCompleteDiskSearchIndex(opts?: {
 		sqlite?.kind === "sqlite" &&
 		typeof sqlite.fillFromDisk === "function"
 	) {
-		setSearchIndexState("idle");
-		setOpenProgress({
-			phase: "indexing",
-			scanned: 0,
-			totalHint: noteCount,
-			message: "Workspace ready — title search first, then note heads…",
-		});
+		const pageAlreadyReady = isTitleSearchLive(getSearchIndexState());
+		if (!pageAlreadyReady) {
+			setSearchIndexState("idle");
+			setOpenProgress({
+				phase: "indexing",
+				scanned: 0,
+				totalHint: noteCount,
+				message: "Workspace ready — title search first, then note heads…",
+			});
+		}
 		await yieldToUi(true);
 		try {
 			const seededBefore = await seedLinkIndexFromDurable(sqlite);
 			if (!seededBefore) vaultLinkIndex.markPending();
+			let interactiveFillSettled = pageAlreadyReady;
 			const native = await sqlite.fillFromDisk(8000, {
 				forceRebuild: opts?.forceRebuild === true,
 				settleAtPhase: opts?.waitFor === "done" ? "done" : "meta",
@@ -981,8 +1239,39 @@ async function runCompleteDiskSearchIndex(opts?: {
 				priorityPaths: diskFillPriorityPaths(),
 				onProgress: (p) => {
 					if (gen !== vaultGen) return;
-					const total = p.total > 0 ? p.total : noteCount;
-					const next = advanceSearchIndexState(getSearchIndexState(), p.phase);
+					// Ready is the interactive window. Later title batches must
+					// not put the banner back on a full-folder listing.
+					if (interactiveFillSettled && p.phase !== "error") {
+						const settled = advanceSearchIndexState(
+							getSearchIndexState(),
+							p.phase,
+							p.searchState,
+						);
+						setSearchIndexState(settled);
+						if (useVaultStore.getState().indexFillBusy) {
+							useVaultStore.setState({ indexFillBusy: false });
+						}
+						if (p.phase === "catalog-counted") {
+							const seen = p.total > 0 ? p.total : p.scanned;
+							if (seen > 0 && useVaultStore.getState().shellCatalog) {
+								const cur = useVaultStore.getState().catalogNoteCount;
+								useVaultStore.setState({
+									catalogNoteCount: Math.max(cur, seen),
+								});
+								noteShellFillProgress();
+							}
+						}
+						return;
+					}
+					// Rust leaves total at 0 until the walk finishes. A startup
+					// catalog count (often 1) must not become the denominator.
+					const reportedTotal = p.total > 0 ? p.total : 0;
+					const totalHint = honestFillTotal(p.scanned, reportedTotal);
+					const next = advanceSearchIndexState(
+						getSearchIndexState(),
+						p.phase,
+						p.searchState,
+					);
 					setSearchIndexState(next);
 					if (next === "ready-meta" || next === "ready-fts-partial" || next === "ready-fts") {
 						diskSearchReady = true;
@@ -990,27 +1279,64 @@ async function runCompleteDiskSearchIndex(opts?: {
 					if (p.phase === "ready-fts-partial" || p.phase === "done") {
 						void seedLinkIndexFromDurable(sqlite, { allowEmpty: true });
 					}
-					if (p.phase === "done") {
+					if (useVaultStore.getState().shellCatalog) {
+						noteShellFillProgress();
+						const seen = p.total > 0 ? p.total : p.scanned;
+						if (seen > 0) {
+							const cur = useVaultStore.getState().catalogNoteCount;
+							useVaultStore.setState({ catalogNoteCount: Math.max(cur, seen) });
+						}
+						if (p.phase === "done" && p.total > 0 && p.total <= SHELL_FULL_MAX_NOTES) {
+							const root = desktopRoot;
+							const prefer = useVaultStore.getState().settings.lastNotePath;
+							if (root) {
+								void mountShellCatalog(root, prefer).then((outcome) => {
+									if (outcome.status !== "ready" || !outcome.mount.materialize) return;
+									const built = nodesFromShellRows(outcome.mount.rows);
+									useVaultStore.setState({
+										nodes: built.nodes,
+										rootIds: outcome.mount.rootIds.length
+											? outcome.mount.rootIds
+											: built.rootIds,
+										activeNoteId:
+											outcome.mount.activeNoteId ||
+											useVaultStore.getState().activeNoteId,
+										...shellSessionFromMount(outcome.mount, outcome.mount.notes),
+									});
+								});
+							}
+						}
+					}
+					if (p.phase === "ready-meta" || p.phase === "done") {
+						const windowScanned = p.scanned > 0 ? p.scanned : 0;
+						const alreadyReady = getOpenProgress().phase === "ready";
+						interactiveFillSettled = true;
+						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
-						setOpenProgress({
-							phase: "ready",
-							scanned: total || noteCount,
-							totalHint: total || noteCount,
-							message: sqliteFillReadyMessage(p.skipped, total || noteCount),
-						});
+						if (!alreadyReady) {
+							setOpenProgress({
+								phase: "ready",
+								scanned: windowScanned,
+								totalHint: null,
+								message: "Ready · titles and open notes",
+							});
+						}
+						if (p.phase === "done") indexLoadedDesktopNotes();
 						return;
 					}
 					if (p.phase === "error") {
+						desktopFillRoot = null;
 						useVaultStore.setState({ indexFillBusy: false });
 					}
+					if (savedPageStatusHeld()) return;
 					setOpenProgress({
 						phase: "indexing",
 						scanned: p.scanned,
-						totalHint: total || noteCount,
+						totalHint,
 						message: sqliteFillPhaseMessage({
 							phase: p.phase,
 							scanned: p.scanned,
-							total: total || noteCount,
+							total: reportedTotal,
 							skipped: p.skipped,
 							indexed: p.indexed,
 						}),
@@ -1030,10 +1356,21 @@ async function runCompleteDiskSearchIndex(opts?: {
 					indexed,
 					notes,
 					skipped,
+					scanned: Number(native?.scanned ?? 0),
 				})
 			) {
 				const root = desktopRoot || st.vaultPath || "vault";
-				throw new DesktopFsForbiddenError(root);
+				// An empty index is only a scope failure if the folder cannot be
+				// read. A brand-new vault whose first note was made after the walk
+				// also reports nothing, and that is not an error.
+				let readable = false;
+				try {
+					await assertDesktopRootReadable(root);
+					readable = true;
+				} catch {
+					readable = false;
+				}
+				if (!readable) throw new DesktopFsForbiddenError(root);
 			}
 			diskSearchReady = true;
 			if (getSearchIndexState() === "idle") {
@@ -1065,7 +1402,10 @@ async function runCompleteDiskSearchIndex(opts?: {
 					searchIndexState: getSearchIndexState(),
 				};
 			}
-			if (getSearchIndexState() === "ready-fts" || skipped >= (notes || noteCount)) {
+			if (
+				!savedPageStatusHeld() &&
+				(getSearchIndexState() === "ready-fts" || skipped >= (notes || noteCount))
+			) {
 				setOpenProgress({
 					phase: "ready",
 					scanned: noteCount,
@@ -1089,12 +1429,14 @@ async function runCompleteDiskSearchIndex(opts?: {
 			if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
 				const message =
 					err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
-				setOpenProgress({
-					phase: "error",
-					scanned: 0,
-					totalHint: noteCount,
-					message,
-				});
+				if (!savedPageStatusHeld()) {
+					setOpenProgress({
+						phase: "error",
+						scanned: 0,
+						totalHint: noteCount,
+						message,
+					});
+				}
 				throw err instanceof Error ? err : new Error(message);
 			}
 			const message =
@@ -1102,21 +1444,25 @@ async function runCompleteDiskSearchIndex(opts?: {
 					? `SQLite FTS fill failed: ${err.message}`
 					: "SQLite FTS fill failed";
 			console.error("[nexus] native FTS fill failed (no JS 100k fallback)", err);
-			setOpenProgress({
-				phase: "error",
-				scanned: 0,
-				totalHint: noteCount,
-				message,
-			});
+			if (!savedPageStatusHeld()) {
+				setOpenProgress({
+					phase: "error",
+					scanned: 0,
+					totalHint: noteCount,
+					message,
+				});
+			}
 			throw err instanceof Error ? err : new Error(message);
 		}
 	}
-	setOpenProgress({
-		phase: "indexing",
-		scanned: 0,
-		totalHint: noteCount,
-		message: "Workspace ready — indexing search from files (not SQLite)…",
-	});
+	if (!savedPageStatusHeld()) {
+		setOpenProgress({
+			phase: "indexing",
+			scanned: 0,
+			totalHint: noteCount,
+			message: "Workspace ready — indexing search from files (not SQLite)…",
+		});
+	}
 	let result: { indexed: number; errors: number };
 	try {
 		result = await fillDurableIndexFromReader(st.nodes, readDiskSearchHead, {
@@ -1124,6 +1470,7 @@ async function runCompleteDiskSearchIndex(opts?: {
 			isCancelled: () => gen !== vaultGen,
 			onProgress: (done, total) => {
 				if (gen !== vaultGen) return;
+				if (savedPageStatusHeld()) return;
 				setOpenProgress({
 					phase: "indexing",
 					scanned: done,
@@ -1136,26 +1483,45 @@ async function runCompleteDiskSearchIndex(opts?: {
 		if (err instanceof DesktopFsForbiddenError || isForbiddenFsError(err)) {
 			const message =
 				err instanceof Error ? err.message : desktopFsForbiddenMessage(desktopRoot || st.vaultPath);
+			if (!savedPageStatusHeld()) {
+				setOpenProgress({
+					phase: "error",
+					scanned: 0,
+					totalHint: noteCount,
+					message,
+				});
+			}
+			throw err instanceof Error ? err : new Error(message);
+		}
+		throw err;
+	}
+	if (gen !== vaultGen) return { ...result, skipped: true };
+	// The file pass above stores a short slim head and drops words that
+	// contain digits. A note already open has the rest of its text; put
+	// that text into the same index so search can see it.
+	for (const n of Object.values(useVaultStore.getState().nodes)) {
+		if (n.kind === "note" && n.content !== undefined) upsertDurableNoteFromNode(n);
+	}
+	let rootReadable = false;
+	if (noteCount > 0 && result.indexed === 0 && result.errors > 0 && desktopRoot) {
+		try {
+			await assertDesktopRootReadable(desktopRoot);
+			rootReadable = true;
+		} catch {
+			rootReadable = false;
+		}
+	}
+	if (noteCount > 0 && result.indexed === 0 && result.errors > 0 && !rootReadable) {
+		const root = desktopRoot || st.vaultPath || "vault";
+		const message = desktopFsForbiddenMessage(root);
+		if (!savedPageStatusHeld()) {
 			setOpenProgress({
 				phase: "error",
 				scanned: 0,
 				totalHint: noteCount,
 				message,
 			});
-			throw err instanceof Error ? err : new Error(message);
 		}
-		throw err;
-	}
-	if (gen !== vaultGen) return { ...result, skipped: true };
-	if (noteCount > 0 && result.indexed === 0 && result.errors > 0) {
-		const root = desktopRoot || st.vaultPath || "vault";
-		const message = desktopFsForbiddenMessage(root);
-		setOpenProgress({
-			phase: "error",
-			scanned: 0,
-			totalHint: noteCount,
-			message,
-		});
 		throw new DesktopFsForbiddenError(root);
 	}
 	diskSearchReady = true;
@@ -1175,12 +1541,14 @@ async function runCompleteDiskSearchIndex(opts?: {
 			searchReady: true,
 		};
 	}
-	setOpenProgress({
-		phase: "ready",
-		scanned: noteCount,
-		totalHint: noteCount,
-		message: "Ready",
-	});
+	if (!savedPageStatusHeld()) {
+		setOpenProgress({
+			phase: "ready",
+			scanned: noteCount,
+			totalHint: noteCount,
+			message: "Ready",
+		});
+	}
 	window.setTimeout(() => {
 		if (vaultGen !== gen) return;
 		const cur = getOpenProgress();
@@ -1196,15 +1564,40 @@ async function runCompleteDiskSearchIndex(opts?: {
 	return { ...result, skipped: false };
 }
 /** Single-path disk open: always meta-only for disk vaults (bodies on demand). */
-async function loadDiskVaultScan(mode: VaultMode) {
+async function loadDiskVaultScan(mode: VaultMode, opts?: { preferPath?: string | null }): Promise<{
+	scan: Awaited<ReturnType<typeof openDesktopVaultAt>>;
+	metaOnly: boolean;
+	shell: ShellMount | null;
+}> {
 	const metaOnly = shouldLazyBodies(mode) || mode === "desktop" || mode === "fsa";
-	setOpenProgress({
-		phase: "walking",
-		scanned: 0,
-		totalHint: null,
-		message: metaOnly ? "Scanning vault metadata…" : "Opening vault…"
-	});
+	if (mode === "desktop" && desktopRoot) {
+		const prefetched = adoptBootShell(takePrefetchedDesktopShell(desktopRoot));
+		if (prefetched) {
+			const built = nodesFromShellRows(prefetched.rows);
+			scopeGrantFollowsReady = true;
+			rememberSavedPage(desktopRoot, prefetched.rows);
+			return {
+				scan: {
+					nodes: built.nodes,
+					rootIds: prefetched.rootIds.length ? prefetched.rootIds : built.rootIds,
+					signatures: {} as Record<string, string>,
+				},
+				metaOnly: true,
+				shell: prefetched,
+			};
+		}
+	}
+	const keepSavedPage = mode === "desktop" && savedPageBannerUp();
+	if (!keepSavedPage) {
+		setOpenProgress({
+			phase: "walking",
+			scanned: 0,
+			totalHint: null,
+			message: metaOnly ? "Scanning vault metadata…" : "Opening vault…"
+		});
+	}
 	const onProgress = (scanned: number) => {
+		if (savedPageBannerUp()) return;
 		setOpenProgress({
 			phase: "walking",
 			scanned,
@@ -1215,24 +1608,77 @@ async function loadDiskVaultScan(mode: VaultMode) {
 	try {
 		if (mode === "desktop") {
 			if (!desktopRoot) throw new Error("No desktop vault root");
-			await ensureDesktopVaultFsScope(desktopRoot);
+			if (keepSavedPage) {
+				// The page is already on screen. A refused grant is a toast
+				// after Ready, not a banner that replaces it.
+				scopeGrantFollowsReady = true;
+			} else {
+				await ensureDesktopVaultFsScope(desktopRoot);
+			}
 			if (metaOnly) {
-				const native = await nativeMetaWalk(desktopRoot);
-				if (native && native.length > 0) {
-					onProgress(native.length);
-					const scan = vaultScanFromNodeMeta(native);
-					const n = Object.keys(scan.nodes).length;
-					setOpenProgress({
-						phase: "indexing",
-						scanned: n,
-						totalHint: n,
-						message: "Metadata ready — indexing search from files…",
-					});
+				const outcome = await mountShellCatalog(desktopRoot, opts?.preferPath);
+				if (outcome.status === "busy") {
+					// A full meta walk would copy the vault into the window. Stay on
+					// the shell path; the catalog read already retried the lock.
 					return {
-						scan,
-						metaOnly: true
+						scan: { nodes: {}, rootIds: [], signatures: {} },
+						metaOnly: true,
+						shell: {
+							materialize: false,
+							pending: true,
+							notes: 0,
+							folders: 0,
+							rows: [],
+							rootIds: [],
+							activeNoteId: null,
+							omittedNotes: 0,
+							loaded: [],
+							dbPath: "",
+						},
 					};
 				}
+				const shell = outcome.status === "ready" ? outcome.mount : null;
+				if (shell) {
+					const built = nodesFromShellRows(shell.rows);
+					const scan = {
+						nodes: built.nodes,
+						rootIds: shell.rootIds.length ? shell.rootIds : built.rootIds,
+						signatures: {} as Record<string, string>,
+					};
+					const shown = shell.materialize ? shell.notes : shell.rows.length;
+					if (savedPageTitlesLive(shell)) {
+						rememberSavedPage(desktopRoot, shell.rows);
+						scopeGrantFollowsReady = true;
+					}
+					if (!keepSavedPage && !savedPageTitlesLive(shell)) {
+						setOpenProgress({
+							phase: "indexing",
+							scanned: shown,
+							totalHint: shell.notes || shown,
+							message: shell.materialize
+								? "Metadata ready — indexing search from files…"
+								: "Catalog ready — opening a window of the vault…",
+						});
+					}
+					return { scan, metaOnly: true, shell };
+				}
+				// A catalog miss must not list every file before Ready.
+				return {
+					scan: { nodes: {}, rootIds: [], signatures: {} },
+					metaOnly: true,
+					shell: {
+						materialize: false,
+						pending: true,
+						notes: 0,
+						folders: 0,
+						rows: [],
+						rootIds: [],
+						activeNoteId: null,
+						omittedNotes: 0,
+						loaded: [],
+						dbPath: "",
+					},
+				};
 			}
 			const scan = await openDesktopVaultAt(desktopRoot, {
 				metaOnly,
@@ -1247,34 +1693,51 @@ async function loadDiskVaultScan(mode: VaultMode) {
 			});
 			return {
 				scan,
-				metaOnly
+				metaOnly,
+				shell: null,
 			};
 		}
 		if (!fsaRoot) throw new Error("No FSA vault root");
-		const scan = metaOnly
-			? await scanVaultMeta(fsaRoot, onProgress, {
-					maxNotes: allowForcedLargeFsa() ? undefined : CHROME_FSA_NOTE_CAP,
-					skipGetFileAfter: CHROME_FSA_GETFILE_MAX,
-				})
-			: await scanVault(fsaRoot);
-		const n = Object.keys(scan.nodes).length;
+		if (!metaOnly) {
+			const scan = await scanVault(fsaRoot);
+			const n = Object.keys(scan.nodes).length;
+			setOpenProgress({
+				phase: "indexing",
+				scanned: n,
+				totalHint: n,
+				message: "Metadata ready — indexing search from files…",
+			});
+			return { scan, metaOnly: false, shell: null };
+		}
+		const shell = await mountBrowserShell(fsaRoot, opts?.preferPath ?? null, onProgress);
+		const built = nodesFromShellRows(shell.rows);
+		const shown = shell.materialize ? shell.notes : shell.rows.length;
 		setOpenProgress({
 			phase: "indexing",
-			scanned: n,
-			totalHint: n,
-			message: "Metadata ready — indexing search from files…",
+			scanned: shown,
+			totalHint: shell.notes || shown,
+			message: shell.materialize
+				? "Metadata ready — indexing search from files…"
+				: "Catalog ready — opening a window of the folder…",
 		});
 		return {
-			scan,
-			metaOnly
+			scan: {
+				nodes: built.nodes,
+				rootIds: shell.rootIds.length ? shell.rootIds : built.rootIds,
+				signatures: {},
+			},
+			metaOnly: true,
+			shell,
 		};
 	} catch (e) {
-		setOpenProgress({
-			phase: "error",
-			scanned: 0,
-			totalHint: null,
-			message: e instanceof Error ? e.message : "Open failed"
-		});
+		if (!savedPageBannerUp()) {
+			setOpenProgress({
+				phase: "error",
+				scanned: 0,
+				totalHint: null,
+				message: e instanceof Error ? e.message : "Open failed"
+			});
+		}
 		throw e;
 	}
 }
@@ -1327,6 +1790,7 @@ function applyChromeFsaGuardFromCount(
 	};
 	if (kind === "refuse" && !allowForcedLargeFsa()) {
 		fsaRoot = null;
+		void closeBrowserShell();
 		void clearDirectoryHandle();
 		useVaultStore.setState({
 			connecting: false,
@@ -1360,12 +1824,92 @@ function fsaChromeScaleSettings(noteCount: number): Partial<VaultSettings> {
 	return { graphMode: "hidden", rightOpen: false };
 }
 
+/**
+ * Open a folder the browser was granted. The catalog keeps the paths.
+ * The window is one page. Ready is that page.
+ */
+async function mountGrantedFsaFolder(
+	handle: FileSystemDirectoryHandle,
+	opts: { vaultId: string; toast: string; freshPrefs: boolean; rememberHandle?: boolean },
+): Promise<void> {
+	cancelVaultModuleState();
+	clearBodyArchive();
+	invalidateVaultTagsCache();
+	desktopRoot = null;
+	setDesktopVaultRoot(null);
+	fsaRoot = handle;
+	const get = useVaultStore.getState;
+	const set = useVaultStore.setState;
+	if (opts.rememberHandle !== false) {
+		await saveDirectoryHandle(handle, { id: opts.vaultId, name: handle.name });
+	}
+	const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
+		preferPath: get().settings.lastNotePath,
+	});
+	const noteCount = shell?.notes || countVaultNotes(scan.nodes);
+	if (applyChromeFsaGuardFromCount(noteCount, handle.name) === "refused") return;
+	const shellSession = shellSessionFromMount(shell, noteCount);
+	const first =
+		(shell?.activeNoteId && scan.nodes[shell.activeNoteId]) ||
+		Object.values(scan.nodes).find((n) => n.kind === "note");
+	const recents = pushRecent({
+		id: opts.vaultId,
+		name: handle.name,
+		path: handle.name,
+		lastOpened: Date.now(),
+		mode: "fsa",
+	});
+	const prefs = opts.freshPrefs ? getPrefs() : null;
+	set({
+		vaultId: opts.vaultId,
+		vaultName: handle.name,
+		vaultPath: handle.name,
+		mode: "fsa",
+		nodes: prepareMountedNodes(scan.nodes, "fsa", [first?.id ?? ""], { metaOnly }),
+		rootIds: scan.rootIds,
+		activeNoteId: first?.id ?? null,
+		expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
+		dirtyNoteIds: [],
+		recentVaults: recents,
+		connecting: false,
+		toast: opts.toast,
+		chromeFsaLimit: get().chromeFsaLimit,
+		...GRAPH_SCOPE_DEFAULTS,
+		...shellSession,
+		settings: {
+			...get().settings,
+			...(opts.freshPrefs
+				? {
+						lastNotePath: first?.path ?? null,
+						editorMode: prefs!.defaultEditorMode,
+						graphMode: prefs!.defaultGraphView,
+						rightOpen: prefs!.defaultGraphView === "panel",
+					}
+				: {}),
+			...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
+		},
+	});
+	syncActiveBackend("fsa");
+	{
+		const st = useVaultStore.getState();
+		if (st.activeNoteId) await st.ensureNoteBody(st.activeNoteId);
+		await prepareDurableIndex(st.vaultId, st.mode);
+		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+		await completeDiskSearchIndex();
+	}
+	applyLaunchNotePreference();
+	set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
+	resetAndSeedNav(get().activeNoteId);
+}
+
 /** Drop LRU victims from the live node map so ≤20k FSA does not keep every opened body. */
 function evictBodiesKeeping(keepIds: Iterable<string>): void {
 	const s = useVaultStore.getState();
 	const protectedIds = new Set(keepIds);
 	if (s.activeNoteId) protectedIds.add(s.activeNoteId);
 	if (s.secondaryNoteId) protectedIds.add(s.secondaryNoteId);
+	for (const id of s.primaryTabs ?? []) protectedIds.add(id);
+	for (const id of s.secondaryTabs ?? []) protectedIds.add(id);
 	const victims = pickEvictions(protectedIds).filter((id) => !protectedIds.has(id));
 	if (!victims.length) return;
 	const live = s.nodes;
@@ -1423,10 +1967,190 @@ function recentsForOpenVault(
 ) {
 	return recentNoteIdsForVault(vaultId, nodes, limit);
 }
+/** Which vault the in-memory tab strip belongs to. A different vault must not inherit it. */
+let tabsOwnerVault: string | null = null;
+let suppressTabSave = false;
+
+function notePaths(ids: readonly string[], nodes: Record<string, VaultNode>): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const id of ids) {
+		const node = nodes[id];
+		if (node?.kind !== "note" || !node.path || seen.has(node.path)) continue;
+		seen.add(node.path);
+		out.push(node.path);
+	}
+	return out;
+}
+
+function snapshotTabSession(s: VaultStore): TabSession {
+	const primary = notePaths(s.primaryTabs ?? [], s.nodes);
+	const secondary = notePaths(s.secondaryTabs ?? [], s.nodes);
+	const active = s.activeNoteId ? s.nodes[s.activeNoteId] : null;
+	const second = s.secondaryNoteId ? s.nodes[s.secondaryNoteId] : null;
+	const scroll: TabSession["scroll"] = [];
+	const pushScroll = (pane: "primary" | "secondary", ids: readonly string[]) => {
+		for (const id of ids) {
+			const node = s.nodes[id];
+			if (node?.kind !== "note" || !node.path) continue;
+			const top = recallPaneScroll(pane, id);
+			if (top > 0) scroll.push({ pane, path: node.path, top });
+		}
+	};
+	pushScroll("primary", s.primaryTabs ?? []);
+	pushScroll("secondary", s.secondaryTabs ?? []);
+	return {
+		primary,
+		secondary,
+		active: active?.kind === "note" ? active.path : primary[0] ?? null,
+		secondaryActive: second?.kind === "note" ? second.path : secondary[0] ?? null,
+		split: Boolean(s.settings.workspaceSplit && secondary.length),
+		scroll,
+		at: Date.now(),
+	};
+}
+
+function rememberSessionScroll(session: TabSession, pathToId: Map<string, string>): void {
+	for (const mark of session.scroll) {
+		const id = pathToId.get(mark.path);
+		if (id) rememberPaneScroll(mark.pane, id, mark.top);
+	}
+}
+
+function applyResolvedTabs(
+	s: VaultStore,
+	primary: ReturnType<typeof resolveTabList>,
+	secondary: ReturnType<typeof resolveTabList>,
+	split: boolean,
+	fallbackId: string | null,
+): void {
+	const note = (id: string | null) => Boolean(id && s.nodes[id]?.kind === "note");
+	let ids = primary.ids;
+	let active = primary.activeId;
+	if (!ids.length && note(fallbackId)) {
+		ids = [fallbackId as string];
+		active = fallbackId;
+	}
+	const secondIds = split ? secondary.ids : [];
+	const secondActive = secondIds.length ? secondary.activeId ?? secondIds[0] : null;
+	const activeNode = active ? s.nodes[active] : null;
+	const secondNode = secondActive ? s.nodes[secondActive] : null;
+	suppressTabSave = true;
+	useVaultStore.setState({
+		primaryTabs: ids,
+		activeNoteId: active,
+		secondaryTabs: secondIds,
+		secondaryNoteId: secondActive,
+		settings: {
+			...s.settings,
+			workspaceSplit: Boolean(secondActive),
+			lastNotePath: activeNode?.kind === "note" ? activeNode.path : s.settings.lastNotePath,
+			lastSecondaryNotePath:
+				secondNode?.kind === "note" ? secondNode.path : s.settings.lastSecondaryNotePath,
+		},
+	});
+	suppressTabSave = false;
+	if (active) {
+		const n = useVaultStore.getState().nodes[active];
+		if (n?.kind === "note" && n.content === undefined) {
+			void useVaultStore.getState().ensureNoteBody(active);
+		}
+	}
+}
+
+/** Paths not in this window: ask the catalog. Missing files leave the saved list. */
+function admitMissingTabPaths(vaultId: string, paths: string[]): void {
+	const db = useVaultStore.getState().shellDbPath;
+	if (!db || db === BROWSER_SHELL_DB || !paths.length) return;
+	void fetchShellByPaths(db, paths).then((rows) => {
+		const live = useVaultStore.getState();
+		if (live.vaultId !== vaultId || tabsOwnerVault !== vaultId) return;
+		if (!rows) return;
+		const notes = rows.filter((row) => row.kind === "note");
+		if (notes.length) live.ingestShellRows(notes);
+		const found = new Set(notes.map((row) => row.path));
+		const saved = loadTabSession(vaultId);
+		if (!saved) return;
+		const drop = new Set(paths.filter((path) => !found.has(path)));
+		const next: TabSession = {
+			...saved,
+			primary: saved.primary.filter((path) => !drop.has(path)),
+			secondary: saved.secondary.filter((path) => !drop.has(path)),
+			at: Date.now(),
+		};
+		if (next.active && drop.has(next.active)) next.active = next.primary[0] ?? null;
+		if (next.secondaryActive && drop.has(next.secondaryActive)) {
+			next.secondaryActive = next.secondary[0] ?? null;
+		}
+		next.split = next.split && next.secondary.length > 0;
+		saveTabSession(vaultId, next);
+		const again = useVaultStore.getState();
+		if (again.vaultId !== vaultId) return;
+		const index = pathIndex(again.nodes);
+		applyResolvedTabs(
+			again,
+			resolveTabList(next.primary, next.active, index),
+			resolveTabList(next.secondary, next.secondaryActive, index),
+			next.split,
+			again.activeNoteId,
+		);
+		rememberSessionScroll(next, pathIndex(useVaultStore.getState().nodes));
+	});
+}
+
+function restoreSavedTabs(s: VaultStore, fallbackId: string | null): void {
+	const saved = loadTabSession(s.vaultId);
+	const index = pathIndex(s.nodes);
+	const primary = saved
+		? resolveTabList(saved.primary, saved.active, index)
+		: { ids: [] as string[], paths: [] as string[], activeId: null, activePath: null, missing: [] as string[] };
+	const secondary = saved
+		? resolveTabList(saved.secondary, saved.secondaryActive, index)
+		: { ids: [] as string[], paths: [] as string[], activeId: null, activePath: null, missing: [] as string[] };
+	applyResolvedTabs(s, primary, secondary, Boolean(saved?.split), fallbackId);
+	if (saved) rememberSessionScroll(saved, index);
+	const missing = [...primary.missing, ...secondary.missing];
+	const shellLookup = Boolean(
+		s.shellCatalog && s.shellDbPath && s.shellDbPath !== BROWSER_SHELL_DB,
+	);
+	if (s.vaultId && missing.length && shellLookup) {
+		admitMissingTabPaths(s.vaultId, missing);
+		return;
+	}
+	const live = useVaultStore.getState();
+	if (live.vaultId) saveTabSession(live.vaultId, snapshotTabSession(live));
+}
+
 /** Reset nav stack and seed with launch note (browser-like: ⌘[ inactive until second open). */
 function resetAndSeedNav(activeNoteId: string | null) {
+	const s = useVaultStore.getState();
+	const note = (id: string | null) => Boolean(id && s.nodes[id]?.kind === "note");
+	const vaultChanged = tabsOwnerVault !== s.vaultId;
+	const primaryLive = vaultChanged ? [] : (s.primaryTabs ?? []).filter((id) => note(id));
+	if (vaultChanged || primaryLive.length === 0) {
+		tabsOwnerVault = s.vaultId;
+		restoreSavedTabs(s, note(activeNoteId) ? activeNoteId : null);
+		const active = useVaultStore.getState().activeNoteId;
+		resetNavHistory();
+		if (active) pushNav(active);
+		return;
+	}
 	resetNavHistory();
 	if (activeNoteId) pushNav(activeNoteId);
+	const patch: Partial<VaultStore> = {};
+	if (note(activeNoteId) && !primaryLive.includes(activeNoteId as string)) {
+		patch.primaryTabs = openNoteTab(primaryLive, s.activeNoteId, activeNoteId as string, "replace").tabs;
+	} else if (primaryLive.length !== (s.primaryTabs ?? []).length) {
+		patch.primaryTabs = primaryLive;
+	}
+	const split = Boolean(s.settings.workspaceSplit && s.secondaryNoteId);
+	const secondaryLive = (s.secondaryTabs ?? []).filter((id) => note(id));
+	if (!split) {
+		if ((s.secondaryTabs ?? []).length) patch.secondaryTabs = [];
+	} else if (secondaryLive.length === 0) {
+		patch.secondaryTabs = note(s.secondaryNoteId) ? [s.secondaryNoteId as string] : [];
+	}
+	if (Object.keys(patch).length) useVaultStore.setState(patch);
 }
 /** Record open in vault-scoped visits + nav + store MRU list. */
 function recordNoteOpen(
@@ -1452,6 +2176,7 @@ async function persistNoteIfFsa(
 	opts?: { ack?: boolean },
 ) {
 	const ack = opts?.ack !== false;
+	markLocalWrite(path, content);
 	if (desktopRoot) {
 		await writeDesktopNote(desktopRoot, path, content);
 		if (ack) desktopWatchAck?.();
@@ -1460,6 +2185,29 @@ async function persistNoteIfFsa(
 	if (!fsaRoot) return;
 	await writeNoteFile(fsaRoot, path, content);
 	if (ack && watcherAck) await watcherAck(fsaRoot);
+}
+
+/** The file on disk matches this note. Unsaved is for edits that have not landed. */
+function clearDirtyIfUnchanged(
+	noteId: string,
+	path: string,
+	content: string | undefined,
+): void {
+	if (content === undefined) return;
+	const st = useVaultStore.getState();
+	const cur = st.nodes[noteId];
+	if (!cur || cur.kind !== "note" || cur.path !== path || cur.content !== content) return;
+	if (!st.dirtyNoteIds.includes(noteId)) return;
+	useVaultStore.setState({
+		dirtyNoteIds: st.dirtyNoteIds.filter((x) => x !== noteId),
+		lastSavedAt: Date.now(),
+	});
+}
+
+function markNoteDirty(noteId: string): void {
+	const st = useVaultStore.getState();
+	if (!st.nodes[noteId] || st.dirtyNoteIds.includes(noteId)) return;
+	useVaultStore.setState({ dirtyNoteIds: [...st.dirtyNoteIds, noteId] });
 }
 function pushRecent(entry: RecentVault) {
 	const list = (loadRecents() as RecentVault[]).filter((r) => r.id !== entry.id);
@@ -1485,6 +2233,25 @@ function applyLaunchNotePreference() {
 		if (mode === "last") return;
 		const st = useVaultStore.getState();
 		if (!st.vaultId) return;
+		let noteCount = 0;
+		for (const id in st.nodes) {
+			if (st.nodes[id]?.kind === "note") noteCount += 1;
+		}
+		if (shouldSkipLaunchNote(noteCount)) return;
+		// A paged catalog only holds part of the vault in memory. Creating
+		// today's note on launch there can shadow the file on disk or leave a
+		// note behind that the next launch cannot read.
+		if (st.shellCatalog) {
+			const todayPath = dailyNotePath(new Date());
+			let loaded = false;
+			for (const id in st.nodes) {
+				if (st.nodes[id]?.path === todayPath) {
+					loaded = true;
+					break;
+				}
+			}
+			if (!loaded) return;
+		}
 		if (mode === "smart") {
 			const activeId = st.activeNoteId;
 			const active = activeId ? st.nodes[activeId] : null;
@@ -1534,6 +2301,101 @@ function applyScaleRestore(
 	}
 }
 
+function filledPageIsSearchable(
+	shell: ShellMount | null | undefined,
+	forceRebuild?: boolean,
+): boolean {
+	return shell?.titlesLive === true && forceRebuild !== true;
+}
+
+/** Set when the saved page was painted before plugin-fs scope was granted. */
+let scopeGrantFollowsReady = false;
+
+/**
+ * Saved-page Ready is already on screen. Grant folder access, then open the
+ * index. A refused grant must not replace that Ready line.
+ */
+function continueFilledIndexAfterReady(
+	vaultId: string | null,
+	mode: VaultMode,
+	dbPath: string | null | undefined,
+	root: string,
+): void {
+	const deferScope = scopeGrantFollowsReady;
+	scopeGrantFollowsReady = false;
+	const start = () => openFilledIndexAfterReady(vaultId, mode, dbPath, root);
+	if (!deferScope) {
+		start();
+		return;
+	}
+	void (async () => {
+		try {
+			await ensureDesktopVaultFsScope(root);
+		} catch (err) {
+			console.warn("[nexus] vault scope after Ready", err);
+		}
+		start();
+	})();
+}
+
+/** Early Ready is on screen, or the shell already announced that same page. */
+function savedPageStatusHeld(): boolean {
+	const message = getOpenProgress().message;
+	if (message === SAVED_PAGE_READY_MESSAGE) return true;
+	return savedPageBannerUp();
+}
+
+/** The saved page is the announcement. The index file opens afterward. */
+function announceFilledPageReady(shell: ShellMount, root: string): void {
+	diskSearchReady = true;
+	setSearchIndexState("ready-meta");
+	const pageNotes = (shell.rows ?? []).filter((r) => r.kind === "note").length;
+	setOpenProgress({
+		phase: "ready",
+		scanned: Math.max(1, Math.min(32, pageNotes || 1)),
+		totalHint: null,
+		message: SAVED_PAGE_READY_MESSAGE,
+	});
+	const pageRoot =
+		root ||
+		(typeof localStorage !== "undefined"
+			? localStorage.getItem(DESKTOP_ROOT_STORAGE_KEY) || ""
+			: "");
+	if (pageRoot && !rememberSavedPage(pageRoot, shell.rows)) {
+		useVaultStore.setState({
+			toast: "This page is ready, but it could not be saved for the next open.",
+		});
+	}
+	publishReadyClock("shell");
+}
+
+/**
+ * Open the filled index only after Ready can paint. `vault_index_open` used
+ * to run on the webview thread inside this turn, so the announcement could
+ * not land until that file returned.
+ */
+function openFilledIndexAfterReady(
+	vaultId: string | null,
+	mode: VaultMode,
+	dbPath: string | null | undefined,
+	root: string,
+): void {
+	if (root) desktopFillRoot = root;
+	if (getOpenProgress().phase !== "ready" && !diskSearchReady) {
+		useVaultStore.setState({ indexFillBusy: true });
+	}
+	void (async () => {
+		await yieldToUi(true);
+		await prepareDurableIndex(vaultId, mode, dbPath);
+		maybeSyncDurableIndex(vaultId, mode, useVaultStore.getState().nodes);
+		await completeDiskSearchIndex({ forceRebuild: false });
+	})().catch((e) => {
+		useVaultStore.setState({ indexFillBusy: false });
+		const message = e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
+		useVaultStore.setState({ toast: message });
+	});
+}
+
 /** Desktop open without a folder dialog — Wave E soak + reopen. */
 async function mountDesktopVaultAt(
 	get: StoreGet,
@@ -1549,21 +2411,32 @@ async function mountDesktopVaultAt(
 	searchIndexState: ReturnType<typeof getSearchIndexState>;
 }> {
 	const fillBusy =
+		useVaultStore.getState().indexFillBusy ||
 		isIndexFillInFlight() ||
 		isNativeFillInFlight() ||
 		Boolean(diskSearchInflight);
-	if (
-		shouldJoinDesktopFill({
-			currentRoot: desktopRoot,
-			nextRoot: root,
-			fillInFlight: fillBusy,
-		})
-	) {
-		if (diskSearchInflight) await diskSearchInflight;
+	const remembered = rememberedDesktopFillRoot();
+	const sameFill = shouldJoinDesktopFill({
+		currentRoot: remembered,
+		nextRoot: root,
+		fillInFlight: fillBusy,
+	});
+	const liveNow = useVaultStore.getState();
+	const uiMounted = Boolean(liveNow.vaultId) && liveNow.rootIds.length > 0;
+	// Same folder, tree still on screen: join. Do not rescan 100k.
+	if (sameFill && uiMounted) {
+		if (
+			shouldWaitForInflightFill({
+				fillInFlight: Boolean(diskSearchInflight),
+				searchReady: diskSearchReady,
+			})
+		) {
+			await diskSearchInflight;
+		}
 		set({ connecting: false });
 		const live = useVaultStore.getState();
 		return {
-			notes: countVaultNotes(live.nodes),
+			notes: live.shellCatalog ? live.catalogNoteCount : countVaultNotes(live.nodes),
 			vaultId: live.vaultId ?? opts?.vaultId ?? "",
 			vaultPath: live.vaultPath || root,
 			searchEngine: describeSearchEngine(),
@@ -1571,20 +2444,8 @@ async function mountDesktopVaultAt(
 			searchIndexState: getSearchIndexState(),
 		};
 	}
-	if (
-		shouldBlockDesktopOpen({
-			currentRoot: desktopRoot,
-			nextRoot: root,
-			fillInFlight: fillBusy,
-		})
-	) {
-		set({
-			connecting: false,
-			toast: FILL_IN_PROGRESS_TOAST,
-		});
-		throw new Error(FILL_IN_PROGRESS_TOAST);
-	}
-	cancelVaultModuleState();
+	// A different folder cancels the fill in progress. The same folder joins it.
+	cancelVaultModuleState(sameFill ? { keepFill: true } : undefined);
 	clearBodyArchive();
 	invalidateVaultTagsCache();
 	desktopRoot = root;
@@ -1596,10 +2457,14 @@ async function mountDesktopVaultAt(
 	});
 	let scan: Awaited<ReturnType<typeof loadDiskVaultScan>>["scan"];
 	let metaOnly: boolean;
+	let shellMount: ShellMount | null = null;
 	try {
-		const loaded = await loadDiskVaultScan("desktop");
+		const loaded = await loadDiskVaultScan("desktop", {
+			preferPath: useVaultStore.getState().settings.lastNotePath,
+		});
 		scan = loaded.scan;
 		metaOnly = loaded.metaOnly;
+		shellMount = loaded.shell;
 	} catch (e) {
 		desktopRoot = null;
 		const message =
@@ -1608,7 +2473,7 @@ async function mountDesktopVaultAt(
 			connecting: false,
 			toast: message,
 		});
-		if (getOpenProgress().phase !== "error") {
+		if (getOpenProgress().phase !== "error" && !savedPageBannerUp()) {
 			setOpenProgress({
 				phase: "error",
 				scanned: 0,
@@ -1622,7 +2487,10 @@ async function mountDesktopVaultAt(
 	const vaultId =
 		opts?.vaultId ||
 		"desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
-	const first = Object.values(scan.nodes).find((n) => n.kind === "note");
+	const shellSession = shellSessionFromMount(shellMount, countVaultNotes(scan.nodes));
+	const first =
+		(shellMount?.activeNoteId && scan.nodes[shellMount.activeNoteId]) ||
+		Object.values(scan.nodes).find((n) => n.kind === "note");
 	const recents = pushRecent({
 		id: vaultId,
 		name,
@@ -1647,6 +2515,7 @@ async function mountDesktopVaultAt(
 		chromeFsaLimit: null,
 		toast: opts?.toast ?? `Opened vault: ${name}`,
 		...GRAPH_SCOPE_DEFAULTS,
+		...shellSession,
 		settings: {
 			...get().settings,
 			lastNotePath: first?.path ?? null,
@@ -1659,23 +2528,28 @@ async function mountDesktopVaultAt(
 	{
 		const st = useVaultStore.getState();
 		if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-		await prepareDurableIndex(st.vaultId, st.mode);
-		maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-		try {
-			await completeDiskSearchIndex({ forceRebuild: opts?.forceRebuild === true });
-		} catch (e) {
-			const message =
-				e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
-			set({ toast: message });
-			if (getOpenProgress().phase !== "error") {
-				setOpenProgress({
-					phase: "error",
-					scanned: 0,
-					totalHint: null,
-					message,
-				});
+		if (shellMount && filledPageIsSearchable(shellMount, opts?.forceRebuild)) {
+			announceFilledPageReady(shellMount, root);
+			continueFilledIndexAfterReady(st.vaultId, st.mode, shellMount.dbPath, root);
+		} else {
+			await prepareDurableIndex(st.vaultId, st.mode, shellMount?.dbPath);
+			maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+			try {
+				await completeDiskSearchIndex({ forceRebuild: opts?.forceRebuild === true });
+			} catch (e) {
+				const message =
+					e instanceof Error ? e.message : desktopFsForbiddenMessage(root);
+				set({ toast: message });
+				if (getOpenProgress().phase !== "error" && !savedPageBannerUp()) {
+					setOpenProgress({
+						phase: "error",
+						scanned: 0,
+						totalHint: null,
+						message,
+					});
+				}
+				throw e;
 			}
-			throw e;
 		}
 	}
 	applyLaunchNotePreference();
@@ -1683,7 +2557,7 @@ async function mountDesktopVaultAt(
 	resetAndSeedNav(get().activeNoteId);
 	const live = useVaultStore.getState();
 	return {
-		notes: countVaultNotes(live.nodes),
+		notes: live.shellCatalog ? live.catalogNoteCount : countVaultNotes(live.nodes),
 		vaultId: live.vaultId ?? vaultId,
 		vaultPath: live.vaultPath,
 		searchEngine: describeSearchEngine(),
@@ -1691,6 +2565,13 @@ async function mountDesktopVaultAt(
 		searchIndexState: getSearchIndexState(),
 	};
 }
+
+const shellDeferredParents = new Set<string>();
+let shellWakeTimer: ReturnType<typeof setTimeout> | null = null;
+let lastShellWake = 0;
+
+let noteShellReadDeferred = (_parentId: string) => {};
+let noteShellFillProgress = () => {};
 
 function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
   return {
@@ -1703,6 +2584,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	rootIds: [],
 	activeNoteId: null,
 	secondaryNoteId: null,
+	primaryTabs: [],
+	secondaryTabs: [],
+	...SHELL_CATALOG_OFF,
+	shellLiveTick: 0,
+	readingView: false,
 	pendingJump: null,
 	settings: { ...DEFAULT_SETTINGS },
 	expandedFolders: [],
@@ -1733,6 +2619,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	graphEgoReturnPath: null,
 	scaleRemount: null,
 	bootstrap: async () => {
+		const live = get();
+		// A second bootstrap (remount) must not rescan or drop a live vault.
+		if (live.ready && live.vaultId && live.rootIds.length > 0) return;
+		if (live.ready && live.connecting) return;
 		const recents = loadRecents();
 		const fsaSupported = canOpenLocalVaultFolder();
 		const cloudSession = loadCloudSession();
@@ -1773,9 +2663,16 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				try {
 					desktopRoot = root;
 					fsaRoot = null;
-					const { scan, metaOnly } = await loadDiskVaultScan("desktop");
 					const lastPath = get().settings.lastNotePath;
-					const active = lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id || Object.values(scan.nodes).find((n) => n.kind === "note")?.id || null;
+					const { scan, metaOnly, shell } = await loadDiskVaultScan("desktop", {
+						preferPath: lastPath,
+					});
+					const shellSession = shellSessionFromMount(shell, countVaultNotes(scan.nodes));
+					const active =
+						(shell?.activeNoteId && scan.nodes[shell.activeNoteId]?.id) ||
+						(lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id) ||
+						Object.values(scan.nodes).find((n) => n.kind === "note")?.id ||
+						null;
 					const name = root.split(/[/\\]/).filter(Boolean).pop() || "Vault";
 					const vaultId = "desk-" + name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
 					const recents2 = pushRecent({
@@ -1798,14 +2695,20 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 						connecting: false,
 						dirtyNoteIds: [],
 						...GRAPH_SCOPE_DEFAULTS,
+						...shellSession,
 					});
 					syncActiveBackend("desktop");
 					{
 						const st = useVaultStore.getState();
 						if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-						await prepareDurableIndex(st.vaultId, st.mode);
-						maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-						await completeDiskSearchIndex();
+						if (shell && filledPageIsSearchable(shell)) {
+							announceFilledPageReady(shell, root);
+							continueFilledIndexAfterReady(st.vaultId, st.mode, shell.dbPath, root);
+						} else {
+							await prepareDurableIndex(st.vaultId, st.mode, shell?.dbPath);
+							maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
+							await completeDiskSearchIndex();
+						}
 					}
 					applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
@@ -1826,10 +2729,18 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					fsaRoot = saved.handle;
 					set({ connecting: true });
 					try {
-						const { scan, metaOnly } = await loadDiskVaultScan("fsa");
-						if (applyChromeFsaGuard(scan, saved.meta.name) === "refused") return;
 						const lastPath = get().settings.lastNotePath;
-						const active = lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id || Object.values(scan.nodes).find((n) => n.kind === "note")?.id || null;
+						const { scan, metaOnly, shell } = await loadDiskVaultScan("fsa", {
+							preferPath: lastPath,
+						});
+						const noteCount = shell?.notes || countVaultNotes(scan.nodes);
+						if (applyChromeFsaGuardFromCount(noteCount, saved.meta.name) === "refused") return;
+						const shellSession = shellSessionFromMount(shell, noteCount);
+						const active =
+							(shell?.activeNoteId && scan.nodes[shell.activeNoteId]?.id) ||
+							(lastPath && Object.values(scan.nodes).find((n) => n.path === lastPath)?.id) ||
+							Object.values(scan.nodes).find((n) => n.kind === "note")?.id ||
+							null;
 						const recents2 = pushRecent({
 							id: saved.meta.id,
 							name: saved.meta.name,
@@ -1851,9 +2762,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 							dirtyNoteIds: [],
 							chromeFsaLimit: get().chromeFsaLimit,
 							...GRAPH_SCOPE_DEFAULTS,
+							...shellSession,
 							settings: {
 								...get().settings,
-								...fsaChromeScaleSettings(countVaultNotes(scan.nodes)),
+								...(shellSession.shellCatalog ? {} : fsaChromeScaleSettings(noteCount)),
 							},
 						});
 						syncActiveBackend("fsa");
@@ -1890,29 +2802,31 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 		}
 		const state = get();
-		if (state.vaultId && state.mode !== "fsa" && state.mode !== "desktop" && Object.keys(state.nodes).length > 0) {
+		if (state.vaultId && state.rootIds.length > 0) {
 			applyLaunchNotePreference();
 		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
 		resetAndSeedNav(get().activeNoteId);
 			return;
 		}
 		if (await get().remountScaleSession()) return;
+		// A fill can outlive the mounted tree. Do not clear the session
+		// out from under it — Welcome reopen joins the same folder.
+		if (vaultFillBusy() || desktopFillRoot) return;
+		tabsOwnerVault = null;
 		set({
 			vaultId: null,
 			vaultName: "",
 			vaultPath: "",
 			nodes: {},
 			rootIds: [],
-			activeNoteId: null
+			activeNoteId: null,
+			primaryTabs: [],
+			secondaryTabs: [],
 		});
 	},
 	openDemoVault: () => {
 		// Don't clobber an in-flight vault open (e.g. large test vault)
 		if (get().connecting) return;
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		cancelVaultModuleState();
 		clearBodyArchive();
 		invalidateVaultTagsCache();
@@ -1976,10 +2890,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		// Single-flight: one concurrent open; connecting stays true until done/fail
 		if (get().connecting) return;
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		const restoreEarly = opts?.restore && opts.restore !== true ? opts.restore : null;
 		set({
 			connecting: true,
@@ -2055,6 +2965,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					: "Preparing workspace…"
 			});
 
+			// Index [[wikilinks]] while bodies are still attached. Stripping next
+			// drops content; prepareMountedNodes will not rebuild this vault,
+			// and indexing only the open note would mark the map ready with
+			// zero edges ("No [[wikilinks]] indexed" on a vault that has them).
+			rebuildLinkIndex(data.nodes);
 			// One 45k walk: archive + strip. A second strip pass was ~80–120ms.
 			archiveAndStripBodiesInPlace(data.nodes, [firstNote?.id ?? ""]);
 			if (gen !== vaultGen) return;
@@ -2212,10 +3127,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			return;
 		}
 		if (get().connecting) return;
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		set({ connecting: true, folderAccessLost: false });
 		cancelVaultModuleState();
 		const gen = vaultGen;
@@ -2229,7 +3140,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				phase: "walking",
 				scanned: 0,
 				totalHint: n,
-				message: `Building soak vault (${n.toLocaleString()} notes)…`,
+				message: `Building large test vault (${n.toLocaleString()} notes)…`,
 			});
 			const data = await buildSyntheticVault({
 				noteCount: n,
@@ -2404,7 +3315,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			const msg = err instanceof Error ? err.message : String(err);
 			set({
 				connecting: false,
-				toast: `Could not open soak vault: ${msg}`,
+				toast: `Could not open large test vault: ${msg}`,
 			});
 			setOpenProgress({
 				phase: "error",
@@ -2434,6 +3345,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		cancelVaultModuleState();
 		clearBodyArchive();
 		invalidateVaultTagsCache();
+		void closeBrowserShell();
 		fsaRoot = null;
 		desktopRoot = null;
 		setDesktopVaultRoot(null);
@@ -2476,10 +3388,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		resetAndSeedNav(get().activeNoteId);
 	},
 	openFolderAsVault: async () => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		if (get().connecting) return;
 		set({
 			connecting: true,
@@ -2511,61 +3419,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				});
 				return;
 			}
-			cancelVaultModuleState();
-			clearBodyArchive();
-			invalidateVaultTagsCache();
-			fsaRoot = handle;
 			const vaultId = "fsa-" + handle.name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
-			await saveDirectoryHandle(handle, {
-				id: vaultId,
-				name: handle.name
-			});
-			const { scan, metaOnly } = await loadDiskVaultScan("fsa");
-			if (applyChromeFsaGuard(scan, handle.name) === "refused") return;
-			const first = Object.values(scan.nodes).find((n) => n.kind === "note");
-			const recents = pushRecent({
-				id: vaultId,
-				name: handle.name,
-				path: handle.name,
-				lastOpened: Date.now(),
-				mode: "fsa"
-			});
-			const fsaNotes = countVaultNotes(scan.nodes);
-			set({
+			await mountGrantedFsaFolder(handle, {
 				vaultId,
-				vaultName: handle.name,
-				vaultPath: handle.name,
-				mode: "fsa",
-				nodes: prepareMountedNodes(scan.nodes, "fsa", [first?.id ?? ""], { metaOnly }),
-				rootIds: scan.rootIds,
-				activeNoteId: first?.id ?? null,
-				expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
-				dirtyNoteIds: [],
-				recentVaults: recents,
-				connecting: false,
 				toast: `Opened vault: ${handle.name}`,
-				chromeFsaLimit: get().chromeFsaLimit,
-				...GRAPH_SCOPE_DEFAULTS,
-				settings: {
-					...get().settings,
-					lastNotePath: first?.path ?? null,
-					editorMode: getPrefs().defaultEditorMode,
-					graphMode: getPrefs().defaultGraphView,
-					rightOpen: getPrefs().defaultGraphView === "panel",
-					...fsaChromeScaleSettings(fsaNotes),
-				}
+				freshPrefs: true,
 			});
-			syncActiveBackend("fsa");
-			{
-				const st = useVaultStore.getState();
-				if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-				await prepareDurableIndex(st.vaultId, st.mode);
-				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-				await completeDiskSearchIndex();
-			}
-			applyLaunchNotePreference();
-			set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
-			resetAndSeedNav(get().activeNoteId);
 		} catch (e) {
 			if (isChromeFsaCapError(e)) {
 				applyChromeFsaGuardFromCount(e.notes, "This folder");
@@ -2578,10 +3437,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	createMemoryVault: (name) => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
 		get().openLocalVault(vaultName, buildBlankVault(vaultName));
 		get().setToast(
@@ -2589,10 +3444,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		);
 	},
 	createNewVault: async (name) => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		const vaultName = (name || "Nexus Vault").trim() || "Nexus Vault";
 		const welcome = [
 			"# Welcome",
@@ -2788,57 +3639,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				await get().openFolderAsVault();
 				return;
 			}
-			cancelVaultModuleState();
-			clearBodyArchive();
-			invalidateVaultTagsCache();
-			fsaRoot = handle;
-			const vaultId = id;
-			await saveDirectoryHandle(handle, {
-				id: vaultId,
-				name: handle.name
-			});
-			const { scan, metaOnly } = await loadDiskVaultScan("fsa");
-			if (applyChromeFsaGuard(scan, handle.name) === "refused") return;
-			const first = Object.values(scan.nodes).find((n) => n.kind === "note");
-			const recents = pushRecent({
-				id: vaultId,
-				name: handle.name,
-				path: handle.name,
-				lastOpened: Date.now(),
-				mode: "fsa"
-			});
-			const fsaNotes = countVaultNotes(scan.nodes);
-			set({
-				vaultId,
-				vaultName: handle.name,
-				vaultPath: handle.name,
-				mode: "fsa",
-				nodes: prepareMountedNodes(scan.nodes, "fsa", [first?.id ?? ""], { metaOnly }),
-				rootIds: scan.rootIds,
-				activeNoteId: first?.id ?? null,
-				expandedFolders: smartExpandedFolders(scan.nodes, first?.id ?? null),
-				dirtyNoteIds: [],
-				recentVaults: recents,
-				connecting: false,
+			await mountGrantedFsaFolder(handle, {
+				vaultId: id,
 				toast: `Reopened vault: ${handle.name}`,
-				chromeFsaLimit: get().chromeFsaLimit,
-				...GRAPH_SCOPE_DEFAULTS,
-				settings: {
-					...get().settings,
-					...fsaChromeScaleSettings(fsaNotes),
-				},
+				freshPrefs: false,
 			});
-			syncActiveBackend("fsa");
-			{
-				const st = useVaultStore.getState();
-				if (st.activeNoteId) st.ensureNoteBody(st.activeNoteId);
-				await prepareDurableIndex(st.vaultId, st.mode);
-				maybeSyncDurableIndex(st.vaultId, st.mode, st.nodes);
-				await completeDiskSearchIndex();
-			}
-			applyLaunchNotePreference();
-		set({ recentNoteVisits: recentsForOpenVault(get().vaultId, get().nodes) });
-		resetAndSeedNav(get().activeNoteId);
 		} catch (e) {
 			if (isChromeFsaCapError(e)) {
 				applyChromeFsaGuardFromCount(e.notes, "This folder");
@@ -2851,10 +3656,6 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	closeVault: async () => {
-		if (vaultFillBusy()) {
-			set({ toast: FILL_IN_PROGRESS_TOAST });
-			return;
-		}
 		flushActiveEditors();
 		flushStageNow(set);
 		const mode = get().mode;
@@ -2885,6 +3686,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			totalHint: null,
 			message: ""
 		});
+		tabsOwnerVault = null;
 		set({
 			vaultId: null,
 			vaultName: "",
@@ -2893,6 +3695,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			nodes: {},
 			rootIds: [],
 			activeNoteId: null,
+			primaryTabs: [],
+			secondaryTabs: [],
 			recentNoteVisits: [],
 			dirtyNoteIds: [],
 			lastExternalSync: null,
@@ -2919,6 +3723,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const leavingDirty = !!(leavingId && get().dirtyNoteIds.includes(leavingId));
 		if (leavingDirty) flushActiveEditors();
 		const pane = opts?.pane === "secondary" ? "secondary" : "primary";
+		const tabMode = opts?.newTab ? "new" : "replace";
 		const jump: NoteJump | null =
 			id && (opts?.heading || opts?.blockId)
 				? {
@@ -2931,21 +3736,28 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 
 		if (pane === "secondary") {
 			if (!id) {
+				setFindFocusPane("primary");
 				set({
 					secondaryNoteId: null,
+					secondaryTabs: [],
 					pendingJump: null,
 					settings: { ...get().settings, workspaceSplit: false },
 				});
 				return;
 			}
 			const note = get().nodes[id];
-			if (id && note?.kind === "note" && note.content === undefined) {
+			const opened = openNoteTab(get().secondaryTabs ?? [], get().secondaryNoteId, id, tabMode);
+			if (opened.activeId === get().secondaryNoteId && opened.tabs === (get().secondaryTabs ?? []) && !jump) {
+				return;
+			}
+			if (note?.kind === "note" && note.content === undefined) {
 				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) {
 					get().ensureNoteBody(id);
 				}
-			} else if (id) touchBody(id);
+			} else if (note) touchBody(id);
 			set({
-				secondaryNoteId: id,
+				secondaryNoteId: opened.activeId,
+				secondaryTabs: opened.tabs,
 				pendingJump: jump,
 				settings: {
 					...get().settings,
@@ -2954,14 +3766,43 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					lastSecondaryNotePath: note?.path ?? get().settings.lastSecondaryNotePath,
 				},
 			});
+			evictBodiesKeeping([id]);
 			return;
 		}
 
-		if (id === get().activeNoteId) {
+		if (!id) {
+			set({
+				activeNoteId: null,
+				primaryTabs: [],
+				pendingJump: null,
+			});
+			sampleHeap("close");
+			return;
+		}
+
+		const openedPrimary = openNoteTab(get().primaryTabs ?? [], get().activeNoteId, id, tabMode);
+		if (id === get().activeNoteId && openedPrimary.tabs === (get().primaryTabs ?? [])) {
 			if (jump) set({ pendingJump: jump });
 			return;
 		}
 		const note = id ? get().nodes[id] : null;
+		const shellDb = get().shellDbPath;
+		if (id && get().shellCatalog && !note && shellDb) {
+			const db = shellDb;
+			const requested = id;
+			void fetchShellNote(db, requested).then((row) => {
+				if (!row) return;
+				const live = useVaultStore.getState();
+				if (live.shellDbPath !== db) return;
+				live.ingestShellRows([row]);
+				if (live.activeNoteId === requested) {
+					const loaded = useVaultStore.getState().nodes[requested];
+					if (loaded?.kind === "note" && loaded.content === undefined) {
+						void useVaultStore.getState().ensureNoteBody(requested);
+					}
+				}
+			});
+		}
 		const pathExpand = expandPathToNote(get().nodes, id);
 		const curExpanded = get().expandedFolders;
 		// Only rebuild expandedFolders when ancestors aren't already open —
@@ -2988,10 +3829,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const nextPath = note?.path ?? get().settings.lastNotePath;
 		const pathChanged = nextPath !== get().settings.lastNotePath;
 		let noteCount = 0;
-		try {
-			noteCount = ensureVaultIndex(get().nodes).noteCount;
-		} catch {
-			/* ignore */
+		if (get().shellCatalog) {
+			noteCount = get().catalogNoteCount;
+		} else {
+			try {
+				noteCount = ensureVaultIndex(get().nodes).noteCount;
+			} catch {
+				/* ignore */
+			}
 		}
 		const accordion = noteCount >= 400;
 		const nextExpanded = accordion
@@ -3003,7 +3848,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				? Array.from(new Set([...curExpanded, ...pathExpand]))
 				: null;
 		set({
-			activeNoteId: id,
+			activeNoteId: openedPrimary.activeId,
+			primaryTabs: openedPrimary.tabs,
 			pendingJump: jump,
 			...(nextExpanded ? { expandedFolders: nextExpanded } : {}),
 			recentNoteVisits,
@@ -3027,8 +3873,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	toggleWorkspaceSplit: () => {
 		const cur = get().settings.workspaceSplit;
 		if (cur) {
+			setFindFocusPane("primary");
 			set({
 				secondaryNoteId: null,
+				secondaryTabs: [],
 				pendingJump: null,
 				settings: { ...get().settings, workspaceSplit: false },
 			});
@@ -3057,6 +3905,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const nextNode = next ? get().nodes[next] : null;
 		set({
 			secondaryNoteId: next,
+			secondaryTabs: next ? [next] : [],
 			settings: {
 				...get().settings,
 				workspaceSplit: true,
@@ -3073,8 +3922,10 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 	},
 	closeSecondaryPane: () => {
+		setFindFocusPane("primary");
 		set({
 			secondaryNoteId: null,
+			secondaryTabs: [],
 			pendingJump: get().pendingJump?.pane === "secondary" ? null : get().pendingJump,
 			settings: { ...get().settings, workspaceSplit: false },
 		});
@@ -3086,6 +3937,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		set({
 			activeNoteId: b,
 			secondaryNoteId: a,
+			primaryTabs: get().secondaryTabs ?? [],
+			secondaryTabs: get().primaryTabs ?? [],
 			settings: {
 				...get().settings,
 				workspaceSplit: true,
@@ -3093,6 +3946,81 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				lastSecondaryNotePath: (a && get().nodes[a]?.path) || get().settings.lastSecondaryNotePath,
 			},
 		});
+	},
+	closeNoteTab: (pane, id) => {
+		if (pane === "secondary") {
+			const closed = closeTabList(get().secondaryTabs ?? [], get().secondaryNoteId, id);
+			if (!closed.activeId) {
+			setFindFocusPane("primary");
+			set({
+				secondaryNoteId: null,
+				secondaryTabs: [],
+				pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+				settings: { ...get().settings, workspaceSplit: false },
+			});
+			return null;
+		}
+		const note = get().nodes[closed.activeId];
+		set({
+			secondaryNoteId: closed.activeId,
+			secondaryTabs: closed.tabs,
+			pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+				settings: {
+					...get().settings,
+					workspaceSplit: true,
+					lastSecondaryNotePath: note?.path ?? get().settings.lastSecondaryNotePath,
+				},
+			});
+			if (note?.kind === "note" && note.content === undefined) {
+				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) get().ensureNoteBody(closed.activeId);
+			} else if (note) touchBody(closed.activeId);
+			return closed.activeId;
+		}
+		const closed = closeTabList(get().primaryTabs ?? [], get().activeNoteId, id);
+		if (!closed.activeId) {
+			set({
+				activeNoteId: null,
+				primaryTabs: [],
+				pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+				settings: { ...get().settings, lastNotePath: null },
+			});
+			sampleHeap("close");
+			return null;
+		}
+		const note = get().nodes[closed.activeId];
+		set({
+			activeNoteId: closed.activeId,
+			primaryTabs: closed.tabs,
+			pendingJump: get().pendingJump?.noteId === id ? null : get().pendingJump,
+			settings: {
+				...get().settings,
+				lastNotePath: note?.path ?? get().settings.lastNotePath,
+			},
+		});
+		if (note?.kind === "note" && note.content === undefined) {
+			if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) get().ensureNoteBody(closed.activeId);
+		} else if (note) {
+			touchBody(closed.activeId);
+			evictBodiesKeeping([closed.activeId]);
+		}
+		return closed.activeId;
+	},
+	reorderNoteTabs: (pane, fromId, toId) => {
+		if (pane === "secondary") {
+			const next = reorderTabList(get().secondaryTabs ?? [], fromId, toId);
+			if (!tabsEqual(next, get().secondaryTabs)) set({ secondaryTabs: next });
+			return;
+		}
+		const next = reorderTabList(get().primaryTabs ?? [], fromId, toId);
+		if (!tabsEqual(next, get().primaryTabs)) set({ primaryTabs: next });
+	},
+	cycleNoteTab: (pane, dir) => {
+		const tabs = pane === "secondary" ? (get().secondaryTabs ?? []) : (get().primaryTabs ?? []);
+		const active = pane === "secondary" ? get().secondaryNoteId : get().activeNoteId;
+		const next = cycleTabList(tabs, active, dir);
+		if (!next || next === active) return next;
+		get().setActiveNote(next, { pane, silent: true });
+		return next;
 	},
 	clearPendingJump: () => set({ pendingJump: null }),
 	restoreNoteRevision: (noteId, revId) => {
@@ -3108,11 +4036,187 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 
 	toggleFolder: (id) => {
 		const cur = readExpandedFolders(get);
-		const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+		const opening = !cur.includes(id);
+		const next = opening ? [...cur, id] : cur.filter((x) => x !== id);
 		writeExpandedFolders(set, next);
+		if (opening && get().shellCatalog && !(get().shellLoaded[id] > 0)) {
+			void get().loadShellChildren(id);
+		}
 	},
 	setExpandedFolders: (ids) => {
 		writeExpandedFolders(set, Array.from(new Set(ids)));
+	},
+	loadShellChildren: async (parentId) => {
+		const s = get();
+		if (!s.shellCatalog || !s.shellDbPath) return;
+		const parentPath = shellParentPath(s.nodes, parentId);
+		if (parentPath == null) return;
+		if (shellPageInflight.has(parentId)) return;
+		const offset = s.shellLoaded[parentId] ?? 0;
+		shellPageInflight.add(parentId);
+		try {
+			const page = await fetchShellChildren(s.shellDbPath, parentPath, offset, SHELL_CHILD_PAGE);
+			if (!page) {
+				noteShellReadDeferred(parentId);
+				return;
+			}
+			const live = get();
+			if (!live.shellCatalog || live.shellDbPath !== s.shellDbPath) return;
+			const merged = mergeShellRows(live.nodes, live.rootIds, page.rows);
+			const loaded = offset + page.rows.length;
+			const hidden = pageHidden(page, loaded);
+			const unloaded = { ...live.shellUnloaded };
+			if (hidden > 0) unloaded[parentId] = hidden;
+			else delete unloaded[parentId];
+			set({
+				nodes: merged.nodes,
+				rootIds: merged.rootIds,
+				shellLoaded: { ...live.shellLoaded, [parentId]: loaded },
+				shellUnloaded: unloaded,
+			});
+		} finally {
+			shellPageInflight.delete(parentId);
+		}
+	},
+	// A folder picked in search is about to take Enter. In a paged vault the
+	// catalog can still list notes that left the disk while the app was closed
+	// (it does not walk the folder again on reopen), and such a folder would not
+	// take Enter as empty. Look at the folder on disk: when it holds nothing,
+	// the catalog forgets those rows and the folder is empty here too.
+	settleFolderForEnter: async (folderId) => {
+		const s = get();
+		const node = s.nodes[folderId];
+		const root = desktopRoot;
+		if (!node || node.kind !== "folder" || !s.shellCatalog || s.mode !== "desktop" || !root) return;
+		for (let i = 0; i < 40 && shellPageInflight.has(folderId); i++) {
+			await new Promise((r) => setTimeout(r, 20));
+		}
+		if (get().shellLoaded[folderId] === undefined) await get().loadShellChildren(folderId);
+		const onDisk = await countDesktopFolderEntries(root, node.path);
+		if (!onDisk || onDisk.notes + onDisk.folders > 0) return;
+		const live = get();
+		if (!live.shellCatalog || live.shellDbPath !== s.shellDbPath || !live.nodes[folderId]) return;
+		const kids = Object.values(live.nodes).filter((n) => n.parentId === folderId);
+		const db = live.shellDbPath;
+		if (kids.length && db) {
+			try {
+				await fetchShellForget(db, root, kids.map((k) => k.path));
+			} catch {
+				/* the rows below still go from this window */
+			}
+		}
+		const now = get();
+		const dropped = dropShellIds(now.nodes, now.rootIds, kids.map((k) => k.id));
+		const unloaded = { ...now.shellUnloaded };
+		delete unloaded[folderId];
+		set({
+			nodes: dropped.nodes,
+			rootIds: dropped.rootIds,
+			shellUnloaded: unloaded,
+			shellLoaded: { ...now.shellLoaded, [folderId]: 0 },
+			...(now.activeNoteId && dropped.dropped.includes(now.activeNoteId) ? { activeNoteId: null } : {}),
+		});
+		try { ensureVaultIndex(get().nodes); } catch {}
+	},
+	reloadShellParent: async (parentId) => {
+		const s = get();
+		if (!s.shellCatalog) return;
+		shellPageInflight.delete(parentId);
+		set({ shellLoaded: { ...s.shellLoaded, [parentId]: 0 } });
+		await get().loadShellChildren(parentId);
+	},
+	ingestShellRows: (rows) => {
+		if (!rows?.length) return;
+		const s = get();
+		const merged = mergeShellRows(s.nodes, s.rootIds, rows);
+		if (merged.nodes === s.nodes) return;
+		set({ nodes: merged.nodes, rootIds: merged.rootIds });
+	},
+	refreshShellPaths: (paths) => {
+		try { (window as unknown as { __TAURI_INTERNALS__?: { invoke: (c: string, a: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__?.invoke("ready_clock_log", { line: "NEXUS_READY_CLOCK SDBG refresh " + JSON.stringify(paths).slice(0, 200) + " shell=" + get().shellCatalog + " root=" + Boolean(desktopRoot) }); } catch { /* dbg */ }
+		if (!get().shellCatalog || !paths?.length) return;
+		const db = get().shellDbPath;
+		const root = desktopRoot;
+		void (async () => {
+			if (db === BROWSER_SHELL_DB) {
+				try {
+					await admitBrowserPaths(paths);
+				} catch {
+					/* the page reload still shows rows already in the catalog */
+				}
+			}
+			if (db && root && db !== BROWSER_SHELL_DB) {
+				// A note dropped into the folder after Ready joins title search now.
+				// A write elsewhere can hold the catalog for a moment; try again.
+				let admitted = await fetchShellAdmit(db, root, paths);
+				for (let attempt = 0; admitted === null && attempt < 3; attempt++) {
+					await new Promise((r) => setTimeout(r, 1500 * 2 ** attempt));
+					if (get().shellDbPath !== db) break;
+					admitted = await fetchShellAdmit(db, root, paths);
+				}
+				try { (window as unknown as { __TAURI_INTERNALS__?: { invoke: (c: string, a: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__?.invoke("ready_clock_log", { line: "NEXUS_READY_CLOCK SDBG admitted " + JSON.stringify(admitted?.map((r) => r.path) ?? null).slice(0, 200) }); } catch { /* dbg */ }
+				if (admitted?.length && get().shellDbPath === db) {
+					const notes = admitted.filter((r) => r.kind === "note").length;
+					get().ingestShellRows(admitted);
+					set({
+						catalogNoteCount: get().catalogNoteCount + notes,
+						catalogFolderCount: get().catalogFolderCount + (admitted.length - notes),
+					});
+				}
+			}
+			let goneIds: string[] = [];
+			let gonePaths: string[] = [];
+			if (db === BROWSER_SHELL_DB || (db && root)) {
+				const forgotten = await fetchShellForget(db, root || db, paths);
+				if (forgotten && get().shellDbPath === db) {
+					goneIds = forgotten.ids.slice();
+					gonePaths = forgotten.paths.slice();
+					for (const rel of forgotten.paths) {
+						goneIds.push(deskNodeId(rel));
+					}
+				}
+			}
+			if (goneIds.length && get().shellCatalog) {
+				const live = get();
+				goneIds = keepRenamedShellIds(live.nodes, goneIds, gonePaths, wroteHereRecently);
+				const dropped = dropShellIds(live.nodes, live.rootIds, goneIds);
+				if (dropped.dropped.length) {
+					const activeGone =
+						(live.activeNoteId && dropped.dropped.includes(live.activeNoteId)) ||
+						(live.secondaryNoteId && dropped.dropped.includes(live.secondaryNoteId));
+					set({
+						nodes: dropped.nodes,
+						rootIds: dropped.rootIds,
+						...(activeGone
+							? {
+									activeNoteId:
+										live.activeNoteId && dropped.dropped.includes(live.activeNoteId)
+											? null
+											: live.activeNoteId,
+									secondaryNoteId:
+										live.secondaryNoteId && dropped.dropped.includes(live.secondaryNoteId)
+											? null
+											: live.secondaryNoteId,
+								}
+							: {}),
+					});
+				}
+			}
+			const parents = new Set<string>();
+			for (const path of paths) parents.add(shellParentKeyForPath(path));
+			let budget = 0;
+			for (const id of parents) {
+				if (budget >= 8) break;
+				const open =
+					id === SHELL_ROOT_KEY ||
+					get().expandedFolders.includes(id) ||
+					(get().shellLoaded[id] ?? 0) > 0;
+				if (!open) continue;
+				if (!get().nodes[id] && id !== SHELL_ROOT_KEY) continue;
+				budget += 1;
+				void get().reloadShellParent(id);
+			}
+		})();
 	},
 	setLeftOpen: (open) => set({ settings: {
 		...get().settings,
@@ -3132,21 +4236,44 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	} }),
 	setEditorMode: (mode) => {
 		flushActiveEditors();
-		set({ settings: {
+		set({ readingView: false, settings: {
 			...get().settings,
 			editorMode: mode
 		} });
 	},
+	setReadingView: (on) => {
+		if (on) flushActiveEditors();
+		if (get().readingView !== on) set({ readingView: on });
+	},
+	toggleReadingView: () => get().setReadingView(!get().readingView),
 	setGraphMode: (mode) => {
 		const prev = get().settings.graphMode;
+		const cur = get().settings;
+		let leftOpen = cur.leftOpen;
+		let rightOpen = cur.rightOpen;
+		if (mode === "fullscreen" && prev !== "fullscreen") {
+			fullscreenPanelSnapshot = {
+				leftOpen: cur.leftOpen,
+				rightOpen: cur.rightOpen,
+			};
+			leftOpen = false;
+			rightOpen = false;
+		} else if (prev === "fullscreen" && mode !== "fullscreen") {
+			// The snapshot lives only in memory. After a relaunch in fullscreen
+			// the saved leftOpen is the forced false, so the list comes back.
+			leftOpen = fullscreenPanelSnapshot?.leftOpen ?? true;
+			rightOpen =
+				mode === "panel" ? true : (fullscreenPanelSnapshot?.rightOpen ?? cur.rightOpen);
+			fullscreenPanelSnapshot = null;
+		}
 		set({
 			settings: {
-				...get().settings,
+				...cur,
 				graphMode: mode,
-				// Keep graph visible in the right rail when leaving fullscreen
-				...(mode === "panel" ? { rightOpen: true } : {})
+				leftOpen,
+				rightOpen,
 			},
-			...(mode === "panel" ? { rightTab: "graph" as const } : {})
+			...(mode === "panel" ? { rightTab: "graph" as const } : {}),
 		});
 		if (mode === "fullscreen" && prev !== "fullscreen") {
 			get().setToast("Fullscreen graph · Esc or Exit to leave");
@@ -3157,7 +4284,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const cur = get().settings.editorMode;
 		const next =
 			cur === "visual" ? "source" : cur === "source" ? "split" : "visual";
-		set({ settings: {
+		set({ readingView: false, settings: {
 			...get().settings,
 			editorMode: next
 		} });
@@ -3216,10 +4343,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (!opts?.external && prev) recordNoteRevision(id, node.path, prev);
 		// Keep body archive in sync for large-test lazy mounts
 		if (hasBodyArchive() && node.path) setBodyInArchive(node.path, next);
+		const born =
+			node.ctime ??
+			(get().mode === "demo" || get().mode === "local" ? node.mtime : undefined);
 		const nextNode: VaultNode = {
 			...node,
 			content: next,
 			mtime: Date.now(),
+			...(born ? { ctime: born } : {}),
 		};
 		get().nodes[id] = nextNode;
 		patchVaultIndex(get().nodes, [id]);
@@ -3228,7 +4359,16 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			dirtyNoteIds: opts?.external ? get().dirtyNoteIds.filter((x) => x !== id) : get().dirtyNoteIds.includes(id) ? get().dirtyNoteIds : [...get().dirtyNoteIds, id],
 			lastExternalSync: opts?.external ? Date.now() : get().lastExternalSync
 		});
-		vaultLinkIndex.setNoteLinks(id, next);
+		const noteCount = ensureVaultIndex(get().nodes).noteCount;
+		if (
+			!isLargeMemoryVault(get().vaultId) &&
+			!shouldUseEgoGraph(noteCount) &&
+			!vaultLinkIndex.coversNoteCount(noteCount)
+		) {
+			rebuildLinkIndex(get().nodes);
+		} else {
+			vaultLinkIndex.setNoteLinks(id, next);
+		}
 		touchBody(id);
 		const updated = get().nodes[id];
 		if (updated?.kind === "note") {
@@ -3286,10 +4426,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (!node) return;
 		let name = newName.trim();
 		if (!name) return;
+		const canvasFile =
+			node.kind === "note" &&
+			(isCanvasPath(node.path) || isCanvasNote(typeof node.content === "string" ? node.content : "", node.path));
 		if (node.kind === "note") {
-			name = name.replace(/\.md$/i, "");
+			name = name.replace(/\.(md|canvas)$/i, "");
 			if (!name) return;
-			name = `${name}.md`;
+			name = canvasFile ? `${name}.canvas` : `${name}.md`;
 		}
 		const parent = parentPath(node.path);
 		let newPath = parent ? pathJoin(parent, name) : name;
@@ -3297,8 +4440,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const idx = ensureVaultIndex(get().nodes);
 		const conflictId = idx.getIdByPath(get().nodes, newPath);
 		if (conflictId && conflictId !== id) {
-			const stem = name.replace(/\.md$/i, "");
-			const ext = node.kind === "note" ? ".md" : "";
+			const stem = name.replace(/\.(md|canvas)$/i, "");
+			const ext = node.kind === "note" ? (canvasFile ? ".canvas" : ".md") : "";
 			let i = 1;
 			while (idx.hasPath(parent ? pathJoin(parent, `${stem} ${i}${ext}`) : `${stem} ${i}${ext}`)) i++;
 			name = `${stem} ${i}${ext}`;
@@ -3307,10 +4450,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const oldPath = node.path;
 		const nodes = { ...get().nodes };
-		const titleOnly = name.replace(/\.md$/i, "");
+		const titleOnly = name.replace(/\.(md|canvas)$/i, "");
 		let content = node.content;
-		if (node.kind === "note" && typeof content === "string") if (/^#\s+.+$/m.test(content)) content = content.replace(/^#\s+.+$/m, `# ${titleOnly}`);
-		else content = `# ${titleOnly}\n\n` + content.replace(/^\n+/, "");
+		if (node.kind === "note" && typeof content === "string" && !canvasFile) {
+			if (/^#\s+.+$/m.test(content)) content = content.replace(/^#\s+.+$/m, `# ${titleOnly}`);
+			else content = `# ${titleOnly}\n\n` + content.replace(/^\n+/, "");
+		}
 		nodes[id] = {
 			...node,
 			name,
@@ -3329,6 +4474,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					path: newPath + n.path.slice(oldPath.length),
 					mtime: Date.now()
 				};
+				if (n.kind === "note") markLocalWrite(nodes[cid].path, undefined, n.path);
 				dirtyIds.push(cid);
 			});
 			if (hasBodyArchive()) rekeyBodyArchivePrefix(oldPath, newPath);
@@ -3337,6 +4483,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (typeof content === "string") setBodyInArchive(newPath, content);
 		}
 		try { ensureVaultIndex(get().nodes).markDirty(dirtyIds); } catch {}
+		markLocalWrite(oldPath);
+		markLocalWrite(newPath, node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined, oldPath);
 		set({ nodes });
 		// Keep durable FTS path/title in sync after rename
 		{
@@ -3357,15 +4505,29 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
+			const written = node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined;
 			queueDiskWrite(async () => {
-				await renameDesktopPath(root, oldPath, newPath, node.kind, node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined);
-				desktopWatchAck?.();
+				try {
+					await renameDesktopPath(root, oldPath, newPath, node.kind, written);
+					desktopWatchAck?.();
+					if (node.kind === "note") clearDirtyIfUnchanged(id, newPath, written);
+				} catch (err) {
+					if (node.kind === "note") markNoteDirty(id);
+					throw err;
+				}
 			});
 		} else if (get().mode === "fsa" && fsaRoot) {
 			const root = fsaRoot;
+			const written = node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined;
 			queueDiskWrite(async () => {
-				await renamePathOnDisk(root, oldPath, newPath, node.kind, node.kind === "note" ? contentForDiskWrite(nodes[id]) : undefined);
-				if (watcherAck) await watcherAck(root);
+				try {
+					await renamePathOnDisk(root, oldPath, newPath, node.kind, written);
+					if (watcherAck) await watcherAck(root);
+					if (node.kind === "note") clearDirtyIfUnchanged(id, newPath, written);
+				} catch (err) {
+					if (node.kind === "note") markNoteDirty(id);
+					throw err;
+				}
 			});
 		}
 	},
@@ -3378,12 +4540,13 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const activate = opts?.activate !== false;
 		const stage = beginStage(get);
 		const parent = parentId ? stage.nodes[parentId] : null;
-		const base = slugifyTitle(title) || "Untitled";
-		let name = base.endsWith(".md") ? base : `${base}.md`;
+		const ext = opts?.extension === ".canvas" ? ".canvas" : ".md";
+		const base = (slugifyTitle(title) || "Untitled").replace(/\.md$/i, "").replace(/\.canvas$/i, "");
+		let name = `${base}${ext}`;
 		let path = parent ? pathJoin(parent.path, name) : name;
 		let i = 1;
 		while (pathOccupied(stage.nodes, path)) {
-			name = `${base.replace(/\.md$/i, "")} ${i}.md`;
+			name = `${base} ${i}${ext}`;
 			path = parent ? pathJoin(parent.path, name) : name;
 			i++;
 		}
@@ -3399,6 +4562,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		else if (typeof opts?.content === "string") content = opts.content;
 		else if (opts?.template) content = buildTemplateContent(opts.template, titleClean);
 		else content = `# ${titleClean}\n\n`;
+		markLocalWrite(path, content);
 		stage.nodes[id] = {
 			id,
 			path,
@@ -3421,16 +4585,29 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (parentId && !stage.expandedFolders.includes(parentId)) stage.expandedFolders = [...stage.expandedFolders, parentId];
 		if (activate) {
 			stage.activeNoteId = id;
+			// A new note is for writing: reading view would leave nowhere to type.
+			if (get().readingView) set({ readingView: false });
 		}
-		if (!stage.dirtyNoteIds.includes(id)) stage.dirtyNoteIds = [...stage.dirtyNoteIds, id];
+		// The new file is written below. It is not an unsaved edit.
 		patchVaultIndex(stage.nodes, [id]);
 		scheduleStageFlush(set);
 		if (isDiskVault(get().mode)) {
+			const noteId = id;
 			const pth = path;
 			const body = content;
 			enqueueDiskOp(async () => {
-				await persistNoteIfFsa(pth, body, { ack: false });
-			});
+				const live = useVaultStore.getState().nodes[noteId];
+				// A rename already moved this file. That write owns the bytes.
+				if (!live || live.kind !== "note" || live.path !== pth) return;
+				const writeBody = typeof live.content === "string" ? live.content : body;
+				try {
+					await persistNoteIfFsa(pth, writeBody, { ack: false });
+					clearDirtyIfUnchanged(noteId, pth, writeBody);
+				} catch (err) {
+					markNoteDirty(noteId);
+					throw err;
+				}
+			}, true);
 		}
 		// Always materialize so activate:false callers (wikilink create) see nodes[id]
 		flushStageNow(set);
@@ -3450,6 +4627,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		persistLargeVaultOverlayNode(get().vaultId, get().nodes[id], get().nodes);
 		return id;
 	},
+	createCanvas: (parentId, title = "Untitled") =>
+		get().createNote(parentId, title, {
+			raw: true,
+			content: emptyCanvasFile(),
+			extension: ".canvas",
+		}),
 	createFolder: (parentId, name = "New Folder", opts) => {
 		if (get().connecting) return null;
 		const expand = opts?.expand !== false;
@@ -3764,20 +4947,40 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			message: `Moved to trash: ${target.path}`,
 			vaultId: get().vaultId
 		});
-		const nextActive = toDelete.has(get().activeNoteId ?? "")
-			? (get().recentNoteVisits ?? []).find(
-					(nid) => nodes[nid]?.kind === "note",
-				) ??
-				Object.values(nodes).find((n) => n.kind === "note")?.id ??
-				null
-			: get().activeNoteId;
+		const activeGone = toDelete.has(get().activeNoteId ?? "");
+		let primaryTabs = (get().primaryTabs ?? []).filter((nid) => !toDelete.has(nid));
+		let nextActive = get().activeNoteId;
+		if (activeGone) {
+			const closed = closeTabList(get().primaryTabs ?? [], get().activeNoteId, get().activeNoteId ?? "");
+			primaryTabs = closed.tabs.filter((nid) => !toDelete.has(nid));
+			nextActive = closed.activeId && !toDelete.has(closed.activeId) ? closed.activeId : null;
+			if (!nextActive) {
+				nextActive =
+					(get().recentNoteVisits ?? []).find((nid) => nodes[nid]?.kind === "note") ??
+					Object.values(nodes).find((n) => n.kind === "note")?.id ??
+					null;
+				if (nextActive && !primaryTabs.includes(nextActive)) primaryTabs = [...primaryTabs, nextActive];
+			}
+		}
 		const droppedSecondary = toDelete.has(get().secondaryNoteId ?? "");
-		const nextSecondary = droppedSecondary ? null : get().secondaryNoteId;
+		let secondaryTabs = (get().secondaryTabs ?? []).filter((nid) => !toDelete.has(nid));
+		let nextSecondary = get().secondaryNoteId;
+		if (droppedSecondary) {
+			const closed = closeTabList(get().secondaryTabs ?? [], get().secondaryNoteId, get().secondaryNoteId ?? "");
+			secondaryTabs = closed.tabs.filter((nid) => !toDelete.has(nid));
+			nextSecondary = closed.activeId && !toDelete.has(closed.activeId) ? closed.activeId : null;
+		}
+		if (!nextSecondary) {
+			secondaryTabs = [];
+			if (get().settings.workspaceSplit) setFindFocusPane("primary");
+		}
 		set({
 			nodes,
 			rootIds: get().rootIds.filter((r) => !toDelete.has(r)),
 			activeNoteId: nextActive,
+			primaryTabs,
 			secondaryNoteId: nextSecondary,
+			secondaryTabs,
 			expandedFolders: get().expandedFolders.filter((x) => !toDelete.has(x)),
 			dirtyNoteIds: get().dirtyNoteIds.filter((x) => !toDelete.has(x)),
 			trashTick: get().trashTick + 1,
@@ -3794,18 +4997,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				}
 			}
 		}
-		const trashLabel = target.kind === "note" ? noteTitle(target) : target.name;
 		if (undoTrashPath) {
-			get().setToast(`Moved to trash: ${trashLabel}`, {
+			get().setToast("Moved to Trash. You can put it back.", {
 				label: "Restore",
 				kind: "restore-trash",
 				trashPath: undoTrashPath,
 			});
 		} else {
-			get().setToast(`Moved to trash: ${trashLabel}`, {
-				label: "Open trash",
-				kind: "open-pulse",
-			});
+			get().setToast("Moved to Trash. You can put it back.");
 		}
 		if (get().mode === "desktop" && desktopRoot) {
 			const root = desktopRoot;
@@ -4156,9 +5355,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const { nodes, rootIds, mode } = get();
 		const systems = Object.values(nodes).find((n) => n.kind === "folder" && n.path === "Systems");
-		const path = HERMES_SAMPLE_NOTE.path;
+		const path = AGENT_SAMPLE_NOTE.path;
 		const existing = Object.values(get().nodes).find((n) => n.path === path);
-		const content = HERMES_SAMPLE_NOTE.content.replace("${TS}", (new Date()).toISOString());
+		const content = AGENT_SAMPLE_NOTE.content.replace("${TS}", (new Date()).toISOString());
 		if (existing) {
 			const mine = existing.content ?? "";
 			const dirty =
@@ -4196,7 +5395,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				pushPulse({
 					kind: "hermes",
 					path: siblingPath,
-					title: "Hermes Pulse",
+					title: "Agent Pulse",
 					message: "Agent write conflicted — open Conflict Studio",
 					vaultId: get().vaultId,
 				});
@@ -4210,14 +5409,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			pushPulse({
 				kind: "hermes",
 				path,
-				title: "Hermes Pulse",
-				message: "Hermes updated Systems/Hermes Pulse.md",
+				title: "Agent Pulse",
+				message: `An agent updated ${path}`,
 				vaultId: get().vaultId
 			});
 			set({
 				lastExternalSync: Date.now(),
 				hermesTick: get().hermesTick + 1,
-				toast: "Hermes updated Systems/Hermes Pulse.md",
+				toast: `An agent updated ${path}`,
 				toastAction: { label: "Open Pulse", kind: "open-pulse" },
 				activeNoteId: existing.id,
 				rightTab: "pulse",
@@ -4229,7 +5428,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const node: VaultNode = {
 			id,
 			path,
-			name: HERMES_SAMPLE_NOTE.name,
+			name: AGENT_SAMPLE_NOTE.name,
 			kind: "note",
 			parentId: systems?.id ?? null,
 			mtime: Date.now(),
@@ -4246,7 +5445,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			expandedFolders: expanded,
 			lastExternalSync: Date.now(),
 			hermesTick: get().hermesTick + 1,
-			toast: "Hermes created Systems/Hermes Pulse.md",
+			toast: `An agent created ${path}`,
 			toastAction: { label: "Open Pulse", kind: "open-pulse" },
 			activeNoteId: id,
 			rightTab: "pulse",
@@ -4255,8 +5454,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		pushPulse({
 			kind: "hermes",
 			path,
-			title: "Hermes Pulse",
-			message: "Hermes created Systems/Hermes Pulse.md",
+			title: "Agent Pulse",
+			message: `An agent created ${path}`,
 			vaultId: get().vaultId
 		});
 		if (isDiskVault(mode)) queueDiskWrite(() => persistNoteIfFsa(path, content));
@@ -4267,14 +5466,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		} catch {
 			/* ignore */
 		}
-		const path = HERMES_SAMPLE_NOTE.path;
+		const path = AGENT_SAMPLE_NOTE.path;
 		let existing = Object.values(get().nodes).find((n) => n.path === path);
 		if (!existing) {
 			get().simulateHermesWrite();
 			existing = Object.values(get().nodes).find((n) => n.path === path);
 		}
 		if (!existing || existing.kind !== "note") {
-			get().setToast("Could not open Hermes Pulse");
+			get().setToast("Could not open Agent Pulse");
 			return;
 		}
 		const mine = `${existing.content ?? ""}\n\nI am still editing this — keep mine.\n`;
@@ -4296,10 +5495,15 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			get()._applyExternalSnapshotNow(pending.nodes, pending.rootIds);
 		}, wait);
 	},
-	_applyExternalSnapshotNow: (nodesIn, rootIds) => {
+	_applyExternalSnapshotNow: (nodesIn, rootIdsIn) => {
 		flushStageNow(set);
-		let nodes = nodesIn;
 		const prev = get().nodes;
+		// A rescan names files by path; keep the ids the open notes already use.
+		const kept = keepIdsByPath(prev, nodesIn, rootIdsIn);
+		// Notes the app just created, renamed, or wrote keep the text it holds.
+		const held = keepRecentLocalBodies(prev, kept.nodes, kept.rootIds, diskCopyIsOurs);
+		let nodes = held.nodes;
+		const rootIds = held.rootIds;
 		const fingerprint = (map: Record<string, VaultNode>) => {
 			let notes = 0;
 			let mtimeXor = 0;
@@ -4335,7 +5539,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (!local || local.kind !== "note") continue;
 			const diskId = nodes[dirtyId]?.kind === "note" ? dirtyId : Object.values(nodes).find((n) => n.kind === "note" && n.path === local.path)?.id;
 			if (!diskId || !nodes[diskId]) {
-				const restoredId = makeId(local.path, get().mode);
+				// Restore under the id the note already has, so the open editor keeps it.
+				const restoredId = nodes[dirtyId] ? makeId(local.path, get().mode) : dirtyId;
 				const parentPathStr = parentPath(local.path);
 				let parentId = null;
 				if (parentPathStr) parentId = Object.values(nodes).find((n) => n.kind === "folder" && n.path === parentPathStr)?.id ?? null;
@@ -4446,6 +5651,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}
 			conflictToast = `Conflict — kept your edits; disk copy saved as ${pathToName(sibling)}`;
 		}
+		if (!nextActive && active && nodes[active]?.kind === "note") nextActive = active;
 		const remappedExpanded = [];
 		for (const id of get().expandedFolders) {
 			const p = prev[id]?.path;
@@ -4522,11 +5728,45 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			}, BURST_WINDOW_MS);
 		}
 		const nextToast = conflictToast ? conflictToast : shouldToast && burstCount < BURST_MIN_COUNT ? "Vault updated from disk" : get().toast;
+		const mapOpenTabs = (tabs: string[]) => {
+			const out: string[] = [];
+			const seen = new Set<string>();
+			for (const tid of tabs) {
+				const path = prev[tid]?.path;
+				const nid =
+					nodes[tid]?.kind === "note" ? tid : path ? pathToNewId.get(path) ?? null : null;
+				if (!nid || seen.has(nid) || nodes[nid]?.kind !== "note") continue;
+				seen.add(nid);
+				out.push(nid);
+			}
+			return out;
+		};
+		let primaryTabs = mapOpenTabs(get().primaryTabs ?? []);
+		if (nextActive && nodes[nextActive]?.kind === "note" && !primaryTabs.includes(nextActive)) {
+			primaryTabs = openNoteTab(primaryTabs, null, nextActive, "new").tabs;
+		}
+		if (!nextActive) primaryTabs = [];
+		let nextSecondary = get().secondaryNoteId;
+		if (nextSecondary && nodes[nextSecondary]?.kind !== "note") {
+			const secPath = prev[nextSecondary]?.path;
+			const nid = secPath ? pathToNewId.get(secPath) ?? null : null;
+			nextSecondary = nid && nodes[nid]?.kind === "note" ? nid : null;
+		}
+		let secondaryTabs = nextSecondary ? mapOpenTabs(get().secondaryTabs ?? []) : [];
+		if (nextSecondary && !secondaryTabs.includes(nextSecondary)) {
+			secondaryTabs = openNoteTab(secondaryTabs, null, nextSecondary, "new").tabs;
+		}
 		set({
 			nodes,
 			rootIds: nextRootIds,
 			lastExternalSync: now,
 			activeNoteId: nextActive,
+			primaryTabs,
+			secondaryNoteId: nextSecondary,
+			secondaryTabs,
+			...(get().settings.workspaceSplit && !nextSecondary
+				? { settings: { ...get().settings, workspaceSplit: false } }
+				: {}),
 			dirtyNoteIds: remappedDirty,
 			toast: nextToast,
 			toastAction: nextToast === get().toast ? get().toastAction : null,
@@ -4568,6 +5808,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		const inflight = bodyHydrateInflight.get(id);
 		if (inflight) return inflight;
+		missingBodyIds.delete(id);
+		if (failedBodyIds.delete(id)) bumpBodyGen();
 		const run = (async () => {
 			const mode = get().mode;
 			// Module vaultGen — bumped by cancelVaultModuleState on vault switch
@@ -4578,14 +5820,22 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				rootIds: get().rootIds,
 				signatures: {}
 			}));
-			if (!backend?.readNote && !mockDiskBodies?.has(path)) return null;
+			if (!backend?.readNote && !mockDiskBodies?.has(path)) {
+				failedBodyIds.add(id);
+				bumpBodyGen();
+				return null;
+			}
 			try {
 				const content = mockDiskBodies?.has(path)
 					? mockDiskBodies.get(path)!
 					: backend?.readNote
 						? await backend.readNote(path)
 						: null;
-				if (content == null) return null;
+				if (content == null) {
+					failedBodyIds.add(id);
+					bumpBodyGen();
+					return null;
+				}
 				if (genAtStart !== vaultGen) return null;
 				const cur = get().nodes[id];
 				if (!cur || cur.kind !== "note") return null;
@@ -4624,24 +5874,30 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				const dirtyIds = [id, ...victims.filter((v) => v !== id)];
 				patchVaultIndex(live, dirtyIds);
 				set({ nodes: live });
+				bumpBodyGen();
 				if (!vaultFillBusy()) {
 					vaultLinkIndex.setNoteLinks(id, content);
 				}
 				// Desktop SQLite mirror is empty at 100k — slimNotes≈0 used to
 				// vault_index_upsert every click into the live fill writer.
 				const idx = getDurableIndex();
-				if (
-					!shouldSkipDurableUpsertOnHydrate({
-						fillBusy: vaultFillBusy(),
-						indexKind: idx?.kind,
-						slimNotes: idx?.stats().slimNotes ?? 0,
-					})
-				) {
+				const hydrateArgs = {
+					fillBusy: vaultFillBusy(),
+					indexKind: idx?.kind,
+					slimNotes: idx?.stats().slimNotes ?? 0,
+				};
+				if (shouldIndexOpenedDesktopNote(hydrateArgs)) {
+					indexOpenedDesktopNote({
+						...cur,
+						content
+					});
+				} else if (!shouldSkipDurableUpsertOnHydrate(hydrateArgs)) {
 					upsertDurableNoteFromNode({
 						...cur,
 						content
 					});
 				}
+				if (browserCatalogOwnsSearch()) indexOpenBrowserNote(path);
 				sampleHeap(`body:${path}`);
 				if (!vaultFillBusy()) {
 					try {
@@ -4654,6 +5910,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				return content;
 			} catch (e) {
 				console.warn("[nexus] ensureNoteBody failed", id, e);
+				if (isMissingFileError(e)) missingBodyIds.add(id);
+				failedBodyIds.add(id);
+				bumpBodyGen();
 				return null;
 			} finally {
 				bodyHydrateInflight.delete(id);
@@ -5038,6 +6297,77 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
   };
 }
 
+/** Panels parked while the galaxy is fullscreen. Not persisted. */
+let fullscreenPanelSnapshot: { leftOpen: boolean; rightOpen: boolean } | null =
+  null;
+
+function flushDeferredShellReads() {
+	const ids = [...shellDeferredParents].slice(0, 8);
+	shellDeferredParents.clear();
+	const live = useVaultStore.getState();
+	if (live.shellCatalog) {
+		for (const id of ids) void live.loadShellChildren(id);
+	}
+	useVaultStore.setState((s) => ({ shellLiveTick: (s.shellLiveTick ?? 0) + 1 }));
+	wakeShellCatalog();
+}
+
+function scheduleShellWake() {
+	if (shellWakeTimer) return;
+	shellWakeTimer = setTimeout(() => {
+		shellWakeTimer = null;
+		flushDeferredShellReads();
+	}, 280);
+}
+
+noteShellReadDeferred = (parentId: string) => {
+	if (!parentId) return;
+	shellDeferredParents.add(parentId);
+	scheduleShellWake();
+};
+
+let reconcileListen: Promise<unknown> | null = null;
+
+/**
+ * After a warm Ready the native side lists the folder against the catalog.
+ * Its totals replace whatever this window last counted, lower included, and
+ * the open pages reload so notes added outside Nexus show in the list.
+ */
+function listenForCatalogReconcile(): void {
+	if (reconcileListen || !isDesktopShell()) return;
+	reconcileListen = onShellCatalogReconciled((ev) => {
+		const live = useVaultStore.getState();
+		if (!live.shellCatalog || !ev.dbPath || ev.dbPath !== live.shellDbPath) return;
+		useVaultStore.setState({
+			catalogNoteCount: ev.notes,
+			catalogFolderCount: ev.folders,
+		});
+		if (ev.added > 0 || ev.removed > 0) {
+			const open = [SHELL_ROOT_KEY, ...live.expandedFolders.filter((id) => live.nodes[id])];
+			for (const id of open.slice(0, 8)) void useVaultStore.getState().reloadShellParent(id);
+			useVaultStore.setState((s) => ({ shellLiveTick: (s.shellLiveTick ?? 0) + 1 }));
+		}
+	}).then((stop) => {
+		if (!stop) reconcileListen = null;
+	});
+}
+// A relaunch into the last vault mounts on another path than Open; listen
+// before either, so no mount misses the recount.
+listenForCatalogReconcile();
+
+noteShellFillProgress = () => {
+	const now = Date.now();
+	if (now - lastShellWake < 450) return;
+	lastShellWake = now;
+	if (shellWakeTimer) {
+		clearTimeout(shellWakeTimer);
+		shellWakeTimer = null;
+	}
+	flushDeferredShellReads();
+	const live = useVaultStore.getState();
+	if (live.shellCatalog) void live.reloadShellParent(SHELL_ROOT_KEY);
+};
+
 export const useVaultStore = create(
   persist(createVaultState as never, {
 	name: STORAGE_KEY,
@@ -5046,6 +6376,10 @@ export const useVaultStore = create(
 		if (!state) return;
 		queueMicrotask(() => {
 			const s = useVaultStore.getState();
+			if (!s.scaleRemount && s.nodes && !isLargeMemoryVault(s.vaultId)) {
+				const noteCount = ensureVaultIndex(s.nodes).noteCount;
+				if (!shouldUseEgoGraph(noteCount)) rebuildLinkIndex(s.nodes);
+			}
 			if (s.scaleRemount) return;
 			if (!s.settings.workspaceSplit) return;
 			let secondary = s.secondaryNoteId;
@@ -5061,6 +6395,7 @@ export const useVaultStore = create(
 			if (!secondary) {
 				useVaultStore.setState({
 					secondaryNoteId: null,
+					secondaryTabs: [],
 					settings: { ...s.settings, workspaceSplit: false },
 				});
 				return;
@@ -5072,6 +6407,93 @@ export const useVaultStore = create(
 	},
 })
 ) as unknown as import("zustand").UseBoundStore<import("zustand").StoreApi<VaultStore>>;
+
+/** Keep each pane's strip on the note that is actually open. */
+let noteTabSettle = false;
+useVaultStore.subscribe((state, prev) => {
+	if (noteTabSettle || !prev) return;
+	const prevTabsP = prev.primaryTabs ?? [];
+	const prevTabsS = prev.secondaryTabs ?? [];
+	const nextTabsP = state.primaryTabs ?? [];
+	const nextTabsS = state.secondaryTabs ?? [];
+	const same =
+		state.nodes === prev.nodes &&
+		state.activeNoteId === prev.activeNoteId &&
+		state.secondaryNoteId === prev.secondaryNoteId &&
+		nextTabsP === prevTabsP &&
+		nextTabsS === prevTabsS &&
+		state.settings.workspaceSplit === prev.settings.workspaceSplit;
+	if (same) return;
+	const alive = (id: string, active: string | null) => {
+		const n = state.nodes[id];
+		if (n?.kind === "note") return true;
+		if (n) return false;
+		return active != null && id === active;
+	};
+	const primary = settlePaneTabs({
+		prevTabs: prevTabsP,
+		prevActive: prev.activeNoteId,
+		nextTabs: nextTabsP,
+		nextActive: state.activeNoteId,
+		tabsTouched: nextTabsP !== prevTabsP,
+		alive: (id) => alive(id, state.activeNoteId),
+	});
+	const splitOff = !state.settings.workspaceSplit && !state.secondaryNoteId;
+	const secondary = splitOff
+		? { tabs: [] as string[], activeId: null as string | null }
+		: settlePaneTabs({
+				prevTabs: prevTabsS,
+				prevActive: prev.secondaryNoteId,
+				nextTabs: nextTabsS,
+				nextActive: state.secondaryNoteId,
+				tabsTouched: nextTabsS !== prevTabsS,
+				alive: (id) => alive(id, state.secondaryNoteId),
+			});
+	const patch: Partial<VaultStore> = {};
+	if (!tabsEqual(primary.tabs, nextTabsP) || primary.activeId !== state.activeNoteId) {
+		patch.primaryTabs = primary.tabs;
+		patch.activeNoteId = primary.activeId;
+	}
+	if (!tabsEqual(secondary.tabs, nextTabsS) || secondary.activeId !== state.secondaryNoteId) {
+		patch.secondaryTabs = secondary.tabs;
+		if (secondary.activeId !== state.secondaryNoteId) patch.secondaryNoteId = secondary.activeId;
+		if (!secondary.activeId && state.settings.workspaceSplit) {
+			patch.settings = { ...state.settings, workspaceSplit: false };
+			setFindFocusPane("primary");
+		}
+	}
+	if (!patch.primaryTabs && !patch.secondaryTabs && patch.activeNoteId === undefined && patch.secondaryNoteId === undefined && !patch.settings) {
+		return;
+	}
+	noteTabSettle = true;
+	try {
+		useVaultStore.setState(patch);
+		const live = useVaultStore.getState();
+		for (const id of [patch.activeNoteId, patch.secondaryNoteId]) {
+			if (!id) continue;
+			const n = live.nodes[id];
+			if (n?.kind === "note" && n.content === undefined) {
+				if (!shouldDeferNoteBodyHydrate({ fillBusy: vaultFillBusy() })) void live.ensureNoteBody(id);
+			}
+		}
+	} finally {
+		noteTabSettle = false;
+	}
+});
+
+useVaultStore.subscribe((state, prev) => {
+	if (suppressTabSave || !prev || !state.vaultId || tabsOwnerVault !== state.vaultId) return;
+	if (
+		state.primaryTabs === prev.primaryTabs &&
+		state.secondaryTabs === prev.secondaryTabs &&
+		state.activeNoteId === prev.activeNoteId &&
+		state.secondaryNoteId === prev.secondaryNoteId &&
+		state.settings.workspaceSplit === prev.settings.workspaceSplit
+	) {
+		return;
+	}
+	saveTabSession(state.vaultId, snapshotTabSession(state));
+});
 
 /** DEV-only probe for Playwright / stress harnesses — not shipped to production. */
 if (import.meta.env.DEV && typeof window !== "undefined") {
@@ -5112,6 +6534,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			notes,
 			folders,
 			bodiesLoaded,
+			shellCatalog: s.shellCatalog,
+			catalogNoteCount: s.catalogNoteCount,
 			dirty: s.dirtyNoteIds.length,
 			activeNoteId: s.activeNoteId,
 			activeNotePath: s.activeNoteId ? s.nodes[s.activeNoteId]?.path ?? null : null,
@@ -5158,6 +6582,11 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				open: (n: number) => Promise<void>;
 				open45k: () => Promise<void>;
 				createNote: (parentId?: string | null, title?: string) => string | null;
+				openRebuildConfirm: () => void;
+				openEmptyVault: () => void;
+				probeFirstRun: () => Record<string, unknown>;
+				probeFirstRunText: () => string;
+				probeFolderText: (name: string) => string;
 				setActiveNote: (id: string | null) => void;
 				setSecondaryNote: (id: string | null) => void;
 				setRightTab: (tab: string) => void;
@@ -5167,6 +6596,11 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				clearOverlay: () => Promise<void>;
 				openMockFsa: (files: Record<string, string>) => Promise<void>;
 				openMockFsaCount: (n: number) => Promise<void>;
+				openPagedFsa: (n: number) => Promise<Record<string, unknown>>;
+				plantPagedNote: (name: string, text: string) => Promise<void>;
+				openCatalogNote: (path: string) => Promise<Record<string, unknown>>;
+				pageShellRoot: () => Promise<Record<string, unknown>>;
+				saveActiveMarker: (marker: string) => Promise<Record<string, unknown>>;
 				search: (query: string, limit?: number) => Promise<unknown>;
 				openNotes: (limit?: number) => Promise<number>;
 				heapTrend: (opens?: number) => Promise<Record<string, unknown>>;
@@ -5188,6 +6622,80 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		open45k: () => useVaultStore.getState().openLargeTestVault(),
 		createNote: (parentId?: string | null, title?: string) =>
 			useVaultStore.getState().createNote(parentId ?? null, title ?? "Untitled"),
+		openRebuildConfirm: () => {
+			window.dispatchEvent(new Event("nexus-open-rebuild"));
+		},
+		openEmptyVault: () => {
+			useVaultStore.getState().openLocalVault("First Run", {
+				nodes: {},
+				rootIds: [],
+				vaultName: "First Run",
+			});
+		},
+		// Read-only first-run state for the box harness: tells a missed create
+		// from a slow one, and shows a disk write that failed.
+		probeFirstRun: () => {
+			const s = useVaultStore.getState();
+			let notes = 0;
+			for (const id in s.nodes) if (s.nodes[id]?.kind === "note") notes += 1;
+			const tree = document.querySelector("[data-file-tree]");
+			const rename = document.querySelector<HTMLInputElement>("[data-testid='tree-rename']");
+			const active = s.activeNoteId ? s.nodes[s.activeNoteId] : null;
+			return {
+				mode: s.mode,
+				vaultPath: s.vaultPath,
+				connecting: s.connecting,
+				notes,
+				listOpen: Boolean(tree),
+				listFocused: Boolean(tree && document.activeElement === tree),
+				firstRunShown: Boolean(document.querySelector("[data-testid='vault-first-run']")),
+				renameOpen: Boolean(rename),
+				renameValue: rename?.value ?? null,
+				renameSelected: rename
+					? rename.selectionStart === 0 && rename.selectionEnd === rename.value.length
+					: null,
+				activePath: active?.path ?? null,
+				writingInNote: Boolean(document.activeElement?.closest?.(".ProseMirror")),
+				caretIn: (() => {
+					if (!document.activeElement?.closest?.(".ProseMirror")) return null;
+					const at = window.getSelection()?.anchorNode;
+					const el = at && (at.nodeType === 1 ? (at as Element) : at.parentElement);
+					return el?.closest?.("h1, h2, h3, h4, h5, h6") ? "title" : "body";
+				})(),
+				writeIntent: writeIntentState(),
+				diskWriteError,
+			};
+		},
+		// Same fields as a JSON string. A CDP Runtime.evaluate without
+		// returnByValue hands back an object reference, which prints as {}.
+		// Read-only: what the app holds for a folder by name or path, as JSON text.
+		probeFolderText: (name: string) => {
+			const s = useVaultStore.getState();
+			const want = String(name ?? "").replace(/^\/+|\/+$/g, "").toLowerCase();
+			const folder = Object.values(s.nodes).find(
+				(n) => n.kind === "folder" && (n.path.toLowerCase() === want || n.name.toLowerCase() === want),
+			);
+			if (!folder) return JSON.stringify({ found: false, shellCatalog: s.shellCatalog });
+			const kids = Object.values(s.nodes).filter((n) => n.parentId === folder.id).map((n) => n.path);
+			const tree = document.querySelector("[data-file-tree]");
+			return JSON.stringify({
+				found: true,
+				id: folder.id,
+				path: folder.path,
+				shellCatalog: s.shellCatalog,
+				children: kids,
+				shellLoaded: s.shellLoaded[folder.id] ?? null,
+				shellUnloaded: s.shellUnloaded[folder.id] ?? null,
+				emptyRow: Boolean(document.querySelector(`[data-node-id="${CSS.escape(folder.id)}"][data-folder-empty="1"]`)),
+				armed: tree?.getAttribute("data-empty-armed") === folder.id,
+			});
+		},
+		probeFirstRunText: () => {
+			const soak = (window as unknown as {
+				__NEXUS_SOAK__?: { probeFirstRun?: () => Record<string, unknown> };
+			}).__NEXUS_SOAK__;
+			return JSON.stringify(soak?.probeFirstRun?.() ?? {});
+		},
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),
 		setSecondaryNote: (id: string | null) =>
@@ -5275,6 +6783,122 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				}
 			).__NEXUS_SOAK__;
 			await soak?.openMockFsa(files);
+		},
+		openPagedFsa: async (n: number) => {
+			const { memoryVaultDirectory, memoryVaultFileReads } = await import("./memory-directory");
+			const count = Math.max(1, Math.floor(n));
+			const handle = memoryVaultDirectory(count);
+			useVaultStore.setState({ connecting: true, folderAccessLost: false });
+			await mountGrantedFsaFolder(handle, {
+				vaultId: "fsa-paged",
+				toast: `Opened vault: ${handle.name}`,
+				freshPrefs: true,
+				rememberHandle: false,
+			});
+			const st = useVaultStore.getState();
+			let windowNotes = 0;
+			let bodies = 0;
+			for (const id in st.nodes) {
+				const node = st.nodes[id];
+				if (node?.kind !== "note") continue;
+				windowNotes += 1;
+				if (node.content !== undefined) bodies += 1;
+			}
+			const progress = getOpenProgress();
+			return {
+				phase: progress.phase,
+				message: progress.message,
+				shellCatalog: st.shellCatalog,
+				catalogNoteCount: st.catalogNoteCount,
+				windowNotes,
+				bodies,
+				getFileCalls: memoryVaultFileReads(),
+				hidden: Object.values(st.shellUnloaded).reduce((sum, n) => sum + n, 0),
+				limitKind: st.chromeFsaLimit?.kind ?? null,
+				activePath: st.activeNoteId ? st.nodes[st.activeNoteId]?.path ?? null : null,
+				activeHasBody:
+					Boolean(st.activeNoteId) &&
+					st.nodes[st.activeNoteId!]?.kind === "note" &&
+					st.nodes[st.activeNoteId!]?.content !== undefined,
+			};
+		},
+		plantPagedNote: async (name: string, text: string) => {
+			const { queueMemoryVaultBody } = await import("./memory-directory");
+			queueMemoryVaultBody(name, text);
+		},
+		openCatalogNote: async (path: string) => {
+			const { fsaNodeId } = await import("./fs-adapter");
+			const id = fsaNodeId(path);
+			useVaultStore.getState().setActiveNote(id);
+			const deadline = Date.now() + 8000;
+			let bodyLength = 0;
+			while (Date.now() < deadline) {
+				const node = useVaultStore.getState().nodes[id];
+				if (node?.kind === "note" && typeof node.content === "string") {
+					bodyLength = node.content.length;
+					break;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 40));
+			}
+			const live = useVaultStore.getState();
+			let windowNotes = 0;
+			let bodies = 0;
+			for (const nid in live.nodes) {
+				const node = live.nodes[nid];
+				if (node?.kind !== "note") continue;
+				windowNotes += 1;
+				if (node.content !== undefined) bodies += 1;
+			}
+			return {
+				id,
+				path,
+				bodyLength,
+				windowNotes,
+				bodies,
+				shellCatalog: live.shellCatalog,
+				catalogNoteCount: live.catalogNoteCount,
+			};
+		},
+		pageShellRoot: async () => {
+			await useVaultStore.getState().loadShellChildren(SHELL_ROOT_KEY);
+			const live = useVaultStore.getState();
+			let windowNotes = 0;
+			let bodies = 0;
+			for (const nid in live.nodes) {
+				const node = live.nodes[nid];
+				if (node?.kind !== "note") continue;
+				windowNotes += 1;
+				if (node.content !== undefined) bodies += 1;
+			}
+			const hidden = Object.values(live.shellUnloaded).reduce((sum, n) => sum + n, 0);
+			return {
+				windowNotes,
+				bodies,
+				hidden,
+				catalogNoteCount: live.catalogNoteCount,
+				shellCatalog: live.shellCatalog,
+			};
+		},
+		saveActiveMarker: async (marker: string) => {
+			const { readMemoryVaultNote } = await import("./memory-directory");
+			const st = useVaultStore.getState();
+			const id = st.activeNoteId;
+			const node = id ? st.nodes[id] : null;
+			if (!id || !node || node.kind !== "note") {
+				return { ok: false, reason: "no-active-note" };
+			}
+			const body =
+				node.content !== undefined ? node.content : await st.ensureNoteBody(id);
+			const next = `${body ?? ""}\n${marker}\n`;
+			useVaultStore.getState().updateNoteContent(id, next, { source: true });
+			await useVaultStore.getState().flushDirty();
+			const path = useVaultStore.getState().nodes[id]?.path ?? node.path;
+			const disk = readMemoryVaultNote(path);
+			return {
+				ok: Boolean(disk && disk.includes(marker)),
+				path,
+				dirty: useVaultStore.getState().dirtyNoteIds.includes(id),
+			};
 		},
 		openNotes: async (limit = 20) => {
 			const st = useVaultStore.getState();
@@ -5366,6 +6990,25 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				"@/lib/search/search-backend"
 			);
 			const s = useVaultStore.getState();
+			if (s.shellCatalog && s.shellDbPath === BROWSER_SHELL_DB) {
+				const rows = await fetchShellSearch(s.shellDbPath, query, limit);
+				const hits = (rows ?? [])
+					.filter((hit) => hit.kind === "note")
+					.map((hit) => ({
+						noteId: hit.id,
+						path: hit.path,
+						title: hit.title || hit.name.replace(/\.md$/i, ""),
+						snippet: hit.path,
+						score: 1,
+						matchType: "title" as const,
+					}));
+				return {
+					hits,
+					searchEngine: describeSearchEngine(),
+					notes: Object.keys(s.nodes).length,
+					catalog: true,
+				};
+			}
 			const hits = await searchWithBackendAsync(s.nodes, query, limit);
 			return { hits, searchEngine: describeSearchEngine(), notes: Object.keys(s.nodes).length };
 		},

@@ -1,6 +1,8 @@
 mod durable_index;
+mod task_scan;
 mod fill_join;
 mod index_fill;
+mod shell_catalog;
 mod vault_scope;
 mod vault_watch;
 
@@ -9,7 +11,14 @@ use durable_index::{
     vault_index_list_links,
     vault_index_open,
     vault_index_path, vault_index_rebuild, vault_index_remove, vault_index_search,
-    vault_index_stats, vault_index_upsert, vault_index_wipe, IndexState,
+    vault_index_search_ops, vault_index_task_page,
+    vault_index_stats, vault_index_upsert, vault_index_wipe, vault_shell_backlinks,
+    vault_shell_children, vault_shell_ego, vault_shell_forget, vault_shell_level,
+    vault_shell_broken, vault_shell_known_norms, vault_shell_link_coverage, vault_shell_mentions, vault_shell_mount,
+    vault_shell_note, vault_shell_orphans, vault_shell_path_page, vault_shell_paths,
+    vault_shell_admit, vault_shell_recent, vault_shell_resolve_link, vault_shell_suggest,
+    vault_shell_tag_notes,
+    vault_shell_tags, IndexState,
 };
 use vault_scope::{
     is_allowed_vault_root, register_and_grant, vault_clear_roots, vault_register_root,
@@ -18,10 +27,91 @@ use vault_watch::{
     vault_watch_ack, vault_watch_start, vault_watch_stop, WatchState,
 };
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    Emitter,
+    webview::PageLoadEvent,
+    Emitter, Manager,
 };
+
+fn ready_clock_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn ready_clock_line(phase: &str, t: u64, window_ms: u64) -> String {
+    format!(
+        "NEXUS_READY_CLOCK phase={phase} t={t} window={window_ms} document=0 early=0 hit=0 reason=- shell=0"
+    )
+}
+
+static READY_WINDOW_MS: AtomicU64 = AtomicU64::new(0);
+static READY_FOCUS_LOGGED: AtomicBool = AtomicBool::new(false);
+static READY_DOC_LOGGED: AtomicBool = AtomicBool::new(false);
+static READY_SHOWN: AtomicBool = AtomicBool::new(false);
+
+fn reveal_main_window<R: tauri::Runtime>(manager: &impl Manager<R>) {
+    if READY_SHOWN.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(window) = manager.get_webview_window("main") else {
+        READY_SHOWN.store(false, Ordering::Relaxed);
+        return;
+    };
+    let _ = window.show();
+    let _ = window.set_focus();
+    let t = ready_clock_ms();
+    let window_ms = READY_WINDOW_MS.load(Ordering::Relaxed);
+    eprintln!("{}", ready_clock_line("shown", t, window_ms));
+}
+
+fn log_ready_focus(window_ms: u64) {
+    if READY_FOCUS_LOGGED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let t = ready_clock_ms();
+    eprintln!("{}", ready_clock_line("focus", t, window_ms));
+}
+
+fn log_ready_phase(phase: &str) {
+    eprintln!("{}", ready_clock_line(phase, ready_clock_ms(), 0));
+}
+
+/// Marks one edge of the launch clock. `runtime` is the first user plugin,
+/// after the Tauri runtime exists. `plugins` is the last work before the
+/// event loop builds the webview. `window` (in setup) is the first line
+/// after that webview exists, so `plugins` → `window` is webview construction.
+fn ready_phase_plugin<R: tauri::Runtime>(
+    id: &'static str,
+    phase: &'static str,
+) -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new(id)
+        .setup(move |_app, _api| {
+            log_ready_phase(phase);
+            Ok(())
+        })
+        .build()
+}
+
+/// Echo a page clock line onto the process log.
+/// The window stays hidden until the early page has decided, so the first
+/// visible frame is that line rather than a blank webview.
+#[tauri::command]
+fn ready_clock_log(app: tauri::AppHandle, line: String) {
+    let one = line.replace(['\n', '\r'], " ");
+    if one.starts_with("NEXUS_READY_CLOCK ") && one.len() <= 400 {
+        eprintln!("{one}");
+        if one.contains("phase=early ")
+            || one.contains("phase=module ")
+            || one.contains("phase=shell ")
+        {
+            reveal_main_window(&app);
+        }
+    }
+}
 
 /// Native meta walk DTO — mirrors TS `NodeMeta` (no bodies).
 #[derive(Clone, serde::Serialize)]
@@ -55,7 +145,7 @@ fn should_skip_dir(name: &str) -> bool {
 /// Bulk folder + `.md` meta listing. Paths are vault-relative POSIX.
 /// Wave A: root is registered (absolute, no `..`) and granted plugin-fs
 /// persisted-scope before walk — dialog *and* programmatic path opens.
-#[tauri::command]
+#[tauri::command(async)]
 fn vault_meta_walk(app: tauri::AppHandle, root: String) -> Result<Vec<NodeMetaDto>, String> {
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -104,7 +194,7 @@ fn vault_meta_walk(app: tauri::AppHandle, root: String) -> Result<Vec<NodeMetaDt
                 dirs.push((path, child_rel, name));
             } else if ft.is_file() {
                 let lower = name.to_ascii_lowercase();
-                if !lower.ends_with(".md") {
+                if !lower.ends_with(".md") && !lower.ends_with(".canvas") {
                     continue;
                 }
                 let meta = entry.metadata().ok();
@@ -157,16 +247,21 @@ fn vault_index_ping() -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let process_ms = ready_clock_ms();
+    eprintln!("{}", ready_clock_line("process", process_ms, 0));
     tauri::Builder::default()
+        .plugin(ready_phase_plugin("nexus-clock-runtime", "runtime"))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(ready_phase_plugin("nexus-clock-plugins", "plugins"))
         .manage(std::sync::Mutex::new(IndexState::new()))
         .manage(std::sync::Mutex::new(WatchState::new()))
         .invoke_handler(tauri::generate_handler![
             vault_meta_walk,
             vault_index_ping,
+            ready_clock_log,
             vault_register_root,
             vault_clear_roots,
             vault_index_path,
@@ -177,6 +272,8 @@ pub fn run() {
             vault_index_upsert,
             vault_index_remove,
             vault_index_search,
+            vault_index_search_ops,
+            vault_index_task_page,
             vault_index_stats,
             vault_index_list,
             vault_index_list_links,
@@ -185,12 +282,102 @@ pub fn run() {
             vault_watch_start,
             vault_watch_stop,
             vault_watch_ack,
+            vault_shell_mount,
+            vault_shell_children,
+            vault_shell_level,
+            vault_shell_ego,
+            vault_shell_note,
+            vault_shell_backlinks,
+            vault_shell_tags,
+            vault_shell_tag_notes,
+            vault_shell_suggest,
+            vault_shell_recent,
+            vault_shell_forget,
+            vault_shell_paths,
+            vault_shell_path_page,
+            vault_shell_orphans,
+            vault_shell_broken,
+            vault_shell_known_norms,
+            vault_shell_mentions,
+            vault_shell_link_coverage,
+            vault_shell_resolve_link,
+            vault_shell_admit,
         ])
+        .on_page_load(|_webview, payload| {
+            let url = payload.url().as_str();
+            if url.starts_with("about:") {
+                return;
+            }
+            // Finished must not show the window. On the happy path the early
+            // script reveals only after it has laid the page out. Showing here
+            // would put a blank shell on screen first.
+            let phase = if payload.event() == PageLoadEvent::Finished {
+                "document-finished"
+            } else if payload.event() == PageLoadEvent::Started {
+                "document-native"
+            } else {
+                return;
+            };
+            if phase == "document-native" && READY_DOC_LOGGED.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            let t = ready_clock_ms();
+            let window_ms = READY_WINDOW_MS.load(Ordering::Relaxed);
+            eprintln!("{}", ready_clock_line(phase, t, window_ms));
+        })
         .setup(|app| {
-            let handle = app.handle();
+            let window_ms = ready_clock_ms();
+            READY_WINDOW_MS.store(window_ms, Ordering::Relaxed);
+            eprintln!("{}", ready_clock_line("window", window_ms, window_ms));
+            if let Some(window) = app.get_webview_window("main") {
+                if window.is_focused().unwrap_or(false) {
+                    log_ready_focus(window_ms);
+                }
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(true) = event {
+                        log_ready_focus(window_ms);
+                    }
+                });
+            }
 
-            let open_vault =
-                MenuItem::with_id(handle, "open_vault", "Open Vault…", true, Some("CmdOrCtrl+O"))?;
+            let handle = app.handle().clone();
+            // Menus used to run before the event loop could serve the document.
+            let menu_handle = handle.clone();
+            handle.run_on_main_thread(move || {
+                if let Err(err) = install_menus(&menu_handle) {
+                    eprintln!("nexus menu: {err}");
+                }
+            })?;
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running Nexus");
+}
+
+fn install_menus(handle: &tauri::AppHandle) -> tauri::Result<()> {
+            // Obsidian's chords: Ctrl/Cmd+O finds a note, Ctrl/Cmd+P runs a command.
+            let open_vault = MenuItem::with_id(
+                handle,
+                "open_vault",
+                "Open Vault…",
+                true,
+                Some("CmdOrCtrl+Shift+O"),
+            )?;
+            let quick_switcher = MenuItem::with_id(
+                handle,
+                "quick_switcher",
+                "Quick Switcher…",
+                true,
+                Some("CmdOrCtrl+O"),
+            )?;
+            let command_palette = MenuItem::with_id(
+                handle,
+                "command_palette",
+                "Command Palette…",
+                true,
+                Some("CmdOrCtrl+P"),
+            )?;
             let open_demo = MenuItem::with_id(
                 handle,
                 "open_demo",
@@ -218,7 +405,7 @@ pub fn run() {
             let toggle_source = MenuItem::with_id(
                 handle,
                 "toggle_source",
-                "Toggle Visual / Source",
+                "Toggle Reading View",
                 true,
                 Some("CmdOrCtrl+E"),
             )?;
@@ -272,7 +459,7 @@ pub fn run() {
                 handle,
                 "View",
                 true,
-                &[&search, &toggle_graph, &toggle_source],
+                &[&quick_switcher, &command_palette, &search, &toggle_graph, &toggle_source],
             )?;
 
             let window_submenu = Submenu::with_items(
@@ -296,15 +483,12 @@ pub fn run() {
                     &window_submenu,
                 ],
             )?;
-            app.set_menu(menu)?;
+            handle.set_menu(menu)?;
 
-            app.on_menu_event(move |app, event| {
+            handle.on_menu_event(move |app, event| {
                 let id = event.id().as_ref().to_string();
                 let _ = app.emit("nexus-menu", id);
             });
 
             Ok(())
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running Nexus");
 }

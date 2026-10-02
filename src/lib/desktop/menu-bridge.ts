@@ -10,6 +10,8 @@ type MenuHandlers = {
   closeVault: () => void;
   settings: () => void;
   search: () => void;
+  quickSwitcher: () => void;
+  commandPalette: () => void;
   newNote: () => void;
   save: () => void;
   toggleGraph: () => void;
@@ -40,6 +42,12 @@ export async function bindDesktopMenu(
           break;
         case "search":
           handlers.search();
+          break;
+        case "quick_switcher":
+          handlers.quickSwitcher();
+          break;
+        case "command_palette":
+          handlers.commandPalette();
           break;
         case "new_note":
           handlers.newNote();

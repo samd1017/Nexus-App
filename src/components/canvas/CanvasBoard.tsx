@@ -37,12 +37,16 @@ import {
   bringToFront,
   CANVAS_COLORS,
   canvasColorHex,
+  canvasNoteTitle,
   cardAnchor,
   cardAtPoint,
   distributeCards,
+  edgeBetweenSelected,
   edgePath,
   fitCamera,
+  frameAroundCards,
   idsMovedWith,
+  isCanvasPath,
   nearestSide,
   newCardId,
   nudgeCards,
@@ -50,15 +54,20 @@ import {
   sendToBack,
   reflowEdges,
   snapToGrid,
+  withoutEdge,
   toObsidianCanvas,
   vacantPoint,
-  writeCanvasDoc,
+  serializeCanvas,
   type CanvasCard,
   type CanvasDoc,
   type CanvasEdge,
   type CanvasSide,
 } from "@/lib/vault/canvas";
-import { previewSnippet } from "@/lib/markdown/serialize";
+import { markdownToHtml } from "@/lib/markdown/serialize";
+import {
+  scheduleFillSafeHydrate,
+  shouldSkipBackgroundBodyHydrate,
+} from "@/lib/vault/fill-interaction";
 import { cn } from "@/lib/utils";
 
 type Props = { noteId: string; content: string };
@@ -104,9 +113,45 @@ function ColorDots({
   );
 }
 
+function CanvasNoteBody({ content }: { content: string | undefined }) {
+  const html = useMemo(() => {
+    if (typeof content !== "string") return "";
+    try {
+      return markdownToHtml(content);
+    } catch {
+      return "<p></p>";
+    }
+  }, [content]);
+  if (content == null) {
+    return (
+      <p className="text-[11px] text-[var(--text-muted)]" data-testid="canvas-note-render">
+        Loading note…
+      </p>
+    );
+  }
+  if (!content.trim()) {
+    return (
+      <p className="text-[11px] text-[var(--text-muted)]" data-testid="canvas-note-render">
+        Empty note
+      </p>
+    );
+  }
+  return (
+    <div
+      className="nexus-canvas-note-render"
+      data-testid="canvas-note-render"
+      dangerouslySetInnerHTML={{ __html: html }}
+      onPointerDown={(e) => e.stopPropagation()}
+    />
+  );
+}
+
 export function CanvasBoard({ noteId, content }: Props) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
+  const createNote = useVaultStore((s) => s.createNote);
+  const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const nodes = useVaultStore((s) => s.nodes);
   const [doc, setDoc] = useState<CanvasDoc>(() => parseCanvasDoc(content));
   const [picker, setPicker] = useState<"note" | "link" | null>(null);
@@ -147,7 +192,8 @@ export function CanvasBoard({ noteId, content }: Props) {
   }, [noteId, content]);
 
   const persist = (next: CanvasDoc) => {
-    const md = writeCanvasDoc(baselineRef.current, next);
+    const path = useVaultStore.getState().nodes[noteId]?.path;
+    const md = serializeCanvas(baselineRef.current, next, path);
     baselineRef.current = md;
     updateNoteContent(noteId, md);
   };
@@ -183,6 +229,9 @@ export function CanvasBoard({ noteId, content }: Props) {
       if (!t.closest("[data-canvas-add]")) setAddOpen(false);
       if (!t.closest("[data-canvas-align]")) setAlignOpen(false);
       if (!t.closest("[data-canvas-more]")) setMoreOpen(false);
+      if (!t.closest(".nexus-canvas")) {
+        document.querySelectorAll(".nexus-canvas").forEach((el) => el.setAttribute("data-canvas-focus", "0"));
+      }
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
@@ -191,7 +240,13 @@ export function CanvasBoard({ noteId, content }: Props) {
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
-    const onNativeWheel = (e: WheelEvent) => {
+      const onNativeWheel = (e: WheelEvent) => {
+      const render = (e.target as HTMLElement | null)?.closest?.(".nexus-canvas-note-render");
+      if (render instanceof HTMLElement && render.scrollHeight > render.clientHeight + 2) {
+        render.scrollTop += e.deltaY;
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const cx = e.clientX - rect.left;
@@ -215,15 +270,37 @@ export function CanvasBoard({ noteId, content }: Props) {
   }, [noteId]);
 
   const notes = useMemo(
-    () => Object.values(nodes).filter((n) => n.kind === "note" && n.id !== noteId),
+    () =>
+      Object.values(nodes).filter(
+        (n) => n.kind === "note" && n.id !== noteId && !isCanvasPath(n.path),
+      ),
     [nodes, noteId],
   );
   const filteredNotes = useMemo(() => {
     const q = pickerQ.trim().toLowerCase();
     return notes
       .filter((n) => !q || noteTitle(n).toLowerCase().includes(q) || n.path.toLowerCase().includes(q))
-      .slice(0, 14);
+      .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)))
+      .slice(0, 40);
   }, [notes, pickerQ]);
+
+  useEffect(() => {
+    const missing: string[] = [];
+    for (const card of doc.cards) {
+      if (card.kind !== "note" || !card.notePath) continue;
+      const note = Object.values(nodes).find((n) => n.kind === "note" && n.path === card.notePath);
+      if (note && note.content === undefined) missing.push(note.id);
+    }
+    if (!missing.length) return;
+    const run = () => {
+      if (shouldSkipBackgroundBodyHydrate({ fillBusy: useVaultStore.getState().indexFillBusy })) return;
+      for (const id of missing.slice(0, 12)) void ensureNoteBody(id);
+    };
+    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) {
+      return scheduleFillSafeHydrate(run);
+    }
+    run();
+  }, [doc.cards, nodes, indexFillBusy, ensureNoteBody]);
 
   const worldFromEvent = (e: { clientX: number; clientY: number }, cam = docRef.current.cam) => {
     const rect = hostRef.current?.getBoundingClientRect();
@@ -268,6 +345,28 @@ export function CanvasBoard({ noteId, content }: Props) {
     setAddOpen(false);
     setPicker(null);
     return card.id;
+  };
+
+  const frameAt = useRef(0);
+  const frameIds = (ids: string[]) => {
+    const cards = frameAroundCards(docRef.current.cards, ids, newCardId());
+    if (!cards) return;
+    const now = performance.now();
+    if (now - frameAt.current < 150) return;
+    frameAt.current = now;
+    const frameId = cards[0]?.id;
+    const next = { ...docRef.current, cards };
+    commit(next);
+    persist(next);
+    if (frameId) setSelected([frameId, ...ids]);
+  };
+
+  const connectSelected = () => {
+    const edge = edgeBetweenSelected(docRef.current, selected, newCardId());
+    if (!edge) return;
+    const next = { ...docRef.current, edges: [...docRef.current.edges, edge] };
+    commit(next);
+    persist(next);
   };
 
   const patchCards = (fn: (cards: CanvasCard[]) => CanvasCard[]) =>
@@ -400,7 +499,9 @@ export function CanvasBoard({ noteId, content }: Props) {
   };
 
   const removeEdge = (id: string) => {
-    commit({ ...docRef.current, edges: docRef.current.edges.filter((e) => e.id !== id) });
+    const next = withoutEdge(docRef.current, id);
+    commit(next);
+    persist(next);
     setSelectedEdge(null);
     setEdgeLabelId(null);
     setMenu(null);
@@ -415,7 +516,7 @@ export function CanvasBoard({ noteId, content }: Props) {
   };
 
   const onBgPointerDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest("[data-canvas-card],[data-canvas-port],[data-canvas-edge],[data-canvas-menu],[data-canvas-float]")) {
+    if ((e.target as HTMLElement).closest("[data-canvas-card],[data-canvas-port],[data-canvas-edge],[data-canvas-menu],[data-canvas-float],[data-canvas-empty]")) {
       return;
     }
     setPicker(null);
@@ -458,6 +559,12 @@ export function CanvasBoard({ noteId, content }: Props) {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("textarea,input,[data-resize],[data-card-open]")) return;
     if ((e.target as HTMLElement).closest("[data-canvas-port]")) return;
+    if (e.detail >= 2 && card.kind === "note") {
+      e.stopPropagation();
+      e.preventDefault();
+      openNote(card.notePath);
+      return;
+    }
     if (connectFrom && connectFrom.id !== card.id) {
       e.stopPropagation();
       e.preventDefault();
@@ -470,7 +577,8 @@ export function CanvasBoard({ noteId, content }: Props) {
     setMenu(null);
     setEditingId(null);
     setSelectedEdge(null);
-    const ids = e.shiftKey
+    const multi = e.shiftKey || e.metaKey || (e.ctrlKey && !e.altKey);
+    const ids = multi
       ? selected.includes(card.id)
         ? selected.filter((id) => id !== card.id)
         : [...selected, card.id]
@@ -488,7 +596,6 @@ export function CanvasBoard({ noteId, content }: Props) {
       const c = docRef.current.cards.find((x) => x.id === id);
       if (c) ox[id] = { x: c.x, y: c.y };
     }
-    capture(e);
     dragRef.current = { kind: "card", ids: moveIds, x: e.clientX, y: e.clientY, ox, started: false };
   };
 
@@ -508,6 +615,7 @@ export function CanvasBoard({ noteId, content }: Props) {
       if (!drag.started) {
         if (dx * dx + dy * dy < 16) return;
         drag.started = true;
+        capture(e);
         beginHistory();
         live({ ...cur, cards: bringToFront(cur.cards, drag.ids) });
       }
@@ -680,25 +788,14 @@ export function CanvasBoard({ noteId, content }: Props) {
         e.preventDefault();
         toggleLock(selected);
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === "g" && selected.length >= 2) {
-        e.preventDefault();
-        const cards = selected
-          .map((id) => docRef.current.cards.find((x) => x.id === id))
-          .filter((c): c is CanvasCard => c != null && c.kind !== "group");
-        if (cards.length < 2) return;
-        const pad = 28;
-        const group: CanvasCard = {
-          id: newCardId(),
-          kind: "group",
-          text: "Group",
-          x: Math.min(...cards.map((c) => c.x)) - pad,
-          y: Math.min(...cards.map((c) => c.y)) - pad,
-          w: Math.max(...cards.map((c) => c.x + c.w)) - Math.min(...cards.map((c) => c.x)) + pad * 2,
-          h: Math.max(...cards.map((c) => c.y + c.h)) - Math.min(...cards.map((c) => c.y)) + pad * 2,
-          color: "6",
-        };
-        commit({ ...docRef.current, cards: [group, ...docRef.current.cards] });
-        setSelected([group.id, ...selected]);
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "g") {
+        const board = document.querySelector(".nexus-canvas");
+        if (board?.getAttribute("data-canvas-focus") === "1") {
+          e.preventDefault();
+          e.stopPropagation();
+          frameIds(selected);
+          return;
+        }
       }
       const step = e.shiftKey ? 24 : 4;
       if (selected.length && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
@@ -716,11 +813,14 @@ export function CanvasBoard({ noteId, content }: Props) {
     const onUp = (e: KeyboardEvent) => {
       if (e.key === " ") spaceRef.current = false;
     };
+    const onFrame = () => frameIds(selected);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onUp);
+    window.addEventListener("nexus-canvas-frame", onFrame);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onUp);
+      window.removeEventListener("nexus-canvas-frame", onFrame);
     };
   });
 
@@ -788,7 +888,7 @@ export function CanvasBoard({ noteId, content }: Props) {
     if (menu.kind === "board") {
       return [
         { label: "Add text", run: () => addCard({ kind: "text", text: "" }, { x: menu.wx, y: menu.wy }) },
-        { label: "Add group", run: () => addCard({ kind: "group", text: "Group" }, { x: menu.wx, y: menu.wy }) },
+        { label: "Add frame", run: () => addCard({ kind: "group", text: "Frame" }, { x: menu.wx, y: menu.wy }) },
         { label: "Add note", run: () => setPicker("note") },
         { label: "Paste here", run: () => pasteClipboard({ x: menu.wx, y: menu.wy }) },
         { label: "Select all", run: () => setSelected(doc.cards.map((c) => c.id)) },
@@ -837,11 +937,15 @@ export function CanvasBoard({ noteId, content }: Props) {
   const liveEdge = selectedEdge ? edgeById(selectedEdge) : null;
 
   return (
-    <div className="nexus-canvas relative flex min-h-0 flex-1 flex-col">
+    <div
+      className="nexus-canvas relative flex min-h-0 flex-1 flex-col"
+      data-canvas-focus="1"
+      onPointerDownCapture={(e) => e.currentTarget.setAttribute("data-canvas-focus", "1")}
+    >
       <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[11px] leading-snug text-[var(--text-muted)]">
-        <span className="font-semibold text-[var(--text-secondary)]">Tour board</span>
+        <span className="font-semibold text-[var(--text-secondary)]">Board</span>
         {" · "}
-        Spatial cards in this vault — not an Obsidian Canvas plugin.
+        Shift-click or Ctrl-click cards, then Connect or Frame. Note cards render the note inside the card. Still missing: community canvas plugins.
       </div>
       <div className="nexus-canvas-toolbar">
         <div className="relative" data-canvas-add>
@@ -850,14 +954,14 @@ export function CanvasBoard({ noteId, content }: Props) {
           </button>
           {addOpen ? (
             <div className="nexus-canvas-pop">
-              <button type="button" className="nexus-canvas-menu-item" onClick={() => addCard({ kind: "text", text: "" })}>
+              <button type="button" className="nexus-canvas-menu-item" data-testid="canvas-add-text" onClick={() => addCard({ kind: "text", text: "Card" })}>
                 <Type size={13} /> Text card
               </button>
               <button type="button" className="nexus-canvas-menu-item" onClick={() => { setPicker("note"); setAddOpen(false); }}>
                 <StickyNote size={13} /> Note card
               </button>
-              <button type="button" className="nexus-canvas-menu-item" onClick={() => addCard({ kind: "group", text: "Group" })}>
-                <Square size={13} /> Group
+              <button type="button" className="nexus-canvas-menu-item" data-testid="canvas-add-frame" onClick={() => addCard({ kind: "group", text: "Frame" })}>
+                <Square size={13} /> Frame
               </button>
               <button type="button" className="nexus-canvas-menu-item" onClick={() => { setPicker("link"); setAddOpen(false); }}>
                 <Link2 size={13} /> Link
@@ -881,6 +985,56 @@ export function CanvasBoard({ noteId, content }: Props) {
             </div>
           ) : null}
         </div>
+        <button
+          type="button"
+          className="chip-btn"
+          data-testid="canvas-connect"
+          title="Connect the two selected cards"
+          disabled={selected.filter((id) => cardById(id)?.kind !== "group").length < 2}
+          onClick={connectSelected}
+        >
+          <Link2 size={13} /> Connect
+        </button>
+        <button
+          type="button"
+          className="chip-btn"
+          data-testid="canvas-frame"
+          title="Frame the selected cards"
+          disabled={selected.filter((id) => cardById(id)?.kind !== "group").length < 2}
+          onClick={() => frameIds(selected)}
+        >
+          <Square size={13} /> Frame
+        </button>
+        {doc.edges.map((edge, index) => (
+          <button
+            key={edge.id}
+            type="button"
+            data-testid="canvas-edge-select"
+            data-edge-id={edge.id}
+            className={cn("chip-btn", selectedEdge === edge.id && "is-active")}
+            title="Select this link, then Delete"
+            onClick={() => {
+              setSelected([]);
+              setSelectedEdge(edge.id);
+            }}
+          >
+            Link {index + 1}
+          </button>
+        ))}
+        {doc.edges.length ? (
+          <button
+            type="button"
+            data-testid="canvas-edge-delete"
+            className="chip-btn"
+            title="Delete the selected link"
+            disabled={!selectedEdge}
+            onClick={() => {
+              if (selectedEdge) removeEdge(selectedEdge);
+            }}
+          >
+            Delete link
+          </button>
+        ) : null}
         <button type="button" className="chip-btn" title="Undo" disabled={!undoRef.current.length} onClick={undo}>
           <Undo2 size={13} />
         </button>
@@ -902,7 +1056,7 @@ export function CanvasBoard({ noteId, content }: Props) {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Find cards…"
-          className="ml-1 h-7 w-32 rounded-md border border-[var(--border)] bg-transparent px-2 text-[11px] outline-none"
+          className="nexus-field ml-1 h-7 w-32 rounded-md border border-[var(--border)] bg-transparent px-2 text-[11px]"
         />
         <span className="ml-auto hidden text-[11px] text-[var(--text-muted)] lg:inline">
           Drag · right-click · click a line to edit it
@@ -917,14 +1071,33 @@ export function CanvasBoard({ noteId, content }: Props) {
             value={pickerQ}
             onChange={(e) => setPickerQ(e.target.value)}
             placeholder="Pin a note…"
-            className="mb-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px] outline-none"
+            className="nexus-field mb-1 w-full rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px]"
           />
+          <button
+            type="button"
+            className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-[var(--accent)] hover:bg-white/[0.05]"
+            data-testid="canvas-create-note"
+            onClick={() => {
+              const parentId = useVaultStore.getState().nodes[noteId]?.parentId ?? null;
+              const id = createNote(parentId, "Untitled", { activate: false });
+              const created = id ? useVaultStore.getState().nodes[id] : null;
+              if (created?.kind === "note") {
+                addCard({ kind: "note", notePath: created.path, w: 260, h: 160 });
+              }
+              setPicker(null);
+              setPickerQ("");
+            }}
+          >
+            <Plus size={12} /> Create note
+          </button>
           <ul className="max-h-56 overflow-y-auto">
             {filteredNotes.map((n) => (
               <li key={n.id}>
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-white/[0.05]"
+                  data-testid="canvas-pin-note"
+                  data-note-path={n.path}
                   onClick={() => addCard({ kind: "note", notePath: n.path, w: 260, h: 160 })}
                 >
                   <FileText size={12} className="opacity-50" />
@@ -950,7 +1123,7 @@ export function CanvasBoard({ noteId, content }: Props) {
             value={pickerQ}
             onChange={(e) => setPickerQ(e.target.value)}
             placeholder="https://…"
-            className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px] outline-none"
+            className="nexus-field min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 text-[12px]"
           />
           <button type="submit" className="chip-btn">Add</button>
         </form>
@@ -978,6 +1151,32 @@ export function CanvasBoard({ noteId, content }: Props) {
       >
         {connectFrom ? (
           <div className="nexus-canvas-hint">Click another card to connect · Esc to cancel</div>
+        ) : null}
+        {doc.cards.length === 0 ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+            data-testid="canvas-empty"
+            data-canvas-empty
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-[12px] border border-[var(--border)] bg-[var(--panel-solid)] px-4 py-3 text-center">
+              <p className="text-[13px] text-[var(--text-secondary)]">This canvas is empty.</p>
+              <p className="max-w-[280px] text-[12px] text-[var(--text-muted)]">
+                Add cards, then Shift-click or Ctrl-click to select more than one. Connect links them. Frame groups them.
+              </p>
+              <button
+                type="button"
+                className="primary-btn min-h-8 px-3 text-[12px]"
+                data-testid="canvas-add-note"
+                onClick={() => {
+                  setPicker("note");
+                  setAddOpen(false);
+                }}
+              >
+                Add note
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {selected.length && !selectedEdge ? (
@@ -1109,7 +1308,7 @@ export function CanvasBoard({ noteId, content }: Props) {
               const on = selectedEdge === edge.id || hoverEdge === edge.id;
               const stroke = on ? "#7dd3fc" : canvasColorHex(edge.color) || "var(--accent)";
               return (
-                <g key={edge.id} data-canvas-edge className="pointer-events-auto">
+                <g key={edge.id} data-canvas-edge data-testid="canvas-edge" className="pointer-events-auto">
                   <path
                     d={d}
                     fill="none"
@@ -1279,13 +1478,14 @@ export function CanvasBoard({ noteId, content }: Props) {
               const note = card.kind === "note"
                 ? Object.values(nodes).find((n) => n.kind === "note" && n.path === card.notePath)
                 : null;
-              const preview = note ? previewSnippet(note.content || "", 180) : "";
+              const noteLabel = card.kind === "note" ? canvasNoteTitle(card.notePath || "", note?.name) : "";
               const hex = canvasColorHex(card.color);
               const dim = q
                 ? !(
                     (card.text || "").toLowerCase().includes(q) ||
                     (card.notePath || "").toLowerCase().includes(q) ||
                     (note ? noteTitle(note).toLowerCase().includes(q) : false) ||
+                    (note && typeof note.content === "string" && note.content.toLowerCase().includes(q)) ||
                     (card.url || "").toLowerCase().includes(q)
                   )
                 : false;
@@ -1335,6 +1535,7 @@ export function CanvasBoard({ noteId, content }: Props) {
                       key={side}
                       type="button"
                       data-canvas-port
+                      data-testid="canvas-port"
                       tabIndex={-1}
                       aria-hidden={!showPorts}
                       className={cn(
@@ -1347,27 +1548,36 @@ export function CanvasBoard({ noteId, content }: Props) {
                     />
                   ))}
                   {card.kind === "note" ? (
-                    <div className="flex h-full w-full flex-col items-start gap-1 overflow-hidden text-left">
+                    <div
+                      className="flex h-full w-full flex-col items-start gap-1 overflow-hidden text-left"
+                      data-testid="canvas-note-card"
+                      data-note-path={card.notePath || ""}
+                    >
                       <span className="flex w-full items-center gap-1.5 text-[13px] font-medium">
                         <StickyNote size={14} className="text-[var(--accent)]" />
-                        <span className="min-w-0 truncate">{note ? noteTitle(note) : card.notePath || "Missing note"}</span>
-                        {note ? (
-                          <button
-                            type="button"
-                            data-card-open
-                            className="ml-auto shrink-0 text-[10px] text-[var(--accent)] hover:underline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openNote(card.notePath);
-                            }}
-                          >
-                            Open
-                          </button>
-                        ) : null}
+                        <span className="min-w-0 truncate" data-testid="canvas-note-title">
+                          {noteLabel}
+                        </span>
+                        <button
+                          type="button"
+                          data-testid="canvas-open-note"
+                          data-card-open
+                          className="ml-auto shrink-0 text-[10px] text-[var(--accent)] hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openNote(card.notePath);
+                          }}
+                        >
+                          Open
+                        </button>
                       </span>
-                      <span className="line-clamp-4 text-[11px] leading-relaxed text-[var(--text-muted)]">
-                        {preview || "Double-click to open"}
-                      </span>
+                      {note ? (
+                        <CanvasNoteBody content={note.content} />
+                      ) : (
+                        <p className="text-[11px] text-[var(--text-muted)]" data-testid="canvas-note-render">
+                          Missing note
+                        </p>
+                      )}
                     </div>
                   ) : card.kind === "image" ? (
                     card.imageSrc ? (
@@ -1425,6 +1635,36 @@ export function CanvasBoard({ noteId, content }: Props) {
                 </div>
               );
             })}
+          {doc.edges.map((edge) => {
+            const from = cardById(edge.from);
+            const to = cardById(edge.to);
+            if (!from || !to) return null;
+            const a = cardAnchor(from, edge.fromSide || "right");
+            const b = cardAnchor(to, edge.toSide || "left");
+            const midX = (a.x + b.x) / 2;
+            const midY = (a.y + b.y) / 2;
+            const k = doc.cam.k || 1;
+            const hit = 44 / k;
+            return (
+              <button
+                key={`hit-${edge.id}`}
+                type="button"
+                data-testid="canvas-edge-hit"
+                data-canvas-edge
+                data-edge-id={edge.id}
+                aria-label="Select link"
+                className={cn("nexus-canvas-edge-hit", selectedEdge === edge.id && "is-selected")}
+                style={{ left: midX - hit / 2, top: midY - hit / 2, width: hit, height: hit }}
+                onPointerDown={(ev) => {
+                  ev.stopPropagation();
+                  ev.preventDefault();
+                  setSelected([]);
+                  setSelectedEdge(edge.id);
+                  setMenu(null);
+                }}
+              />
+            );
+          })}
           {marquee ? (
             <div
               className="pointer-events-none absolute border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]"

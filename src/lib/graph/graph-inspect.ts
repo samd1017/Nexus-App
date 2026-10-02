@@ -9,6 +9,9 @@ import { vaultLinkIndex } from "@/lib/vault/link-index";
 import { normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
 import { buildWikilinkIndex, resolveWikilink } from "@/lib/graph/build-graph";
+import { getBacklinks } from "@/lib/vault/backlinks";
+import { shouldUseEgoGraph } from "@/lib/vault/scale-flags";
+import { vaultIndex } from "@/lib/vault/indexes";
 
 export type GraphInspectLink = {
   id: string;
@@ -62,11 +65,11 @@ function toLink(
 
 /** Inspect one note. Caps listed chips; counts are full map totals. */
 export function inspectGraphNote(
-  nodes: Record<string, VaultNode>,
+  nodes: Record<string, VaultNode> | null | undefined,
   noteId: string | null,
   max = 6,
 ): GraphInspect | null {
-  if (!noteId) return null;
+  if (!noteId || !nodes || typeof nodes !== "object") return null;
   const n = nodes[noteId];
   if (!n) {
     return {
@@ -99,21 +102,43 @@ export function inspectGraphNote(
     if (dest && dest.kind === "note" && dest.id !== n.id) destIds.push(dest.id);
   }
   const uniqueOut = [...new Set(destIds)];
-  const innIds = incomingIds(n);
+  let innIds = incomingIds(n);
+  // Small vaults still have bodies when the reverse map is cold. Match the
+  // status line, which falls back to a body scan in that case.
+  // getBacklinks returns one row per mention, so the same note can appear
+  // several times. Chips and the in-count are unique notes.
+  if (
+    !vaultLinkIndex.coversNoteCount(vaultIndex.noteCount) &&
+    !shouldUseEgoGraph(vaultIndex.noteCount)
+  ) {
+    innIds = [...new Set(getBacklinks(n, nodes).map((b) => b.fromId))];
+  }
+  const uniqueInn = [...new Set(innIds)];
   return {
     id: n.id,
     title: noteTitle(n),
     path: n.path,
     kind: "note",
-    out: uniqueOut
-      .slice(0, max)
-      .map((id) => toLink(nodes, id))
-      .filter((x): x is GraphInspectLink => !!x),
-    inn: innIds
-      .slice(0, max)
-      .map((id) => toLink(nodes, id))
-      .filter((x): x is GraphInspectLink => !!x),
+    out: listedLinks(nodes, uniqueOut, max),
+    inn: listedLinks(nodes, uniqueInn, max),
     outCount: uniqueOut.length,
-    inCount: innIds.length,
+    inCount: uniqueInn.length,
   };
+}
+
+function listedLinks(
+  nodes: Record<string, VaultNode>,
+  ids: string[],
+  max: number,
+): GraphInspectLink[] {
+  const seen = new Set<string>();
+  const out: GraphInspectLink[] = [];
+  for (const id of ids) {
+    const link = toLink(nodes, id);
+    if (!link || seen.has(link.id)) continue;
+    seen.add(link.id);
+    out.push(link);
+    if (out.length >= max) break;
+  }
+  return out;
 }

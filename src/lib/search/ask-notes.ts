@@ -34,10 +34,8 @@ export type AskAnswer = {
 };
 
 const SYNONYMS: Record<string, string[]> = {
-  agent: ["hermes", "grok", "pulse", "bot"],
-  agents: ["hermes", "grok", "pulse"],
-  grok: ["hermes", "agent", "pulse"],
-  hermes: ["agent", "grok", "pulse"],
+  agent: ["pulse", "automation", "script"],
+  agents: ["pulse", "automation"],
   share: ["folder", "vault", "disk", "markdown"],
   vault: ["folder", "notes", "markdown"],
   conflict: ["studio", "keep", "theirs", "mine"],
@@ -189,7 +187,7 @@ export function retrieveForAsk(
   const free = ops.rest || stripped;
   const raw = ops.fileFilter
     ? []
-    : hasSearchOps(ops)
+    : hasSearchOps(ops) || ops.orClauses.length > 1
       ? searchWithOps(nodes, stripped, Math.max(limit * 3, 24))
       : searchWithPathFolderOps(
           nodes,

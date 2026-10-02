@@ -1,5 +1,5 @@
 /**
- * Wave E disk path on a Linux VM (no Tauri / no FSA user gesture).
+ * Wave E disk path without Tauri and without an FSA user gesture.
  *
  * 1) Write real .md folders at 100k then 300k
  * 2) Run the same in-process generate / structural / path-patch / memory-FTS
@@ -9,8 +9,9 @@
  *   node scripts/wave-e-disk.mjs [--sizes 100000,300000] [--out /tmp/nexus-wave-e]
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { artifactPath } from "./artifact-dir.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -26,9 +27,9 @@ mkdirSync(outRoot, { recursive: true });
 
 const tauriSteps = {
   platform: "macOS (or any Tauri desktop build)",
-  whyLinuxVmCannot: [
+  headlessLimits: [
     "File System Access picker requires a user gesture; headless Chrome has no folder grant.",
-    "Tauri desktop + SQLite FTS5 is not installed in this browser-first VM.",
+    "Tauri desktop + SQLite FTS5 is not part of a browser-only run.",
   ],
   steps: [
     "macOS: npm run gen:soak-vault -- --notes 100000 --out ~/Documents/nexus-soak-100k",
@@ -41,7 +42,7 @@ const tauriSteps = {
     "Title bar must say On disk / Desktop — never Test · this browser",
     "⌘K / Ctrl+K 'retrieval hub' — heading must include SQLite FTS5 BM25 (not Memory FTS capped)",
     "Capture: interactiveMs, search app-ready, __NEXUS_STRESS__().searchEngine.id, create+reload, graph-panel switch p95, RSS",
-    "This VM only benches memory inverted index. Do not record those ms as SQLite BM25.",
+    "A browser-only run only benches memory inverted index. Do not record those ms as SQLite BM25.",
   ],
 };
 
@@ -85,12 +86,12 @@ const report = {
   bench: benchJson,
   tauriSteps,
   honestFloor:
-    "Browser / FSA / this VM: memory inverted index. After candidate-cap intersection, 300k 'retrieval hub' measured ~2.5ms (was ~205ms when the full posting list was copied). That is not SQLite BM25 quality. Desktop Tauri remains the ranked ≤50ms architecture. This VM cannot FSA-pick or Tauri-open the generated folders.",
+    "Browser / FSA: memory inverted index. After candidate-cap intersection, 300k 'retrieval hub' measured ~2.5ms (was ~205ms when the full posting list was copied). That is not SQLite BM25 quality. Desktop Tauri remains the ranked ≤50ms architecture. A browser-only run cannot FSA-pick or Tauri-open the generated folders.",
 };
 const outFile = join(outRoot, "WAVE_E_REPORT.json");
 writeFileSync(outFile, JSON.stringify(report, null, 2));
-if (existsSync("/opt/cursor/artifacts/stress")) {
-  writeFileSync("/opt/cursor/artifacts/stress/wave-e.json", JSON.stringify(report, null, 2));
-}
+const artifactCopy = artifactPath("stress", "wave-e.json");
+mkdirSync(dirname(artifactCopy), { recursive: true });
+writeFileSync(artifactCopy, JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
 console.log(`wrote ${outFile}`);

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BookOpen,
   Code2,
   Columns2,
   Eye,
   Network,
+  Table2,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -18,15 +20,10 @@ import {
   ArrowLeftRight,
   Pin,
 } from "lucide-react";
-import { useVaultStore, getBreadcrumbTrail } from "@/lib/vault/store";
-import { useTreeStructureTick } from "@/lib/vault/tree-tick";
-import { vaultIndex } from "@/lib/vault/indexes";
+import { useVaultStore, getBreadcrumbTrail, noteFileIsMissing, wroteHereRecently } from "@/lib/vault/store";
 import { jumpToBlockRef, jumpToOutlineHeading } from "@/lib/editor/outline-jump";
 import { isContentLoaded } from "@/lib/vault/content";
-import {
-  scheduleFillSafeHydrate,
-  shouldDeferNoteBodyHydrate,
-} from "@/lib/vault/fill-interaction";
+import { NoteTabBar } from "./NoteTabBar";
 import { VisualEditor } from "./VisualEditor";
 import { SourceEditor } from "./SourceEditor";
 import { SourcePreview } from "./SourcePreview";
@@ -35,6 +32,7 @@ import { isCanvasNote } from "@/lib/vault/canvas";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import { NoteTitleInput } from "./NoteTitleInput";
 import { EditorSaveChip } from "./EditorSaveChip";
+import { EditorStatusBar } from "./EditorStatusBar";
 import { NexusMark, NEXUS_TAGLINE } from "@/components/brand/NexusLogo";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { setFocusMode } from "@/lib/prefs/focus-mode";
@@ -44,7 +42,10 @@ import { formatShortcut } from "@/lib/platform";
 import { FindInNoteBar } from "./FindInNoteBar";
 import { FrontmatterEditor } from "./FrontmatterEditor";
 import { setFindEditorMode, setFindFocusPane, getFindFocusPane } from "@/lib/editor/find-target";
+import { setBasesOpen } from "@/lib/vault/bases-session";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
+import { revealFileList } from "@/lib/chrome/reveal-list";
+import { startFirstNote as startFirstNoteAnywhere } from "@/lib/vault/first-note";
 import {
   formatDateLong,
   isTodayDailyPath,
@@ -60,6 +61,8 @@ export function EditorPane({
   pane?: "primary" | "secondary";
 } = {}) {
   const editorMode = useVaultStore((s) => s.settings.editorMode);
+  const readingView = useVaultStore((s) => s.readingView);
+  const toggleReadingView = useVaultStore((s) => s.toggleReadingView);
   const graphMode = useVaultStore((s) => s.settings.graphMode);
   const rightOpen = useVaultStore((s) => s.settings.rightOpen);
   const leftOpen = useVaultStore((s) => s.settings.leftOpen);
@@ -84,13 +87,14 @@ export function EditorPane({
   const resolvedId = useVaultStore((s) =>
     pane === "secondary" ? (noteId ?? s.secondaryNoteId) : (noteId ?? s.activeNoteId),
   );
+  const openTabs = useVaultStore((s) =>
+    (pane === "secondary" ? s.secondaryTabs : s.primaryTabs) ?? [],
+  );
   const note = useVaultStore((s) =>
     resolvedId ? (s.nodes[resolvedId] ?? null) : null,
   );
-  const structureTick = useTreeStructureTick();
   const isSecondary = pane === "secondary";
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
-  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [hydrateError, setHydrateError] = useState(false);
   const [splitLive, setSplitLive] = useState<{ id: string; text: string } | null>(
     null,
@@ -108,6 +112,25 @@ export function EditorPane({
     // Close find when switching notes
     setFindOpen(false);
   }, [note?.id]);
+
+  // Ctrl+E unmounts the surface that had focus; the keys stay with this pane.
+  const wasReading = useRef(readingView);
+  useEffect(() => {
+    if (wasReading.current === readingView) return;
+    wasReading.current = readingView;
+    if (getFindFocusPane() !== pane && workspaceSplit) return;
+    const frame = window.requestAnimationFrame(() => {
+      const own = document.querySelector<HTMLElement>(`[data-editor-pane="${pane}"]`);
+      if (!own) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== document.body && !own.contains(active)) return;
+      const target = readingView
+        ? own.querySelector<HTMLElement>("[data-reading-view] .nexus-source-preview")
+        : own.querySelector<HTMLElement>(".ProseMirror, textarea[aria-label='Markdown source']");
+      target?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [readingView, pane, workspaceSplit]);
 
   useEffect(() => {
     if (!pendingJump || !note?.id || pendingJump.noteId !== note.id) return;
@@ -166,43 +189,151 @@ export function EditorPane({
     setHydrateError(false);
     if (note?.kind !== "note" || note.content !== undefined) return;
     let cancelled = false;
-    const start = () => {
-      if (cancelled) return;
-      void ensureNoteBody(note.id).then((body: string | null) => {
-        if (cancelled) return;
-        if (body === null) setHydrateError(true);
-      });
-    };
-    // During fill: wait for idle so tree/graph clicks paint first. Rapid
-    // selects cancel the previous idle work — only the last note reads disk.
-    if (shouldDeferNoteBodyHydrate({ fillBusy: indexFillBusy })) {
-      const stopIdle = scheduleFillSafeHydrate(() => {
-        if (!cancelled) start();
-      });
-      return () => {
-        cancelled = true;
-        stopIdle();
+    // Read the file now. Fill keeps the catalog lock; this path does not
+    // upsert into it, so the open note must not wait for the walk to finish.
+    const id = note.id;
+    const path = note.path;
+    let retry = 0;
+    void ensureNoteBody(id).then((body: string | null) => {
+      if (cancelled || body !== null) return;
+      // A remembered note whose file is gone (an old daily note, a file
+      // removed outside Nexus) used to strand the pane on an error page.
+      // Try once more, then let it go and hand the cursor to the list.
+      // A note this app just created or renamed is mid-write on disk, not gone:
+      // keep reading until the write lands instead of letting it go.
+      let tries = 0;
+      const attempt = () => {
+        void ensureNoteBody(id).then((again: string | null) => {
+          if (cancelled || again !== null) return;
+          if (wroteHereRecently(path) && tries < 8) {
+            tries += 1;
+            retry = window.setTimeout(attempt, 600);
+            return;
+          }
+          const st = useVaultStore.getState();
+          if (
+            isSecondary ||
+            st.activeNoteId !== id ||
+            st.dirtyNoteIds.includes(id) ||
+            wroteHereRecently(path) ||
+            !noteFileIsMissing(id)
+          ) {
+            setHydrateError(true);
+            return;
+          }
+          useVaultStore.getState().closeNoteTab(isSecondary ? "secondary" : "primary", id);
+          useVaultStore.setState({
+            toast: `${path} is not on disk anymore. Pick a note in the list.`,
+          });
+          revealFileList((tree) => {
+            const active = document.activeElement as HTMLElement | null;
+            if (!active || active === document.body) tree.focus({ preventScroll: true });
+          });
+        });
       };
-    }
-    start();
+      retry = window.setTimeout(attempt, 400);
+    });
     return () => {
       cancelled = true;
+      window.clearTimeout(retry);
     };
-  }, [note?.id, note?.content, ensureNoteBody, indexFillBusy]);
+  }, [note?.id, note?.path, note?.content, ensureNoteBody, isSecondary]);
 
-  const noteCount = useMemo(() => {
-    void structureTick;
-    return vaultIndex.noteCount;
-  }, [structureTick]);
-  const createNote = useVaultStore((s) => s.createNote);
+  // While a note is open this stays -1, so catalog page reloads do not
+  // re-render the editor. The empty state is the only reader of the count.
+  const noteCount = useVaultStore((s) => {
+    if (s.activeNoteId || (pane === "secondary" && s.secondaryNoteId)) return -1;
+    if (s.shellCatalog) return s.catalogNoteCount;
+    let n = 0;
+    const nodes = s.nodes;
+    for (const id in nodes) {
+      if (nodes[id]?.kind === "note") n += 1;
+    }
+    return n;
+  });
+  const startFirstNote = useCallback(() => startFirstNoteAnywhere(), []);
+
+  useEffect(() => {
+    if (isSecondary || noteCount !== 0) return;
+    const idleNow = () => {
+      if (document.querySelector("[data-nexus-confirm], [role='dialog'][aria-modal='true']")) return false;
+      const active = document.activeElement as HTMLElement | null;
+      return (
+        !active ||
+        active === document.body ||
+        active === document.documentElement ||
+        Boolean(active.closest?.("[data-editor-empty='vault']"))
+      );
+    };
+    // A brand-new vault lands on the list, opening it if it was collapsed.
+    const land = () => {
+      if (!idleNow()) return;
+      revealFileList((tree) => {
+        if (idleNow()) tree.focus({ preventScroll: true });
+      });
+    };
+    land();
+    const later = window.setTimeout(land, 160);
+    // Enter with nothing focused starts the first note too.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.defaultPrevented || e.repeat || e.isComposing) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("[data-file-tree], button, a, input, textarea, select, [contenteditable='true']")) return;
+      if (!idleNow() && !(t === document.body || t === document.documentElement)) return;
+      e.preventDefault();
+      startFirstNote();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(later);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [isSecondary, noteCount, startFirstNote]);
 
   if (!note || note.kind !== "note") {
+    if (openTabs.length > 0 && resolvedId && openTabs.includes(resolvedId)) {
+      return (
+        <div
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
+          data-editor-pane={pane}
+          data-testid="nexus-editor"
+          data-body-loading="true"
+          role="status"
+          aria-live="polite"
+        >
+          <NoteTabBar pane={pane} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
+            <p className="text-[14px] text-[var(--text-secondary)]">Loading note…</p>
+          </div>
+        </div>
+      );
+    }
+    if (openTabs.length > 0) {
+      return (
+        <div
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
+          data-editor-pane={pane}
+          data-editor-empty="note"
+        >
+          <NoteTabBar pane={pane} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
+            <h2 className="text-[22px] font-semibold tracking-tight">No file is open</h2>
+            <p className="mt-2 max-w-sm text-[14px] text-[var(--text-secondary)]">
+              Choose an open note, or close the tab.
+            </p>
+          </div>
+        </div>
+      );
+    }
     if (isSecondary) {
       return (
         <div
-          className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)] px-6 text-center"
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
           data-editor-pane="secondary"
         >
+          <NoteTabBar pane="secondary" />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <p className="text-[14px] text-[var(--text-secondary)]">
             Open a second note
           </p>
@@ -216,23 +347,55 @@ export function EditorPane({
           >
             Close pane
           </button>
+          </div>
         </div>
       );
     }
     const emptyVault = noteCount === 0;
     return (
-      <div className="fade-in flex h-full flex-col items-center justify-center px-8 text-center">
+      <div className="flex h-full min-w-0 flex-1 flex-col" data-editor-pane={pane}>
+        <NoteTabBar pane={pane} />
+      <div
+        className="fade-in flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center"
+        data-editor-empty={emptyVault ? "vault" : "note"}
+      >
         <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] text-[var(--accent)] shadow-[0_0_40px_rgba(0,200,255,0.12)]">
           <NexusMark size={36} className="text-[var(--text-primary)]" />
         </div>
         <h2 className="text-[22px] font-semibold tracking-tight">
-          {emptyVault ? "Start your vault" : "Select a note"}
+          {emptyVault ? "Start your vault" : "No file is open"}
         </h2>
-        <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-[var(--text-secondary)]">
+        <p
+          role={emptyVault ? "status" : undefined}
+          data-testid={emptyVault ? "vault-first-run" : undefined}
+          className={cn(
+            "mt-2 max-w-sm leading-relaxed",
+            emptyVault
+              ? "text-[22px] font-semibold text-white"
+              : "text-[14px] text-[var(--text-secondary)]",
+          )}
+        >
           {emptyVault
-            ? "Create your first note, open today's daily page, or search anytime."
-            : `Choose a file from the vault, search with ${formatShortcut("K")}, or create a note.`}
+            ? "Enter starts a note."
+            : "Pick a note in the list, or go to one by name."}
         </p>
+        {emptyVault ? (
+          <p
+            className="mt-2 max-w-sm text-[14px] font-medium leading-relaxed text-white/85"
+            data-testid="vault-first-run-invite"
+          >
+            Give it a name, press Enter, and you are writing.
+          </p>
+        ) : (
+          <p
+            className="nexus-keys-hint mt-3 flex flex-wrap items-center justify-center gap-2 text-[15px] font-semibold text-white"
+            data-testid="note-keys-hint"
+          >
+            <kbd>Esc</kbd> list <span aria-hidden>·</span> <kbd>Arrows</kbd> move{" "}
+            <span aria-hidden>·</span> <kbd>Enter</kbd> open{" "}
+            <span aria-hidden>·</span> <kbd>F2</kbd> rename
+          </p>
+        )}
         <p className="mt-2 text-[12px] tracking-wide text-[var(--text-muted)]">
           {NEXUS_TAGLINE}
         </p>
@@ -241,15 +404,15 @@ export function EditorPane({
             <button
               type="button"
               className="primary-btn"
-              onClick={() => createNote(null)}
+              onClick={() => startFirstNote()}
             >
               <FilePlus2 size={16} />
               New note
             </button>
           ) : (
-            <NewNoteMenu variant="primary" title="New note" align="left">
+            <NewNoteMenu variant="primary" title="Create new note" align="left">
               <FilePlus2 size={16} />
-              New note
+              Create new note <span className="opacity-75">{formatShortcut("N")}</span>
             </NewNoteMenu>
           )}
           <button
@@ -260,14 +423,26 @@ export function EditorPane({
             <CalendarDays size={16} />
             Today's note
           </button>
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={() => setCommandOpen(true)}
-          >
-            Search {formatShortcut("K")}
-          </button>
+          {emptyVault ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => setCommandOpen(true)}
+            >
+              Search {formatShortcut("K")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="ghost-btn"
+              data-testid="empty-go-to-file"
+              onClick={() => setCommandOpen(true)}
+            >
+              Go to file {formatShortcut("O")}
+            </button>
+          )}
         </div>
+      </div>
       </div>
     );
   }
@@ -277,16 +452,19 @@ export function EditorPane({
     if (hydrateError) {
       return (
         <div
-          className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)] px-6 text-center"
+          className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
           data-active-note={note.id}
+          data-editor-pane={pane}
           data-body-error="true"
         >
+          <NoteTabBar pane={pane} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <AlertCircle
             size={28}
-            className="mb-3 text-[var(--accent)]"
+            className="mb-3 text-[var(--danger)]"
             aria-hidden
           />
-          <p className="text-[14px] text-[var(--text-secondary)]">
+          <p className="text-[14px] text-[var(--text-secondary)]" role="alert">
             {mode === "fsa" || mode === "desktop" || (mode as string) === "sandbox"
               ? "Couldn't load this note from disk"
               : mode === "demo"
@@ -294,29 +472,46 @@ export function EditorPane({
                 : "Couldn't restore this note"}
           </p>
           <p className="mt-1 text-[12px] text-[var(--text-muted)]">{note.path}</p>
-          <button
-            type="button"
-            className="ghost-btn mt-4"
-            onClick={() => {
-              setHydrateError(false);
-              void ensureNoteBody(note.id).then((body: string | null) => {
-                if (body === null) setHydrateError(true);
-              });
-            }}
-          >
-            Retry
-          </button>
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => {
+                setHydrateError(false);
+                void ensureNoteBody(note.id).then((body: string | null) => {
+                  if (body === null) setHydrateError(true);
+                });
+              }}
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                useVaultStore.getState().closeNoteTab(pane, note.id);
+                revealFileList((tree) => tree.focus({ preventScroll: true }));
+              }}
+            >
+              Back to the list
+            </button>
+          </div>
+          </div>
         </div>
       );
     }
     return (
       <div
-        className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-[var(--bg-deepest)]"
+        className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-deepest)]"
         data-active-note={note.id}
         data-editor-pane={pane}
         data-testid="nexus-editor"
         data-body-loading="true"
+        role="status"
+        aria-live="polite"
       >
+        <NoteTabBar pane={pane} />
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
         <Loader2
           size={28}
           className="mb-3 animate-spin text-[var(--accent)]"
@@ -324,13 +519,16 @@ export function EditorPane({
         />
         <p className="text-[14px] text-[var(--text-secondary)]">Loading note…</p>
         <p className="mt-1 text-[12px] text-[var(--text-muted)]">{note.path}</p>
+        </div>
       </div>
     );
   }
 
   const body = note.content ?? "";
-  const canvasNote = isCanvasNote(body);
-  const editorKey = `${editorMode}::${canvasNote ? "canvas" : "note"}`;
+  const canvasNote = isCanvasNote(body, note.path);
+  const reading = readingView && !canvasNote;
+  const editing = !reading;
+  const editorKey = `${reading ? "reading" : editorMode}::${canvasNote ? "canvas" : "note"}`;
   const previewBody = splitLive?.id === note.id ? splitLive.text : body;
 
   return (
@@ -341,8 +539,9 @@ export function EditorPane({
       data-testid="nexus-editor"
       onPointerDownCapture={() => setFindFocusPane(pane)}
     >
-      <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
-        <div className="min-w-0 flex-1">
+      <NoteTabBar pane={pane} />
+      <div className="nexus-editor-head flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--border)] px-2 sm:gap-2 sm:px-3 md:px-4">
+        <div className="nexus-editor-title min-w-0 flex-1">
           {/* Parent path only — note title lives in NoteTitleInput (avoids Untitled / Untitled) */}
           {crumbs.length > 0 ? (
             <div
@@ -435,7 +634,7 @@ export function EditorPane({
               <div className="mr-1.5">
                 <EditorSaveChip />
               </div>
-              <span className="mr-2 hidden text-[11px] text-[var(--text-muted)] lg:inline">
+              <span className="nexus-editor-when mr-2 hidden text-[11px] text-[var(--text-muted)] lg:inline">
                 {mode === "fsa" || mode === "desktop" || (mode as string) === "sandbox"
                   ? "on disk · "
                   : ""}
@@ -468,26 +667,26 @@ export function EditorPane({
                   type="button"
                   className={cn(
                     "chip-btn !border-0",
-                    editorMode === "visual" && "is-active",
+                    editing && editorMode === "visual" && "is-active",
                   )}
                   onClick={() => setEditorMode("visual")}
                   title="Visual mode"
-                  aria-pressed={editorMode === "visual"}
+                  aria-pressed={editing && editorMode === "visual"}
                 >
                   <Eye size={13} />
                   <span className="hidden md:inline">
-                    {canvasNote ? "Tour board" : "Visual"}
+                    {canvasNote ? "Board" : "Visual"}
                   </span>
                 </button>
                 <button
                   type="button"
                   className={cn(
                     "chip-btn !border-0",
-                    editorMode === "source" && "is-active",
+                    editing && editorMode === "source" && "is-active",
                   )}
                   onClick={() => setEditorMode("source")}
-                  title={`Source mode (${formatShortcut("E")})`}
-                  aria-pressed={editorMode === "source"}
+                  title="Source mode"
+                  aria-pressed={editing && editorMode === "source"}
                 >
                   <Code2 size={13} />
                   <span className="hidden md:inline">Source</span>
@@ -497,14 +696,27 @@ export function EditorPane({
                     type="button"
                     className={cn(
                       "chip-btn !border-0",
-                      editorMode === "split" && "is-active",
+                      editing && editorMode === "split" && "is-active",
                     )}
                     onClick={() => setEditorMode("split")}
                     title="Source + live preview of this note"
-                    aria-pressed={editorMode === "split"}
+                    aria-pressed={editing && editorMode === "split"}
                   >
                     <Columns2 size={13} />
                     <span className="hidden md:inline">Preview</span>
+                  </button>
+                ) : null}
+                {!canvasNote ? (
+                  <button
+                    type="button"
+                    className={cn("chip-btn !border-0", reading && "is-active")}
+                    onClick={() => toggleReadingView()}
+                    title={`Reading view (${formatShortcut("E")})`}
+                    aria-pressed={reading}
+                    data-testid="reading-view-toggle"
+                  >
+                    <BookOpen size={13} />
+                    <span className="hidden md:inline">Read</span>
                   </button>
                 ) : null}
                 {!isSecondary ? (
@@ -543,6 +755,16 @@ export function EditorPane({
                 )}
                 <button
                   type="button"
+                  className="chip-btn !border-0 hidden md:inline-flex"
+                  data-testid="bases-open"
+                  title="Note table"
+                  onClick={() => setBasesOpen(true)}
+                >
+                  <Table2 size={13} />
+                  <span className="hidden md:inline">Bases</span>
+                </button>
+                <button
+                  type="button"
                   className={cn(
                     "chip-btn !border-0 hidden md:inline-flex",
                     (graphMode === "fullscreen" ||
@@ -552,7 +774,7 @@ export function EditorPane({
                       "is-active",
                   )}
                   onClick={() => toggleGraphForViewport()}
-                  title={`Fullscreen graph (${formatShortcut("G")}) — Esc or Exit to leave`}
+                  title={`Local graph (${formatShortcut("G")}) — Esc or Exit to leave`}
                   aria-pressed={
                     graphMode === "fullscreen" ||
                     (graphMode === "panel" && rightOpen && rightTab === "graph")
@@ -611,7 +833,14 @@ export function EditorPane({
         key={editorKey}
         className="editor-surface-enter flex min-h-0 flex-1 flex-col"
       >
-        {editorMode === "visual" && canvasNote ? (
+        {reading ? (
+          <div
+            className="nexus-reading-view flex min-h-0 flex-1 flex-col"
+            data-reading-view="true"
+          >
+            <SourcePreview content={body} noteId={note.id} reading pane={pane} />
+          </div>
+        ) : canvasNote ? (
           <CanvasBoard noteId={note.id} content={body} />
         ) : editorMode === "visual" ? (
           <VisualEditor noteId={note.id} content={body} pane={pane} />
@@ -629,13 +858,14 @@ export function EditorPane({
               <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 Live preview
               </div>
-              <SourcePreview content={previewBody} noteId={note.id} />
+              <SourcePreview content={previewBody} noteId={note.id} pane={pane} />
             </div>
           </div>
         ) : (
           <SourceEditor noteId={note.id} content={body} pane={pane} />
         )}
       </div>
+      <EditorStatusBar noteId={note.id} />
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { isPhoneViewport } from "@/lib/layout/viewport";
 import {
   applyFrontmatter,
   parseFrontmatterFields,
@@ -16,18 +18,23 @@ export function FrontmatterEditor({
   content: string;
 }) {
   const updateNoteContent = useVaultStore((s) => s.updateNoteContent);
+  const focusMode = usePrefsStore((s) => s.focusMode);
   const { yaml } = useMemo(() => splitFrontmatter(content || ""), [content]);
   const parsed = useMemo(
     () => (yaml != null ? parseFrontmatterFields(yaml) : []),
     [yaml],
   );
-  const [open, setOpen] = useState(yaml != null);
+  // Phone width keeps the note in view. Desktop opens properties when they exist.
+  const [open, setOpen] = useState(() => yaml != null && !isPhoneViewport());
   const [rows, setRows] = useState<FrontmatterField[]>(parsed);
 
   useEffect(() => {
     setRows(parsed.length ? parsed : yaml != null ? [{ key: "", value: "" }] : []);
-    if (yaml != null) setOpen(true);
+    if (yaml == null) setOpen(false);
+    else setOpen(!isPhoneViewport());
   }, [noteId, yaml, parsed]);
+
+  if (focusMode) return null;
 
   if (yaml == null && !open) {
     return (
@@ -84,7 +91,7 @@ export function FrontmatterEditor({
           {rows.map((row, i) => (
             <div key={i} className="flex items-center gap-2">
               <input
-                className="w-[7.5rem] shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 font-mono text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field w-[7.5rem] shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 font-mono text-[12px] text-[var(--text-primary)]"
                 value={row.key}
                 placeholder="key"
                 spellCheck={false}
@@ -97,7 +104,7 @@ export function FrontmatterEditor({
                 }}
               />
               <input
-                className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[12.5px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[12.5px] text-[var(--text-primary)]"
                 value={row.value}
                 placeholder="value"
                 aria-label={`Property ${i + 1} value`}

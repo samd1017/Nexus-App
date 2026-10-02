@@ -115,6 +115,7 @@ export interface DurableNoteMetaContract {
   parentId: string | null;
   mtime: number;
   size?: number;
+  ctime?: number;
   contentHash?: string;
   title?: string;
   bodySnippet?: string;
@@ -143,7 +144,17 @@ export const DURABLE_INDEX_REBUILD_RULES = {
   ] as const,
   migrateStrategy: "wipe-derived-tables-and-reapply-ddl" as const,
   upsertPreserveBodyWhenUnloaded: true,
-  bodySnippetMaxChars: 4000,
+  /**
+   * Loaded note text kept for in-memory search. A 4,000-character cut
+   * hid a word that sits further into an opened note.
+   */
+  bodySnippetMaxChars: 262_144,
+  /**
+   * Desktop deep head. Matches Rust `DEFAULT_DEEP_HEAD`. An opened note
+   * indexes this many characters; the background fill does not read the rest
+   * of the vault to match it.
+   */
+  desktopOpenNoteChars: 8_000,
 } as const;
 
 export const DESKTOP_INDEX_PATHS = {

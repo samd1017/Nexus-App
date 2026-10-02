@@ -22,13 +22,16 @@ function note(
   parentId: string | null,
   content: string,
 ): VaultNode {
+  const now = Date.now();
   return {
     id: idFor(path),
     path,
     name,
     kind: "note",
     parentId,
-    mtime: Date.now(),
+    mtime: now,
+    ctime: now,
+    size: new TextEncoder().encode(content).length,
     content,
   };
 }
@@ -72,14 +75,14 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
+| Note list | [[Note List]] — \`\`\`nexus-query\`\`\` lists a folder, a tag, or a frontmatter field. Not full Dataview |
 | Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
 | Backlinks | Right panel → see what points here |
-| Graph | Right panel → Graph, or **Ctrl/⌘G** for fullscreen |
+| Graph | Right panel → Graph, or **Ctrl/⌘G** for the Local graph |
 | Search | **Ctrl/⌘K** — find any note instantly |
 | Callouts | Open [[Callouts]] or insert from the toolbar More menu |
 | Diagrams | Open [[Diagrams & Math]] — mermaid charts and $math$ |
-| Canvas | Open [[Welcome board]] — **tour board** (cards in this vault; not Obsidian Canvas parity) |
 | Theme | Sun/moon in the title bar — Dark, Light, or System |
 | Settings | Gear or **Ctrl/⌘,** — theme and remappable hotkeys |
 | Dual pane | **Pane** or **⌘2** — two notes at once. Alt-click a file to park it beside |
@@ -101,7 +104,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 
 ## See the graph
 
-Open the right panel → **Graph**, or press **Ctrl/⌘G** for fullscreen. Orbit, zoom, and click a node. Use the download icon to export a PNG.
+Open the right panel → **Graph**, or press **Ctrl/⌘G** for the Local graph (this note and its links), even if Folder Map was open. Orbit, zoom, and click a node. Use the download icon to export a PNG.
 
 ## What stays true
 
@@ -141,15 +144,87 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
 | You get | Agents get |
 | --- | --- |
 | Readable Markdown | Same readable Markdown |
-| \`git diff\` that makes sense | CLI and Hermes-friendly paths |
+| \`git diff\` that makes sense | Ordinary file paths |
 | Portability forever | No lock-in API |
 
 ## Related
 
 - [[Welcome]]
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Linking Notes]]
 - [[Settings & Shortcuts]]
+`,
+    ),
+  );
+
+  add(
+    note(
+      pathJoin("Projects", "Note List.md"),
+      "Note List.md",
+      projects.id,
+      `# Note List
+
+A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`WHERE file.ctime >= date(today) - 30d\` compare them. \`SORT file.size\` or \`SORT file.ctime\`. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field. Missing values sort last. \`WHERE status = "draft" AND contains(file.name, "Call")\` keeps a note only when every comparison matches. \`WHERE status = "draft" OR status = "live"\` keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. A TABLE formula is up to three + - * /, left to right, with no parentheses.
+
+\`\`\`nexus-query
+LIST FROM #writing OR #graph
+\`\`\`
+
+\`\`\`nexus-query
+TABLE status FROM path:Research WHERE status = "draft"
+\`\`\`
+
+\`\`\`nexus-query
+LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call")
+\`\`\`
+
+\`\`\`nexus-query
+LIST FROM path:Research WHERE status = "draft" OR status = "live"
+\`\`\`
+
+\`\`\`nexus-query
+TABLE status FROM path:Research GROUP BY status rows
+\`\`\`
+
+\`\`\`nexus-query
+LIST FROM path:Research LIMIT 3
+\`\`\`
+
+\`\`\`nexus-query
+TABLE file.size, file.ctime FROM path:Research
+\`\`\`
+
+\`\`\`nexus-query
+TABLE status, due FROM path:Research SORT due
+\`\`\`
+
+\`\`\`nexus-query
+LIST FROM path:Research WHERE contains(file.name, "Graph")
+\`\`\`
+
+\`\`\`nexus-query
+TABLE file.name + " note" FROM path:Research WHERE contains(file.name, "Graph")
+\`\`\`
+
+\`\`\`nexus-query
+TABLE file.outlinks FROM path:Research WHERE contains(file.name, "Graph")
+\`\`\`
+
+\`\`\`nexus-query
+TABLE file.inlinks FROM path:Research WHERE contains(file.name, "Graph")
+\`\`\`
+
+\`\`\`nexus-query
+LIST FROM path:Research WHERE contains(file.name, "Graph") FLATTEN file.inlinks
+\`\`\`
+
+\`\`\`nexus-query
+TABLE FROM path:Research SORT mtime desc
+\`\`\`
+
+\`\`\`nexus-query
+TABLE FROM path:Journal field:mtime
+\`\`\`
 `,
     ),
   );
@@ -198,11 +273,16 @@ On disk they stay plain text. In **Visual** mode they render as interactive pill
       pathJoin("Research", "Graph View.md"),
       "Graph View.md",
       research.id,
-      `# Graph View
+      `---
+status: live
+due: 2026-09-01
+---
+
+# Graph View
 
 #graph #links
 
-The graph turns [[wikilinks]] into a living map of your thinking.
+The graph opens on **Local**: this note and the notes it links. **Folder Map** is one click away and opens the 3D vault.
 
 ## What you’ll see
 
@@ -219,14 +299,15 @@ The graph turns [[wikilinks]] into a living map of your thinking.
 | Click | Open the note (exits fullscreen) |
 | Drag | Reposition nodes |
 | Scroll | Zoom |
-| **⌘G** | Fullscreen graph |
+| **⌘G** | Fullscreen Local graph, even after Folder Map |
+| Folder Map | 3D vault map, on the graph bar |
 
 ## Seed network
 
 - [[Welcome]]
 - [[Linking Notes]]
 - [[Design Language]]
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Local-first Vault]]
 `,
     ),
@@ -273,7 +354,12 @@ Open **Settings (⌘,)** and switch Cyan → Violet → Emerald. The whole UI up
       pathJoin("Research", "Callouts.md"),
       "Callouts.md",
       research.id,
-      `# Callouts
+      `---
+status: draft
+due: 2026-10-02
+---
+
+# Callouts
 
 #writing #callouts
 
@@ -326,29 +412,8 @@ $$
 \\int_0^1 x^2 \\, dx = \\frac{1}{3}
 $$
 
-Insert from **More → Mermaid diagram** or **Math block**. See also [[Welcome board]] and [[Visual & Source]].
+Insert from **More → Mermaid diagram** or **Math block**. See also [[Visual & Source]].
 `,
-    ),
-  );
-
-  const canvases = add(folder("Canvases", "Canvases", null));
-  add(
-    note(
-      pathJoin("Canvases", "Welcome board.md"),
-      "Welcome board.md",
-      canvases.id,
-      [
-        "---",
-        "type: canvas",
-        "---",
-        "",
-        "# Welcome board",
-        "",
-        "````canvas",
-        '{"cam":{"x":36,"y":24,"k":1},"snap":true,"cards":[{"id":"c_group","x":12,"y":8,"w":580,"h":300,"kind":"group","text":"Welcome","color":"6"},{"id":"c_welcome","x":36,"y":48,"w":240,"h":140,"kind":"text","color":"5","text":"Welcome board\\n\\nDrag a card. Hover a side to connect."},{"id":"c_welcome_link","x":320,"y":48,"w":240,"h":120,"kind":"note","notePath":"Welcome.md","color":"4"},{"id":"c_diagrams","x":320,"y":184,"w":240,"h":100,"kind":"note","notePath":"Research/Diagrams & Math.md"}],"edges":[{"id":"e_next","from":"c_welcome","to":"c_welcome_link","fromSide":"right","toSide":"left","label":"open","color":"5"}]}',
-        "````",
-        "",
-      ].join("\n"),
     ),
   );
 
@@ -387,7 +452,7 @@ folder:Research
 
 ## Round-trip rules
 
-Nexus keeps files clean so [[Hermes Compatibility]] and \`git diff\` stay honest. Prefer standard Markdown; avoid proprietary blobs.
+Nexus keeps files clean so [[External Agents]] and \`git diff\` stay honest. Prefer standard Markdown; avoid proprietary blobs.
 
 ## Practice
 
@@ -405,14 +470,14 @@ Nexus keeps files clean so [[Hermes Compatibility]] and \`git diff\` stay honest
 
   add(
     note(
-      pathJoin("Systems", "Hermes Compatibility.md"),
-      "Hermes Compatibility.md",
+      pathJoin("Systems", "External Agents.md"),
+      "External Agents.md",
       systems.id,
-      `# Hermes Compatibility
+      `# External Agents
 
-#agents #hermes
+#agents #pulse
 
-Hermes (and any agent or script) should treat this vault as ordinary files.
+Any agent or script should treat this vault as ordinary files.
 
 ## Contract
 
@@ -427,9 +492,9 @@ Creates, edits, renames, and deletes from outside the app appear in the UI withi
 
 ## Demo it now
 
-In the vault switcher menu (More), choose **Simulate agent write**. A new note lands under Systems. Pulse opens so you can treat it like a Grok / Hermes dump.
+In the vault switcher menu (More), choose **Simulate agent write**. A new note lands under Systems. Pulse opens so you can treat it like an outside write.
 
-To see a conflict: **Practice agent conflict** (vault menu, Pulse, Settings → Agents, or ⌘K). Conflict Studio opens with a line diff — Keep mine or Take theirs.
+To see a conflict: **Practice agent conflict** (vault menu, Pulse, Settings → External agents, or ⌘K). Conflict Studio opens with a line diff — Keep mine or Take theirs.
 
 ## Linked
 
@@ -525,7 +590,7 @@ Alt-click [[Graph View]] to open it beside this note. **⌘2** toggles the works
 
 - [[Welcome]]
 - [[Visual & Source]]
-- [[Hermes Compatibility]]
+- [[External Agents]]
 `,
     ),
   );
@@ -537,9 +602,9 @@ Alt-click [[Graph View]] to open it beside this note. **⌘2** toggles the works
       systems.id,
       `# Agent Day
 
-#agents #grok #pulse
+#agents #pulse
 
-First-hour path for humans + Grok on the same folder.
+First-hour path for a person and an outside writer on the same folder.
 
 Welcome already has the feature tour — this note is the five-minute switch: open, ask, let an agent write, resolve a conflict.
 
@@ -550,10 +615,10 @@ This demo vault is already open. For a real folder: **Open…** and point at any
 ## Agent write
 
 1. Vault menu → **More → Practice agent conflict**
-2. Or press **⌘K**, type \`hermes\` / \`agent\`
-3. Pulse shows **Hermes Pulse** — an external write
+2. Or press **⌘K**, type \`agent\`
+3. Pulse shows **Agent Pulse** — an external write
 
-On disk, the same thing happens when Cursor, Grok Bot, or a script saves a file.
+On disk, the same thing happens when another app or a script saves a file.
 
 ## Conflict
 
@@ -565,7 +630,7 @@ Edit a note in Nexus (leave it dirty) while an agent writes the same path. Nexus
 
 ## Related
 
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Local-first Vault]]
 - [[Welcome]]
 `,
@@ -581,7 +646,7 @@ Edit a note in Nexus (leave it dirty) while an agent writes the same path. Nexus
 
 Opened the vault for the first time.
 
-The graph already ties together [[Local-first Vault]], [[Graph View]], and [[Hermes Compatibility]]. That loop — **write, link, see** — is the product.
+The graph already ties together [[Local-first Vault]], [[Graph View]], and [[External Agents]]. That loop — **write, link, see** — is the product.
 
 ## Tasks
 
@@ -610,7 +675,6 @@ Felt immediate. Calm center, powerful edges. Settings accents made it mine in on
     welcome.id,
     projects.id,
     research.id,
-    canvases.id,
     systems.id,
     journal.id,
   ];
@@ -651,10 +715,10 @@ This is your vault. Notes are ordinary Markdown in a folder — you, git, and ag
   return { nodes, rootIds: [welcome.id], vaultName };
 }
 
-export const HERMES_SAMPLE_NOTE = {
-  path: pathJoin("Systems", "Hermes Pulse.md"),
-  name: "Hermes Pulse.md",
-  content: `# Hermes Pulse
+export const AGENT_SAMPLE_NOTE = {
+  path: pathJoin("Systems", "Agent Pulse.md"),
+  name: "Agent Pulse.md",
+  content: `# Agent Pulse
 
 This note was written by an **external process** (simulated agent).
 
@@ -666,7 +730,7 @@ The filesystem watcher picked this up without a manual refresh. The vault remain
 
 ## Links
 
-- [[Hermes Compatibility]]
+- [[External Agents]]
 - [[Local-first Vault]]
 - [[Welcome]]
 `,

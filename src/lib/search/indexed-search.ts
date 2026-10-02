@@ -11,7 +11,7 @@ import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { getDurableIndex } from "@/lib/vault/durable-index";
 import { snippetForSearchHit } from "@/lib/search/snippets";
 
-const BODY_CAP = 4000;
+const BODY_CAP = 262_144;
 
 type Doc = {
   id: string;

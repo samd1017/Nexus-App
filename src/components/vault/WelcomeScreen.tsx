@@ -22,14 +22,16 @@ import {
   NEXUS_NAME,
   NEXUS_TAGLINE,
 } from "@/components/brand/NexusLogo";
-import { canOpenLocalVaultFolder, isDesktopShell } from "@/lib/platform";
+import { canOpenLocalVaultFolder, formatShortcut, isDesktopShell } from "@/lib/platform";
 import { ThemeToggle } from "@/components/chrome/ThemeToggle";
 import {
+  chromeFsaHonestyLine,
   chromeFsaRefuseChrome,
   chromeFsaRefuseDesktop,
   chromeFsaRefuseLead,
   chromeFsaRefuseTitle,
   chromeFsaWarnMessage,
+  chromeFsaWelcomeDetail,
 } from "@/lib/vault/chrome-fsa-cap";
 
 type PendingAction =
@@ -58,7 +60,6 @@ export function WelcomeScreen() {
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const reopenRecentVault = useVaultStore((s) => s.reopenRecentVault);
   const connecting = useVaultStore((s) => s.connecting);
-  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const recentVaults = useVaultStore((s) => s.recentVaults);
   const folderAccessLost = useVaultStore((s) => s.folderAccessLost);
   const chromeFsaLimit = useVaultStore((s) => s.chromeFsaLimit);
@@ -73,17 +74,19 @@ export function WelcomeScreen() {
   const hasRecents = recentVaults.length > 0;
 
   useEffect(() => {
-    if (!connecting && !indexFillBusy) setPending(null);
-  }, [connecting, indexFillBusy]);
+    if (!connecting) setPending(null);
+  }, [connecting]);
 
   const run = (kind: Exclude<PendingAction, null>, fn: () => void) => {
-    if (connecting || indexFillBusy) return;
+    // Welcome only shows with no vault. A background fill must not
+    // freeze Open — same-folder reopen joins that fill.
+    if (connecting) return;
     setPending(kind);
     fn();
   };
 
   const openTopRecent = () => {
-    if (connecting || indexFillBusy || !topRecent) return;
+    if (connecting || !topRecent) return;
     run("recent", () => {
       if (topRecent.mode === "demo") openDemoVault();
       else if (
@@ -103,7 +106,7 @@ export function WelcomeScreen() {
   };
 
   const onOpenFolder = () => {
-    if (connecting || indexFillBusy) return;
+    if (connecting) return;
     if (!fsaOk) {
       setToast(
         desktop
@@ -118,7 +121,7 @@ export function WelcomeScreen() {
   };
 
   const onCreateVault = (onDisk: boolean) => {
-    if (connecting || indexFillBusy) return;
+    if (connecting) return;
     const name = createName.trim() || "Nexus Vault";
     if (onDisk && !fsaOk && !desktop) {
       setToast(
@@ -137,12 +140,8 @@ export function WelcomeScreen() {
     });
   };
 
-  const busy = connecting || indexFillBusy;
-  const busyLabel = pending
-    ? PENDING_LABEL[pending]
-    : indexFillBusy && !connecting
-      ? "Indexing…"
-      : "Opening…";
+  const busy = connecting;
+  const busyLabel = pending ? PENDING_LABEL[pending] : "Opening…";
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-auto bg-[var(--bg-deepest)]">
@@ -169,7 +168,7 @@ export function WelcomeScreen() {
       </div>
 
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-3xl flex-col px-6">
-        <section className="flex min-h-full flex-col justify-center py-14 sm:py-18">
+        <section className="flex flex-col pb-8 pt-16 sm:pt-20">
           <div
             className="welcome-hero-brand flex flex-col items-start gap-5"
             style={{ animation: "welcomeFadeUp 520ms ease-out both" }}
@@ -183,7 +182,6 @@ export function WelcomeScreen() {
               <div>
                 <div
                   className="nexus-wordmark select-none text-[38px] font-semibold leading-none tracking-[-0.04em] text-[var(--text-primary)] sm:text-[46px]"
-                  aria-label="Nexus"
                 >
                   Nexus
                 </div>
@@ -195,22 +193,42 @@ export function WelcomeScreen() {
           </div>
 
           <h1
-            className="mt-10 max-w-xl text-[28px] font-semibold leading-[1.15] tracking-tight text-[var(--text-primary)] sm:text-[34px]"
+            className="mt-7 max-w-xl text-[28px] font-semibold leading-[1.15] tracking-tight text-[var(--text-primary)] sm:text-[34px]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 80ms both" }}
           >
-            A writing surface that stays fast
+            Ask the vault.
             <span className="text-[var(--text-muted)]">
               {" "}
-              — Desktop for large vaults.
+              Open the right note.
             </span>
           </h1>
           <p
             className="mt-4 max-w-lg text-[15.5px] leading-relaxed text-[var(--text-secondary)]"
             style={{ animation: "welcomeFadeUp 520ms ease-out 140ms both" }}
           >
-            Local-first Markdown. Visual + Source. Live folder sync. Light or dark.
-            Zero accounts.
+            Plain Markdown on your machine. Search that cites the source.
+            The graph opens on this note. Folder Map is one click away. No account.
           </p>
+          <p
+            className="mt-2 max-w-lg text-[13.5px] leading-relaxed text-[var(--text-secondary)]"
+            style={{ animation: "welcomeFadeUp 520ms ease-out 180ms both" }}
+          >
+            No plugin API in this beta — plain Markdown, built-in query blocks, and a Tasks list.
+          </p>
+
+          <div
+            className="mt-6 max-w-xl rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] bg-[var(--accent-dim)] px-4 py-3"
+            data-chrome-fsa-honesty
+            role="note"
+            style={{ animation: "welcomeFadeUp 520ms ease-out 180ms both" }}
+          >
+            <p className="text-[15px] font-semibold leading-snug tracking-tight text-[var(--text-primary)]">
+              {chromeFsaHonestyLine()}
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+              {chromeFsaWelcomeDetail()}
+            </p>
+          </div>
 
           {!fsaOk && !desktop ? (
             <div className="mt-6 flex flex-wrap items-start gap-3 rounded-[14px] border border-[color-mix(in_srgb,var(--accent)_40%,var(--border))] bg-[var(--accent-dim)] px-4 py-3">
@@ -397,7 +415,7 @@ export function WelcomeScreen() {
           {showCreate ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
               <input
-                className="min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                className="nexus-field min-w-[12rem] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)]"
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
                 placeholder="Vault name"
@@ -440,12 +458,12 @@ export function WelcomeScreen() {
               {
                 icon: Search,
                 title: "Find",
-                body: "Chrome: about 20,000 notes. Desktop: SQLite FTS5 for 100k+.",
+                body: "Ask in plain language. Every answer cites the note.",
               },
               {
                 icon: Network,
                 title: "See",
-                body: "Spatial graph — neighborhood, then the whole vault.",
+                body: `${formatShortcut("G")} opens the Local graph of this note. Folder Map is one click away.`,
               },
               {
                 icon: Cloud,
@@ -468,12 +486,11 @@ export function WelcomeScreen() {
             ))}
           </div>
 
-          <div className="mt-6 rounded-[16px] border border-[var(--border)] bg-[var(--fill-subtle)] px-4 py-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-            Chrome in the browser: about 20,000 notes. A lifetime
-            Obsidian-sized vault (100k–300k) needs Nexus Desktop — same
-            markdown folder, SQLite search, no tab discard. We will not open
-            25,000+ notes in Chrome.
-          </div>
+          <p className="mt-6 max-w-xl text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+            Larger vaults stay on Nexus Desktop: the same Markdown folder,
+            search that fills in, and a folder map or neighborhood. Never one
+            orb per note.
+          </p>
 
           <p className="mt-8 max-w-lg text-[12.5px] leading-relaxed text-[var(--text-muted)]">
             Privacy: notes stay on your device. Nexus does not upload vault

@@ -3,8 +3,8 @@ import {
   CalendarDays,
   FilePlus2,
   FileText,
-  FolderKanban,
   LayoutGrid,
+  FolderKanban,
   Lightbulb,
   Users,
 } from "lucide-react";
@@ -21,7 +21,6 @@ const ICONS: Record<NoteTemplateId, ReactNode> = {
   meeting: <Users size={14} />,
   idea: <Lightbulb size={14} />,
   project: <FolderKanban size={14} />,
-  canvas: <LayoutGrid size={14} />,
 };
 
 type Props = {
@@ -53,23 +52,55 @@ export function NewNoteMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createNote = useVaultStore((s) => s.createNote);
+  const createCanvas = useVaultStore((s) => s.createCanvas);
 
   useEffect(() => {
     if (!open) return;
+    const trigger = triggerRef.current;
+    const timer = window.setTimeout(() => {
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>("[role='menuitem']")
+        ?.focus();
+    }, 0);
+    const items = () =>
+      Array.from(
+        menuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitem']") ??
+          [],
+      );
     const onDoc = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+        trigger?.focus({ preventScroll: true });
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const list = items();
+      if (!list.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const current = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next =
+        e.key === "ArrowDown"
+          ? (current + 1 + list.length) % list.length
+          : (current - 1 + list.length) % list.length;
+      list[next]?.focus();
     };
     document.addEventListener("mousedown", onDoc);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
+      window.clearTimeout(timer);
       document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [open]);
 
@@ -92,6 +123,7 @@ export function NewNoteMenu({
   return (
     <div ref={rootRef} className="relative inline-flex">
       <button
+        ref={triggerRef}
         type="button"
         className={cn(triggerClass, className)}
         title={title}
@@ -106,6 +138,7 @@ export function NewNoteMenu({
 
       {open ? (
         <div
+          ref={menuRef}
           id={menuId}
           role="menu"
           aria-label="New note template"
@@ -117,6 +150,28 @@ export function NewNoteMenu({
           <div className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
             New note
           </div>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="new-canvas"
+            onClick={() => {
+              setOpen(false);
+              createCanvas(parentId, "Untitled");
+            }}
+            className="flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.05]"
+          >
+            <span className="mt-0.5 text-[var(--accent)]">
+              <LayoutGrid size={14} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[12.5px] font-medium text-[var(--text-primary)]">
+                New canvas
+              </span>
+              <span className="block text-[11px] leading-snug text-[var(--text-muted)]">
+                Empty .canvas board in this folder
+              </span>
+            </span>
+          </button>
           {NOTE_TEMPLATES.map((t) => (
             <button
               key={t.id}

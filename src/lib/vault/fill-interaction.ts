@@ -9,10 +9,17 @@
  * Keep title-seed / fill-join / Open-gate / link_edge / phases unchanged.
  */
 
-export function shouldDeferNoteBodyHydrate(args: {
+/**
+ * The note the user just opened reads from disk immediately.
+ * Fill may still be writing the catalog. The SQLite upsert stays
+ * skipped (`shouldSkipDurableUpsertOnHydrate`) so this read does not
+ * start a second writer. Hover stays on `shouldSkipBackgroundBodyHydrate`;
+ * embeds read during fill too, at idle and a few at a time.
+ */
+export function shouldDeferNoteBodyHydrate(_args: {
   fillBusy: boolean;
 }): boolean {
-  return args.fillBusy === true;
+  return false;
 }
 
 /**
@@ -30,7 +37,18 @@ export function shouldSkipDurableUpsertOnHydrate(args: {
   return (args.slimNotes ?? 0) >= 400;
 }
 
-/** Hover / embed / mention extras — never pile onto fill I/O. */
+/**
+ * After the capped fill settles, opening a note writes that one deep head
+ * into SQLite. During fill the click must not start a second writer.
+ */
+export function shouldIndexOpenedDesktopNote(args: {
+  fillBusy: boolean;
+  indexKind?: string | null;
+}): boolean {
+  return args.fillBusy !== true && args.indexKind === "sqlite";
+}
+
+/** Hover / mention extras never pile onto fill I/O; embeds defer to idle instead. */
 export function shouldSkipBackgroundBodyHydrate(args: {
   fillBusy: boolean;
 }): boolean {

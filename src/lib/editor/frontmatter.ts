@@ -2,14 +2,52 @@
 
 export type FrontmatterField = { key: string; value: string };
 
+const PROPERTY_KEYS = new Set([
+  "title",
+  "tags",
+  "status",
+  "type",
+  "created",
+  "updated",
+  "aliases",
+  "cssclass",
+  "cssclasses",
+  "date",
+  "description",
+  "publish",
+]);
+
+/**
+ * A leading ``` fence whose lines are all `key: value`, and at least one key
+ * is a real property name, is frontmatter that a visual round-trip wrapped.
+ * Leave ordinary code samples alone.
+ */
+function peelPropertyFence(raw: string): { yaml: string; body: string } | null {
+  const m = raw.match(/^```[^\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*(?:\r?\n|$)/);
+  if (!m) return null;
+  const yaml = m[1] ?? "";
+  const lines = yaml.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) return null;
+  let known = 0;
+  for (const line of lines) {
+    const km = /^([A-Za-z_][\w-]*)\s*:\s*\S/.exec(line);
+    if (!km) return null;
+    if (PROPERTY_KEYS.has(km[1].toLowerCase())) known += 1;
+  }
+  if (known < 1) return null;
+  return { yaml, body: raw.slice(m[0].length) };
+}
+
 export function splitFrontmatter(md: string): {
   yaml: string | null;
   body: string;
 } {
   const raw = (md || "").replace(/^\uFEFF/, "");
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  if (!m) return { yaml: null, body: raw };
-  return { yaml: m[1] ?? "", body: raw.slice(m[0].length) };
+  if (m) return { yaml: m[1] ?? "", body: raw.slice(m[0].length) };
+  const fenced = peelPropertyFence(raw);
+  if (fenced) return { yaml: fenced.yaml, body: fenced.body };
+  return { yaml: null, body: raw };
 }
 
 export function parseFrontmatterFields(yaml: string): FrontmatterField[] {

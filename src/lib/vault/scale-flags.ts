@@ -1,6 +1,13 @@
 /**
- * Single-path scale flags — one scale-safe architecture for all disk vaults.
- * Demo/local stay eager (mode gate). No user toggle / no size-based mode flip.
+ * Scale continuum — one product from a handful of notes through ~500k.
+ * Same craft. No user-facing toy mode or enterprise mode.
+ *
+ * Graph (automatic, not a toggle):
+ *   under folderGraphMinNotes (400) → full note graph, every note, not a folder stub
+ *   at and above that → folder map (≤ folderMaxNodes) or ego (≤ 400 nodes)
+ * A 500k vault never draws one orb per note. A 12-note vault never opens on a barren map.
+ *
+ * Demo/local stay eager. Disk vaults lazy-load bodies and fill search progressively.
  */
 
 export type SearchBackendKind = "fuse" | "worker" | "fts5";

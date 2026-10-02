@@ -1,5 +1,5 @@
 /**
- * Write a deterministic soak vault to disk (plain Markdown).
+ * Write a deterministic large test vault to disk (plain Markdown).
  *
  * Probe words: `hub` and `cluster` (every body has "Cluster hub"; Hub titles
  * every 200 notes). `retrieval` is a rotating topic, not every file.

@@ -3,7 +3,7 @@
  *
  * Decision: do NOT ship half-working remote OAuth stubs.
  * Primary path = open a folder synced by Dropbox / Google Drive / OneDrive desktop.
- * Notes stay plain .md on disk; Hermes and the app share the same files.
+ * Notes stay plain .md on disk; outside writers and the app share the same files.
  */
 
 export type CloudProvider =

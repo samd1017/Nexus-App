@@ -3,6 +3,8 @@
  */
 
 import { useVaultStore } from "@/lib/vault/store";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { surfaceForGraphHotkey } from "@/lib/layout/graph-hotkey";
 
 const NARROW_MQ = "(max-width: 899px)";
 const PHONE_MQ = "(max-width: 640px)";
@@ -35,11 +37,25 @@ export function closeDrawersIfNarrow(): void {
 }
 
 /**
- * ⌘G / Graph toolbar: always enter fullscreen (idempotent).
- * A second press must not bounce the demo back to the editor — leave via
+ * ⌘G / Graph toolbar: fullscreen on the Local graph (this note and its links).
+ * Folder Map can stay the last tab click, but G still lands on Local.
+ * A second press must not bounce back to the editor — leave via
  * Esc or Exit graph only (`exitGraphForViewport`).
  */
+let mapChosenAt = 0;
+
+/** True when the reader opened the fullscreen map at or after `since`. */
+export function mapChosenSince(since: number): boolean {
+  return mapChosenAt >= since;
+}
+
 export function enterGraphFullscreen(): void {
+  mapChosenAt = Date.now();
+  const prefs = usePrefsStore.getState();
+  const surface = surfaceForGraphHotkey(prefs.graphSurface);
+  if (prefs.graphSurface !== surface) {
+    prefs.updatePrefs({ graphSurface: surface });
+  }
   const s = useVaultStore.getState();
   if (isPhoneViewport()) {
     if (s.settings.leftOpen) s.setLeftOpen(false);
@@ -56,11 +72,12 @@ export function toggleGraphForViewport(): void {
 }
 
 export function exitGraphForViewport(): void {
-  const s = useVaultStore.getState();
-  s.setGraphMode(isPhoneViewport() ? "hidden" : "panel");
-  // Leave the graph surface — do not remount ForceGraph3D in the side panel
-  // (that 3D init was stealing the next note-create / note-switch frame).
-  if (s.rightTab === "graph") s.setRightTab("backlinks");
+  const phone = isPhoneViewport();
+  useVaultStore.getState().setGraphMode(phone ? "hidden" : "panel");
+  // setGraphMode("panel") writes rightTab "graph" inside the same update.
+  // The state object from before that call still has the pre-exit tab, so
+  // checking it skips the handoff and the side panel remounts ForceGraph3D.
+  if (!phone) useVaultStore.getState().setRightTab("backlinks");
 }
 
 /** Phone: open/close the backlinks drawer. */

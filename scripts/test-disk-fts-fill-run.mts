@@ -149,7 +149,7 @@ await assert.rejects(
       forbidNodes,
       async () => {
         reads += 1;
-        throw new Error("forbidden path: C:\\\\Users\\\\samd1\\\\nexus-soak-100k");
+        throw new Error("forbidden path: C:\\\\vault\\\\nexus-soak-100k");
       },
       { concurrency: 1 },
     ),

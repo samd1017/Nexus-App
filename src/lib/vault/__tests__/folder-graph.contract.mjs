@@ -370,6 +370,30 @@ async function main() {
     assert.equal(flags.shouldUseFolderGraph(420), false);
     flags.applyScaleSafeDefaults();
     assert.equal(flags.shouldUseFolderGraph(10), false);
+
+    // Scale continuum: a handful stays a full graph; 45k and 500k stay budgeted.
+    assert.equal(flags.shouldUseFolderGraph(12), false);
+    assert.equal(flags.shouldUseEgoGraph(12), false);
+    assert.equal(flags.shouldUseFolderGraph(45_000), true);
+    assert.equal(flags.shouldUseFolderGraph(500_000), true);
+    assert.ok(flags.getScaleFlags().folderMaxNodes <= 320);
+    const rHuge = buildGraph.resolveGraphData(large.nodes, {
+      noteCount: 500_000,
+      activeNoteId: noteId,
+      graphBrowsePath: "",
+      graphScopeMode: "vault",
+    });
+    assert.equal(rHuge.mode, "folder");
+    assert.ok(rHuge.nodes.length <= 320);
+    assert.ok(rHuge.nodes.length < 500);
+    const rHugeEgo = buildGraph.resolveGraphData(large.nodes, {
+      noteCount: 500_000,
+      activeNoteId: noteId,
+      graphBrowsePath: "",
+      graphScopeMode: "ego",
+    });
+    assert.equal(rHugeEgo.mode, "ego");
+    assert.ok(rHugeEgo.nodes.length <= 400);
   }
 
   // U13 content-edit fingerprint stable (structureGeneration unchanged on content-only)

@@ -12,8 +12,10 @@ import { searchVault as fuseSearchVault } from "./fuse-search";
 import { indexedSearch } from "./indexed-search";
 import { getScaleFlags, type SearchBackendKind } from "@/lib/vault/scale-flags";
 import { getDurableIndex } from "@/lib/vault/durable-index";
+import { searchOpenPageTitles } from "@/lib/vault/shell-catalog";
 import {
   getSearchIndexState,
+  MEMORY_FTS_ENGINE_LABEL,
   sqliteEngineShortLabel,
   type SearchIndexState,
 } from "@/lib/vault/sqlite-fill-progress";
@@ -72,15 +74,21 @@ class FtsSearchBackend implements SearchBackend {
     query: string,
     limit = 40,
   ): Promise<SearchHit[]> {
+    const page = searchOpenPageTitles(nodes, query, limit);
     const idx = getDurableIndex();
+    let rest: SearchHit[] = [];
     if (idx?.ready && idx.searchFtsAsync) {
       try {
-        return await idx.searchFtsAsync(query, limit);
+        rest = await idx.searchFtsAsync(query, limit);
       } catch {
-        return idx.searchFts(query, limit);
+        rest = idx.searchFts(query, limit);
       }
+    } else {
+      rest = this.search(nodes, query, limit);
     }
-    return this.search(nodes, query, limit);
+    if (page.length === 0) return rest;
+    const seen = new Set(page.map((hit) => hit.noteId));
+    return [...page, ...rest.filter((hit) => !seen.has(hit.noteId))].slice(0, limit);
   }
 }
 
@@ -114,6 +122,8 @@ export function describeSearchEngine(): {
   id: SearchEngineId;
   label: string;
   shortLabel: string;
+  /** Calm heading copy. Desktop keeps the SQLite name the soak checks for. */
+  uiLabel: string;
   ranked: boolean;
   indexState: SearchIndexState;
 } {
@@ -123,6 +133,7 @@ export function describeSearchEngine(): {
       id: "fuse",
       label: "Fuse.js",
       shortLabel: "Fuse",
+      uiLabel: "In this vault",
       ranked: false,
       indexState: "idle",
     };
@@ -132,6 +143,7 @@ export function describeSearchEngine(): {
       id: "inverted",
       label: "In-process inverted index",
       shortLabel: "Inverted",
+      uiLabel: "In this vault",
       ranked: false,
       indexState: "idle",
     };
@@ -139,10 +151,12 @@ export function describeSearchEngine(): {
   const idx = getDurableIndex();
   if (idx?.ready && (idx.kind === "sqlite" || idx.kind === "native") && idx.searchFtsAsync) {
     const indexState = getSearchIndexState();
+    const sqlite = sqliteEngineShortLabel(indexState);
     return {
       id: "sqlite-fts5-bm25",
       label: "SQLite FTS5 BM25 (desktop)",
-      shortLabel: sqliteEngineShortLabel(indexState),
+      shortLabel: sqlite,
+      uiLabel: sqlite,
       ranked: true,
       indexState,
     };
@@ -151,7 +165,8 @@ export function describeSearchEngine(): {
     return {
       id: "memory-fts-capped",
       label: "In-memory FTS (800-candidate cap, not SQLite BM25)",
-      shortLabel: "Memory FTS (capped)",
+      shortLabel: MEMORY_FTS_ENGINE_LABEL,
+      uiLabel: MEMORY_FTS_ENGINE_LABEL,
       ranked: false,
       indexState: "idle",
     };
@@ -160,6 +175,7 @@ export function describeSearchEngine(): {
     id: "inverted",
     label: "In-process inverted index",
     shortLabel: "Inverted",
+    uiLabel: "In this vault",
     ranked: false,
     indexState: "idle",
   };

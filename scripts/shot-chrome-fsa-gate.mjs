@@ -4,9 +4,10 @@
  */
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
+import { artifactPath } from "./artifact-dir.mjs";
 
 const BASE = process.argv.find((a) => a.startsWith("http")) || "http://127.0.0.1:8080/";
-const OUT = "/opt/cursor/artifacts/screenshots";
+const OUT = artifactPath("screenshots");
 mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({

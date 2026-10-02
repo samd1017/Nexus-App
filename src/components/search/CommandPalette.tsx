@@ -1,10 +1,27 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
+import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
+import { revealFolderInList, revealInFlight } from "@/lib/chrome/reveal-list";
+import { diskFolderRow, folderForEnter } from "@/lib/search/folder-enter";
+import { paletteEnterOpensNow } from "@/lib/search/palette-enter";
+import { focusEditorPane } from "@/lib/editor/pane-focus";
+import { getFindFocusPane } from "@/lib/editor/find-target";
+import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
+import { requestOpenVaultBase, setBasesOpen } from "@/lib/vault/bases-session";
+import { setSwitcherOpen } from "@/lib/search/switcher-session";
+import { isCanvasPath } from "@/lib/vault/canvas";
+import { switcherHits } from "@/lib/search/switcher-order";
+import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
   FileText,
   FolderOpen,
   FolderPlus,
   Network,
+  ArrowUpRight,
+  ListChecks,
+  Table2,
+  LayoutGrid,
+  BookOpen,
   Code2,
   Eye,
   FilePlus,
@@ -14,7 +31,6 @@ import {
   Lightbulb,
   Users,
   FolderKanban,
-  LayoutGrid,
   Trash2,
   PanelLeft,
   PanelRight,
@@ -32,21 +48,52 @@ import {
   X,
   Pin,
   Paperclip,
+  Palette,
 } from "lucide-react";
-import { useVaultStore } from "@/lib/vault/store";
-import { usePrefsStore } from "@/lib/prefs/preferences";
+import { getDesktopRoot, useVaultStore } from "@/lib/vault/store";
+import { statDesktopFolder } from "@/lib/vault/tauri-adapter";
+import { deskNodeId } from "@/lib/vault/desk-node-id";
+import { THEME_CHOICES, usePrefsStore } from "@/lib/prefs/preferences";
+import { useCssSnippetStore } from "@/lib/appearance/snippets";
 import {
   searchWithBackend as searchVault,
   searchWithBackendAsync,
   describeSearchEngine,
 } from "@/lib/search/search-backend";
-import { hasSearchOps, parseSearchOps, searchWithOps } from "@/lib/search/query-ops";
+import {
+  hasOrQuery,
+  hasSearchOps,
+  isTagOnlyQuery,
+  parseSearchOps,
+  planPagedDesktopSearch,
+  searchDesktopOps,
+  searchUsesLoadedBodies,
+  searchWithOps,
+  unsupportedSearchHint,
+} from "@/lib/search/query-ops";
 import { fuseSearchHits } from "@/lib/search/rank-fusion";
 import { buildAskAnswer, retrieveForAsk } from "@/lib/search/ask-notes";
 import { getBacklinks } from "@/lib/vault/backlinks";
+import {
+  BROWSER_SHELL_DB,
+  fetchShellBacklinks,
+  fetchShellByPaths,
+  mergeShellRows,
+  fetchShellBroken,
+  fetchShellOrphans,
+  fetchShellPathPage,
+  onShellCatalogWake,
+  fetchShellRecent,
+  fetchShellSearch,
+  fetchShellSuggest,
+  fetchShellTagNotes,
+  fetchShellTags,
+  searchOpenPageTitles,
+} from "@/lib/vault/shell-catalog";
+import { presentLinkContext } from "@/lib/markdown/wikilinks";
 
 import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
-import { getAllBrokenLinks, getOrphanNotes } from "@/lib/vault/broken-links";
+import { getAllBrokenLinks, getOrphanNotes, type VaultBrokenLink } from "@/lib/vault/broken-links";
 import type { TrashEntry } from "@/lib/vault/trash";
 import { cn } from "@/lib/utils";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
@@ -69,7 +116,10 @@ import {
   getSearchIndexState,
   isNoteHeadSearchLive,
   isTitleSearchLive,
+  MEMORY_SEARCH_CAP_NOTE,
+  memorySearchIsPartial,
   searchEmptyStateMessage,
+  searchEmptyStatus,
 } from "@/lib/vault/sqlite-fill-progress";
 import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
@@ -88,6 +138,9 @@ const MATCH_TYPE_LABEL: Record<string, string> = {
   path: "Path",
   tag: "Tag",
 };
+
+/** How many note rows the palette asks for. A full page is not the whole vault. */
+const PALETTE_RESULT_LIMIT = 16;
 
 function HighlightedText({
   text,
@@ -125,7 +178,6 @@ const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   meeting: <Users size={15} />,
   idea: <Lightbulb size={15} />,
   project: <FolderKanban size={15} />,
-  canvas: <LayoutGrid size={15} />,
 };
 
 const ASK_STARTERS = [
@@ -143,6 +195,7 @@ const ASK_OPS = [
 
 /** Open command palette, optionally with a prefilled query. */
 export function openCommandPalette(query?: string) {
+  setSwitcherOpen(false);
   setPendingCommandQuery(query ?? null);
   useVaultStore.getState().setCommandOpen(true);
 }
@@ -202,8 +255,48 @@ function topNotesByVisitMtime(
   return out;
 }
 
+/** A folder picked in search lands in the list once it is known whether it is empty. */
+function revealSearchedFolder(id: string): void {
+  revealFolderInList(id, { settle: useVaultStore.getState().settleFolderForEnter(id) });
+}
+
+/** cmdk runs onSelect from this event and from a real click. */
+const PALETTE_ITEM_SELECT = "cmdk-item-select";
+
+function openPaletteRow(row: HTMLElement): void {
+  const before = useVaultStore.getState().activeNoteId;
+  row.dispatchEvent(new Event(PALETTE_ITEM_SELECT));
+  const st = useVaultStore.getState();
+  const opened = Boolean(row.getAttribute("data-note-id")) || (st.activeNoteId != null && st.activeNoteId !== before);
+  if (!opened || !st.activeNoteId) return;
+  const split = Boolean(st.settings.workspaceSplit && st.secondaryNoteId);
+  focusEditorPane(split ? getFindFocusPane() : "primary");
+}
+
+function focusOpenedHit(): void {
+  const st = useVaultStore.getState();
+  if (!st.activeNoteId) return;
+  const split = Boolean(st.settings.workspaceSplit && st.secondaryNoteId);
+  focusEditorPane(split ? getFindFocusPane() : "primary");
+}
+
+let openedWith: { q: string; at: number } | null = null;
+
+// Where the cursor was before search opened. The field takes focus on mount,
+// so this is tracked all the time rather than read when search opens.
+let focusBeforeSearch: HTMLElement | null = null;
+
 export function CommandPalette() {
   const open = useVaultStore((s) => s.commandOpen);
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || t.closest?.("[aria-label='Command palette']")) return;
+      focusBeforeSearch = t;
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => document.removeEventListener("focusin", onFocusIn, true);
+  }, []);
   if (!open) return null;
   return <CommandPaletteOpen />;
 }
@@ -228,9 +321,13 @@ function CommandPaletteOpen() {
   const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const requestDelete = useVaultStore((s) => s.requestDelete);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
+  const shellCatalog = useVaultStore((s) => s.shellCatalog);
+  const shellLiveTick = useVaultStore((s) => s.shellLiveTick);
+  const shellDbPath = useVaultStore((s) => s.shellDbPath);
   const toggleLeft = useVaultStore((s) => s.toggleLeft);
   const toggleRight = useVaultStore((s) => s.toggleRight);
   const toggleEditorMode = useVaultStore((s) => s.toggleEditorMode);
+  const toggleReadingView = useVaultStore((s) => s.toggleReadingView);
   const openDemoVault = useVaultStore((s) => s.openDemoVault);
   const openLargeTestVault = useVaultStore((s) => s.openLargeTestVault);
   const openSyntheticVault = useVaultStore((s) => s.openSyntheticVault);
@@ -255,18 +352,27 @@ function CommandPaletteOpen() {
 
   useEffect(() => {
     if (open) {
-      const pending = takePendingCommandQuery();
+      // Held for a moment: a second run of this effect (React's dev check)
+      // would otherwise find it taken and clear the ">" or "ask:" it opened with.
+      const taken = takePendingCommandQuery();
+      if (taken != null) openedWith = { q: taken, at: Date.now() };
+      const pending = taken ?? (openedWith && Date.now() - openedWith.at < 100 ? openedWith.q : null);
       if (pending != null) {
         setQuery(pending);
       } else {
         setQuery("");
       }
-      // Ensure keystrokes land in the palette without an extra click
-      const t = window.setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
-      }, 0);
-      return () => window.clearTimeout(t);
+      const prev = focusBeforeSearch;
+      // Keystrokes land in the field even if the note takes the cursor after paint.
+      const root = inputRef.current?.closest("[role='dialog']") as HTMLElement | null;
+      if (!root) return;
+      const release = holdOpenFocus(root, () => inputRef.current, () => false, true);
+      return () => {
+        release();
+        // Closing search goes back where you were, or to the list. A folder
+        // picked in search is landing in the list: the list takes the cursor.
+        requestAnimationFrame(() => restoreFocusOrList(revealInFlight() ? null : prev));
+      };
     } else {
       setQuery("");
       setDebouncedSearch("");
@@ -331,6 +437,16 @@ function CommandPaletteOpen() {
     qLower === "deleted" ||
     qLower === "restore";
   const hasPathFolderOp = hasSearchOps(pathFolderOps);
+  const hasOr = hasOrQuery(pathFolderOps);
+  const useOpsSearch = hasPathFolderOp || hasOr;
+  const unsupportedHint = isCommandMode ? null : unsupportedSearchHint(pathFolderOps);
+  const scopeHint = isCommandMode
+    ? null
+    : planPagedDesktopSearch({
+        shellCatalog: Boolean(shellCatalog && shellDbPath),
+        sqlite: Boolean(getDurableIndex()?.searchOpsAsync),
+        ops: pathFolderOps,
+      }).hint;
   const showAllActions = Boolean(raw) || isCommandMode;
   const actionQuery = isCommandMode
     ? q
@@ -339,6 +455,22 @@ function CommandPaletteOpen() {
   const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
 
   const syncHits = useMemo(() => {
+    if (shellCatalog && shellDbPath && !hasOr && !searchUsesLoadedBodies(pathFolderOps)) {
+      if (isEmptyQuery) return topNotesByVisitMtime(nodes, 10, vaultId);
+      if ((exactTagQuery || isTagBrowse) && !hasPathFolderOp) return [];
+      const needle = debouncedSearch.trim() || searchText || raw;
+      if (
+        needle &&
+        !isCommandMode &&
+        !wantsOrphans &&
+        !wantsBroken &&
+        !isAskMode &&
+        !hasPathFolderOp
+      ) {
+        return searchOpenPageTitles(nodes, needle, PALETTE_RESULT_LIMIT);
+      }
+      if (wantsOrphans || wantsBroken || hasPathFolderOp) return [];
+    }
     if (isEmptyQuery) {
       return topNotesByVisitMtime(nodes, 10, vaultId);
     }
@@ -355,7 +487,7 @@ function CommandPaletteOpen() {
     }
     if (wantsOrphans || wantsBroken || isCommandMode) return [];
 
-    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
     const activeNode = activeNoteId ? nodes[activeNoteId] : null;
     const neighborIds =
       activeNode?.kind === "note"
@@ -372,9 +504,9 @@ function CommandPaletteOpen() {
       return retrieveForAsk(nodes, debouncedSearch.trim() || raw, signals, 8);
     }
 
-    if (hasPathFolderOp) {
+    if (useOpsSearch) {
       return fuseSearchHits(
-        searchWithOps(nodes, debouncedSearch.trim() || raw, 16),
+        searchWithOps(nodes, debouncedSearch.trim() || raw, PALETTE_RESULT_LIMIT),
         signals,
       );
     }
@@ -384,9 +516,9 @@ function CommandPaletteOpen() {
       // Durable async search owns FTS. A second sync intersect at 100k
       // was enough extra allocation to discard Chrome on the 12th search.
       if (idx?.ready && idx.searchFtsAsync) return [];
-      return fuseSearchHits(searchVault(nodes, needle, 16), signals);
+      return fuseSearchHits(searchVault(nodes, needle, PALETTE_RESULT_LIMIT), signals);
     }
-    return fuseSearchHits(searchVault(nodes, raw, 16), signals);
+    return fuseSearchHits(searchVault(nodes, raw, PALETTE_RESULT_LIMIT), signals);
   }, [
     nodes,
     vaultId,
@@ -401,18 +533,270 @@ function CommandPaletteOpen() {
     wantsBroken,
     isCommandMode,
     hasPathFolderOp,
+    hasOr,
+    useOpsSearch,
     pathFolderOps.pathFilter,
     pathFolderOps.folderFilter,
     pathFolderOps.fileFilter,
     pathFolderOps.tagFilter,
+    pathFolderOps.lineFilter,
+    pathFolderOps.sectionFilter,
     pathFolderOps.excludes,
     isAskMode,
     activeNoteId,
+    shellCatalog,
+    shellDbPath,
   ]);
 
   const [asyncHits, setAsyncHits] = useState<SearchHit[] | null>(null);
+  const [noteSearchPending, setNoteSearchPending] = useState(false);
+  const [noteSearchFailed, setNoteSearchFailed] = useState(false);
   useEffect(() => {
     setAsyncHits(null);
+    setNoteSearchPending(false);
+    setNoteSearchFailed(false);
+    const searchPlan = planPagedDesktopSearch({
+      shellCatalog: Boolean(shellCatalog && shellDbPath),
+      sqlite: Boolean(getDurableIndex()?.searchOpsAsync),
+      ops: pathFolderOps,
+    });
+    if (
+      searchPlan.engine === "sqlite-ops" &&
+      shellDbPath &&
+      shellDbPath !== BROWSER_SHELL_DB
+    ) {
+      let cancelled = false;
+      setNoteSearchPending(true);
+      void searchDesktopOps(raw, PALETTE_RESULT_LIMIT)
+        .then((rows) => {
+          if (cancelled) return;
+          setNoteSearchPending(false);
+          if (!rows) {
+            setNoteSearchFailed(true);
+            setAsyncHits([]);
+            return;
+          }
+          setNoteSearchFailed(false);
+          setAsyncHits(rows);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setNoteSearchPending(false);
+          setNoteSearchFailed(true);
+          setAsyncHits([]);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (searchPlan.engine === "window") {
+      setAsyncHits([]);
+      return;
+    }
+    if (shellCatalog && shellDbPath && !hasOr && !searchUsesLoadedBodies(pathFolderOps)) {
+      let cancelled = false;
+      const db = shellDbPath;
+      const asHit = (id: string, path: string, title: string, snippet: string): SearchHit => ({
+        noteId: id,
+        path,
+        title,
+        snippet,
+        score: 1,
+        matchType: "title",
+      });
+      if (isEmptyQuery) {
+        void fetchShellRecent(db, 10).then((rows) => {
+          if (cancelled || !rows) return;
+          const visits = topNotesByVisitMtime(useVaultStore.getState().nodes, 10, vaultId);
+          const seen = new Set(visits.map((hit) => hit.noteId));
+          const extra: SearchHit[] = [];
+          for (const row of rows) {
+            if (seen.has(row.id) || visits.length + extra.length >= 10) continue;
+            extra.push(asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), row.path));
+          }
+          setAsyncHits([...visits, ...extra]);
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+      if (isTagOnlyQuery(pathFolderOps) || (exactTagQuery && !hasPathFolderOp)) {
+        const tag = pathFolderOps.tagFilter || (exactTagQuery ? exactTagQuery[1] : "");
+        if (tag) {
+          void fetchShellTagNotes(db, tag).then((rows) => {
+            if (cancelled || !rows) return;
+            setAsyncHits(rows.map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), `#${tag}`)));
+          });
+          return () => {
+            cancelled = true;
+          };
+        }
+      }
+      if (hasPathFolderOp && db !== BROWSER_SHELL_DB) {
+        const pathNeedle = pathFolderOps.pathFilter ?? "";
+        const folderNeedle = pathFolderOps.folderFilter ?? "";
+        const paint = (rows: Awaited<ReturnType<typeof fetchShellPathPage>>) => {
+          if (cancelled || !rows) return;
+          setAsyncHits(
+            rows
+              .filter((row) => row.kind === "note")
+              .map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), row.path)),
+          );
+        };
+        void fetchShellPathPage(db, pathNeedle, folderNeedle, PALETTE_RESULT_LIMIT).then((rows) => {
+          if (cancelled) return;
+          if (!rows) {
+            const stop = onShellCatalogWake(() => {
+              stop();
+              if (cancelled) return;
+              void fetchShellPathPage(db, pathNeedle, folderNeedle, PALETTE_RESULT_LIMIT).then(paint);
+            });
+            return;
+          }
+          paint(rows);
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+      if (
+        isCommandMode ||
+        isTagBrowse ||
+        wantsOrphans ||
+        wantsBroken ||
+        isAskMode ||
+        hasPathFolderOp
+      ) {
+        return;
+      }
+      const needle = debouncedSearch.trim() || searchText || raw;
+      if (!needle.trim()) return;
+      if (db === BROWSER_SHELL_DB) {
+        setNoteSearchPending(true);
+        void fetchShellSearch(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
+          if (cancelled) return;
+          setNoteSearchPending(false);
+          if (!hits) {
+            setNoteSearchFailed(true);
+            return;
+          }
+          setNoteSearchFailed(false);
+          setAsyncHits(
+            hits
+              .filter((hit) => hit.kind === "note")
+              .map((hit) => asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path)),
+          );
+        });
+        return () => {
+          cancelled = true;
+          setNoteSearchPending(false);
+        };
+      }
+      const idx = getDurableIndex();
+      const titleLive = isTitleSearchLive(getSearchIndexState());
+      const mapSuggest = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>): SearchHit[] =>
+        (hits ?? [])
+          .filter((hit) => hit.kind === "note")
+          .map((hit) =>
+            asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path),
+          );
+      // Titles come from the title index already in quick-switcher order
+      // ("Topic 15", "Topic 150"…) and paint as soon as they arrive. The ranked
+      // search runs once typing pauses and only adds what the titles missed; it
+      // never reorders them or holds the first paint.
+      const typed = (searchText || raw).trim();
+      const settled = debouncedSearch.trim() === raw.trim();
+      let catalogHits: SearchHit[] = [];
+      let ftsHits: SearchHit[] = [];
+      let catalogReady = false;
+      const ftsAvailable = Boolean(idx?.ready && idx.searchFtsAsync);
+      const ftsStarted = settled && ftsAvailable;
+      let catalogSettled = false;
+      // Still typing: the ranked search comes with the pause, so no hits yet
+      // is not a miss yet.
+      let ftsSettled = !ftsAvailable;
+      setNoteSearchPending(true);
+      const settleIfDone = () => {
+        if (cancelled) return;
+        if (catalogSettled && (ftsSettled || catalogHits.length > 0)) setNoteSearchPending(false);
+      };
+      const publish = () => {
+        if (cancelled) return;
+        if (!catalogReady && ftsHits.length === 0) return;
+        const recentIds = vaultId
+          ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT)
+          : [];
+        const merged = switcherHits(
+          catalogHits,
+          ftsHits,
+          PALETTE_RESULT_LIMIT,
+          titleLive
+            ? (extra) => fuseSearchHits(extra, { recentIds, activeNoteId, neighborIds: [], queryText: typed })
+            : undefined,
+        );
+        // An empty index reply must not hide titles already on the open page.
+        if (merged.length === 0) return;
+        setNoteSearchFailed(false);
+        setAsyncHits(merged);
+      };
+      const applyCatalog = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
+        if (cancelled || !hits) return;
+        catalogHits = mapSuggest(hits);
+        catalogReady = true;
+        setNoteSearchFailed(false);
+        publish();
+      };
+      const markCatalogMissed = () => {
+        catalogSettled = true;
+        setNoteSearchFailed(true);
+        settleIfDone();
+      };
+      void fetchShellSuggest(db, typed, PALETTE_RESULT_LIMIT).then((hits) => {
+        if (cancelled) return;
+        if (!hits) {
+          markCatalogMissed();
+          const stop = onShellCatalogWake(() => {
+            stop();
+            if (cancelled) return;
+            catalogSettled = false;
+            setNoteSearchPending(true);
+            void fetchShellSuggest(db, typed, PALETTE_RESULT_LIMIT).then((rows) => {
+              if (cancelled) return;
+              if (!rows) {
+                markCatalogMissed();
+                return;
+              }
+              applyCatalog(rows);
+              catalogSettled = true;
+              settleIfDone();
+            });
+          });
+          return;
+        }
+        applyCatalog(hits);
+        catalogSettled = true;
+        settleIfDone();
+      });
+      if (ftsStarted) {
+        void (async () => {
+          try {
+            const rows = await searchWithBackendAsync(nodes, typed, PALETTE_RESULT_LIMIT);
+            if (cancelled) return;
+            ftsHits = rows;
+            publish();
+          } catch {
+            if (!cancelled && catalogHits.length === 0) setNoteSearchFailed(true);
+          } finally {
+            ftsSettled = true;
+            settleIfDone();
+          }
+        })();
+      }
+      return () => {
+        cancelled = true;
+        setNoteSearchPending(false);
+      };
+    }
     if (
       isEmptyQuery ||
       isCommandMode ||
@@ -424,12 +808,12 @@ function CommandPaletteOpen() {
     ) {
       return;
     }
-    const needle = hasPathFolderOp
+    const needle = useOpsSearch
       ? debouncedSearch.trim() || raw
       : debouncedSearch.trim() || searchText || raw;
     if (!needle.trim()) return;
     let cancelled = false;
-    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, 16) : [];
+    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
     const activeNode = activeNoteId ? nodes[activeNoteId] : null;
     const neighborIds =
       activeNode?.kind === "note"
@@ -441,15 +825,24 @@ function CommandPaletteOpen() {
       neighborIds,
       queryText: needle,
     };
-    void (hasPathFolderOp
-      ? Promise.resolve(searchWithOps(nodes, needle, 16))
-      : searchWithBackendAsync(nodes, needle, 16)
+    const useAsyncLookup = !useOpsSearch;
+    if (useAsyncLookup) setNoteSearchPending(true);
+    void (useOpsSearch
+      ? Promise.resolve(searchWithOps(nodes, needle, PALETTE_RESULT_LIMIT))
+      : searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT)
     ).then((rows) => {
       if (cancelled) return;
+      if (useAsyncLookup) setNoteSearchPending(false);
+      setNoteSearchFailed(false);
       setAsyncHits(fuseSearchHits(rows, signals));
+    }).catch(() => {
+      if (cancelled) return;
+      setNoteSearchPending(false);
+      setNoteSearchFailed(true);
     });
     return () => {
       cancelled = true;
+      if (useAsyncLookup) setNoteSearchPending(false);
     };
   }, [
     nodes,
@@ -464,19 +857,214 @@ function CommandPaletteOpen() {
     wantsBroken,
     isCommandMode,
     hasPathFolderOp,
+    hasOr,
+    useOpsSearch,
     isAskMode,
     activeNoteId,
+    shellCatalog,
+    shellDbPath,
+    pathFolderOps.pathFilter,
+    pathFolderOps.folderFilter,
+    pathFolderOps.tagFilter,
+    pathFolderOps.lineFilter,
+    pathFolderOps.sectionFilter,
+    searchIndexState,
   ]);
   const hits = asyncHits ?? syncHits;
+  const [catalogFolderTick, setCatalogFolderTick] = useState(0);
+
+  // Folders are not notes, so note search never lists them. Enter on one
+  // shows it in the list with the cursor on it.
+  const folderHits = useMemo(() => {
+    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return [];
+    if (qLower.startsWith("is:")) return [];
+    const out: { id: string; name: string; path: string }[] = [];
+    for (const id in nodes) {
+      const n = nodes[id];
+      if (n?.kind !== "folder") continue;
+      if (!n.name.toLowerCase().includes(qLower)) continue;
+      out.push({ id, name: n.name, path: n.path });
+      if (out.length >= 5) break;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, hasOr, nodes, shellLiveTick, catalogFolderTick]);
+
+  // Enter pressed while the catalog is still being asked for a folder by this
+  // name waits for the answer: a folder goes to the list; no folder runs what
+  // was selected, as the Enter would have.
+  const pendingFolderEnterRef = useRef<{ q: string; timer: number } | null>(null);
+  const catalogAnsweredRef = useRef<string | null>(null);
+  const runHeldEnter = useCallback(() => {
+    const pending = pendingFolderEnterRef.current;
+    if (!pending) return;
+    pendingFolderEnterRef.current = null;
+    window.clearTimeout(pending.timer);
+    const root = inputRef.current?.closest("[cmdk-root]");
+    const selected = root?.querySelector<HTMLElement>(
+      "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
+    );
+    selected?.click();
+    if (!selected) {
+      root?.querySelector<HTMLElement>("[data-testid='search-note-hit']")?.click();
+    }
+  }, []);
+
+  // A paged vault only holds the folders it has shown. When none of them is
+  // named exactly what was typed, ask the catalog for that folder at the vault
+  // root (or that exact path), then the disk, load it, and list it. Nothing
+  // happens when it does not exist.
+  const catalogDb = shellDbPath && shellDbPath !== BROWSER_SHELL_DB ? shellDbPath : null;
+  const folderLookup = Boolean(
+    shellCatalog && (catalogDb || useVaultStore.getState().mode === "desktop"),
+  );
+  useEffect(() => {
+    if (!folderLookup) return;
+    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return;
+    if (qLower.startsWith("is:")) return;
+    const wanted = q.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    if (!wanted) return;
+    const wantedLower = wanted.toLowerCase();
+    const live = useVaultStore.getState().nodes;
+    for (const id in live) {
+      const n = live[id];
+      if (n?.kind === "folder" && (n.path.toLowerCase() === wantedLower || n.name.toLowerCase() === wantedLower)) {
+        catalogAnsweredRef.current = q;
+        return;
+      }
+    }
+    let cancelled = false;
+    const vaultAtLookup = useVaultStore.getState().vaultId;
+    const t = window.setTimeout(() => {
+      void (catalogDb ? fetchShellByPaths(catalogDb, [wanted]) : Promise.resolve(null)).then(async (rows) => {
+        if (cancelled) return;
+        let folders = (rows ?? []).filter((r) => r.kind === "folder");
+        // The catalog knows folders through the notes inside them, so an
+        // empty folder is missing there. Ask the disk for that exact path.
+        const root = getDesktopRoot();
+        if (!folders.length && root && useVaultStore.getState().mode === "desktop") {
+          const onDisk = await statDesktopFolder(root, wanted);
+          if (cancelled) return;
+          if (onDisk) folders = [diskFolderRow(wanted, onDisk.mtime, deskNodeId)];
+        }
+        const st = useVaultStore.getState();
+        if (folders.length && st.shellCatalog && st.shellDbPath === shellDbPath && st.vaultId === vaultAtLookup) {
+          const merged = mergeShellRows(st.nodes, st.rootIds, folders);
+          useVaultStore.setState({ nodes: merged.nodes, rootIds: merged.rootIds });
+          // Learn what is inside, so a folder with notes is not taken for empty.
+          for (const f of folders) void useVaultStore.getState().loadShellChildren(f.id);
+          catalogAnsweredRef.current = q;
+          setCatalogFolderTick((n) => n + 1);
+          return;
+        }
+        catalogAnsweredRef.current = q;
+        if (pendingFolderEnterRef.current?.q === q) runHeldEnter();
+      });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, hasOr, folderLookup, catalogDb, shellDbPath, runHeldEnter]);
+
+  const catalogFolderPending = Boolean(
+    folderLookup &&
+      q &&
+      !isAskMode &&
+      !isCommandMode &&
+      !isTagBrowse &&
+      !hasPathFolderOp &&
+      !hasOr &&
+      !qLower.startsWith("is:"),
+  ) && catalogAnsweredRef.current !== q;
+  useEffect(() => {
+    const pending = pendingFolderEnterRef.current;
+    if (!pending) return;
+    if (pending.q !== q) {
+      window.clearTimeout(pending.timer);
+      pendingFolderEnterRef.current = null;
+      return;
+    }
+    const folder = folderForEnter(folderHits, q);
+    if (!folder) return;
+    // A note that matches the words still loses to a folder named exactly.
+    if (hits.length > 0 && !folder.exact) return;
+    window.clearTimeout(pending.timer);
+    pendingFolderEnterRef.current = null;
+    revealSearchedFolder(folder.id);
+  }, [folderHits, hits.length, q]);
 
   const askAnswer = useMemo(() => {
     if (!isAskMode) return null;
     return buildAskAnswer(raw, hits, nodes);
   }, [isAskMode, raw, hits, nodes]);
 
+  const [shellOrphans, setShellOrphans] = useState<{ id: string; title: string; path: string }[]>([]);
+  const [shellBrokenLinks, setShellBrokenLinks] = useState<VaultBrokenLink[]>([]);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB || !wantsOrphans) {
+      setShellOrphans([]);
+      return;
+    }
+    let cancel = false;
+    void fetchShellOrphans(shellDbPath, 24).then((rows) => {
+      if (cancel || !rows) return;
+      setShellOrphans(
+        rows.map((row) => ({
+          id: row.id,
+          title: row.name.replace(/\.md$/i, ""),
+          path: row.path,
+        })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, wantsOrphans, shellLiveTick]);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB || !wantsBroken) {
+      setShellBrokenLinks([]);
+      return;
+    }
+    let cancel = false;
+    void fetchShellBroken(shellDbPath, 40).then((rows) => {
+      if (cancel || !rows) return;
+      setShellBrokenLinks(
+        rows.map((row) => ({
+          noteId: row.fromId,
+          notePath: row.fromPath,
+          noteTitle: row.fromTitle,
+          target: row.target,
+          context: row.fromTitle,
+        })),
+      );
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [shellCatalog, shellDbPath, wantsBroken, shellLiveTick]);
+
+  const [shellTags, setShellTags] = useState<{ tag: string; count: number }[] | null>(null);
+  useEffect(() => {
+    if (!shellCatalog || !shellDbPath || !isTagBrowse) {
+      setShellTags(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchShellTags(shellDbPath, 48).then((rows) => {
+      if (!cancelled && rows) setShellTags(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [shellCatalog, shellDbPath, isTagBrowse, shellLiveTick]);
+
   const tags = useMemo(() => {
     if (!isTagBrowse) return [];
-    return collectVaultTags(nodes)
+    const source = shellCatalog
+      ? (shellTags ?? []).map((t) => ({ tag: t.tag, count: t.count, noteIds: [] as string[] }))
+      : collectVaultTags(nodes);
+    return source
       .filter(
         (t) =>
           !tagPartial ||
@@ -484,25 +1072,27 @@ function CommandPaletteOpen() {
           t.tag.includes(tagPartial),
       )
       .slice(0, 20);
-  }, [nodes, isTagBrowse, tagPartial]);
+  }, [nodes, isTagBrowse, tagPartial, shellCatalog, shellTags]);
 
   const orphans = useMemo(() => {
     if (!wantsOrphans) return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) return shellOrphans;
     try {
       return getOrphanNotes(nodes, 24);
     } catch {
       return [];
     }
-  }, [nodes, wantsOrphans]);
+  }, [nodes, wantsOrphans, shellCatalog, shellDbPath, shellOrphans]);
 
   const brokenLinks = useMemo(() => {
     if (!wantsBroken) return [];
+    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) return shellBrokenLinks;
     try {
       return getAllBrokenLinks(nodes, 40);
     } catch {
       return [];
     }
-  }, [nodes, wantsBroken]);
+  }, [nodes, wantsBroken, shellCatalog, shellDbPath, shellBrokenLinks]);
 
   const brokenCreateTargets = useMemo(() => {
     if (!wantsBroken) return [];
@@ -532,6 +1122,60 @@ function CommandPaletteOpen() {
             setCommandOpen(false);
           }),
         },
+        {
+          id: "new-canvas",
+          label: "New canvas",
+          keywords: ["canvas", "board", "create"],
+          icon: <LayoutGrid size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("new-canvas", () => {
+            const st = useVaultStore.getState();
+            const active = st.activeNoteId ? st.nodes[st.activeNoteId] : null;
+            const parent = focusedEmptyFolderId() ?? active?.parentId ?? null;
+            st.createCanvas(parent, "Untitled");
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "open-canvas",
+          label: "Open canvas",
+          keywords: ["canvas", "board", "open"],
+          icon: <LayoutGrid size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("open-canvas", () => {
+            const canvases = Object.values(useVaultStore.getState().nodes)
+              .filter((n) => n.kind === "note" && isCanvasPath(n.path))
+              .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)));
+            if (canvases.length === 0) {
+              useVaultStore.getState().setToast("No canvas files yet. New canvas creates one.");
+              setCommandOpen(false);
+              return;
+            }
+            if (canvases.length === 1) {
+              useVaultStore.getState().setActiveNote(canvases[0].id);
+              setCommandOpen(false);
+              return;
+            }
+            setQuery("open canvas ");
+          }),
+        },
+        ...(actionQuery.trim().toLowerCase().startsWith("open canvas")
+          ? Object.values(nodes)
+              .filter((n) => n.kind === "note" && isCanvasPath(n.path))
+              .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)))
+              .slice(0, 30)
+              .map((n) => ({
+                id: `open-canvas-${n.id}`,
+                label: `Open canvas: ${noteTitle(n)}`,
+                keywords: ["canvas", n.path],
+                icon: <LayoutGrid size={15} />,
+                shortcut: undefined as string | undefined,
+                run: wrapRun(`open-canvas-${n.id}`, () => {
+                  useVaultStore.getState().setActiveNote(n.id);
+                  setCommandOpen(false);
+                }),
+              }))
+          : []),
         {
           id: "daily",
           label: "Daily note",
@@ -571,7 +1215,7 @@ function CommandPaletteOpen() {
           }),
         ),
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
-    [actionQuery, createNote, openDailyNote, createFromTemplate, setCommandOpen],
+    [actionQuery, nodes, createNote, openDailyNote, createFromTemplate, setCommandOpen, setQuery],
   );
 
   const navigateActions = useMemo(
@@ -600,20 +1244,87 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "toggle-reading-view",
+          label: "Toggle reading view",
+          keywords: ["reading", "read", "preview", "edit", "view", "obsidian"],
+          icon: <BookOpen size={15} />,
+          shortcut: formatShortcut("E"),
+          run: wrapRun("toggle-reading-view", () => {
+            toggleReadingView();
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "toggle-editor",
           label: "Cycle Visual / Source / Split",
           keywords: ["editor", "source", "visual", "split", "mode", "markdown"],
           icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-          shortcut: formatShortcut("E"),
+          shortcut: undefined as string | undefined,
           run: wrapRun("toggle-editor", () => {
             toggleEditorMode();
             setCommandOpen(false);
           }),
         },
         {
+          id: "open-outgoing",
+          label: "Outgoing links",
+          keywords: ["outgoing", "links", "unresolved", "wikilink"],
+          icon: <ArrowUpRight size={15} />,
+          run: wrapRun("open-outgoing", () => {
+            useVaultStore.getState().setRightTab("outgoing");
+            useVaultStore.getState().setRightOpen(true);
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "open-tasks",
+          label: "Tasks",
+          keywords: ["tasks", "todo", "checkbox", "due"],
+          icon: <ListChecks size={15} />,
+          run: wrapRun("open-tasks", () => {
+            useVaultStore.getState().setRightTab("tasks");
+            useVaultStore.getState().setRightOpen(true);
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "open-bases",
+          label: "Bases",
+          keywords: ["bases", "note table", "properties", "frontmatter", "table"],
+          icon: <Table2 size={15} />,
+          run: wrapRun("open-bases", () => {
+            setBasesOpen(true);
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "open-vault-base",
+          label: "Open .base from vault",
+          keywords: ["bases", "base", "obsidian", "import", "views"],
+          icon: <Table2 size={15} />,
+          run: wrapRun("open-vault-base", () => {
+            requestOpenVaultBase();
+            setCommandOpen(false);
+          }),
+        },
+        {
+          id: "open-graph-overview",
+          label: "Graph overview",
+          keywords: ["graph", "overview", "vault", "folder", "tag", "filters"],
+          icon: <Network size={15} />,
+          run: wrapRun("open-graph-overview", () => {
+            usePrefsStore.getState().updatePrefs({ graphSurface: "overview" });
+            const store = useVaultStore.getState();
+            store.setRightOpen(true);
+            store.setRightTab("graph");
+            store.setGraphMode("fullscreen");
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "toggle-graph",
-          label: "Open graph",
-          keywords: ["graph", "fullscreen", "network", "orbit"],
+          label: "Open Local graph",
+          keywords: ["graph", "fullscreen", "local", "network", "orbit"],
           icon: <Network size={15} />,
           shortcut: formatShortcut("G"),
           run: wrapRun("toggle-graph", () => {
@@ -656,6 +1367,29 @@ function CommandPaletteOpen() {
             setCommandOpen(false);
           }),
         },
+        ...THEME_CHOICES.map((choice) => ({
+          id: `theme-${choice.id}`,
+          label: `Theme: ${choice.label}`,
+          keywords: ["theme", "appearance", "color", "dark", "light", choice.label.toLowerCase()],
+          icon: <Palette size={15} />,
+          run: wrapRun(`theme-${choice.id}`, () => {
+            usePrefsStore.getState().updatePrefs({ theme: choice.id });
+            setToast(`Theme: ${choice.label}`);
+            setCommandOpen(false);
+          }),
+        })),
+        {
+          id: "snippets-off",
+          label: "Turn off CSS snippets",
+          keywords: ["css", "snippets", "appearance", "theme", "reset", "safe"],
+          icon: <Palette size={15} />,
+          run: wrapRun("snippets-off", () => {
+            const on = useCssSnippetStore.getState().enabled.length;
+            useCssSnippetStore.getState().disableAll();
+            setToast(on ? "CSS snippets off" : "No CSS snippets were on");
+            setCommandOpen(false);
+          }),
+        },
         {
           id: "help",
           label: "Help & shortcuts",
@@ -674,6 +1408,7 @@ function CommandPaletteOpen() {
       toggleLeft,
       toggleRight,
       toggleEditorMode,
+      toggleReadingView,
       setCommandOpen,
       setToast,
     ],
@@ -790,8 +1525,8 @@ function CommandPaletteOpen() {
           },
           ...([10_000, 50_000, 100_000, 200_000] as const).map((n) => ({
             id: `soak-vault-${n}`,
-            label: `Open soak vault (${n.toLocaleString()} notes)`,
-            keywords: ["soak", "scale", "stress", "synthetic", String(n), "large"],
+            label: `Open large test vault (${n.toLocaleString()} notes)`,
+            keywords: ["scale", "stress", "synthetic", String(n), "large"],
             icon: <Database size={15} />,
             shortcut: undefined as string | undefined,
             run: wrapRun(`soak-vault-${n}`, () => {
@@ -801,30 +1536,23 @@ function CommandPaletteOpen() {
           })),
         ] : []),
         {
-          id: "hermes-sim",
+          id: "agent-sim",
           label: "Simulate agent write",
-          keywords: ["hermes", "agent", "external", "simulate", "grok", "pulse"],
+          keywords: ["agent", "external", "simulate", "pulse", "automation"],
           icon: <Sparkles size={15} />,
           shortcut: undefined as string | undefined,
-          run: wrapRun("hermes-sim", () => {
+          run: wrapRun("agent-sim", () => {
             simulateHermesWrite();
             setCommandOpen(false);
           }),
         },
         {
-          id: "hermes-conflict",
+          id: "agent-conflict",
           label: "Practice agent conflict",
-          keywords: [
-            "hermes",
-            "conflict",
-            "studio",
-            "agent",
-            "practice",
-            "grok",
-          ],
+          keywords: ["conflict", "studio", "agent", "practice", "external"],
           icon: <Sparkles size={15} />,
           shortcut: undefined as string | undefined,
-          run: wrapRun("hermes-conflict", () => {
+          run: wrapRun("agent-conflict", () => {
             practiceAgentConflict();
             setCommandOpen(false);
           }),
@@ -889,6 +1617,43 @@ function CommandPaletteOpen() {
         run: wrapRun("new-note", () => {
           createNote(null);
           setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "new-canvas",
+        label: "New canvas",
+        icon: <LayoutGrid size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("new-canvas", () => {
+          const st = useVaultStore.getState();
+          const active = st.activeNoteId ? st.nodes[st.activeNoteId] : null;
+          const parent = focusedEmptyFolderId() ?? active?.parentId ?? null;
+          st.createCanvas(parent, "Untitled");
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-canvas",
+        label: "Open canvas",
+        icon: <LayoutGrid size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-canvas", () => {
+          const canvases = Object.values(useVaultStore.getState().nodes)
+            .filter((n) => n.kind === "note" && isCanvasPath(n.path))
+            .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)));
+          if (canvases.length === 0) {
+            useVaultStore.getState().setToast("No canvas files yet. New canvas creates one.");
+            setCommandOpen(false);
+            return;
+          }
+          if (canvases.length === 1) {
+            useVaultStore.getState().setActiveNote(canvases[0].id);
+            setCommandOpen(false);
+            return;
+          }
+          setQuery("open canvas ");
           setRecentTick((t) => t + 1);
         }),
       },
@@ -962,10 +1727,21 @@ function CommandPaletteOpen() {
         }),
       },
       {
+        id: "toggle-reading-view",
+        label: "Toggle reading view",
+        icon: <BookOpen size={15} />,
+        shortcut: formatShortcut("E") as string | undefined,
+        run: wrapRun("toggle-reading-view", () => {
+          toggleReadingView();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
         id: "toggle-editor",
         label: "Cycle Visual / Source / Split",
         icon: editorMode === "visual" ? <Code2 size={15} /> : <Eye size={15} />,
-        shortcut: formatShortcut("E"),
+        shortcut: undefined as string | undefined,
         run: wrapRun("toggle-editor", () => {
           toggleEditorMode();
           setCommandOpen(false);
@@ -973,8 +1749,69 @@ function CommandPaletteOpen() {
         }),
       },
       {
+        id: "open-outgoing",
+        label: "Outgoing links",
+        icon: <ArrowUpRight size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-outgoing", () => {
+          useVaultStore.getState().setRightTab("outgoing");
+          useVaultStore.getState().setRightOpen(true);
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-tasks",
+        label: "Tasks",
+        icon: <ListChecks size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-tasks", () => {
+          useVaultStore.getState().setRightTab("tasks");
+          useVaultStore.getState().setRightOpen(true);
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-bases",
+        label: "Bases",
+        icon: <Table2 size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-bases", () => {
+          setBasesOpen(true);
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-vault-base",
+        label: "Open .base from vault",
+        icon: <Table2 size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-vault-base", () => {
+          requestOpenVaultBase();
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-graph-overview",
+        label: "Graph overview",
+        icon: <Network size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-graph-overview", () => {
+          usePrefsStore.getState().updatePrefs({ graphSurface: "overview" });
+          const store = useVaultStore.getState();
+          store.setRightOpen(true);
+          store.setRightTab("graph");
+          store.setGraphMode("fullscreen");
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
         id: "toggle-graph",
-        label: "Open graph",
+        label: "Open Local graph",
         icon: <Network size={15} />,
         shortcut: formatShortcut("G"),
         run: wrapRun("toggle-graph", () => {
@@ -1047,6 +1884,7 @@ function CommandPaletteOpen() {
     toggleLeft,
     toggleRight,
     toggleEditorMode,
+    toggleReadingView,
     editorMode,
     flushDirty,
     setToast,
@@ -1089,7 +1927,27 @@ function CommandPaletteOpen() {
   };
 
   const searchEngine = describeSearchEngine();
-  const engineBit = searchEngine.shortLabel;
+  // The query names the note, as in Obsidian's quick switcher. Start writing.
+  const createFromQuery = () => {
+    const title = (searchText || q).trim() || "Untitled";
+    const id = createNote(null, title);
+    setCommandOpen(false);
+    const path = id ? useVaultStore.getState().nodes[id]?.path : null;
+    if (path) requestWriteFocus(path);
+  };
+  const emptyStatus = searchEmptyStatus({
+    titleSearchLive,
+    memorySearch: searchEngine.id !== "sqlite-fts5-bm25",
+    failed: searchIndexState === "error" || noteSearchFailed,
+    pending: noteSearchPending,
+  });
+  const engineBit = searchEngine.uiLabel;
+  const memoryCapped = searchEngine.id === "memory-fts-capped";
+  const memoryPartial = memorySearchIsPartial({
+    engineId: searchEngine.id,
+    hitCount: hits.length,
+    pageLimit: PALETTE_RESULT_LIMIT,
+  });
   const notesHeading = isEmptyQuery
     ? "Recent notes"
     : hasPathFolderOp
@@ -1106,7 +1964,7 @@ function CommandPaletteOpen() {
         ? isTagBrowse
           ? `Tagged #${tagPartial}`
           : hits.length > 0
-            ? `Notes · ${hits.length}${hits.length >= 40 ? "+" : ""} · ${engineBit}`
+            ? `Notes · ${hits.length}${hits.length >= PALETTE_RESULT_LIMIT ? "+" : ""} · ${engineBit}`
             : searchIndexing
               ? `Notes · ${engineBit} · indexing…`
               : `Notes · ${engineBit} · no matches`
@@ -1122,11 +1980,11 @@ function CommandPaletteOpen() {
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="w-full max-w-xl"
+        className="nexus-dialog-in w-full max-w-xl"
         onClick={(e) => e.stopPropagation()}
       >
       <Command
-        className="glass-elevated max-h-[min(92dvh,720px)] w-full overflow-hidden rounded-t-[var(--radius-xl,16px)] shadow-[var(--shadow-elevated)] sm:max-h-none sm:rounded-[var(--radius-xl,16px)] sm:shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
+        className="nexus-dark-island glass-elevated max-h-[min(92dvh,720px)] w-full overflow-hidden rounded-t-[var(--radius-xl,16px)] shadow-[var(--shadow-elevated)] sm:max-h-none sm:rounded-[var(--radius-xl,16px)] sm:shadow-[0_28px_90px_rgba(0,0,0,0.6),0_0_0_1px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
         label="Command palette"
         shouldFilter={false}
       >
@@ -1134,19 +1992,116 @@ function CommandPaletteOpen() {
           <div className="h-1 w-10 rounded-full bg-white/15" />
         </div>
         <div
-          className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 focus-within:shadow-[inset_0_-1px_0_0_var(--accent)]"
+          className="nexus-search-field flex items-center gap-2.5 border-b border-[var(--border)] px-4"
+          data-testid="search-field"
+          onFocusCapture={(e) => {
+            e.currentTarget.setAttribute("data-keyboard-focus", "control");
+          }}
           data-search-engine={searchEngine.id}
           data-search-engine-label={searchEngine.shortLabel}
           data-search-index-state={searchEngine.indexState}
+          title={searchEngine.uiLabel}
         >
           <Search size={16} className="shrink-0 text-[var(--accent)]" />
           <Command.Input
             ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="Search, path: folder:, or ask: what links Hermes…"
-            className="h-12 w-full bg-transparent text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+            placeholder={isCommandMode ? "Select a command…" : "Find or create a note…"}
+            aria-label="Search notes"
+            className="nexus-search-input h-12 w-full bg-transparent text-[15px] text-white placeholder:text-[var(--text-muted)]"
             autoFocus
+            onFocus={(e) => {
+              e.currentTarget
+                .closest("[data-testid='search-field']")
+                ?.setAttribute("data-keyboard-focus", "control");
+            }}
+            onKeyDownCapture={(e) => {
+              if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              // Shift+Enter makes a note with this name, even when notes match.
+              if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return;
+                if (qLower.startsWith("is:") || wantsOrphans || wantsBroken) return;
+                e.preventDefault();
+                e.stopPropagation();
+                createFromQuery();
+                return;
+              }
+              const root = e.currentTarget.closest("[cmdk-root]");
+              const selected = root?.querySelector<HTMLElement>(
+                "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
+              );
+              const top = hits[0];
+              const want = q.trim().toLowerCase();
+              const exactNote = hits.some((h) => h.title.trim().toLowerCase() === want);
+              const enterNow = paletteEnterOpensNow({
+                hasSelection: Boolean(selected),
+                selectedIsFolder: selected?.getAttribute("data-testid") === "search-folder-hit",
+                selectedIsCreate: selected?.getAttribute("data-testid") === "search-create-note",
+                hitCount: hits.length,
+                catalogPending: catalogFolderPending,
+                exactNote,
+                commandMode: isCommandMode,
+                askMode: isAskMode,
+                tagBrowse: isTagBrowse,
+              });
+              if (enterNow === "selected" && selected) {
+                e.preventDefault();
+                e.stopPropagation();
+                openPaletteRow(selected);
+                return;
+              }
+              if (enterNow === "first-hit" && top) {
+                e.preventDefault();
+                e.stopPropagation();
+                setActiveNote(top.noteId);
+                setCommandOpen(false);
+                focusOpenedHit();
+                return;
+              }
+              if (selected?.getAttribute("data-testid") === "search-folder-hit") return;
+              if (!q || isAskMode || isCommandMode || isTagBrowse) return;
+              if (pendingFolderEnterRef.current?.q === q) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+              }
+              // A folder found after the list settled may not be selected, so
+              // Enter would do nothing and leave search holding the keyboard.
+              // A folder named exactly what was typed wins, unless a note is too.
+              const found = folderForEnter(folderHits, q);
+              const folder =
+                found && (found.exact ? !exactNote : hits.length === 0 && !selected) ? found : null;
+              if (folder) {
+                e.preventDefault();
+                e.stopPropagation();
+                revealSearchedFolder(folder.id);
+                return;
+              }
+              // The catalog has not answered yet. What is selected now is
+              // "Create note" or a note that only shares the words; either
+              // would skip a folder with exactly this name.
+              if (!folder && !exactNote && catalogFolderPending) {
+                e.preventDefault();
+                e.stopPropagation();
+                pendingFolderEnterRef.current = { q, timer: window.setTimeout(runHeldEnter, 4000) };
+                return;
+              }
+              if (selected) return;
+              if (top) {
+                e.preventDefault();
+                e.stopPropagation();
+                setActiveNote(top.noteId);
+                setCommandOpen(false);
+                return;
+              }
+              // Nothing matched and nothing is still looking: Enter makes it.
+              if (emptyStatus === "miss" && showCreateNote) {
+                e.preventDefault();
+                e.stopPropagation();
+                createFromQuery();
+              }
+            }}
           />
           <button
             type="button"
@@ -1157,7 +2112,7 @@ function CommandPaletteOpen() {
             <X size={18} />
           </button>
           <kbd className="hidden shrink-0 rounded-md border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)] sm:inline">
-            esc
+            Esc
           </kbd>
         </div>
         {!query.trim() ? (
@@ -1165,15 +2120,39 @@ function CommandPaletteOpen() {
             Tips: <span className="font-mono text-[var(--text-secondary)]">path:</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">file:</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">#tag</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">tag:</span>{" "}
+            <span className="font-mono text-[var(--text-secondary)]">OR</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">-exclude</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">is:orphan</span>{" "}
             <span className="font-mono text-[var(--text-secondary)]">is:deleted</span> ·{" "}
             <span className="font-mono text-[var(--text-secondary)]">ask:</span> cited answers ·{" "}
-            <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands
+            <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands.
+            {" "}
+            <span className="font-mono text-[var(--text-secondary)]">line:</span> and{" "}
+            <span className="font-mono text-[var(--text-secondary)]">section:</span> filter loaded notes.
+          </div>
+        ) : null}
+        {unsupportedHint ? (
+          <div
+            className="border-b border-[var(--border)] px-4 py-1.5 text-[11px] text-[var(--text-secondary)]"
+            role="status"
+            data-testid="search-unsupported-hint"
+          >
+            {unsupportedHint}
+          </div>
+        ) : null}
+        {scopeHint ? (
+          <div
+            className="border-b border-[var(--border)] px-4 py-1.5 text-[11px] text-[var(--text-secondary)]"
+            role="status"
+            data-testid="search-scope-hint"
+          >
+            {scopeHint}
           </div>
         ) : null}
 
         <Command.List className="max-h-[min(480px,50dvh)] overflow-y-auto overscroll-contain p-2 pb-[max(8px,env(safe-area-inset-bottom))] sm:max-h-[min(480px,56vh)]">
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length === 0 ? null : (
           <Command.Empty className="px-3 py-8 text-center">
             <div className="text-[13px] text-[var(--text-muted)]">
               {Object.keys(nodes).length === 0
@@ -1193,6 +2172,7 @@ function CommandPaletteOpen() {
               </button>
             ) : null}
           </Command.Empty>
+          )}
 
           {askAnswer ? (
             <Command.Group heading="Ask your notes · local" className={GROUP_HEADING}>
@@ -1292,7 +2272,7 @@ function CommandPaletteOpen() {
             </Command.Group>
           ) : null}
 
-          {!isCommandMode && searchText && hasPathFolderOp ? (
+          {!isCommandMode && searchText && (hasPathFolderOp || hasOr) ? (
             <Command.Group heading="Search" className={GROUP_HEADING}>
               <Command.Item
                 value={`save-search-${raw}`}
@@ -1402,30 +2382,92 @@ function CommandPaletteOpen() {
             </Command.Group>
           ) : null}
 
-          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) ? (
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length === 0 ? (
+            <div
+              role="status"
+              aria-live="polite"
+              data-search-status={emptyStatus}
+              data-testid={emptyStatus === "miss" ? "search-miss" : undefined}
+              className="px-3 py-3 text-[13px] leading-snug text-[var(--text-secondary)]"
+            >
+              {memoryCapped ? (
+                <div
+                  className="pb-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--text-muted)]"
+                  data-testid="search-engine-heading"
+                >
+                  {notesHeading}
+                </div>
+              ) : null}
+              <div className="flex items-center gap-2">
+                <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+                <span>
+                  {searchEmptyStateMessage({
+                    titleSearchLive:
+                      titleSearchLive || searchEngine.id !== "sqlite-fts5-bm25",
+                    headsReady:
+                      isNoteHeadSearchLive(searchIndexState) ||
+                      searchEngine.id !== "sqlite-fts5-bm25",
+                    catalogSearch: Boolean(
+                      shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
+                    ),
+                    failed: searchIndexState === "error" || noteSearchFailed,
+                    pending: noteSearchPending,
+                    memoryCapped,
+                  })}
+                </span>
+              </div>
+            </div>
+          ) : null}
+
+          {emptyStatus === "miss" && showCreateNote && hits.length === 0 ? (
+            <div
+              className="nexus-miss-actions flex flex-wrap items-center gap-2 px-3 pb-3"
+              data-testid="search-miss-actions"
+            >
+              <button
+                type="button"
+                onClick={createFromQuery}
+              >
+                Create “{(searchText || q).trim().slice(0, 48)}”
+                <kbd className="ml-1.5 rounded border border-[var(--border)] px-1 font-mono text-[10px] opacity-80">Enter</kbd>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  inputRef.current?.focus();
+                }}
+              >
+                Clear search
+              </button>
+            </div>
+          ) : null}
+
+          {memoryPartial &&
+          q &&
+          !isAskMode &&
+          !isCommandMode &&
+          !isTagBrowse &&
+          !(exactTagQuery && hits.length > 1) ? (
+            <div
+              className="px-3 pb-1 pt-2 text-[12px] leading-snug text-[var(--text-muted)]"
+              data-testid="search-memory-cap"
+            >
+              {MEMORY_SEARCH_CAP_NOTE}
+            </div>
+          ) : null}
+
+          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length > 0 ? (
             <Command.Group
               heading={notesHeading}
               className={cn(GROUP_HEADING, tags.length > 0 && "mt-1")}
             >
-              {hits.length === 0 ? (
-                <Command.Item
-                  value="search-index-status"
-                  disabled
-                  className={ITEM_CLASS}
-                >
-                  <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
-                  <span>
-                    {searchEmptyStateMessage({
-                      titleSearchLive,
-                      headsReady: isNoteHeadSearchLive(searchIndexState),
-                    })}
-                  </span>
-                </Command.Item>
-              ) : null}
               {hits.map((h) => (
                 <Command.Item
                   key={h.noteId}
                   value={`note-${h.noteId}-${h.title}`}
+                  data-testid="search-note-hit"
+                  data-note-id={h.noteId}
                   onSelect={() => {
                     setActiveNote(h.noteId);
                     setCommandOpen(false);
@@ -1445,7 +2487,7 @@ function CommandPaletteOpen() {
                     </div>
                     {h.snippet && h.snippet !== h.path ? (
                       <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--text-secondary)]">
-                        <HighlightedText text={h.snippet} query={query} />
+                        <HighlightedText text={presentLinkContext(h.snippet)} query={query} />
                       </div>
                     ) : null}
                   </div>
@@ -1458,19 +2500,50 @@ function CommandPaletteOpen() {
             </Command.Group>
           ) : null}
 
+          {folderHits.length > 0 ? (
+            <Command.Group heading="Folders" className={cn(GROUP_HEADING, "mt-1")}>
+              {folderHits.map((f) => (
+                <Command.Item
+                  key={`folder-${f.id}`}
+                  value={`folder-${f.id}-${f.name}`}
+                  data-testid="search-folder-hit"
+                  data-folder-id={f.id}
+                  onSelect={() => {
+                    setCommandOpen(false);
+                    revealSearchedFolder(f.id);
+                  }}
+                  className={ITEM_CLASS}
+                >
+                  <FolderOpen size={15} className="shrink-0 text-[var(--accent)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-[var(--text-primary)]">
+                      <HighlightedText text={f.name} query={query} />
+                    </div>
+                    <div className="truncate text-[11px] text-[var(--text-muted)]">
+                      {f.path}
+                    </div>
+                  </div>
+                  <span className="ml-auto shrink-0 text-[11px] text-[var(--text-muted)]">
+                    Show in list
+                  </span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          ) : null}
+
           {wantsDeleted ? (
             <Command.Group
               heading="Recently deleted"
               className={cn(GROUP_HEADING, "mt-1")}
             >
               {trashItems.length === 0 ? (
-                <Command.Item
-                  value="no-trash"
-                  className={ITEM_CLASS}
-                  onSelect={() => {}}
+                <div
+                  role="status"
+                  data-search-empty="trash"
+                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
                 >
-                  <span className="text-[var(--text-muted)]">Trash is empty</span>
-                </Command.Item>
+                  Trash is empty
+                </div>
               ) : null}
               {trashItems.map((t) => (
                 <Command.Item
@@ -1502,13 +2575,13 @@ function CommandPaletteOpen() {
               className={cn(GROUP_HEADING, "mt-1")}
             >
               {orphans.length === 0 ? (
-                <Command.Item
-                  value="no-orphans"
-                  className={ITEM_CLASS}
-                  onSelect={() => {}}
+                <div
+                  role="status"
+                  data-search-empty="orphans"
+                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
                 >
-                  <span className="text-[var(--text-muted)]">No orphan notes</span>
-                </Command.Item>
+                  No orphan notes
+                </div>
               ) : null}
               {orphans.map((o) => (
                 <Command.Item
@@ -1543,15 +2616,13 @@ function CommandPaletteOpen() {
               className={cn(GROUP_HEADING, "mt-1")}
             >
               {brokenLinks.length === 0 ? (
-                <Command.Item
-                  value="no-broken"
-                  className={ITEM_CLASS}
-                  onSelect={() => {}}
+                <div
+                  role="status"
+                  data-search-empty="broken"
+                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
                 >
-                  <span className="text-[var(--text-muted)]">
-                    No broken links in this vault
-                  </span>
-                </Command.Item>
+                  No broken links in this vault
+                </div>
               ) : (
                 brokenLinks.map((bl, i) => (
                   <Command.Item
@@ -1627,14 +2698,15 @@ function CommandPaletteOpen() {
             </>
           ) : (
             <>
-              {createActions.length > 0 || showCreateNote ? (
+              {createActions.length > 0 || (showCreateNote && emptyStatus !== "miss") ? (
                 <Command.Group
                   heading="Create"
                   className={cn(GROUP_HEADING, "mt-1")}
                 >
-                  {showCreateNote ? (
+                  {showCreateNote && emptyStatus !== "miss" ? (
                     <Command.Item
                       value={`create-note-${searchText || q}`}
+                      data-testid="search-create-note"
                       onSelect={() => {
                         createNote(null, searchText || q || "Untitled");
                         setCommandOpen(false);
@@ -1716,7 +2788,7 @@ function CommandPaletteOpen() {
         <div className="flex items-center gap-3.5 border-t border-[var(--border)] px-3.5 py-2 text-[10.5px] text-[var(--text-muted)]">
           <Hint keys="↑↓" label="navigate" />
           <Hint keys="↵" label="open" />
-          <Hint keys="esc" label="close" />
+          <Hint keys="Esc" label="close" />
           <span className="ml-auto flex items-center gap-1.5">
             <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
               {formatShortcut("K")}

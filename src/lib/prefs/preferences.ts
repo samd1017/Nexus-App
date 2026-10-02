@@ -20,9 +20,52 @@ export type PhysicsIntensity = "calm" | "standard" | "energetic";
 export type DefaultEditorMode = "visual" | "source" | "split";
 export type SavedSearch = { id: string; name: string; query: string };
 export type DefaultGraphView = "panel" | "hidden";
+/** Local 2D neighborhood is the note-context default. 3D is opt-in Explore. */
+export type GraphSurface = "local" | "explore" | "overview";
+
+export function graphSurfaceOf(value: unknown): GraphSurface {
+  return value === "explore" || value === "overview" ? value : "local";
+}
 /** Which note to open when a vault mounts */
 export type LaunchNoteMode = "today" | "last" | "smart";
-export type ThemeMode = "dark" | "light" | "system";
+export type ThemeMode = "dark" | "light" | "system" | "midnight" | "paper";
+export type ThemeVariant = "midnight" | "paper";
+
+export type ThemeChoice = {
+  id: ThemeMode;
+  label: string;
+  hint: string;
+  /** Page, panel, text, and border colors for the picker swatch. */
+  swatch: [string, string, string, string];
+};
+
+/** Built-in themes. Midnight and Paper repaint chrome; the 3D graph keeps its own look. */
+export const THEME_CHOICES: ThemeChoice[] = [
+  { id: "dark", label: "Dark", hint: "Nexus graphite", swatch: ["#050507", "#16161a", "#f2f2f7", "#2a2a30"] },
+  { id: "light", label: "Light", hint: "Clean paper white", swatch: ["#eef0f4", "#ffffff", "#12141a", "#d5d8e0"] },
+  { id: "midnight", label: "Midnight", hint: "Navy ink, low glare", swatch: ["#070a14", "#111829", "#e8ecfa", "#26304a"] },
+  { id: "paper", label: "Paper", hint: "Warm sepia for long reads", swatch: ["#ece4d4", "#fbf7ef", "#2a2219", "#d8ccb5"] },
+  { id: "system", label: "System", hint: "Follows your OS", swatch: ["#050507", "#eef0f4", "#12141a", "#9898a6"] },
+];
+
+const THEME_META_COLOR: Record<"dark" | "light" | ThemeVariant, string> = {
+  dark: "#050507",
+  light: "#eef0f4",
+  midnight: "#070a14",
+  paper: "#ece4d4",
+};
+
+export function themeModeOf(value: unknown): ThemeMode {
+  return value === "light" || value === "system" || value === "midnight" || value === "paper" ? value : "dark";
+}
+
+export function themeVariantOf(theme: ThemeMode | undefined): ThemeVariant | null {
+  return theme === "midnight" || theme === "paper" ? theme : null;
+}
+
+export function themeLabel(theme: ThemeMode | undefined): string {
+  return THEME_CHOICES.find((choice) => choice.id === themeModeOf(theme))?.label ?? "Dark";
+}
 
 export interface NexusPrefs {
   accentPreset: AccentPreset;
@@ -33,6 +76,8 @@ export interface NexusPrefs {
   editorFontSize: number;
   spellCheck: boolean;
   defaultGraphView: DefaultGraphView;
+  /** Flat neighborhood around the open note, or the 3D graph. */
+  graphSurface: GraphSurface;
   physicsIntensity: PhysicsIntensity;
   confirmDelete: boolean;
   openLastVault: boolean;
@@ -99,6 +144,7 @@ export const DEFAULT_PREFS: NexusPrefs = {
   editorFontSize: 15,
   spellCheck: false,
   defaultGraphView: "panel",
+  graphSurface: "local",
   physicsIntensity: "standard",
   confirmDelete: true,
   openLastVault: true,
@@ -129,9 +175,7 @@ export function getShortcuts(): { keys: string; action: string }[] {
   }));
 }
 
-export function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
-  if (theme === "light") return "light";
-  if (theme === "dark") return "dark";
+function readSystemTheme(): "dark" | "light" {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return "dark";
   }
@@ -142,6 +186,23 @@ export function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
   } catch {
     return "dark";
   }
+}
+
+// System is read once, then only moved by a settled change. Every prefs write
+// repaints the theme, and a desktop that briefly reports the other scheme would
+// otherwise flash the whole window mid-session.
+let settledSystemTheme: "dark" | "light" | null = null;
+
+export function settleSystemTheme(): "dark" | "light" {
+  settledSystemTheme = readSystemTheme();
+  return settledSystemTheme;
+}
+
+export function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
+  if (theme === "light" || theme === "paper") return "light";
+  if (theme === "dark" || theme === "midnight") return "dark";
+  if (settledSystemTheme === null) settledSystemTheme = readSystemTheme();
+  return settledSystemTheme;
 }
 
 /** @deprecated Prefer getShortcuts() so labels match current platform. */
@@ -208,8 +269,14 @@ export function applyPrefsToDom(prefs: NexusPrefs): void {
   root.dataset.focusMode = prefs.focusMode ? "true" : "false";
 
   const resolvedTheme = resolveTheme(prefs.theme);
+  const variant = themeVariantOf(prefs.theme);
   root.dataset.theme = resolvedTheme;
+  if (variant) root.dataset.themeVariant = variant;
+  else delete root.dataset.themeVariant;
   root.style.colorScheme = resolvedTheme;
+  // Obsidian snippets scope colors to body.theme-dark / body.theme-light.
+  document.body?.classList.toggle("theme-dark", resolvedTheme === "dark");
+  document.body?.classList.toggle("theme-light", resolvedTheme === "light");
   if (resolvedTheme === "light") {
     root.style.setProperty(
       "--accent-dim",
@@ -222,10 +289,7 @@ export function applyPrefsToDom(prefs: NexusPrefs): void {
   }
   try {
     const meta = document.querySelector('meta[name="theme-color"]');
-    meta?.setAttribute(
-      "content",
-      resolvedTheme === "light" ? "#eef0f4" : "#050507",
-    );
+    meta?.setAttribute("content", THEME_META_COLOR[variant ?? resolvedTheme]);
   } catch {
     /* ignore */
   }
@@ -257,6 +321,7 @@ function snapshotPrefs(s: NexusPrefs): NexusPrefs {
     editorFontSize: s.editorFontSize,
     spellCheck: s.spellCheck,
     defaultGraphView: s.defaultGraphView,
+    graphSurface: graphSurfaceOf(s.graphSurface),
     physicsIntensity: s.physicsIntensity,
     confirmDelete: s.confirmDelete,
     openLastVault: s.openLastVault,
@@ -267,7 +332,7 @@ function snapshotPrefs(s: NexusPrefs): NexusPrefs {
     reducedMotion: s.reducedMotion,
     sidebarRecentOpen: s.sidebarRecentOpen,
     sidebarTagsOpen: s.sidebarTagsOpen,
-    theme: s.theme === "light" || s.theme === "system" ? s.theme : "dark",
+    theme: themeModeOf(s.theme),
     hotkeyOverrides: sanitizeHotkeyOverrides(s.hotkeyOverrides),
     savedSearches: Array.isArray(s.savedSearches)
       ? s.savedSearches
@@ -320,9 +385,7 @@ export const usePrefsStore = create<PrefsStore>()(
             patch.hotkeyOverrides,
           );
         }
-        if (patch.theme != null && patch.theme !== "light" && patch.theme !== "system") {
-          nextPatch.theme = "dark";
-        }
+        if (patch.theme != null) nextPatch.theme = themeModeOf(patch.theme);
         if (patch.dailyFolder != null) {
           const cleaned = String(patch.dailyFolder)
             .trim()
@@ -336,6 +399,7 @@ export const usePrefsStore = create<PrefsStore>()(
               ? cleaned.slice(0, 64)
               : DEFAULT_PREFS.dailyFolder;
         }
+        if (patch.theme === "system") settleSystemTheme();
         set(nextPatch);
         const next = { ...get(), ...nextPatch };
         applyPrefsToDom(next);
@@ -389,10 +453,8 @@ export const usePrefsStore = create<PrefsStore>()(
             p.sidebarTagsOpen != null
               ? Boolean(p.sidebarTagsOpen)
               : DEFAULT_PREFS.sidebarTagsOpen,
-          theme:
-            p.theme === "light" || p.theme === "system" || p.theme === "dark"
-              ? p.theme
-              : DEFAULT_PREFS.theme,
+          theme: p.theme != null ? themeModeOf(p.theme) : DEFAULT_PREFS.theme,
+          graphSurface: graphSurfaceOf(p.graphSurface),
           hotkeyOverrides: sanitizeHotkeyOverrides(p.hotkeyOverrides),
           savedSearches: Array.isArray(p.savedSearches)
             ? (p.savedSearches as SavedSearch[])

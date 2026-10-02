@@ -3,6 +3,7 @@ import { X, Keyboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePrefsStore } from "@/lib/prefs/preferences";
 import { listShortcutRows } from "@/lib/prefs/hotkeys";
+import { SEARCH_OPERATOR_HELP } from "@/lib/search/query-ops";
 
 function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -126,6 +127,12 @@ export function ShortcutsSheet() {
               </kbd>
             </li>
           </ul>
+          <p
+            className="mt-4 border-t border-[var(--border)] pt-3 text-[12.5px] leading-relaxed text-[var(--text-secondary)]"
+            data-testid="search-operator-help"
+          >
+            {SEARCH_OPERATOR_HELP}
+          </p>
         </div>
       </div>
     </div>

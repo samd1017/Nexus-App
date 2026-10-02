@@ -22,6 +22,7 @@ type FillResult = {
   errors: number;
   notes: number;
   edges: number;
+  scanned?: number;
   searchState?: string;
 };
 
@@ -108,6 +109,7 @@ type NativeNoteDto = {
   parentId?: string | null;
   mtime: number;
   size?: number | null;
+  ctime?: number | null;
   contentHash?: string | null;
   title?: string | null;
   bodySnippet?: string | null;
@@ -124,6 +126,7 @@ function dtoToMeta(d: NativeNoteDto): DurableNoteMeta {
     parentId: d.parentId ?? null,
     mtime: d.mtime,
     size: d.size ?? undefined,
+    ctime: d.ctime ?? undefined,
     contentHash: d.contentHash ?? undefined,
     title: d.title ?? undefined,
     bodySnippet: d.bodySnippet ?? undefined,
@@ -199,17 +202,24 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     const existing = fillInflightByDb.get(this.dbPath);
     if (existing) {
       try {
-        return await existing;
+        return await this.settleFill(existing, opts?.settleAtPhase ?? "done");
       } finally {
         detach();
       }
     }
-    const run = this.runFillFromDisk(headChars, {
+    let run!: Promise<FillResult>;
+    const releaseInteractive = () => {
+      if (fillInflightByDb.get(this.dbPath) === run) {
+        fillInflightByDb.delete(this.dbPath);
+      }
+    };
+    run = this.runFillFromDisk(headChars, {
       forceRebuild: opts?.forceRebuild === true,
       shortHeadChars: opts?.shortHeadChars,
       priorityPaths: opts?.priorityPaths,
+      onInteractive: releaseInteractive,
     }).finally(() => {
-      fillInflightByDb.delete(this.dbPath);
+      releaseInteractive();
       detach();
     });
     fillInflightByDb.set(this.dbPath, run);
@@ -240,6 +250,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
             errors: p.errors,
             notes: p.total || p.indexed,
             edges: 0,
+            scanned: p.scanned,
             searchState: p.searchState ?? undefined,
           });
         }
@@ -267,6 +278,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       forceRebuild: boolean;
       shortHeadChars?: number;
       priorityPaths?: string[];
+      onInteractive?: () => void;
     },
   ): Promise<FillResult> {
     type FillPayload = {
@@ -334,7 +346,7 @@ export class NativeSqliteDurableIndex implements DurableIndex {
                   return;
                 }
                 if (phase === "done") {
-                  finish(resolve, toResult(p));
+                  opts.onInteractive?.();
                 }
               },
             );
@@ -364,11 +376,13 @@ export class NativeSqliteDurableIndex implements DurableIndex {
               settled = true;
               reject(err);
             }
+          } finally {
+            unlisten?.();
           }
         })();
       });
     } finally {
-      unlisten?.();
+      /* listener stays until the invoke returns, including the title tail */
     }
   }
 
@@ -461,6 +475,26 @@ export class NativeSqliteDurableIndex implements DurableIndex {
     return { upserted, removed };
   }
 
+  upsertSearchBody(meta: DurableNoteMeta): void {
+    void this.invoke("vault_index_upsert", {
+      dbPath: this.dbPath,
+      note: {
+        id: meta.id,
+        path: meta.path,
+        name: meta.name,
+        kind: meta.kind,
+        parentId: meta.parentId,
+        mtime: meta.mtime,
+        size: meta.size ?? null,
+        contentHash: meta.contentHash ?? null,
+        title: meta.title ?? null,
+        bodySnippet: meta.bodySnippet ?? null,
+        tags: meta.tags ?? null,
+        linkTargets: meta.linkTargets ?? null,
+      },
+    }).catch(() => {});
+  }
+
   upsertNote(meta: DurableNoteMeta): void {
     this.mirror.upsertNote(meta);
     // After mirror preserve-body, read back what was stored
@@ -509,6 +543,41 @@ export class NativeSqliteDurableIndex implements DurableIndex {
 
   searchFts(query: string, limit = 40): SearchHit[] {
     return this.mirror.searchFts(query, limit);
+  }
+
+  async searchOpsAsync(
+    clauses: Array<{
+      rest: string;
+      pathFilter: string;
+      folderFilter: string;
+      fileFilter: string;
+      tagFilter: string;
+      excludes: string[];
+    }>,
+    limit = 16,
+  ): Promise<SearchHit[]> {
+    const hits = await this.invoke<
+      Array<{
+        noteId: string;
+        path: string;
+        title: string;
+        snippet: string;
+        score: number;
+        matchType: string;
+      }>
+    >("vault_index_search_ops", {
+      dbPath: this.dbPath,
+      clauses,
+      limit,
+    });
+    return hits.map((h) => ({
+      noteId: h.noteId,
+      path: h.path,
+      title: h.title,
+      snippet: h.snippet,
+      score: h.score,
+      matchType: h.matchType === "content" ? "content" : "title",
+    }));
   }
 
   async searchFtsAsync(query: string, limit = 40): Promise<SearchHit[]> {
@@ -570,6 +639,24 @@ export class NativeSqliteDurableIndex implements DurableIndex {
       console.warn("[nexus] vault_index_list_links failed", err);
       return [];
     }
+  }
+}
+
+/** Shell mount already resolved the index file. Skip the ping and path lookup. */
+export async function openNativeSqliteIndexFromKnownPath(
+  vaultId: string,
+  vaultRoot: string,
+  dbPath: string,
+): Promise<NativeSqliteDurableIndex | null> {
+  const invoke = await getInvoke();
+  if (!invoke || !dbPath) return null;
+  try {
+    const idx = new NativeSqliteDurableIndex(dbPath, vaultId, vaultRoot, invoke);
+    await idx.openNative();
+    return idx;
+  } catch (err) {
+    console.warn("[nexus] native sqlite index unavailable", err);
+    return null;
   }
 }
 

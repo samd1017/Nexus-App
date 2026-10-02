@@ -119,6 +119,10 @@ export const Wikilink = Mark.create<WikilinkOptions>({
           // WKWebView / Tauri often misses handleClick — use DOM events
           handleDOMEvents: {
             click: (_view, event) => openFromEvent(event),
+            auxclick: (_view, event) => {
+              if (event.button !== 1) return false;
+              return openFromEvent(event);
+            },
             // Mac / WKWebView: mousedown + click both; preventDefault on mousedown keeps focus behavior sane
             mousedown: (_view, event) => {
               const t = event.target as HTMLElement | null;

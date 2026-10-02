@@ -98,7 +98,7 @@ fn classify_path(rel: &str) -> Option<&'static str> {
     if name.starts_with('.') {
         return None;
     }
-    if name.to_ascii_lowercase().ends_with(".md") {
+    if name.to_ascii_lowercase().ends_with(".md") || name.to_ascii_lowercase().ends_with(".canvas") {
         return Some("change");
     }
     // Directory-ish paths without extension — structural create/delete

@@ -74,4 +74,32 @@ const folder = graphEmptyCopy({
 });
 assert.equal(folder.show, false, "folder map stays visible while links index");
 
+const catalogEgo = graphEmptyCopy({
+  viewMode: "ego",
+  vaultNoteCount: 100_000,
+  drawnNodeCount: 4,
+  activeNoteId: "n1",
+  linkIndexReady: false,
+  linkEdgeCount: 0,
+  hasFilters: false,
+  folderHasPath: false,
+  catalogBacked: true,
+  linksStillFilling: true,
+});
+assert.equal(catalogEgo.show, false, "catalog neighborhood stays on the canvas");
+
+const catalogWaiting = graphEmptyCopy({
+  viewMode: "ego",
+  vaultNoteCount: 100_000,
+  drawnNodeCount: 0,
+  activeNoteId: "n1",
+  linkIndexReady: false,
+  linkEdgeCount: 0,
+  hasFilters: false,
+  folderHasPath: false,
+  catalogBacked: true,
+  linksStillFilling: true,
+});
+assert.equal(catalogWaiting.show, false, "filling links must not cover the map");
+
 console.log("graph-empty.contract: ok");

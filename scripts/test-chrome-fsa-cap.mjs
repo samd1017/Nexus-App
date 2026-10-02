@@ -9,12 +9,15 @@ const r = spawnSync(
     "-e",
     `
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   CHROME_FSA_GETFILE_MAX,
   CHROME_FSA_NOTE_CAP,
   CHROME_FSA_NOTE_WARN,
+  CHROME_FSA_SUPPORTED_MAX,
   CHROME_FSA_WATCH_MAX,
   ChromeFsaCapError,
+  chromeFsaHonestyLine,
   chromeFsaLimitKind,
   chromeFsaRefuseChrome,
   chromeFsaRefuseDesktop,
@@ -22,6 +25,7 @@ import {
   chromeFsaRefuseMessage,
   chromeFsaRefuseTitle,
   chromeFsaWarnMessage,
+  chromeFsaWelcomeDetail,
   countVaultNotes,
   isChromeFsaCapError,
   FORCED_LARGE_FSA_CONFIRM,
@@ -32,6 +36,28 @@ import {
 import { shouldPollFsaWatch } from "./src/lib/vault/watcher.ts";
 assert.equal(CHROME_FSA_NOTE_WARN, 15000);
 assert.equal(CHROME_FSA_NOTE_CAP, 25000);
+assert.equal(CHROME_FSA_SUPPORTED_MAX, 20000);
+assert.equal(chromeFsaHonestyLine(), "Desktop for large vaults; Chrome ≤20k.");
+const welcomeDetail = chromeFsaWelcomeDetail();
+assert.ok(welcomeDetail.includes("20,000"));
+assert.ok(welcomeDetail.includes("25,000"));
+assert.ok(welcomeDetail.includes("Nexus Desktop"));
+assert.ok(welcomeDetail.includes("will not open"));
+const readme = readFileSync("README.md", "utf8");
+assert.ok(readme.includes(chromeFsaHonestyLine()), "README missing honesty line");
+assert.ok(readme.includes(welcomeDetail), "README missing welcome detail");
+const beta = readFileSync("docs/PUBLIC-BETA.md", "utf8");
+assert.ok(beta.includes(chromeFsaHonestyLine()), "PUBLIC-BETA missing honesty line");
+assert.ok(beta.includes(welcomeDetail), "PUBLIC-BETA missing welcome detail");
+const welcome = readFileSync("src/components/vault/WelcomeScreen.tsx", "utf8");
+assert.ok(welcome.includes("chromeFsaHonestyLine("));
+assert.ok(welcome.includes("chromeFsaWelcomeDetail("));
+const honestyAt = welcome.indexOf("data-chrome-fsa-honesty");
+const openAt = welcome.indexOf("Open folder…");
+assert.ok(honestyAt !== -1 && openAt !== -1 && honestyAt < openAt);
+assert.equal(welcome.includes("20,000"), false);
+assert.equal(welcome.includes("25,000"), false);
+assert.equal(welcome.includes("20k"), false);
 assert.equal(CHROME_FSA_WATCH_MAX, 4000);
 assert.equal(CHROME_FSA_GETFILE_MAX, 4000);
 assert.equal(chromeFsaLimitKind(100), null);

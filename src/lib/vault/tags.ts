@@ -1,5 +1,5 @@
 /**
- * Light tag support — plain #tags in Markdown (Hermes-safe, no proprietary DB).
+ * Light tag support — plain #tags in Markdown (no proprietary DB).
  * Tags are extracted from note bodies; optional YAML-ish frontmatter tags: too.
  *
  * collectVaultTags is generation-cached (VaultStructuralIndex.generation() when
@@ -14,6 +14,7 @@ import type { VaultNode } from "./types";
 import { noteTitle } from "./types";
 import { ensureVaultIndex } from "./indexes";
 import { getDurableIndex } from "./durable-index";
+import { splitFrontmatter } from "@/lib/editor/frontmatter";
 
 const TAG_RE = /(?:^|[\s([{])#([a-zA-Z][\w/-]{0,48})\b/g;
 const FRONTMATTER_TAGS =
@@ -28,9 +29,12 @@ function stripCode(md: string): string {
 
 export function extractTagsFromMarkdown(markdown: string): string[] {
   const tags = new Set<string>();
-  const fm = FRONTMATTER_TAGS.exec(markdown);
-  if (fm) {
-    const block = fm[1];
+  const peeled = splitFrontmatter(markdown);
+  const block =
+    peeled.yaml != null
+      ? peeled.yaml
+      : (FRONTMATTER_TAGS.exec(markdown)?.[1] ?? null);
+  if (block) {
     const tagsLine = /^tags:\s*(.+)$/im.exec(block);
     if (tagsLine) {
       const raw = tagsLine[1].trim();
@@ -199,12 +203,11 @@ function buildTagHitsUnsorted(nodes: Record<string, VaultNode>): TagHit[] {
   for (const id in nodes) {
     const n = nodes[id];
     if (!n || n.kind !== "note") continue;
-    let tags: string[];
+    const tags = new Set<string>();
     if (n.content !== undefined) {
-      tags = extractTagsFromMarkdown(n.content);
-    } else {
-      tags = durableTags.get(n.id) ?? [];
+      for (const tag of extractTagsFromMarkdown(n.content)) tags.add(tag);
     }
+    for (const tag of durableTags.get(n.id) ?? []) tags.add(tag.toLowerCase());
     for (const t of tags) {
       let set = map.get(t);
       if (!set) {

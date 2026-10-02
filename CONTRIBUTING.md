@@ -42,7 +42,7 @@ npm run bench:scale
 npm run bench:indexes
 ```
 
-There is a large test vault under `public/large-test-vault/` for stress-testing search, graph, and indexing. Prefer exercising real flows against it when changing search or vault code.
+Generate the 45k stress seed locally into `public/large-test-vault/` (gitignored). Do not commit it. Prefer exercising real flows against it when changing search or vault code.
 
 Visual checks: the preferred path is the web version with Playwright + screenshots. Native Tauri screenshots are also useful for desktop-specific UI.
 
