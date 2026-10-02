@@ -1,6 +1,9 @@
 //! Path-includes the production fill module so this crate can test without GTK/Tauri.
 
-#[path = "../../src/index_fill.rs"]
+#[allow(dead_code)]
+#[path = "../../src/schema.rs"]
+mod schema;
+#[path = "../../src/index_fill/mod.rs"]
 mod index_fill;
 #[path = "../../src/fill_join.rs"]
 mod fill_join;

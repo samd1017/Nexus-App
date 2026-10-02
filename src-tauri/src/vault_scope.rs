@@ -172,30 +172,85 @@ pub fn unregister_root(root: &str) {
     }
 }
 
-/// Ensure db_path is under app data dir (index files only).
+fn index_db_path_rejected(db_path: &str) -> String {
+    format!("index db path must be under app data dir (got {db_path})")
+}
+
+/// Lexical absolute path with `.` and `..` resolved. `..` that escapes the
+/// root is an error. This is a component walk, not a string prefix.
+fn lexical_absolute(path: &Path) -> Result<PathBuf, ()> {
+    if !path.is_absolute() {
+        return Err(());
+    }
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return Err(());
+                }
+            }
+            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
+            Component::RootDir => out.push(c.as_os_str()),
+            Component::Normal(seg) => out.push(seg),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        return Err(());
+    }
+    Ok(out)
+}
+
+/// Canonicalize the longest existing ancestor and reattach the missing tail
+/// so a symlink cannot point the index file outside app data.
+fn resolve_existing_ancestor(path: &Path) -> PathBuf {
+    let mut suffix = Vec::new();
+    let mut cur = path.to_path_buf();
+    loop {
+        if cur.exists() {
+            let canon = std::fs::canonicalize(&cur).unwrap_or(cur);
+            let mut resolved = canon;
+            for part in suffix.iter().rev() {
+                resolved.push(part);
+            }
+            return resolved;
+        }
+        let Some(name) = cur.file_name().map(|n| n.to_os_string()) else {
+            return path.to_path_buf();
+        };
+        suffix.push(name);
+        if !cur.pop() {
+            return path.to_path_buf();
+        }
+    }
+}
+
+/// `candidate` is strictly inside `root` by whole path components.
+fn strictly_under(root: &Path, candidate: &Path) -> bool {
+    candidate.starts_with(root) && candidate != root
+}
+
+/// Ensure `db_path` is strictly inside the app data directory.
+///
+/// The check is a path-component prefix after resolving `.`, `..`, and the
+/// longest existing ancestor (symlinks included). A string prefix is not
+/// enough: `/tmp/evil-indexes/x.sqlite` is not under `/tmp/evil`, and a
+/// sibling directory whose name merely contains `indexes` is not an index.
 pub fn assert_index_db_path(app_data: &Path, db_path: &str) -> Result<PathBuf, String> {
+    let rejected = || index_db_path_rejected(db_path);
     let p = PathBuf::from(db_path);
-    let canon_data = std::fs::canonicalize(app_data).unwrap_or_else(|_| app_data.to_path_buf());
-    // Allow non-existing file if parent is under app data
-    let parent = p.parent().unwrap_or(Path::new("."));
-    let parent_canon = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-    let data_s = key_for(&canon_data);
-    let parent_s = key_for(&parent_canon);
-    if parent_s == data_s
-        || parent_s.starts_with(&(data_s.clone() + "/"))
-        || parent_s.contains("/indexes")
-            && (parent_s.starts_with(&data_s) || p.starts_with(app_data))
-    {
-        return Ok(p);
+    let lexical = lexical_absolute(&p).map_err(|()| rejected())?;
+    let root = match std::fs::canonicalize(app_data) {
+        Ok(canon) => canon,
+        Err(_) => lexical_absolute(app_data).map_err(|()| rejected())?,
+    };
+    let resolved = resolve_existing_ancestor(&lexical);
+    let resolved = lexical_absolute(&resolved).unwrap_or(resolved);
+    if !strictly_under(&root, &resolved) {
+        return Err(rejected());
     }
-    // Also allow if path string is under app_data string prefix (dev)
-    let db_s = key_for(&p);
-    if db_s.starts_with(&data_s) {
-        return Ok(p);
-    }
-    Err(format!(
-        "index db path must be under app data dir (got {db_path})"
-    ))
+    Ok(p)
 }
 
 #[tauri::command]
@@ -250,5 +305,108 @@ mod tests {
         assert!(!is_entire_home_dir(
             &PathBuf::from(&home).join("Documents").join("nexus-scale-100k")
         ));
+    }
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nexus-idx-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn index_db_accepts_a_file_under_the_app_data_directory() {
+        let base = scratch_dir("ok");
+        let app = base.join("appdata");
+        fs::create_dir_all(&app).unwrap();
+        let db = app.join("indexes").join("abc.sqlite");
+        assert!(assert_index_db_path(&app, db.to_str().unwrap()).is_ok());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn index_db_rejects_sibling_whose_name_contains_indexes() {
+        // String prefix would treat `/tmp/evil-indexes` as inside `/tmp/evil`.
+        let base = scratch_dir("evil");
+        let app = base.join("evil");
+        let outside = base.join("evil-indexes");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let db = outside.join("x.sqlite");
+        assert!(
+            assert_index_db_path(&app, db.to_str().unwrap()).is_err(),
+            "parent name containing indexes is not the app data directory"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn index_db_rejects_indexes_directory_outside_app_data() {
+        let base = scratch_dir("outside");
+        let app = base.join("appdata");
+        let outside = base.join("not-the-app").join("indexes");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let db = outside.join("x.sqlite");
+        assert!(assert_index_db_path(&app, db.to_str().unwrap()).is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn index_db_rejects_string_prefix_sibling() {
+        let base = scratch_dir("prefix");
+        let app = base.join("nexus");
+        let sibling = base.join("nexus-evil").join("indexes");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        let db = sibling.join("x.sqlite");
+        assert!(assert_index_db_path(&app, db.to_str().unwrap()).is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn index_db_rejects_dotdot_escape() {
+        let base = scratch_dir("dotdot");
+        let app = base.join("appdata");
+        fs::create_dir_all(app.join("indexes")).unwrap();
+        fs::create_dir_all(base.join("evil-indexes")).unwrap();
+        let db = app
+            .join("indexes")
+            .join("..")
+            .join("..")
+            .join("evil-indexes")
+            .join("x.sqlite");
+        assert!(assert_index_db_path(&app, db.to_str().unwrap()).is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn index_db_rejects_relative_path() {
+        let base = scratch_dir("rel");
+        let app = base.join("appdata");
+        fs::create_dir_all(&app).unwrap();
+        assert!(assert_index_db_path(&app, "indexes/x.sqlite").is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn index_db_rejects_symlink_that_leaves_app_data() {
+        let base = scratch_dir("link");
+        let app = base.join("appdata");
+        let outside = base.join("evil-indexes");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, app.join("linked")).unwrap();
+        let db = app.join("linked").join("x.sqlite");
+        assert!(assert_index_db_path(&app, db.to_str().unwrap()).is_err());
+        let _ = fs::remove_dir_all(&base);
     }
 }

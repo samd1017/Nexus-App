@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -241,11 +241,4 @@ pub fn vault_watch_ack(
         }
     }
     Ok(OkResult { ok: true })
-}
-
-/// Reserved for future multi-process coordination (no-op placeholder keeps API stable).
-#[allow(dead_code)]
-fn watch_registry() -> &'static Mutex<HashMap<String, ()>> {
-    static MAP: OnceLock<Mutex<HashMap<String, ()>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }

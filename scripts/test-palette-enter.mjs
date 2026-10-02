@@ -62,7 +62,13 @@ assert.equal(
 assert.equal(paletteEnterOpensNow({ ...base, hitCount: 0, catalogPending: true }), "wait");
 
 const { readFileSync } = await import("node:fs");
-const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
+const palette = [
+  "src/components/search/CommandPalette.tsx",
+  "src/components/search/palette-search.ts",
+  "src/components/search/palette-results.tsx",
+]
+  .map((rel) => readFileSync(rel, "utf8"))
+  .join("\n");
 assert.match(palette, /paletteEnterOpensNow/);
 assert.match(palette, /search-note-hit/);
 assert.match(palette, /cmdk-item-select/);
