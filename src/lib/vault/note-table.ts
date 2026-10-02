@@ -580,7 +580,7 @@ function cellLinks(raw: FormulaResult["raw"], resolve: LinkResolver): NoteLink[]
 const LINE_WIKILINK = /\[\[([^\]\n]+)\]\]/g;
 
 /** Wikilinks a note makes, once per target. Embeds (![[…]]) and code are not links. */
-function noteOutlinks(content: string): FormulaLink[] {
+export function noteOutlinks(content: string): FormulaLink[] {
   const out: FormulaLink[] = [];
   const seen = new Set<string>();
   const source = stripCodeForLinkScan(content);

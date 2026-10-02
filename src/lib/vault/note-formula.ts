@@ -1590,6 +1590,76 @@ export function runNoteFormula(compiled: CompiledFormula, row: FormulaRow, now =
   }
 }
 
+/** A value as a cell shows it. */
+export function formulaDisplay(v: FormulaValue): string {
+  return show(v);
+}
+
+/** The same true/false a filter or if() would see for this value. */
+export function formulaTruthy(v: FormulaValue): boolean {
+  return truthy(v);
+}
+
+export type FormulaReads = {
+  /** Frontmatter keys, as written. */
+  props: string[];
+  /** Reads `formula.<name>` columns. */
+  refs: string[];
+  /** Reads a property whose name is only known per note, like file.hasProperty(). */
+  anyProp: boolean;
+  links: boolean;
+  backlinks: boolean;
+  tags: boolean;
+};
+
+/** What a compiled formula reads, so a caller loads only the note bodies it needs. */
+export function formulaReads(compiled: CompiledFormula): FormulaReads {
+  const out: FormulaReads = { props: [], refs: [], anyProp: false, links: false, backlinks: false, tags: false };
+  const walk = (node: Node | undefined): void => {
+    if (!node) return;
+    switch (node.k) {
+      case "prop":
+        if (!out.props.includes(node.key)) out.props.push(node.key);
+        return;
+      case "ref":
+        if (!out.refs.includes(node.key)) out.refs.push(node.key);
+        return;
+      case "file":
+        if (node.key === "links") out.links = true;
+        else if (node.key === "backlinks") out.backlinks = true;
+        else if (node.key === "tags") out.tags = true;
+        return;
+      case "list":
+        node.items.forEach(walk);
+        return;
+      case "index":
+        walk(node.a);
+        walk(node.i);
+        return;
+      case "get":
+        walk(node.a);
+        return;
+      case "call":
+        if (node.name === "file.hasLink") out.links = true;
+        if (node.name === "file.hasTag") out.tags = true;
+        if (node.name === "file.hasProperty") out.anyProp = true;
+        node.args.forEach(walk);
+        return;
+      case "bin":
+        walk(node.a);
+        walk(node.b);
+        return;
+      case "un":
+        walk(node.a);
+        return;
+      default:
+        return;
+    }
+  };
+  walk(compiled.program ?? undefined);
+  return out;
+}
+
 /** A summary formula: reads `values` (one item per note in the group) instead of a note. */
 export function compileSummaryFormula(source: string): CompiledFormula {
   const compiled = compileNoteFormula(source, true);

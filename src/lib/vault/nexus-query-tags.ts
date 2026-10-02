@@ -5,7 +5,7 @@
 
 import { getDurableIndex } from "@/lib/vault/durable-index";
 import { NativeSqliteDurableIndex } from "@/lib/vault/native-sqlite-index";
-import { NEXUS_QUERY_CAP, parseNexusQuery } from "@/lib/vault/nexus-query";
+import { NEXUS_QUERY_CAP, queryTags } from "@/lib/vault/nexus-query";
 import {
   BROWSER_SHELL_DB,
   fetchShellTagNotes,
@@ -68,8 +68,8 @@ function nodeForRow(
  * Other tags are kept. Null overall means there is no index to ask.
  */
 export async function loadTagExtras(query: string): Promise<(VaultNode[] | null)[] | null> {
-  const parsed = parseNexusQuery(query);
-  if (parsed.kind !== "ok" || parsed.tags.length === 0) return null;
+  const tags = queryTags(query);
+  if (tags.length === 0) return null;
   let db = indexDbPathForTags();
   if (!db && useVaultStore.getState().mode === "desktop") {
     for (let i = 0; !db && i < 15; i++) {
@@ -78,7 +78,7 @@ export async function loadTagExtras(query: string): Promise<(VaultNode[] | null)
     }
   }
   if (!db) return null;
-  const pages = await Promise.all(parsed.tags.map((tag) => fetchTagPage(db, tag)));
+  const pages = await Promise.all(tags.map((tag) => fetchTagPage(db, tag)));
   if (pages.every((page) => page == null)) return null;
   const live = useVaultStore.getState();
   const byPath = new Map<string, VaultNode>();
