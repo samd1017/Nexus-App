@@ -29,6 +29,7 @@ jobs:
 
       - name: Read version
         id: ver
+        shell: bash
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Build Tauri (macOS Apple Silicon)
@@ -91,6 +92,7 @@ jobs:
 
       - name: Read version
         id: ver
+        shell: bash
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Build Tauri (Windows NSIS)
