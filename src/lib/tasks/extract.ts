@@ -1,8 +1,10 @@
 /**
- * Incomplete Markdown tasks. Due dates are only the 📅 YYYY-MM-DD mark on the
- * task line. Not supported: `due:` frontmatter, recurrence, priorities, and
- * Dataview queries.
+ * Incomplete Markdown tasks. A 📅 YYYY-MM-DD on the line is the due date.
+ * When the line has no emoji date, the note YAML `due:` (YYYY-MM-DD) applies.
+ * Not supported: recurrence, priorities, and Dataview queries.
  */
+
+import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
 
 export type VaultTask = {
   noteId: string;
@@ -23,6 +25,29 @@ export function dueOnTaskLine(text: string): string | null {
   return match ? match[1] : null;
 }
 
+/** `due:` YAML value, or null when it is missing or not a calendar date. */
+export function dueFromFrontmatter(body: string): string | null {
+  const { yaml } = splitFrontmatter(body);
+  if (!yaml) return null;
+  let found: string | null = null;
+  for (const field of parseFrontmatterFields(yaml)) {
+    if (field.key.toLowerCase() !== "due") continue;
+    found = normalizeDueValue(field.value);
+  }
+  return found;
+}
+
+function normalizeDueValue(value: string): string | null {
+  let v = value.trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
+    (v.startsWith("'") && v.endsWith("'") && v.length >= 2)
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+}
+
 export function taskDisplayText(text: string): string {
   return text.replace(DUE_RE, "").replace(/\s+/g, " ").trim();
 }
@@ -34,6 +59,7 @@ export function tasksInNote(note: {
   body: string;
 }): VaultTask[] {
   const out: VaultTask[] = [];
+  const noteDue = dueFromFrontmatter(note.body);
   const lines = note.body.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const match = TASK_RE.exec(lines[i]);
@@ -46,7 +72,7 @@ export function tasksInNote(note: {
       title: note.title,
       line: i + 1,
       text: taskDisplayText(raw),
-      due: dueOnTaskLine(raw),
+      due: dueOnTaskLine(raw) ?? noteDue,
     });
     if (out.length >= PER_NOTE_CAP) break;
   }

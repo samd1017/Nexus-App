@@ -1000,7 +1000,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Tasks"
-                body="Built-in Tasks lists unchecked - [ ] and * [ ] lines. A 📅 YYYY-MM-DD on the line is the due date. due: frontmatter, recurrence, and Dataview queries are not supported. Open a row to jump to that note. The box marks the line done in the file."
+                body="Built-in Tasks lists unchecked - [ ] and * [ ] lines. A 📅 YYYY-MM-DD on the line is the due date and wins. Otherwise a note due: YYYY-MM-DD applies to open tasks on that note. Recurrence, priorities, and Dataview queries are not supported. Open a row to jump to that note. The box marks the line done in the file."
               />
               <HelpItem
                 title="Graph"

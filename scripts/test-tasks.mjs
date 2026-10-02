@@ -38,8 +38,9 @@ assert.equal(tasks[0].text, "Buy milk");
 assert.equal(tasks[0].due, "2026-04-01");
 assert.equal(tasks[0].line, 6);
 assert.equal(tasks[1].text, "Call home");
-assert.equal(tasks[1].due, null);
+assert.equal(tasks[1].due, "2020-01-01");
 assert.equal(tasks[2].text, "Nested");
+assert.equal(tasks[2].due, "2020-01-01");
 assert.equal(dueOnTaskLine("no date"), null);
 assert.equal(taskMatchesPath(tasks[0], "day"), true);
 assert.equal(taskMatchesPath(tasks[0], "Other"), false);
@@ -54,7 +55,26 @@ const big = Array.from({ length: 2000 }, (_, i) => `- [ ] item ${i}`).join("\n")
 const started = Date.now();
 const many = tasksInNote({ id: "n", path: "Big.md", title: "Big", body: big });
 assert.equal(many.length, 40);
+assert.equal(many[0].due, null);
 assert.ok(Date.now() - started < 200);
+
+const quoted = tasksInNote({
+  id: "q",
+  path: "Quoted.md",
+  title: "Quoted",
+  body: '---\ndue: "2026-10-15"\n---\n\n- [ ] Inherit yaml\n- [ ] Line wins 📅 2026-10-05\n',
+});
+assert.equal(quoted[0].due, "2026-10-15");
+assert.equal(quoted[1].due, "2026-10-05");
+assert.equal(quoted[1].text, "Line wins");
+
+const bad = tasksInNote({
+  id: "b",
+  path: "Bad.md",
+  title: "Bad",
+  body: "---\ndue: tomorrow\n---\n\n- [ ] No date\n",
+});
+assert.equal(bad[0].due, null);
 
 const { readFileSync } = await import("node:fs");
 const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");
@@ -68,7 +88,12 @@ assert.match(welcome, /Tasks list/);
 assert.match(welcome, /No plugin API/);
 const help = readFileSync("src/components/settings/SettingsPanel.tsx", "utf8");
 assert.match(help, /Dataview queries are not supported/);
+assert.match(help, /Recurrence/);
+assert.doesNotMatch(help, /due: frontmatter/);
 const rail = readFileSync("src/components/right/TasksRail.tsx", "utf8");
+assert.match(rail, /due:/);
+assert.match(rail, /Recurrence/);
+assert.doesNotMatch(rail, /due: frontmatter/);
 assert.match(rail, /setActiveNote\(task\.noteId/);
 assert.match(rail, /completeTaskLine/);
 assert.doesNotMatch(rail, /Dataview query language/);

@@ -68,6 +68,7 @@ pub fn scan_task_page(
 }
 
 fn push_tasks(out: &mut Vec<ScannedTask>, note_id: &str, path: &str, title: &str, body: &str) {
+    let note_due = due_from_frontmatter(body);
     let mut n = 0usize;
     for (i, line) in body.lines().enumerate() {
         let Some(text) = open_task_text(line) else { continue };
@@ -79,7 +80,7 @@ fn push_tasks(out: &mut Vec<ScannedTask>, note_id: &str, path: &str, title: &str
             path: path.to_string(),
             title: if title.is_empty() { path.to_string() } else { title.to_string() },
             line: (i as i32) + 1,
-            due: due_on_line(&text),
+            due: due_on_line(&text).or_else(|| note_due.clone()),
             text: display_text(&text),
         });
         n += 1;
@@ -96,6 +97,49 @@ fn open_task_text(line: &str) -> Option<String> {
         .or_else(|| trimmed.strip_prefix("* [ ]"))?;
     let text = rest.trim();
     if text.is_empty() { None } else { Some(text.to_string()) }
+}
+
+/// Leading `---` block only. Nested and list YAML are ignored.
+fn due_from_frontmatter(body: &str) -> Option<String> {
+    let body = body.strip_prefix('\u{feff}').unwrap_or(body);
+    let yaml = if let Some(rest) = body.strip_prefix("---\r\n") {
+        rest.split_once("\r\n---")?.0
+    } else if let Some(rest) = body.strip_prefix("---\n") {
+        rest.split_once("\n---")?.0
+    } else {
+        return None;
+    };
+    let mut due = None;
+    for line in yaml.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else { continue };
+        if !key.trim().eq_ignore_ascii_case("due") {
+            continue;
+        }
+        due = normalize_due_value(value.trim());
+    }
+    due
+}
+
+fn normalize_due_value(value: &str) -> Option<String> {
+    let v = if (value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+        || (value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2)
+    {
+        value[1..value.len() - 1].trim()
+    } else {
+        value
+    };
+    if v.len() == 10
+        && v.as_bytes()[4] == b'-'
+        && v.as_bytes()[7] == b'-'
+        && v.chars().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+    {
+        Some(v.to_string())
+    } else {
+        None
+    }
 }
 
 fn due_on_line(text: &str) -> Option<String> {
@@ -157,5 +201,30 @@ mod tests {
         let tail = scan_task_page(&conn, page.next_rowid, 8).unwrap();
         assert!(tail.done);
         assert!(tail.tasks.is_empty());
+    }
+
+    #[test]
+    fn yaml_due_fills_open_tasks_without_emoji() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE note_fts USING fts5(note_id UNINDEXED, title, path, body);
+             INSERT INTO note_fts(note_id, title, path, body) VALUES
+               ('n1', 'Draft', 'Draft.md', '---\ndue: 2026-10-15\n---\n\n- [ ] Inherit\n- [ ] Line wins 📅 2026-10-05\n- [x] Done');
+             INSERT INTO note_fts(note_id, title, path, body) VALUES
+               ('n2', 'Plain', 'Plain.md', '- [ ] No due');
+             INSERT INTO note_fts(note_id, title, path, body) VALUES
+               ('n3', 'Quoted', 'Quoted.md', '---\ndue: \"2026-11-01\"\n---\n* [ ] Quoted');",
+        )
+        .unwrap();
+        let page = scan_task_page(&conn, 0, 8).unwrap();
+        assert_eq!(page.tasks.len(), 4);
+        assert_eq!(page.tasks[0].text, "Inherit");
+        assert_eq!(page.tasks[0].due.as_deref(), Some("2026-10-15"));
+        assert_eq!(page.tasks[1].text, "Line wins");
+        assert_eq!(page.tasks[1].due.as_deref(), Some("2026-10-05"));
+        assert_eq!(page.tasks[2].text, "No due");
+        assert_eq!(page.tasks[2].due, None);
+        assert_eq!(page.tasks[3].text, "Quoted");
+        assert_eq!(page.tasks[3].due.as_deref(), Some("2026-11-01"));
     }
 }

@@ -140,8 +140,9 @@ export function TasksRail() {
     <div className="flex flex-col gap-2 p-3" data-testid="tasks-rail">
       <p className="text-[11.5px] leading-snug text-[var(--text-muted)]">
         Unchecked <span className="font-mono">- [ ]</span> and <span className="font-mono">* [ ]</span> lines.
-        A <span className="font-mono">📅 YYYY-MM-DD</span> on the line is the due date.
-        <span className="font-mono"> due:</span> frontmatter, recurrence, and Dataview queries are not supported.
+        A <span className="font-mono">📅 YYYY-MM-DD</span> on the line is the due date and wins.
+        Otherwise the note <span className="font-mono">due:</span> YAML applies.
+        Recurrence, priorities, and Dataview queries are not supported.
       </p>
       <div className="flex flex-wrap items-center gap-1">
         <button
