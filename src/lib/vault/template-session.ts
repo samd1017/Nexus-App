@@ -2,12 +2,16 @@
 
 import { flushActiveEditors } from "@/lib/editor/flush";
 import { requestInsertTemplate } from "@/lib/editor/insert-template";
+import { requestInsertText } from "@/lib/editor/insert-text";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 import { isCanvasPath } from "./canvas";
 import { useVaultStore } from "./store";
 import {
   appendTemplate,
+  DEFAULT_DATE_FORMAT,
+  DEFAULT_TIME_FORMAT,
   fillBlankNote,
+  formatDate,
   isBlankNote,
   renderTemplate,
   shiftDate,
@@ -152,6 +156,23 @@ export async function newNoteFromTemplate(
   const path = id ? useVaultStore.getState().nodes[id]?.path : null;
   if (path) requestWriteFocus(path);
   return id;
+}
+
+/** Today's date or the time at the caret, in the formats from Template settings. */
+export function insertCurrentMoment(kind: "date" | "time"): boolean {
+  const st = useVaultStore.getState();
+  const id = st.activeNoteId;
+  const node = id ? st.nodes[id] : null;
+  if (!id || !node || node.kind !== "note" || isCanvasPath(node.path)) {
+    st.setToast(`Open a note to insert the ${kind}`);
+    return false;
+  }
+  const { dateFormat, timeFormat } = templateFormats();
+  const format =
+    kind === "date" ? dateFormat?.trim() || DEFAULT_DATE_FORMAT : timeFormat?.trim() || DEFAULT_TIME_FORMAT;
+  if (requestInsertText(id, formatDate(new Date(), format))) return true;
+  st.setToast(`Switch to editing to insert the ${kind}`);
+  return false;
 }
 
 /** New meeting / idea / project: a vault template with the same name wins. */

@@ -24,6 +24,7 @@ import {
 } from "@/lib/editor/find-target";
 import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { registerInsertTemplate } from "@/lib/editor/insert-template";
+import { registerInsertText } from "@/lib/editor/insert-text";
 import { insertTemplateAt } from "@/lib/vault/template-engine";
 
 interface Props {
@@ -437,6 +438,18 @@ export function SourceEditor({
       const without = current.slice(0, start) + current.slice(end);
       const { markdown, caret } = insertTemplateAt(without, start, rendered);
       applyValue(markdown, caret);
+      return true;
+    });
+  }, [applyValue]);
+
+  useEffect(() => {
+    return registerInsertText((targetId, text) => {
+      const ta = taRef.current;
+      if (!ta || noteIdRef.current !== targetId) return false;
+      const current = valueRef.current;
+      const start = ta.selectionStart ?? current.length;
+      const end = ta.selectionEnd ?? start;
+      applyValue(current.slice(0, start) + text + current.slice(end), start + text.length);
       return true;
     });
   }, [applyValue]);

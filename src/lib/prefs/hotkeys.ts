@@ -30,7 +30,9 @@ export type HotkeyId =
   | "pinNote"
   | "insertWikilink"
   | "insertTemplate"
-  | "newFromTemplate";
+  | "newFromTemplate"
+  | "insertDate"
+  | "insertTime";
 
 export type HotkeyChord = {
   key: string;
@@ -66,6 +68,8 @@ export const HOTKEY_IDS: HotkeyId[] = [
   "insertWikilink",
   "insertTemplate",
   "newFromTemplate",
+  "insertDate",
+  "insertTime",
 ];
 
 // Obsidian's everyday chords where they exist: Ctrl/Cmd+O finds a note,
@@ -97,6 +101,9 @@ export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   // Ctrl/Cmd+T and Ctrl/Cmd+Shift+T belong to the browser.
   insertTemplate: { key: "t", alt: true },
   newFromTemplate: { key: "n", alt: true },
+  // Cmd+Option+D toggles the Dock on macOS, so these take Shift as well.
+  insertDate: { key: "d", alt: true, shift: true },
+  insertTime: { key: "t", alt: true, shift: true },
 };
 
 /** Second default chords, as in Obsidian. A remap of the action replaces them. */
@@ -131,6 +138,8 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   insertWikilink: "Insert wikilink ([[)",
   insertTemplate: "Insert template",
   newFromTemplate: "New note from template",
+  insertDate: "Insert current date",
+  insertTime: "Insert current time",
 };
 
 const ID_SET = new Set<string>(HOTKEY_IDS);

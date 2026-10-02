@@ -151,14 +151,37 @@ const daily = buildDailyNoteContent(date, yesterday);
 assert.match(daily, /^# .+\n\n\*2026-03-01\*\n\n## Focus/);
 assert.match(daily, /## From yesterday\n\n- \[ \] Ship templates\n- \[ \] Call Ana\n\n## Later/);
 
-// Properties merge into the note; the note's values win
+// Properties merge into the note: missing ones are added, lists combine,
+// empty ones fill, and any other value the note has stays
+const props = (note, tpl) => mergeTemplateProperties(`---\n${note}\n---\n\nBody`, tpl).markdown;
 const merged = mergeTemplateProperties("---\ntags: work\n---\n\nBody", "tags: meeting\ntype: meeting\naliases:\n  - sync");
-assert.equal(merged.markdown, "---\ntags: work\ntype: meeting\naliases:\n  - sync\n---\n\nBody");
+assert.equal(merged.markdown, "---\ntags:\n  - work\n  - meeting\ntype: meeting\naliases:\n  - sync\n---\n\nBody");
 assert.equal(merged.markdown.slice(merged.newBodyStart), "\nBody");
-const unchanged = mergeTemplateProperties("---\ntags: work\n---\nBody", "tags: other");
-assert.equal(unchanged.markdown, "---\ntags: work\n---\nBody");
+const unchanged = mergeTemplateProperties("---\nstatus: done\n---\nBody", "status: draft");
+assert.equal(unchanged.markdown, "---\nstatus: done\n---\nBody", "a value the note has wins");
+assert.equal(unchanged.newBodyStart, unchanged.oldBodyStart);
 const listMerge = mergeTemplateProperties("Body", "tags:\n- a\n- b");
 assert.equal(listMerge.markdown, "---\ntags:\n- a\n- b\n---\n\nBody");
+assert.equal(props("tags: [a, b]", "tags: [b, c]"), "---\ntags: [a, b, c]\n---\n\nBody", "flow lists combine");
+assert.equal(props("tags:\n- a", "tags: [A, '#c', c]"), "---\ntags:\n- a\n- '#c'\n---\n\nBody", "tags compare without case or #");
+assert.equal(props("tags:\n  - a\n  - b", "tags:\n  - b\n  - a"), "---\ntags:\n  - a\n  - b\n---\n\nBody");
+assert.equal(props("aliases: Sync", "aliases:\n  - Standup"), "---\naliases:\n  - Sync\n  - Standup\n---\n\nBody");
+assert.equal(props("tags: a, b", "tags: c"), "---\ntags:\n  - a\n  - b\n  - c\n---\n\nBody");
+assert.equal(props("people:\n  - Ana", "people: [Bo, Ana]"), "---\npeople:\n  - Ana\n  - Bo\n---\n\nBody", "any list on both sides combines");
+assert.equal(props("owner: Ana", "owner: [Bo]"), "---\nowner: Ana\n---\n\nBody", "a single value is not turned into a list");
+assert.equal(props("status:", "status: draft"), "---\nstatus: draft\n---\n\nBody", "an empty property is filled");
+assert.equal(props("due: \"\"\ntags: []", "due: 2026-03-08\ntags: [x]"), "---\ndue: 2026-03-08\ntags: [x]\n---\n\nBody");
+assert.equal(props("tags:\n  - ", "tags:\n  - x"), "---\ntags:\n  - x\n---\n\nBody");
+assert.equal(props("status: done", "status:\ntags:"), "---\nstatus: done\ntags:\n---\n\nBody", "an empty template value never clears the note's");
+assert.equal(
+  props("\"due date\": x", "due date: y\n'Owner': z"),
+  "---\n\"due date\": x\n'Owner': z\n---\n\nBody",
+  "quoted and plain keys are the same property",
+);
+assert.equal(props("# kept\ntags: a # first", "tags: b"), "---\n# kept\ntags:\n  - a\n  - b\n---\n\nBody");
+assert.equal(props("url: https://x.test/a:b", "url: https://y.test"), "---\nurl: https://x.test/a:b\n---\n\nBody");
+assert.equal(props("tags: [a]", "tags: [a]\nstatus:"), "---\ntags: [a]\nstatus:\n---\n\nBody");
+assert.equal(mergeTemplateProperties("Body", "").markdown, "Body");
 
 // Insert at the caret
 const note = "---\ntags: work\n---\n\n# Plan\n\nBefore|After";
@@ -166,6 +189,25 @@ const caret = note.indexOf("|");
 const ins = insertTemplateAt(note.replace("|", ""), caret, "---\nstatus: draft\n---\n\n- [ ] {{x}}\n");
 assert.equal(ins.markdown, "---\ntags: work\nstatus: draft\n---\n\n# Plan\n\nBefore- [ ] {{x}}\nAfter");
 assert.equal(ins.markdown.slice(0, ins.caret).endsWith("- [ ] {{x}}\n"), true);
+// Properties land wherever the caret is, and the body still goes at the caret
+const mid = "---\ntags: [work]\nstatus: done\n---\n\n# Plan\n\nFirst line\nSecond| line";
+const midIns = insertTemplateAt(
+  mid.replace("|", ""),
+  mid.indexOf("|"),
+  "---\ntags: [meeting, work]\nstatus: draft\nowner: Ana\n---\n\nX",
+);
+assert.equal(
+  midIns.markdown,
+  "---\ntags: [work, meeting]\nstatus: done\nowner: Ana\n---\n\n# Plan\n\nFirst line\nSecondX line",
+);
+assert.equal(midIns.markdown.slice(0, midIns.caret).endsWith("SecondX"), true);
+const inYaml = insertTemplateAt("---\ntags: a\n---\nBody", 6, "---\ntags: b\n---\nZ");
+assert.equal(inYaml.markdown, "---\ntags:\n  - a\n  - b\n---\n\nBodyZ", "a caret inside the properties inserts after the note");
+const onlyProps = insertTemplateAt("# T\n\nText", 5, "---\ntags: x\n---\n");
+assert.equal(onlyProps.markdown, "---\ntags: x\n---\n\n# T\n\nText", "a template of only properties still applies them");
+const crlf = mergeTemplateProperties("---\r\ntags: a\r\n---\r\nBody", "tags: b");
+assert.equal(crlf.markdown, "---\ntags:\n  - a\n  - b\n---\n\nBody", "Windows line endings merge too");
+assert.equal(appendTemplate("---\ntags: a\n---\nNotes", "---\ntags: [b]\n---\nMore"), "---\ntags:\n  - a\n  - b\n---\n\nNotes\n\nMore");
 const plain = insertTemplateAt("ab", 1, "X");
 assert.deepEqual(plain, { markdown: "aXb", caret: 2 }, "a one-line template stays inline");
 const block = insertTemplateAt("Intro\n\nNext\n", 5, "## Standup\n- a\n");
@@ -179,6 +221,10 @@ assert.equal(isBlankNote("---\na: 1\n---\n\n"), true);
 assert.equal(isBlankNote("# Untitled\n\ntext"), false);
 assert.equal(fillBlankNote("# Untitled\n\n", "## Agenda\n- "), "# Untitled\n\n## Agenda\n- ");
 assert.equal(fillBlankNote("# Untitled\n\n", "---\ntags: x\n---\n# Sync\n"), "---\ntags: x\n---\n\n# Sync\n");
+assert.equal(
+  fillBlankNote("---\ntags: [a]\n---\n# Untitled\n", "---\ntags: [b]\nstatus: new\n---\nBody"),
+  "---\ntags: [a, b]\nstatus: new\n---\n\n# Untitled\n\nBody",
+);
 assert.equal(appendTemplate("Notes\n\n\n", "More"), "Notes\n\nMore");
 
 // Discovery: notes under the top-level Templates folder
@@ -250,12 +296,24 @@ assert.deepEqual(templateFormats(), { dateFormat: "YYYY-MM-DD", timeFormat: "HH:
 const { DEFAULT_HOTKEYS, HOTKEY_IDS, HOTKEY_LABELS, conflictingHotkeyId, sanitizeHotkeyOverrides } = await import(
   "../src/lib/prefs/hotkeys.ts"
 );
-for (const id of ["insertTemplate", "newFromTemplate"]) {
+for (const id of ["insertTemplate", "newFromTemplate", "insertDate", "insertTime"]) {
   assert.ok(HOTKEY_IDS.includes(id) && HOTKEY_LABELS[id] && DEFAULT_HOTKEYS[id]);
   assert.equal(conflictingHotkeyId(id, DEFAULT_HOTKEYS[id], {}), null, `${id} has a free default`);
 }
 assert.deepEqual(sanitizeHotkeyOverrides({ insertTemplate: { key: "I", alt: true } }), {
   insertTemplate: { key: "i", alt: true },
 });
+const defaults = HOTKEY_IDS.map((id) => JSON.stringify(DEFAULT_HOTKEYS[id]));
+assert.equal(new Set(defaults).size, defaults.length, "every default chord is distinct");
+
+// Insert current date / time type the formatted moment at the caret
+const { registerInsertText, requestInsertText } = await import("../src/lib/editor/insert-text.ts");
+let typed = null;
+const off = registerInsertText((noteId, text) => (noteId === "n1" ? ((typed = text), true) : false));
+assert.equal(requestInsertText("n2", "x"), false, "only the editor showing that note takes it");
+assert.equal(requestInsertText("n1", formatDate(date, "YYYY-MM-DD")), true);
+assert.equal(typed, "2026-03-01");
+off();
+assert.equal(requestInsertText("n1", "x"), false);
 
 console.log("templates contract: OK");

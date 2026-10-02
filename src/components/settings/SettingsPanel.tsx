@@ -863,7 +863,7 @@ export function SettingsPanel() {
             </div>
             <FormatField
               label="Date format"
-              hint="Used by {{date}}, {{yesterday}}, and {{date+7}}"
+              hint="Used by {{date}}, {{yesterday}}, {{date+7}}, and Insert current date"
               value={prefs.templateDateFormat}
               fallback={DEFAULT_DATE_FORMAT}
               testId="settings-template-date-format"
@@ -871,7 +871,7 @@ export function SettingsPanel() {
             />
             <FormatField
               label="Time format"
-              hint="Used by {{time}}"
+              hint="Used by {{time}} and Insert current time"
               value={prefs.templateTimeFormat}
               fallback={DEFAULT_TIME_FORMAT}
               testId="settings-template-time-format"
@@ -887,7 +887,7 @@ export function SettingsPanel() {
             </p>
             <div className="mt-4 text-[13px] font-medium text-[var(--text-primary)]">Hotkeys</div>
             <ul className="mt-1 space-y-1" data-testid="settings-template-hotkeys">
-              {(["insertTemplate", "newFromTemplate", "daily"] as const).map((id) => (
+              {(["insertTemplate", "newFromTemplate", "insertDate", "insertTime", "daily"] as const).map((id) => (
                 <HotkeyRow
                   key={id}
                   id={id}

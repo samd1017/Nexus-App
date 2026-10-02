@@ -26,6 +26,7 @@ import {
   Search,
   Sparkles,
   CalendarDays,
+  Clock,
   Lightbulb,
   Users,
   FolderKanban,
@@ -50,7 +51,7 @@ import { THEME_CHOICES, usePrefsStore } from "@/lib/prefs/preferences";
 import { useCssSnippetStore } from "@/lib/appearance/snippets";
 import { describeSearchEngine } from "@/lib/search/search-backend";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
-import { newNoteFromStarter, openTemplatePicker } from "@/lib/vault/template-session";
+import { insertCurrentMoment, newNoteFromStarter, openTemplatePicker } from "@/lib/vault/template-session";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
 import {
@@ -394,6 +395,28 @@ function CommandPaletteOpen() {
           run: wrapRun("new-from-template", () => {
             setCommandOpen(false);
             openTemplatePicker("new");
+          }),
+        },
+        {
+          id: "insert-date",
+          label: "Insert current date",
+          keywords: ["template", "templates", "date", "today", "insert", "timestamp"],
+          icon: <CalendarDays size={15} />,
+          shortcut: formatChord(resolveChord("insertDate", hotkeyOverrides)) as string | undefined,
+          run: wrapRun("insert-date", () => {
+            setCommandOpen(false);
+            insertCurrentMoment("date");
+          }),
+        },
+        {
+          id: "insert-time",
+          label: "Insert current time",
+          keywords: ["template", "templates", "time", "now", "insert", "timestamp"],
+          icon: <Clock size={15} />,
+          shortcut: formatChord(resolveChord("insertTime", hotkeyOverrides)) as string | undefined,
+          run: wrapRun("insert-time", () => {
+            setCommandOpen(false);
+            insertCurrentMoment("time");
           }),
         },
         {
