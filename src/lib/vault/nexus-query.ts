@@ -1,7 +1,7 @@
 /**
  * Built-in note list for one fenced block.
  * LIST or TABLE, FROM a folder or tag, WHERE comparisons joined by AND and OR (up to 8; AND binds tighter),
- * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
+ * including date(), > < comparisons, contains(), and file.tags = exact tag membership, TABLE columns from frontmatter,
  * a TABLE formula of up to three + - * / left to right, or choice(condition, a, b), tags joined by OR or AND,
  * SORT title|mtime|size|ctime or a field.
  * FLATTEN file.outlinks is one row per outgoing link.
@@ -25,13 +25,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status rows lists one level of notes in each partition. A TABLE formula is up to three + - * /, left to right, with no parentheses. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status rows lists one level of notes in each partition. A TABLE formula is up to three + - * /, left to right, with no parentheses. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, such as price * 2 + 1 or file.name + " · " + status. No parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, such as price * 2 + 1 or file.name + " · " + status. No parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -463,15 +463,25 @@ function linkMembership(cmp: WhereCmp): { join: "out" | "in"; needle: string } |
   return null;
 }
 
-/** Same shape rules WHERE already uses. Link-list `=` is membership; other ops are not. */
+/**
+ * Exact tag token on file.tags / tags. `=` with text only.
+ * contains() on tags stays a substring of the joined list. Other comparisons stay rejected.
+ */
+function tagMembership(cmp: WhereCmp): string | null {
+  if (columnKey(cmp.field) !== "tags") return null;
+  if (cmp.kind !== "cmp" || cmp.op !== "eq" || cmp.value.kind !== "text") return null;
+  return cmp.value.text.trim().replace(/^#/, "").toLowerCase();
+}
+
+/** Same shape rules WHERE already uses. Link-list `=` and tag `=` are membership; other ops are not. */
 function whereCmpError(cmp: WhereCmp): string | null {
   if (linkListField(cmp.field) && !linkMembership(cmp)) {
     return `Use contains(${cmp.field}, "…") or ${cmp.field} = "Title". Other comparisons on a link list are not supported.`;
   }
   if (cmp.kind !== "contains") {
     const key = columnKey(cmp.field);
-    if (key === "tags") {
-      return `WHERE compares a frontmatter field, such as status = "draft". ${cmp.field} is a column.`;
+    if (key === "tags" && tagMembership(cmp) === null) {
+      return 'WHERE file.tags = "tag" or tags = "tag" keeps a note with that exact tag. Other comparisons on tags are not supported.';
     }
     if (key === "mtime" && cmp.value.kind === "text") {
       return "file.mtime compares a date, such as file.mtime > date(today).";
@@ -1109,6 +1119,11 @@ function whereMatch(
     }
     const labels = links.incoming.get(node.id) ?? [];
     return labels.some((label) => label === membership.needle) ? "yes" : "no";
+  }
+  const tagNeedle = tagMembership(where);
+  if (tagNeedle !== null) {
+    if (!tagNeedle) return "no";
+    return tagsOf(node).some((tag) => tag === tagNeedle) ? "yes" : "no";
   }
   if (where.kind === "contains") {
     const actual = fieldActual(node, where.field);

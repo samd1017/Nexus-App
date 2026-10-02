@@ -190,6 +190,9 @@ assert.equal(NEXUS_QUERY_DQL.includes("WHERE does not compare a link list"), fal
 assert.equal(NEXUS_QUERY_DQL.includes('contains(file.outlinks, "Title")'), true);
 assert.equal(NEXUS_QUERY_DQL.includes('file.outlinks = "Title"'), true);
 assert.equal(NEXUS_QUERY_DQL.includes("same exact-title membership"), true);
+assert.equal(NEXUS_QUERY_DQL.includes('file.tags = "graph"'), true);
+assert.equal(NEXUS_QUERY_DQL.includes('tags = "graph"'), true);
+assert.equal(NEXUS_QUERY_DQL.includes("exact tag"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("is not supported — use contains"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("GROUP BY status"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("LIMIT 3"), true);
@@ -252,6 +255,9 @@ assert.match(noteList.content, /contains\(file\.outlinks, "Welcome"\)/);
 assert.match(noteList.content, /contains\(file\.inlinks, "Welcome"\)/);
 assert.match(noteList.content, /file\.outlinks = "Welcome"/);
 assert.match(noteList.content, /same exact-title membership/);
+assert.match(noteList.content, /file\.tags = "graph"/);
+assert.match(noteList.content, /tags = "graph"/);
+assert.match(noteList.content, /exact tag/);
 assert.doesNotMatch(noteList.content, /is not supported — use contains/);
 assert.doesNotMatch(noteList.content, /WHERE does not compare a link list/);
 assert.doesNotMatch(noteList.content, /no joins/);
@@ -470,6 +476,7 @@ assert.match(choiceCol.footer, /up to three \+ - \* \//);
 assert.match(choiceCol.footer, /No join of two queries/);
 assert.doesNotMatch(choiceCol.footer, /A TABLE formula is one \+ - \* \//);
 assert.match(choiceCol.footer, /same exact-title membership/);
+assert.match(choiceCol.footer, /exact tag/);
 assert.doesNotMatch(choiceCol.footer, /is not supported — use contains/);
 assert.match(choiceCol.footer, /AND binds tighter than OR/);
 assert.doesNotMatch(choiceCol.footer, /cannot mix AND and OR/);
@@ -527,6 +534,21 @@ const notRegex = runNexusQuery('LIST FROM path:Research WHERE contains(file.name
 assert.equal(notRegex.rows.length, 0);
 const tagContains = runNexusQuery('LIST FROM path:Research WHERE contains(file.tags, "graph")', nodes);
 assert.deepEqual(tagContains.rows.map((r) => r.id), ["g"]);
+const tagEq = runNexusQuery('LIST FROM path:Research WHERE file.tags = "graph"', nodes);
+assert.equal(tagEq.error, null);
+assert.doesNotMatch(tagEq.error ?? "", /not Dataview/);
+assert.deepEqual(tagEq.rows.map((r) => r.id), ["g"]);
+const tagBare = runNexusQuery('LIST FROM path:Research WHERE tags = "links"', nodes);
+assert.equal(tagBare.error, null);
+assert.deepEqual(tagBare.rows.map((r) => r.id), ["g"]);
+const tagHash = runNexusQuery('LIST FROM path:Research WHERE file.tags = "#writing"', nodes);
+assert.deepEqual(tagHash.rows.map((r) => r.id), ["c"]);
+const tagCase = runNexusQuery('LIST FROM path:Research WHERE file.tags = "Graph"', nodes);
+assert.deepEqual(tagCase.rows.map((r) => r.id), ["g"]);
+const tagPrefix = runNexusQuery('LIST FROM path:Research WHERE file.tags = "gra"', nodes);
+assert.equal(tagPrefix.error, null);
+assert.equal(tagPrefix.rows.length, 0);
+assert.equal(queryNeedsFrontmatter('LIST FROM path:Research WHERE file.tags = "graph"'), false);
 const mtimeContains = runNexusQuery('LIST FROM path:Journal WHERE contains(file.mtime, "2026-10-01")', nodes);
 assert.deepEqual(mtimeContains.rows.map((r) => r.id), ["f"]);
 const sized = {
@@ -874,7 +896,44 @@ assert.ok(!demoIn.rows.some((r) => r.link === "Graph View"));
 assert.match(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /WHERE filters a tag or a field/);
 assert.doesNotMatch(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /not Dataview/);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE file.mtime = "soon"', shop).error, /compares a date/);
-assert.match(runNexusQuery('LIST FROM path:Research WHERE file.tags = "graph"', shop).error, /is a column/);
+const tagEqShop = runNexusQuery('LIST FROM path:Research WHERE file.tags = "graph"', shop);
+assert.equal(tagEqShop.error, null);
+assert.deepEqual(tagEqShop.rows, []);
+assert.doesNotMatch(tagEqShop.error ?? "", /is a column/);
+assert.doesNotMatch(tagEqShop.error ?? "", /not Dataview/);
+const tagNeq = runNexusQuery('LIST FROM path:Research WHERE file.tags != "graph"', nodes);
+assert.match(tagNeq.error, /Other comparisons on tags are not supported/);
+assert.doesNotMatch(tagNeq.error, /not Dataview/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE tags > "graph"', nodes).error, /compare a date or a number/);
+const tagLists = {
+  r: folder("r", "Research"),
+  wide: { ...note("wide", "Research/Wide.md", "# Wide\n\n#graphic\n"), parentId: "r", mtime: 1 },
+  nested: { ...note("nested", "Research/Nested.md", "---\ntags: [planning/q4, review]\n---\n# Nested\n"), parentId: "r", mtime: 2 },
+  both: { ...note("both", "Research/Both.md", "---\nstatus: draft\ntags: graph\n---\n# Both\n"), parentId: "r", mtime: 3 },
+  hobbies: { ...note("hobbies", "Research/Hobbies.md", "---\nhobbies: [read, write]\n---\n# Hobbies\n"), parentId: "r", mtime: 4 },
+};
+const exactGraphic = runNexusQuery('LIST FROM path:Research WHERE file.tags = "graph"', tagLists);
+assert.deepEqual(exactGraphic.rows.map((r) => r.id), ["both"]);
+const subGraphic = runNexusQuery('LIST FROM path:Research WHERE contains(file.tags, "graph")', tagLists);
+assert.deepEqual(subGraphic.rows.map((r) => r.id).sort(), ["both", "wide"]);
+const nestedExact = runNexusQuery('LIST FROM path:Research WHERE tags = "planning/q4"', tagLists);
+assert.deepEqual(nestedExact.rows.map((r) => r.id), ["nested"]);
+const nestedPrefix = runNexusQuery('LIST FROM path:Research WHERE tags = "planning"', tagLists);
+assert.equal(nestedPrefix.error, null);
+assert.equal(nestedPrefix.rows.length, 0);
+const andTag = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND file.tags = "graph"', tagLists);
+assert.deepEqual(andTag.rows.map((r) => r.id), ["both"]);
+const orTag = runNexusQuery('LIST FROM path:Research WHERE file.tags = "review" OR file.tags = "graphic"', tagLists);
+assert.deepEqual(orTag.rows.map((r) => r.id).sort(), ["nested", "wide"]);
+const choiceTag = runNexusQuery('TABLE choice(file.tags = "graph", "yes", "no") FROM path:Research', tagLists);
+assert.equal(choiceTag.error, null);
+assert.equal(choiceTag.rows.find((r) => r.id === "both").fields[0].value, "yes");
+assert.equal(choiceTag.rows.find((r) => r.id === "wide").fields[0].value, "no");
+const scalarList = runNexusQuery('LIST FROM path:Research WHERE hobbies = "read"', tagLists);
+assert.equal(scalarList.error, null);
+assert.equal(scalarList.rows.length, 0);
+const scalarWhole = runNexusQuery('LIST FROM path:Research WHERE hobbies = "[read, write]"', tagLists);
+assert.deepEqual(scalarWhole.rows.map((r) => r.id), ["hobbies"]);
 const clock = Date.UTC(2026, 9, 1, 15, 0);
 const dueAfter = runNexusQuery('LIST FROM path:Research WHERE due > date(today)', shop, null, clock);
 assert.equal(dueAfter.error, null);
