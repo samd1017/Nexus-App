@@ -765,10 +765,23 @@ function formatMtime(mtime: number): string {
   return d.toISOString().slice(0, 16).replace("T", " ");
 }
 
-/** Byte length already stored on the note. Missing stays blank so the cell shows —. */
-function formatSize(size: number | undefined): string {
-  if (typeof size !== "number" || !Number.isFinite(size) || size < 0) return "";
-  return String(Math.trunc(size));
+function utf8Size(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/**
+ * Catalog size when the vault stored one (a canvas file stays that length).
+ * A loaded body fills in when catalog size is missing. Neither stays blank.
+ */
+function noteByteSize(node: VaultNode): number | null {
+  if (typeof node.size === "number" && Number.isFinite(node.size) && node.size >= 0) return Math.trunc(node.size);
+  if (typeof node.content === "string") return utf8Size(node.content);
+  return null;
+}
+
+function formatSize(size: number | null): string {
+  if (size == null) return "";
+  return String(size);
 }
 
 function hasTags(node: VaultNode, tags: string[], mode: TagJoin): boolean {
@@ -800,7 +813,7 @@ function fieldActual(node: VaultNode, field: string): string | null {
   if (key === "tags") return tagsOf(node).join(", ");
   if (key === "mtime") return formatMtime(node.mtime);
   if (key === "file.ctime") return formatMtime(node.ctime || 0);
-  if (key === "file.size") return formatSize(node.size);
+  if (key === "file.size") return formatSize(noteByteSize(node));
   if (key === "file.name") return noteTitle(node);
   if (key === "file.path") return node.path;
   if (key === "file.folder") return folderOf(node.path);
@@ -929,10 +942,9 @@ function whereMatch(
     return ordered(stamp, where.value.n, where.op) ? "yes" : "no";
   }
   if (key === "file.size" && where.value.kind === "number") {
-    if (typeof node.size !== "number" || !Number.isFinite(node.size) || node.size < 0) {
-      return where.op === "neq" ? "yes" : "no";
-    }
-    return ordered(node.size, where.value.n, where.op) ? "yes" : "no";
+    const n = noteByteSize(node);
+    if (n === null) return where.op === "neq" ? "yes" : "no";
+    return ordered(n, where.value.n, where.op) ? "yes" : "no";
   }
   const actual = fieldActual(node, where.field);
   if (actual === null) return "unloaded";
@@ -1279,10 +1291,10 @@ export function runNexusQuery(
       const delta = av - bv;
       if (delta) return delta * dir;
     } else if (sortKey === "size") {
-      const aMissing = typeof a.size !== "number" || !Number.isFinite(a.size) || a.size < 0;
-      const bMissing = typeof b.size !== "number" || !Number.isFinite(b.size) || b.size < 0;
-      if (aMissing !== bMissing) return aMissing ? 1 : -1;
-      if (!aMissing && !bMissing && a.size !== b.size) return ((a.size ?? 0) - (b.size ?? 0)) * dir;
+      const av = noteByteSize(a);
+      const bv = noteByteSize(b);
+      if ((av === null) !== (bv === null)) return av === null ? 1 : -1;
+      if (av !== null && bv !== null && av !== bv) return (av - bv) * dir;
     } else if (sortKey !== "title") {
       const delta = compareFieldSort(a, b, sortKey, dir);
       if (delta) return delta;

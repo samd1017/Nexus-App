@@ -423,7 +423,7 @@ const sizeTable = runNexusQuery("TABLE file.size, file.ctime FROM path:Research"
 assert.equal(sizeTable.error, null);
 assert.equal(sizeTable.rows.find((r) => r.id === "big").fields.map((f) => f.value).join("|"), "400|2026-10-01 08:00");
 assert.equal(sizeTable.rows.find((r) => r.id === "small").fields[0].value, "40");
-assert.equal(sizeTable.rows.find((r) => r.id === "bare").fields.map((f) => f.value).join("|"), "—|—");
+assert.equal(sizeTable.rows.find((r) => r.id === "bare").fields.map((f) => f.value).join("|"), "7|—");
 assert.doesNotMatch(sizeTable.error ?? "", /not Dataview/);
 const bigger = runNexusQuery("LIST FROM path:Research WHERE file.size > 100", sized);
 assert.deepEqual(bigger.rows.map((r) => r.id), ["big"]);
@@ -436,7 +436,33 @@ assert.deepEqual(bySize.rows.map((r) => r.id), ["big", "small", "bare"]);
 const byBorn = runNexusQuery("LIST FROM path:Research SORT file.ctime", sized);
 assert.deepEqual(byBorn.rows.map((r) => r.id), ["bare", "small", "big"]);
 const sizeGroups = runNexusQuery("LIST FROM path:Research GROUP BY file.size", sized);
-assert.deepEqual(sizeGroups.rows.map((r) => r.group), ["40", "400", "—"]);
+assert.deepEqual(sizeGroups.rows.map((r) => r.group), ["7", "40", "400"]);
+const unsized = {
+  r: folder("r", "Research"),
+  body: { ...note("body", "Research/Loaded.md", "abcdef"), parentId: "r", mtime: 1 },
+  canvas: {
+    ...note("canvas", "Research/Untitled.canvas", "this body is longer than thirty three bytes!!"),
+    parentId: "r",
+    mtime: 2,
+    size: 33,
+  },
+  ghost: { id: "ghost", path: "Research/Ghost.md", name: "Ghost.md", kind: "note", parentId: "r", mtime: 3 },
+};
+const { resetVaultIndex } = await import("../src/lib/vault/indexes.ts");
+resetVaultIndex();
+const shownSize = runNexusQuery("TABLE file.size FROM path:Research SORT file.size desc", unsized);
+assert.deepEqual(
+  shownSize.rows.map((r) => [r.id, r.fields[0].value]),
+  [
+    ["canvas", "33"],
+    ["body", "6"],
+    ["ghost", "—"],
+  ],
+);
+const bodyHit = runNexusQuery("LIST FROM path:Research WHERE file.size > 5", unsized);
+assert.deepEqual(bodyHit.rows.map((r) => r.id).sort(), ["body", "canvas"]);
+const catalogOnly = runNexusQuery("LIST FROM path:Research WHERE file.size > 30", unsized);
+assert.deepEqual(catalogOnly.rows.map((r) => r.id), ["canvas"]);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE file.size = "soon"', sized).error, /compares a number/);
 assert.doesNotMatch(runNexusQuery('LIST FROM path:Research WHERE file.size = "soon"', sized).error, /not Dataview/);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE file.ctime = "soon"', sized).error, /compares a date/);
