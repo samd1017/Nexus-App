@@ -1,5 +1,5 @@
 /**
- * Hard UI soak: demo + 45k large-test.
+ * Hard UI scale check: demo + 45k large-test.
  * Measures app-ready separately from fixed waits. Fails on the ~1s common-op bar
  * (cold open may exceed 1s if progress is visible and the UI stays responsive).
  *
@@ -28,7 +28,7 @@ function now() {
 async function probe(page) {
   return page.evaluate(() => {
     const fn = window.__NEXUS_STRESS__;
-    const last = window.__NEXUS_SOAK_LAST__;
+    const last = window.__NEXUS_SCALE_LAST__;
     return {
       stress: typeof fn === "function" ? fn() : null,
       last: last || null,
@@ -47,7 +47,7 @@ async function clearVault(page) {
       localStorage.setItem("nexus-first-run-coach-v1", "done");
     } catch {}
     try {
-      await window.__NEXUS_SOAK__?.clearOverlay?.();
+      await window.__NEXUS_SCALE__?.clearOverlay?.();
     } catch {}
   });
 }
@@ -84,7 +84,7 @@ function p95(samples) {
 async function switchSample(page, id) {
   return appReadyOp(
     page,
-    () => page.evaluate((noteId) => window.__NEXUS_SOAK__?.setActiveNote?.(noteId), id),
+    () => page.evaluate((noteId) => window.__NEXUS_SCALE__?.setActiveNote?.(noteId), id),
     async () => {
       const p = await probe(page);
       if (p.stress?.activeNoteId !== id) return null;
@@ -256,7 +256,7 @@ async function runDemoStress(page, errors) {
   const before = await probe(page);
   const created = await appReadyOp(
     page,
-    () => page.evaluate(() => window.__NEXUS_SOAK__?.createNote(null, "Soak Created")),
+    () => page.evaluate(() => window.__NEXUS_SCALE__?.createNote(null, "Scale Created")),
     async () => {
       const p = await probe(page);
       if (p.stress && before.stress && p.stress.notes > before.stress.notes) return p;
@@ -483,7 +483,7 @@ async function runLargeStress(page, errors) {
   const created = await appReadyOp(
     page,
     async () => {
-      const id = await page.evaluate(() => window.__NEXUS_SOAK__?.createNote(null, "Soak Created"));
+      const id = await page.evaluate(() => window.__NEXUS_SCALE__?.createNote(null, "Scale Created"));
       return id;
     },
     async () => {
@@ -500,13 +500,13 @@ async function runLargeStress(page, errors) {
   failIfSlow(result, "newNote", created.appReadyMs, COMMON_OP_MS, result.blockers);
   const createdPath =
     created.value?.stress?.lastNotePath || created.value?.stress?.activeNotePath;
-  if (!createdPath || !/Soak Created/i.test(String(createdPath))) {
+  if (!createdPath || !/Scale Created/i.test(String(createdPath))) {
     result.ok = false;
     result.blockers.push(
-      `createNote lastNotePath=${createdPath} (expected Soak Created)`,
+      `createNote lastNotePath=${createdPath} (expected Scale Created)`,
     );
   }
-  await page.evaluate(() => window.__NEXUS_SOAK__?.flushOverlay?.());
+  await page.evaluate(() => window.__NEXUS_SCALE__?.flushOverlay?.());
 
   const typed = await typeInEditor(page, " 45k editor type");
   result.steps.editorTyped = typed.typed;
@@ -516,7 +516,7 @@ async function runLargeStress(page, errors) {
     result.blockers.push("45k editorTyped=false");
   }
 
-  const ids = await page.evaluate(() => window.__NEXUS_SOAK__?.noteIds?.(8) || []);
+  const ids = await page.evaluate(() => window.__NEXUS_SCALE__?.noteIds?.(8) || []);
   let switchCount = 0;
   const switchSamples = [];
   for (const id of ids) {
@@ -540,7 +540,7 @@ async function runLargeStress(page, errors) {
   }
   failIfSlow(result, "switchNotes", switchMax, COMMON_OP_MS, result.blockers);
 
-  await page.evaluate(() => window.__NEXUS_SOAK__?.setRightTab?.("graph"));
+  await page.evaluate(() => window.__NEXUS_SCALE__?.setRightTab?.("graph"));
   const graphPanel = await waitFor(
     page,
     async () => {
@@ -551,7 +551,7 @@ async function runLargeStress(page, errors) {
     50,
   );
   result.steps.graphPanelReady = graphPanel;
-  const graphIds = await page.evaluate(() => window.__NEXUS_SOAK__?.noteIds?.(8) || []);
+  const graphIds = await page.evaluate(() => window.__NEXUS_SCALE__?.noteIds?.(8) || []);
   let graphSwitchCount = 0;
   const graphSwitchSamples = [];
   for (const id of graphIds) {
@@ -606,19 +606,19 @@ async function runLargeStress(page, errors) {
   }
 
   const seedPair = await page.evaluate(() => {
-    const soak = window.__NEXUS_SOAK__;
+    const scale = window.__NEXUS_SCALE__;
     const primary =
-      soak?.findNoteId?.("Brief-41936-jrg") ||
-      soak?.findNoteId?.("Concept-14473-dep") ||
-      (soak?.noteIds?.(12) || []).find((id) => !/Soak_Created/.test(id)) ||
+      scale?.findNoteId?.("Brief-41936-jrg") ||
+      scale?.findNoteId?.("Concept-14473-dep") ||
+      (scale?.noteIds?.(12) || []).find((id) => !/Scale_Created/.test(id)) ||
       null;
     const secondary =
-      soak?.findNoteId?.("Brief-02193-eyp") ||
-      soak?.findNoteId?.("Concept-15332-ycl") ||
-      (soak?.noteIds?.(16) || []).find((id) => id !== primary && !/Soak_Created/.test(id)) ||
+      scale?.findNoteId?.("Brief-02193-eyp") ||
+      scale?.findNoteId?.("Concept-15332-ycl") ||
+      (scale?.noteIds?.(16) || []).find((id) => id !== primary && !/Scale_Created/.test(id)) ||
       null;
-    if (primary) soak?.setActiveNote?.(primary);
-    if (secondary) soak?.setSecondaryNote?.(secondary);
+    if (primary) scale?.setActiveNote?.(primary);
+    if (secondary) scale?.setSecondaryNote?.(secondary);
     return { primary, secondary };
   });
   await waitFor(
@@ -632,7 +632,7 @@ async function runLargeStress(page, errors) {
     4000,
     25,
   );
-  await page.evaluate(() => window.__NEXUS_SOAK__?.flushOverlay?.());
+  await page.evaluate(() => window.__NEXUS_SCALE__?.flushOverlay?.());
   const preReload = await probe(page);
   const expectPath = preReload.stress?.activeNotePath;
   const expectSplit = Boolean(preReload.stress?.workspaceSplit);
@@ -701,16 +701,16 @@ async function runLargeStress(page, errors) {
   if (post.stress?.notes !== 45001) {
     result.ok = false;
     result.blockers.push(
-      `post-reload notes ${post.stress?.notes} !== 45001 (overlay should keep Soak Created)`,
+      `post-reload notes ${post.stress?.notes} !== 45001 (overlay should keep Scale Created)`,
     );
   }
   const overlayNote = await page.evaluate(() =>
-    window.__NEXUS_SOAK__?.findNoteId?.("Soak Created"),
+    window.__NEXUS_SCALE__?.findNoteId?.("Scale Created"),
   );
   result.steps.reloadOverlayNote = overlayNote;
   if (!overlayNote) {
     result.ok = false;
-    result.blockers.push("reload lost session-created Soak Created.md");
+    result.blockers.push("reload lost session-created Scale Created.md");
   }
   if ((post.stress?.bodiesLoaded ?? 99) > 20) {
     result.steps.bodyWarn = `bodiesLoaded=${post.stress.bodiesLoaded}`;

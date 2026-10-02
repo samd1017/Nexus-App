@@ -1,6 +1,6 @@
 /**
  * Grounded "Ask your notes" — extractive answers with citations.
- * No cloud LLM. Retrieves FTS hits, then lifts overlapping sentences.
+ * Retrieves FTS hits, then lifts overlapping sentences.
  */
 
 import type { SearchHit, VaultNode } from "@/lib/vault/types";
@@ -161,7 +161,7 @@ function composeAskSummary(
   }
   const q = question.replace(/^(ask:|\?)\s*/i, "").trim();
   if (!q) {
-    return "Ask your vault locally — no cloud. Try a starter below, or add path: folder: #tag −exclude.";
+    return "Search this vault on device. Try a starter below, or add path: folder: #tag −exclude.";
   }
   return `No matching notes for “${q}”. Narrow with path:Systems, folder:Research, #agents, or −welcome.`;
 }

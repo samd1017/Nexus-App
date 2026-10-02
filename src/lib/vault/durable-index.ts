@@ -31,14 +31,14 @@ export const DURABLE_INDEX_SQL = CONTRACT_SQL;
 /** Memory FTS only — not SQLite BM25. Never score more than this many inverted-index hits. */
 export const MEMORY_FTS_CANDIDATE_CAP = 800;
 /**
- * Max note ids stored per token. Ubiquitous soak words (`cluster`, `hub`,
+ * Max note ids stored per token. Ubiquitous scale words (`cluster`, `hub`,
  * `retrieval`) used to keep a 100k-id Set each. Search intersects uncapped
  * (rare) lists first so a 16-file token still hits.
  */
 export const MEMORY_FTS_POSTING_CAP = 800;
 /**
  * After a slim disk fill, drop unique (size-1) tokens until we are under this
- * many inverted keys. Meeting-* soak files otherwise create ~1 Set per note id.
+ * many inverted keys. Meeting-* scale files otherwise create ~1 Set per note id.
  */
 export const MEMORY_FTS_INV_TOKEN_CAP = 12_000;
 /** Skip O(n) title/path fallback above this vault size. */
@@ -799,7 +799,7 @@ export function rebuildDurableIndexFromNodes(
   idx.rebuildFromNodes(nodes);
 }
 
-/** Chunked full rebuild — use on soak / 45k mounts so the UI can paint. */
+/** Chunked full rebuild — use on scale / 45k mounts so the UI can paint. */
 export async function rebuildDurableIndexFromNodesAsync(
   vaultId: string | null,
   nodes: Record<string, VaultNode>,

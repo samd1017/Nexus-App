@@ -62,7 +62,7 @@ console.log("    The remaining titles list in the background and yield between b
 console.log("  Cold 100k retest: time title-useful and Ready on the existing vault.");
 console.log("    Neither should grow like a full folder listing. After Ready, open,");
 console.log("    scroll, graph, and title search stay responsive while names are still listing.");
-console.log("  Official vault only (SOAK-MANIFEST / npm run gen:soak-vault). Unofficial Meeting-*");
+console.log("  Official vault only (SCALE-MANIFEST / npm run gen:scale-vault). Unofficial Meeting-*");
 console.log("    folders with hub_files=0 are a false alarm — probe those with cluster only.");
 console.log("  After ready-meta, palette title search is live (not “try again when Ready”).");
 console.log("  A title the listing has not reached can miss until that batch lands.");

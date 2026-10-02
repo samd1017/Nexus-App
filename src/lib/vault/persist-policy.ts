@@ -4,14 +4,14 @@
  * Hard caps (browser):
  * - Never persist note bodies / node maps above PARTIALIZE_NODE_CAP (QuotaExceeded).
  * - Disk vaults never persist nodes (markdown on disk is canonical).
- * - Large in-memory seeds (45k / soak-*) persist a remount ticket instead of nodes
+ * - Large in-memory seeds (45k / scale-*) persist a remount ticket instead of nodes
  *   so reload can restore last note + dual-pane without blowing quota.
  * - Session creates/edits on those seeds go to IndexedDB overlay
  *   (`large-vault-overlay.ts`) and a small copy on the remount ticket.
  */
 
 import { isLargeMemoryVault } from "./scale-flags";
-import { isSyntheticSoakVault, parseSoakNoteCount } from "./synthetic-vault";
+import { isSyntheticScaleVault, parseScaleNoteCount } from "./synthetic-vault";
 import type { VaultMode, VaultSettings } from "./types";
 import {
   overlayEntriesFor,
@@ -22,7 +22,7 @@ import {
 export const PARTIALIZE_NODE_CAP = 2500;
 
 export type ScaleRemount = {
-  kind: "soak" | "large-test";
+  kind: "scale" | "large-test";
   vaultId: string;
   vaultName: string;
   noteCount: number | null;
@@ -69,9 +69,9 @@ export function buildScaleRemount(s: PersistInput): ScaleRemount | null {
   const id = s.vaultId ?? null;
   if (!id || !isLargeMemoryVault(id)) return s.scaleRemount ?? null;
   const st = settingsOf(s);
-  const soakN =
-    (typeof st.soakNoteCount === "number" ? st.soakNoteCount : null) ??
-    parseSoakNoteCount(id);
+  const scaleN =
+    (typeof st.scaleNoteCount === "number" ? st.scaleNoteCount : null) ??
+    parseScaleNoteCount(id);
   const overlay = overlayEntriesFor(id)
     .slice(-80)
     .map((e) => ({
@@ -80,10 +80,10 @@ export function buildScaleRemount(s: PersistInput): ScaleRemount | null {
         typeof e.content === "string" ? e.content.slice(0, 20_000) : e.content,
     }));
   return {
-    kind: isSyntheticSoakVault(id) ? "soak" : "large-test",
+    kind: isSyntheticScaleVault(id) ? "scale" : "large-test",
     vaultId: id,
-    vaultName: s.vaultName || (isSyntheticSoakVault(id) ? `Soak ${soakN}` : "Large Test Vault"),
-    noteCount: soakN,
+    vaultName: s.vaultName || (isSyntheticScaleVault(id) ? `Scale test ${scaleN}` : "Large Test Vault"),
+    noteCount: scaleN,
     lastNotePath: (st.lastNotePath as string | null) ?? null,
     lastSecondaryNotePath: (st.lastSecondaryNotePath as string | null) ?? null,
     workspaceSplit: Boolean(st.workspaceSplit),
@@ -120,7 +120,7 @@ export function partializeVaultPersist(s: PersistInput): PersistSlice {
           remount?.lastSecondaryNotePath ??
           (st.lastSecondaryNotePath as string | null) ??
           null,
-        soakNoteCount: remount?.noteCount ?? st.soakNoteCount ?? null,
+        scaleNoteCount: remount?.noteCount ?? st.scaleNoteCount ?? null,
       },
       expandedFolders: [],
       scaleRemount: remount,

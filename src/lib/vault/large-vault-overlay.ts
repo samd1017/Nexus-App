@@ -1,5 +1,5 @@
 /**
- * Side-channel for creates/edits on large in-memory seeds (45k / soak-*).
+ * Side-channel for creates/edits on large in-memory seeds (45k / scale-*).
  *
  * localStorage cannot hold the 45k map (QuotaExceeded). Disk vaults already
  * write markdown. Browser test vaults would otherwise silently drop session

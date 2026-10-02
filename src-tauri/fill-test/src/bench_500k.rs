@@ -1,6 +1,6 @@
 //! Large-vault timings against the production catalog and fill code.
 //!
-//!   NEXUS_BENCH_VAULT=/path/to/nexus-soak-500k \
+//!   NEXUS_BENCH_VAULT=/path/to/nexus-scale-500k \
 //!     cargo test --release --manifest-path src-tauri/fill-test/Cargo.toml \
 //!     bench_large_vault -- --ignored --nocapture
 //!

@@ -16,10 +16,10 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
 await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
-await page.waitForFunction(() => window.__NEXUS_SOAK__, { timeout: 30000 });
+await page.waitForFunction(() => window.__NEXUS_SCALE__, { timeout: 30000 });
 
 await page.evaluate(async () => {
-  await window.__NEXUS_SOAK__.openMockFsaCount(25000);
+  await window.__NEXUS_SCALE__.openMockFsaCount(25000);
 });
 await page.waitForSelector("[data-chrome-fsa-refused]", { timeout: 60000 });
 await page.screenshot({
@@ -28,9 +28,9 @@ await page.screenshot({
 });
 
 await page.reload({ waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__NEXUS_SOAK__, { timeout: 30000 });
+await page.waitForFunction(() => window.__NEXUS_SCALE__, { timeout: 30000 });
 await page.evaluate(async () => {
-  await window.__NEXUS_SOAK__.openMockFsaCount(18000);
+  await window.__NEXUS_SCALE__.openMockFsaCount(18000);
 });
 await page.waitForFunction(
   () => window.__NEXUS_STRESS__?.()?.searchReady === true,

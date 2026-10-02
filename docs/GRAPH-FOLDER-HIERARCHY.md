@@ -1,4 +1,4 @@
-# Hierarchical Folder Graph — Implementation Plan (12-Agent Review)
+# Hierarchical Folder Graph — Implementation Plan
 
 **Status:** **Implemented** (Waves 1–5) · 2026-08-03  
 **Reviewed:** 2026-08-03 · Architecture · UX continuity · Scale · Product/IA · State · A11y · Platform · QA · Risk · Phasing · Docs honesty · Integration  
@@ -16,7 +16,7 @@
 | When? | After **you review this plan** → implement Waves 1→5 |
 | Kill switch | `folderGraph: false` in scale-flags restores today’s ego/full path |
 
-**Consensus GO:** all 12 agents **GO for implement** after this freeze.  
+**Consensus:** GO for implement after this freeze.  
 **NO-GO until Wave 1 pure API tests green** before any GraphView UI.
 
 ---
@@ -311,7 +311,7 @@ Kill switch: `folderGraph: false` → today’s path only.
 ```
 W1 (pure) ──► W2 (auto mode) ──► W3 (nav chrome) ──► W4 (caps) ──► W5 (integration)
                  ▲
-                 └── UI agents MUST NOT start before W1 green
+                 └── UI work must not start before W1 green
 ```
 
 **Do not merge waves.** Big-bang on GraphView (~1.7k LOC) + store (~3.6k) is critical risk.
@@ -428,9 +428,9 @@ D1–D8: full note galaxy feel, ~9–10 notes as orbs + links, ghosts/1-hop/expo
 | `settings.graphMode` | Panel/fullscreen only — never scope |
 | Mobile | Deferred; fix `isDesktopShell` FX split later |
 
-### Agent consensus (12/12)
+### Review consensus (12/12)
 
-| # | Agent | Verdict |
+| # | Review | Verdict |
 |---|--------|---------|
 | 1 | Architecture | **GO** Wave 1 now; W2+ with store freeze |
 | 2 | UX continuity | **GO** if createOrb-only + glass pills |
@@ -479,4 +479,4 @@ Success: a lifelong Obsidian user prefers this graph within minutes. Not SCALE R
 
 ## Next step
 
-**You review this plan → say proceed** → implement Waves 1→5 with multi-agent build + double QA, preserving metal-orb / galaxy aesthetics.
+**You review this plan → say proceed** → implement Waves 1→5 in sequence, with a second QA pass, preserving metal-orb / galaxy aesthetics.

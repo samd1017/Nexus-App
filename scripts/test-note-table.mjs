@@ -880,22 +880,22 @@ assert.equal(basesPropertiesReading(4, true), true);
 const { desktopWriteParent, mkdirTargetForFolder, mkdirTargetForWrite } = await import(
   "../src/lib/vault/desktop-write-path.ts"
 );
-assert.equal(desktopWriteParent("Projects/Soak-Typed-Link.md"), "Projects");
-assert.equal(desktopWriteParent("Projects/Soak-Typed-Link.md/extra"), "Projects");
+assert.equal(desktopWriteParent("Projects/Typed-Link.md"), "Projects");
+assert.equal(desktopWriteParent("Projects/Typed-Link.md/extra"), "Projects");
 assert.equal(desktopWriteParent("Welcome.md"), "");
 assert.equal(desktopWriteParent(".nexus/note-table.json"), ".nexus");
-assert.equal(mkdirTargetForWrite("Projects/Soak-Typed-Link.md", true), null);
-assert.equal(mkdirTargetForWrite("Projects/Soak-Typed-Link.md", false), "Projects");
-assert.equal(mkdirTargetForWrite("Projects/Soak-Typed-Link.md/extra", false), "Projects");
-assert.equal(mkdirTargetForFolder("Projects/Soak-Typed-Link.md", "file"), null);
-assert.equal(mkdirTargetForFolder("Projects/Soak-Typed-Link.md", "missing"), null);
+assert.equal(mkdirTargetForWrite("Projects/Typed-Link.md", true), null);
+assert.equal(mkdirTargetForWrite("Projects/Typed-Link.md", false), "Projects");
+assert.equal(mkdirTargetForWrite("Projects/Typed-Link.md/extra", false), "Projects");
+assert.equal(mkdirTargetForFolder("Projects/Typed-Link.md", "file"), null);
+assert.equal(mkdirTargetForFolder("Projects/Typed-Link.md", "missing"), null);
 assert.equal(mkdirTargetForFolder("Projects", "dir"), null);
 assert.equal(mkdirTargetForFolder("Projects", "missing"), "Projects");
 for (const target of [
-  mkdirTargetForWrite("Projects/Soak-Typed-Link.md", true),
-  mkdirTargetForWrite("Projects/Soak-Typed-Link.md", false),
-  mkdirTargetForWrite("Projects/Soak-Typed-Link.md/extra", false),
-  mkdirTargetForFolder("Projects/Soak-Typed-Link.md", "file"),
+  mkdirTargetForWrite("Projects/Typed-Link.md", true),
+  mkdirTargetForWrite("Projects/Typed-Link.md", false),
+  mkdirTargetForWrite("Projects/Typed-Link.md/extra", false),
+  mkdirTargetForFolder("Projects/Typed-Link.md", "file"),
 ]) {
   assert.ok(!target || !target.endsWith(".md"));
 }
@@ -1243,15 +1243,15 @@ assert.equal(importBaseFile("formulas:\n  a: '1'\n").error, "This .base file has
 assert.equal(importBaseFile("").error, "This .base file has no views to import.");
 const { demoBaseFile } = await import("../src/lib/vault/demo-bases.ts");
 const { vaultBaseEntries } = await import("../src/lib/vault/vault-base-list.ts");
-const threeViews = demoBaseFile("Soak-ThreeViews.base");
+const threeViews = demoBaseFile("Sample-ThreeViews.base");
 assert.ok(threeViews);
 const openedThree = importBaseFile(threeViews.text);
 assert.ok(!("error" in openedThree));
 assert.equal(openedThree.session.views.length, 3);
-assert.deepEqual(openedThree.session.views.map((view) => view.name), ["Soak all", "Soak cards", "Soak third"]);
+assert.deepEqual(openedThree.session.views.map((view) => view.name), ["All notes", "Cards", "Research"]);
 assert.equal(openedThree.session.views[1].layout, "cards");
 assert.equal(openedThree.session.views[2].folder, "Research");
-const groupedBase = importBaseFile(demoBaseFile("Soak-GroupBy.base").text);
+const groupedBase = importBaseFile(demoBaseFile("Sample-GroupBy.base").text);
 assert.deepEqual(groupedBase.session.views[0].groupBy, { column: "status", dir: "asc" });
 assert.deepEqual(
   vaultBaseEntries({
@@ -1260,10 +1260,10 @@ assert.deepEqual(
       welcome: { path: "Welcome.md", name: "Welcome.md", kind: "note" },
       folder: { path: "Notes", kind: "folder" },
     },
-    diskPaths: ["Soak-ThreeViews.base", "Notes/Mine.base"],
+    diskPaths: ["Sample-ThreeViews.base", "Notes/Mine.base"],
     includeDemo: true,
   }).map((file) => file.path),
-  ["Nexus Bases export.base", "Notes/Mine.base", "Soak-GroupBy.base", "Soak-MultiFormula.base", "Soak-ThreeViews.base"],
+  ["Nexus Bases export.base", "Notes/Mine.base", "Sample-GroupBy.base", "Sample-MultiFormula.base", "Sample-ThreeViews.base"],
 );
 assert.deepEqual(
   vaultBaseEntries({ nodes: {}, diskPaths: ["Projects/Other.base"], includeDemo: false }).map((file) => file.path),

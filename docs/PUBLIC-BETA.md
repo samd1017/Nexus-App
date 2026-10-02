@@ -5,7 +5,7 @@
 - **Desktop (Mac/Win/Linux via Tauri)** — local folder vault, native menu, window state
 - Large vaults: meta-only open, lazy bodies, durable FTS, folder/ego graph
 - Heading/block wikilinks and embeds, dual-note workspace, attachments rail, note history
-- Lexical hybrid search + extractive Ask-your-notes (citations; no cloud LLM)
+- Lexical hybrid search + extractive Ask-your-notes (citations from the on-device index)
 - Pulse + Conflict Studio for humans and external agents on the same folder
 
 ## Explicitly not in v1 public

@@ -1,5 +1,5 @@
 /**
- * Writable directory for soak and QA output.
+ * Writable directory for scale tests and QA output.
  * Set NEXUS_ARTIFACT_DIR to override. Never hardcode a host artifact path.
  */
 import os from "node:os";

@@ -195,12 +195,12 @@ async function runSize(browser, n) {
     }
   });
   await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-  await waitFor(page, () => typeof window.__NEXUS_SOAK__?.open === "function", 30000);
+  await waitFor(page, () => typeof window.__NEXUS_SCALE__?.open === "function", 30000);
   await installRecorder(page);
 
   const tOpen = Date.now();
   await page.evaluate((count) => {
-    void window.__NEXUS_SOAK__.open(count);
+    void window.__NEXUS_SCALE__.open(count);
   }, n);
   const opened = await waitFor(
     page,
@@ -249,9 +249,9 @@ async function runSize(browser, n) {
   result.samples.push(
     await sample(page, "ego:orbit+search", async () => {
       const searching = page.evaluate(async () => {
-        const soak = window.__NEXUS_SOAK__;
+        const scale = window.__NEXUS_SCALE__;
         for (const q of ["topic 12", "retrieval", "hub", "agents index", "graph links"]) {
-          await soak.search(q, 40);
+          await scale.search(q, 40);
         }
       });
       await orbit(page, SAMPLE_MS);
@@ -261,9 +261,9 @@ async function runSize(browser, n) {
 
   result.samples.push(
     await sample(page, "ego:note-switch", async () => {
-      const ids = await page.evaluate(() => window.__NEXUS_SOAK__.noteIds(6));
+      const ids = await page.evaluate(() => window.__NEXUS_SCALE__.noteIds(6));
       for (const id of ids) {
-        await page.evaluate((x) => window.__NEXUS_SOAK__.setActiveNote(x), id);
+        await page.evaluate((x) => window.__NEXUS_SCALE__.setActiveNote(x), id);
         await page.waitForTimeout(350);
       }
     }),

@@ -263,8 +263,8 @@ assert.match(clockLogs[0], /hit=0/);
 assert.match(clockLogs[0], /reason=no-page/);
 assert.match(clockLogs[1], /^NEXUS_READY_CLOCK phase=shell /);
 assert.equal(globalThis.window.__NEXUS_READY_CLOCK__.earlyHit, 0);
-assert.equal(globalThis.window.__NEXUS_SOAK_LAST__.readyClock.earlyReason, "no-page");
-assert.equal(typeof globalThis.window.__NEXUS_SOAK_LAST__.readyClock.shell, "number");
+assert.equal(globalThis.window.__NEXUS_SCALE_LAST__.readyClock.earlyReason, "no-page");
+assert.equal(typeof globalThis.window.__NEXUS_SCALE_LAST__.readyClock.shell, "number");
 const bootFn = bootSrc.slice(bootSrc.indexOf("async function bootDesktop"));
 const yieldAt = bootFn.indexOf("await afterPaint()");
 const prefetchAt = bootFn.indexOf("await prefetchSavedPage()");
@@ -1198,10 +1198,10 @@ assert.equal(storeSrc.includes("probeFirstRun"), true);
     new URL("../src/lib/chrome/empty-folder-enter.ts", import.meta.url).href
   );
   startRenameBuffer("n1");
-  for (const key of ["S", "o", "a", "k", "Enter"]) {
+  for (const key of ["N", "o", "t", "e", "Enter"]) {
     assert.equal(bufferRenameKey({ key, ctrlKey: false, metaKey: false, altKey: false }), true);
   }
-  assert.deepEqual(takeRenameBuffer("n1"), { text: "Soak", commit: true });
+  assert.deepEqual(takeRenameBuffer("n1"), { text: "Note", commit: true });
   assert.equal(takeRenameBuffer("n1"), null);
   const plain = { ctrlKey: false, metaKey: false, altKey: false };
   // Nothing is buffered without a pending create.
@@ -1366,7 +1366,7 @@ assert.equal(settingsSrc.includes("totalNotes={noteCount}"), true);
 }
 // The first-run probe has a string form that survives CDP without returnByValue.
 assert.equal(storeSrc.includes("probeFirstRunText: () => {"), true);
-assert.equal(storeSrc.includes("return JSON.stringify(soak?.probeFirstRun?.() ?? {});"), true);
+assert.equal(storeSrc.includes("return JSON.stringify(scale?.probeFirstRun?.() ?? {});"), true);
 // The quick tour never sits on top of Settings or Trash.
 assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
 // A rescan after an in-app rename keeps the note's id, so the open editor does

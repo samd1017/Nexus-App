@@ -122,7 +122,7 @@ export function describeSearchEngine(): {
   id: SearchEngineId;
   label: string;
   shortLabel: string;
-  /** Calm heading copy. Desktop keeps the SQLite name the soak checks for. */
+  /** Calm heading copy. Desktop keeps the SQLite name the scale test checks for. */
   uiLabel: string;
   ranked: boolean;
   indexState: SearchIndexState;

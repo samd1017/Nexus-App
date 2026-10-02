@@ -21,9 +21,9 @@ import { writeIntentState } from "@/lib/editor/write-intent";
 import { buildLargeTestVault, LARGE_TEST_VAULT_ID } from "./large-test-vault";
 import {
   buildSyntheticVault,
-  isSyntheticSoakVault,
-  parseSoakNoteCount,
-  soakVaultId,
+  isSyntheticScaleVault,
+  parseScaleNoteCount,
+  scaleVaultId,
 } from "./synthetic-vault";
 import {
   partializeVaultPersist,
@@ -557,7 +557,7 @@ function migrateNamingKeys() {
 if (typeof window !== "undefined") migrateNamingKeys();
 let fsaRoot: FileSystemDirectoryHandle | null = null;
 let desktopRoot: string | null = null;
-/** Playwright / soak mock FSA — path → markdown. Not retained on store nodes. */
+/** Playwright / scale-test mock FSA — path → markdown. Not retained on store nodes. */
 let mockDiskBodies: Map<string, string> | null = null;
 let diskSearchReady = false;
 /** In-flight body hydrates — dedupe concurrent ensureNoteBody */
@@ -1386,12 +1386,12 @@ async function runCompleteDiskSearchIndex(opts?: {
 				const prev =
 					(
 						window as unknown as {
-							__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+							__NEXUS_SCALE_LAST__?: Record<string, unknown>;
 						}
-					).__NEXUS_SOAK_LAST__ ?? {};
+					).__NEXUS_SCALE_LAST__ ?? {};
 				(
-					window as unknown as { __NEXUS_SOAK_LAST__?: Record<string, unknown> }
-				).__NEXUS_SOAK_LAST__ = {
+					window as unknown as { __NEXUS_SCALE_LAST__?: Record<string, unknown> }
+				).__NEXUS_SCALE_LAST__ = {
 					...prev,
 					searchIndexed: indexed || noteCount,
 					searchIndexSkipped: skipped,
@@ -1529,12 +1529,12 @@ async function runCompleteDiskSearchIndex(opts?: {
 		const prev =
 			(
 				window as unknown as {
-					__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+					__NEXUS_SCALE_LAST__?: Record<string, unknown>;
 				}
-			).__NEXUS_SOAK_LAST__ ?? {};
+			).__NEXUS_SCALE_LAST__ ?? {};
 		(
-			window as unknown as { __NEXUS_SOAK_LAST__?: Record<string, unknown> }
-		).__NEXUS_SOAK_LAST__ = {
+			window as unknown as { __NEXUS_SCALE_LAST__?: Record<string, unknown> }
+		).__NEXUS_SCALE_LAST__ = {
 			...prev,
 			searchIndexed: result.indexed,
 			searchIndexErrors: result.errors,
@@ -2396,7 +2396,7 @@ function openFilledIndexAfterReady(
 	});
 }
 
-/** Desktop open without a folder dialog — Wave E soak + reopen. */
+/** Desktop open without a folder dialog — Wave E scale test + reopen. */
 async function mountDesktopVaultAt(
 	get: StoreGet,
 	set: StoreSet,
@@ -2642,9 +2642,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		});
 		if (import.meta.env.DEV && typeof window !== "undefined") {
 			const params = new URLSearchParams(window.location.search);
-			const soak = Number(params.get("soak"));
-			if (Number.isFinite(soak) && soak > 0) {
-				await get().openSyntheticVault(soak);
+			const scale = Number(params.get("scale"));
+			if (Number.isFinite(scale) && scale > 0) {
+				await get().openSyntheticVault(scale);
 				return;
 			}
 			const vaultQ = (params.get("vault") || "").toLowerCase();
@@ -2875,7 +2875,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				graphMode: "panel",
 				rightOpen: true,
 				workspaceSplit: false,
-				soakNoteCount: null,
+				scaleNoteCount: null,
 			}
 		});
 		syncActiveBackend("demo");
@@ -3015,7 +3015,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					editorMode: getPrefs().defaultEditorMode,
 					graphMode: "panel",
 					rightOpen: true,
-					soakNoteCount: null,
+					scaleNoteCount: null,
 				},
 				toast: overlay.applied
 					? `Large Test Vault open — ${noteCount.toLocaleString()} notes (${overlay.applied} restored from this browser)`
@@ -3028,9 +3028,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (typeof window !== "undefined") {
 				(
 					window as unknown as {
-						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+						__NEXUS_SCALE_LAST__?: Record<string, unknown>;
 					}
-				).__NEXUS_SOAK_LAST__ = {
+				).__NEXUS_SCALE_LAST__ = {
 					noteCount,
 					interactiveMs,
 					overlayApplied: overlay.applied,
@@ -3072,9 +3072,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (typeof window !== "undefined") {
 				(
 					window as unknown as {
-						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+						__NEXUS_SCALE_LAST__?: Record<string, unknown>;
 					}
-				).__NEXUS_SOAK_LAST__ = {
+				).__NEXUS_SCALE_LAST__ = {
 					noteCount,
 					interactiveMs,
 					indexMs,
@@ -3118,12 +3118,12 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 	},
 	openSyntheticVault: async (noteCount, opts) => {
 		if (import.meta.env.PROD) {
-			get().setToast("Soak vaults are not available in production");
+			get().setToast("Scale test vaults are not available in production");
 			return;
 		}
 		const n = Math.max(1, Math.floor(Number(noteCount) || 0));
 		if (!n) {
-			get().setToast("Soak vault needs a note count");
+			get().setToast("Scale test vault needs a note count");
 			return;
 		}
 		if (get().connecting) return;
@@ -3159,14 +3159,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				},
 			});
 			if (gen !== vaultGen) return;
-			const vaultId = soakVaultId(data.noteCount);
+			const vaultId = scaleVaultId(data.noteCount);
 			const firstNote =
 				Object.values(data.nodes).find((node) => node.kind === "note") ?? null;
 			const expanded = smartExpandedFolders(data.nodes, firstNote?.id ?? null);
 			const recents = pushRecent({
 				id: vaultId,
 				name: data.vaultName,
-				path: `Soak vault (${data.noteCount.toLocaleString()} in-browser)`,
+				path: `Scale test (${data.noteCount.toLocaleString()} in-browser)`,
 				lastOpened: Date.now(),
 				mode: "local",
 			});
@@ -3217,7 +3217,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				connecting: false,
 				...GRAPH_SCOPE_DEFAULTS,
 				scaleRemount: {
-					kind: "soak",
+					kind: "scale",
 					vaultId,
 					vaultName: data.vaultName,
 					noteCount: data.noteCount,
@@ -3233,7 +3233,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 					editorMode: getPrefs().defaultEditorMode,
 					graphMode: "panel",
 					rightOpen: true,
-					soakNoteCount: data.noteCount,
+					scaleNoteCount: data.noteCount,
 				},
 				toast: `${data.vaultName} open — ${data.noteCount.toLocaleString()} notes`,
 			});
@@ -3244,9 +3244,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (typeof window !== "undefined") {
 				(
 					window as unknown as {
-						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+						__NEXUS_SCALE_LAST__?: Record<string, unknown>;
 					}
-				).__NEXUS_SOAK_LAST__ = {
+				).__NEXUS_SCALE_LAST__ = {
 					noteCount: data.noteCount,
 					interactiveMs,
 					folderCount: data.folderCount,
@@ -3284,9 +3284,9 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (typeof window !== "undefined") {
 				(
 					window as unknown as {
-						__NEXUS_SOAK_LAST__?: Record<string, unknown>;
+						__NEXUS_SCALE_LAST__?: Record<string, unknown>;
 					}
-				).__NEXUS_SOAK_LAST__ = {
+				).__NEXUS_SCALE_LAST__ = {
 					noteCount: data.noteCount,
 					interactiveMs,
 					openMs,
@@ -3329,8 +3329,8 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		const ticket = get().scaleRemount;
 		if (!ticket) return false;
 		if (import.meta.env.PROD) return false;
-		if (ticket.kind === "soak") {
-			const n = ticket.noteCount ?? parseSoakNoteCount(ticket.vaultId);
+		if (ticket.kind === "scale") {
+			const n = ticket.noteCount ?? parseScaleNoteCount(ticket.vaultId);
 			if (!n) return false;
 			await get().openSyntheticVault(n, { restore: ticket });
 			return true;
@@ -3586,11 +3586,11 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			await get().openLargeTestVault();
 			return;
 		}
-		if (isSyntheticSoakVault(id) || isSyntheticSoakVault(recentEarly?.id)) {
+		if (isSyntheticScaleVault(id) || isSyntheticScaleVault(recentEarly?.id)) {
 			const n =
-				parseSoakNoteCount(id) ??
-				parseSoakNoteCount(recentEarly?.id) ??
-				get().settings.soakNoteCount;
+				parseScaleNoteCount(id) ??
+				parseScaleNoteCount(recentEarly?.id) ??
+				get().settings.scaleNoteCount;
 			if (n) {
 				await get().openSyntheticVault(n);
 				return;
@@ -6548,7 +6548,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			graphMode: s.settings?.graphMode ?? null,
 			rightTab: s.rightTab ?? null,
 			scaleRemount: s.scaleRemount,
-			soakNoteCount: s.settings?.soakNoteCount ?? null,
+			scaleNoteCount: s.settings?.scaleNoteCount ?? null,
 			openProgress: getOpenProgress(),
 			overlayCount: overlayCount(s.vaultId),
 			searchEngine: describeSearchEngine(),
@@ -6578,7 +6578,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 	};
 	(
 		window as unknown as {
-			__NEXUS_SOAK__?: {
+			__NEXUS_SCALE__?: {
 				open: (n: number) => Promise<void>;
 				open45k: () => Promise<void>;
 				createNote: (parentId?: string | null, title?: string) => string | null;
@@ -6617,7 +6617,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 				) => Promise<Record<string, unknown>>;
 			};
 		}
-	).__NEXUS_SOAK__ = {
+	).__NEXUS_SCALE__ = {
 		open: (n: number) => useVaultStore.getState().openSyntheticVault(n),
 		open45k: () => useVaultStore.getState().openLargeTestVault(),
 		createNote: (parentId?: string | null, title?: string) =>
@@ -6691,10 +6691,10 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			});
 		},
 		probeFirstRunText: () => {
-			const soak = (window as unknown as {
-				__NEXUS_SOAK__?: { probeFirstRun?: () => Record<string, unknown> };
-			}).__NEXUS_SOAK__;
-			return JSON.stringify(soak?.probeFirstRun?.() ?? {});
+			const scale = (window as unknown as {
+				__NEXUS_SCALE__?: { probeFirstRun?: () => Record<string, unknown> };
+			}).__NEXUS_SCALE__;
+			return JSON.stringify(scale?.probeFirstRun?.() ?? {});
 		},
 		setActiveNote: (id: string | null) =>
 			useVaultStore.getState().setActiveNote(id, { silent: true }),
@@ -6735,7 +6735,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 					break;
 				}
 			}
-			const vaultId = "fsa-mock-soak";
+			const vaultId = "fsa-mock-scale";
 			const nodes = prepareMountedNodes(raw, "fsa", [firstId ?? ""], {
 				vaultId,
 				metaOnly: true,
@@ -6777,12 +6777,12 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 					files[node.path] = node.content;
 				}
 			}
-			const soak = (
+			const scale = (
 				window as unknown as {
-					__NEXUS_SOAK__?: { openMockFsa: (f: Record<string, string>) => Promise<void> };
+					__NEXUS_SCALE__?: { openMockFsa: (f: Record<string, string>) => Promise<void> };
 				}
-			).__NEXUS_SOAK__;
-			await soak?.openMockFsa(files);
+			).__NEXUS_SCALE__;
+			await scale?.openMockFsa(files);
 		},
 		openPagedFsa: async (n: number) => {
 			const { memoryVaultDirectory, memoryVaultFileReads } = await import("./memory-directory");
@@ -6906,8 +6906,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			const ids: string[] = [];
 			if (active && st.nodes[active]?.kind === "note") ids.push(active);
 			for (const id of (
-				window as unknown as { __NEXUS_SOAK__?: { noteIds: (n?: number) => string[] } }
-			).__NEXUS_SOAK__?.noteIds(limit) ?? []) {
+				window as unknown as { __NEXUS_SCALE__?: { noteIds: (n?: number) => string[] } }
+			).__NEXUS_SCALE__?.noteIds(limit) ?? []) {
 				if (!ids.includes(id)) ids.push(id);
 				if (ids.length >= limit) break;
 			}
@@ -6926,18 +6926,18 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			return ids.length;
 		},
 		heapTrend: async (opens = 20) => {
-			const soak = (
+			const scale = (
 				window as unknown as {
-					__NEXUS_SOAK__?: {
+					__NEXUS_SCALE__?: {
 						noteIds: (n?: number) => string[];
 						search: (q: string, n?: number) => Promise<{ hits?: unknown[] }>;
 						probe: () => Record<string, unknown> | undefined;
 					};
 				}
-			).__NEXUS_SOAK__;
+			).__NEXUS_SCALE__;
 			const snap = async (i: number) => {
-				const cluster = await soak?.search("cluster", 16);
-				const p = soak?.probe() ?? {};
+				const cluster = await scale?.search("cluster", 16);
+				const p = scale?.probe() ?? {};
 				return {
 					i,
 					clusterHits: cluster?.hits?.length ?? 0,
@@ -6959,7 +6959,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			const st = useVaultStore.getState();
 			const ids: string[] = [];
 			if (st.activeNoteId) ids.push(st.activeNoteId);
-			for (const id of soak?.noteIds(opens) ?? []) {
+			for (const id of scale?.noteIds(opens) ?? []) {
 				if (!ids.includes(id)) ids.push(id);
 				if (ids.length >= opens) break;
 			}
@@ -7059,9 +7059,9 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		},
 		flushDirty: () => useVaultStore.getState().flushDirty(),
 		runWaveE: async (absPath: string, opts?: { opens?: number; forceRebuild?: boolean }) => {
-			const soak = (
+			const scale = (
 				window as unknown as {
-					__NEXUS_SOAK__?: {
+					__NEXUS_SCALE__?: {
 						openDesktop: (
 							p: string,
 							o?: { forceRebuild?: boolean },
@@ -7074,10 +7074,10 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 						flushDirty: () => Promise<void>;
 					};
 				}
-			).__NEXUS_SOAK__;
-			if (!soak) throw new Error("soak hook missing");
+			).__NEXUS_SCALE__;
+			if (!scale) throw new Error("scale hook missing");
 			const t0 = performance.now();
-			const open = await soak.openDesktop(absPath, {
+			const open = await scale.openDesktop(absPath, {
 				forceRebuild: opts?.forceRebuild === true,
 			});
 			const openMs = Math.round(performance.now() - t0);
@@ -7089,25 +7089,25 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 			// Browse is already usable. Poll body search until short-head FTS
 			// is ready enough — do not wait for full 100k 8k-head fill.
 			const tSearch = performance.now();
-			let hub = await soak.search("retrieval hub", 16);
-			let cluster = await soak.search("cluster", 16);
+			let hub = await scale.search("retrieval hub", 16);
+			let cluster = await scale.search("cluster", 16);
 			let hubHits = hub?.hits?.length ?? 0;
 			let clusterHits = cluster?.hits?.length ?? 0;
 			const deadline = tSearch + 45_000;
 			while (performance.now() < deadline && (hubHits < 1 || clusterHits < 1)) {
 				await new Promise((r) => window.setTimeout(r, 200));
-				hub = await soak.search("retrieval hub", 16);
-				cluster = await soak.search("cluster", 16);
+				hub = await scale.search("retrieval hub", 16);
+				cluster = await scale.search("cluster", 16);
 				hubHits = hub?.hits?.length ?? 0;
 				clusterHits = cluster?.hits?.length ?? 0;
 			}
 			const searchUsefulMs = Math.round(performance.now() - tSearch);
-			const opened = await soak.openNotes(opts?.opens ?? 20);
+			const opened = await scale.openNotes(opts?.opens ?? 20);
 			const createdTitle = `Wave-E-Create-${Date.now()}`;
-			const createdId = soak.createNote(null, createdTitle);
-			await soak.flushDirty();
-			const reload = await soak.reloadDesktop();
-			const foundAfterReload = soak.findNoteId(createdTitle);
+			const createdId = scale.createNote(null, createdTitle);
+			await scale.flushDirty();
+			const reload = await scale.reloadDesktop();
+			const foundAfterReload = scale.findNoteId(createdTitle);
 			const engine = describeSearchEngine();
 			const pass =
 				engine.id === "sqlite-fts5-bm25" &&
@@ -7138,19 +7138,19 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 		},
 	};
 	try {
-		const soakPath =
-			new URLSearchParams(window.location.search).get("soakDesktop") ||
-			window.localStorage.getItem("nexus-soak-desktop");
-		if (soakPath) {
+		const scalePath =
+			new URLSearchParams(window.location.search).get("scaleDesktop") ||
+			window.localStorage.getItem("nexus-scale-desktop");
+		if (scalePath) {
 			window.setTimeout(() => {
 				void (
 					window as unknown as {
-						__NEXUS_SOAK__?: {
+						__NEXUS_SCALE__?: {
 							runWaveE: (p: string) => Promise<unknown>;
 						};
 					}
-				).__NEXUS_SOAK__
-					?.runWaveE(soakPath)
+				).__NEXUS_SCALE__
+					?.runWaveE(scalePath)
 					.then((r) => {
 						(
 							window as unknown as { __NEXUS_WAVE_E__?: unknown }

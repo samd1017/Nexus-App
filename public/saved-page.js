@@ -38,7 +38,7 @@
       document.documentElement.setAttribute("data-ready-clock", line);
     } catch (ignoreAttr) {}
     try {
-      var last = (window.__NEXUS_SOAK_LAST__ = window.__NEXUS_SOAK_LAST__ || {});
+      var last = (window.__NEXUS_SCALE_LAST__ = window.__NEXUS_SCALE_LAST__ || {});
       last.readyClock = {
         window: clock.window || 0,
         document: clock.document || 0,

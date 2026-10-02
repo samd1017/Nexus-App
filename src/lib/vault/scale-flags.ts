@@ -91,14 +91,14 @@ export function shouldUseFolderGraph(noteCount: number): boolean {
 }
 
 import { LARGE_TEST_VAULT_ID } from "./large-test-vault";
-import { isSyntheticSoakVault } from "./synthetic-vault";
+import { isSyntheticScaleVault } from "./synthetic-vault";
 
 /**
- * In-browser 45k / soak seeds use mode "local" but must behave like a disk vault:
+ * In-browser 45k / scale seeds use mode "local" but must behave like a disk vault:
  * meta-only store + body archive + durable FTS. Demo/other local stay eager.
  */
 export function isLargeMemoryVault(vaultId: string | null | undefined): boolean {
-  return vaultId === LARGE_TEST_VAULT_ID || isSyntheticSoakVault(vaultId);
+  return vaultId === LARGE_TEST_VAULT_ID || isSyntheticScaleVault(vaultId);
 }
 
 /**
