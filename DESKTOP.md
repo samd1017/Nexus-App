@@ -6,25 +6,23 @@ Nexus ships as a local-first web app and a **native desktop shell** powered by [
 
 ## Pre-built Alpha downloads
 
-Unsigned installer assets exist on **[`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) only**:
+Unsigned installers for this version are on the [`v0.1.2-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.2-alpha) release:
 
-- macOS (Apple Silicon): [`Nexus_0.1.0_aarch64.dmg`](https://github.com/samd1017/Nexus-App/releases/download/v0.1.0-alpha/Nexus_0.1.0_aarch64.dmg)
-- Windows: [`Nexus_0.1.0_x64-setup.exe`](https://github.com/samd1017/Nexus-App/releases/download/v0.1.0-alpha/Nexus_0.1.0_x64-setup.exe)
+- macOS (Apple Silicon): [`Nexus_0.1.2-alpha_aarch64.dmg`](https://github.com/samd1017/Nexus-App/releases/download/v0.1.2-alpha/Nexus_0.1.2-alpha_aarch64.dmg)
+- Windows: [`Nexus_0.1.2-alpha_x64-setup.exe`](https://github.com/samd1017/Nexus-App/releases/download/v0.1.2-alpha/Nexus_0.1.2-alpha_x64-setup.exe)
 
-**Latest may be source-only.** The newer tag [`v0.1.1-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.1-alpha) has zero DMG/EXE assets. Do not open `/releases/latest` expecting installers. Files on the older `v0.1.0-alpha` tag whose names contain `0.1.1` are not Latest.
+Prefer [build from source](#install--run-from-source) if you want to compile this tree yourself. **These builds are unsigned** (not notarized / not code-signed). That is expected for Alpha.
 
-Prefer [build from source](#install--run-from-source) over these pre-built files. **These builds are unsigned** (not notarized / not code-signed). That is expected for Alpha.
+### macOS (Apple Silicon) — unsigned
 
-### macOS (Apple Silicon) — unsigned, v0.1.0-alpha only
-
-1. Download `Nexus_0.1.0_aarch64.dmg` from the [`v0.1.0-alpha` release](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha).
+1. Download `Nexus_0.1.2-alpha_aarch64.dmg` from the [`v0.1.2-alpha` release](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.2-alpha).
 2. Open it and drag Nexus to Applications.
 3. First launch: right-click → **Open**, or System Settings → Privacy & Security → **Open Anyway**.
 4. Gatekeeper will warn about an unidentified developer. Confirm Open.
 
-### Windows — unsigned, v0.1.0-alpha only
+### Windows — unsigned
 
-1. Download `Nexus_0.1.0_x64-setup.exe` from the [`v0.1.0-alpha` release](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha).
+1. Download `Nexus_0.1.2-alpha_x64-setup.exe` from the [`v0.1.2-alpha` release](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.2-alpha).
 2. If SmartScreen appears (“Windows protected your PC”), click **More info** → **Run anyway**.
 
 ### What would be needed for signed installs later
@@ -187,7 +185,7 @@ GitHub Actions workflow: `.github/workflows/build-desktop.yml`
 - Triggers: new GitHub Release, or manual **Run workflow**
 - Produces macOS Apple Silicon `.dmg` and Windows NSIS `.exe`
 - Attaches assets to a **draft pre-release** (Alpha) when that build finishes
-- A published tag can still be source-only. Installer assets are on `v0.1.0-alpha` only; `v0.1.1-alpha` has none. See [Pre-built Alpha downloads](#pre-built-alpha-downloads).
+- The current release, `v0.1.2-alpha`, includes the macOS DMG and Windows NSIS EXE. See [Pre-built Alpha downloads](#pre-built-alpha-downloads).
 
 ## Troubleshooting
 

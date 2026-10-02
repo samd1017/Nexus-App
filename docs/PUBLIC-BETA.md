@@ -44,4 +44,4 @@ Desktop release workflow reads the version from `package.json` (do not hardcode 
 
 The primary desktop path is **build from source** — see [DESKTOP.md](../DESKTOP.md).
 
-Unsigned installer assets (not notarized / not code-signed) exist on **[`v0.1.0-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.0-alpha) only**: `Nexus_0.1.0_aarch64.dmg` and `Nexus_0.1.0_x64-setup.exe`. They are not on Latest and not on `v0.1.1-alpha` (source checkpoint, zero DMG/EXE). Do not point anyone at `/releases/latest` expecting installers. Files on the older `v0.1.0-alpha` tag whose names contain `0.1.1` are not Latest.
+Unsigned installer assets (not notarized / not code-signed) for this version are on **[`v0.1.2-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.2-alpha)**: `Nexus_0.1.2-alpha_aarch64.dmg` and `Nexus_0.1.2-alpha_x64-setup.exe`.
