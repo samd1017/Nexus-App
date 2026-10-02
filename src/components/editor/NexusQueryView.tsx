@@ -54,6 +54,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
   const [hydrating, setHydrating] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const caretAt = useRef<number | null>(null);
+  const finished = useRef(false);
   const bodyGen = useSyncExternalStore(subscribeBodyGen, getBodyGen, getBodyGen);
   /** While editing, results follow the text being typed. */
   const query = editing ? liveDraft : saved;
@@ -158,15 +159,21 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
 
   const startEditing = (caret?: number) => {
     caretAt.current = caret ?? null;
+    finished.current = false;
     setDraft(saved);
     setLiveDraft(saved);
     setEditing(true);
   };
+  // Closing the editor removes the focused textarea, which can fire one more
+  // blur; that blur must not save over a cancel or repeat a commit.
   const commit = (text = draft) => {
+    if (finished.current) return;
+    finished.current = true;
     if (text !== saved) updateAttributes({ query: text });
     setEditing(false);
   };
   const cancelEdit = () => {
+    finished.current = true;
     setDraft(saved);
     setEditing(false);
   };
