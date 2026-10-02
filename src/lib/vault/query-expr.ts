@@ -360,6 +360,11 @@ export function joinFilterParts(parts: string[]): string {
     .join(" && ");
 }
 
+/** True when the text joins conditions with AND or OR at the top level. */
+export function isCompoundFilter(text: string): boolean {
+  return filterAndParts(text).length > 1 || hasTopOr(text);
+}
+
 function hasTopOr(text: string): boolean {
   let found = false;
   topLevelScan(text, (i) => {

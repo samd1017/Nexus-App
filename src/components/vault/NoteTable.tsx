@@ -32,6 +32,8 @@ import {
 } from "@/lib/vault/note-table";
 import { groupNoteRows, summarize, summaryKindsFor, summaryLabel, type NoteGroup } from "@/lib/vault/bases-groups";
 import { BASE_EXPORT_FILE, exportBaseFile } from "@/lib/vault/bases-file";
+import { basesViewToQuery } from "@/lib/vault/bases-query";
+import { problemExcerpt } from "@/lib/vault/query-expr";
 import { LIVE_BASE_BACKUP, LIVE_BASE_FILE, readLiveBase, sameBasesSession, type LiveBase } from "@/lib/vault/bases-live";
 import { sentence, type LiveCheck, type LiveOpen, type LiveSave } from "@/lib/vault/bases-live-sync";
 import { liveBasesSync, storageForVaultBase } from "@/lib/vault/bases-live-storage";
@@ -383,8 +385,8 @@ export function NoteTable() {
   }, [vaultId]);
 
   const built = useMemo(
-    () => buildNoteTable(sources, view.folder, view.formulas),
-    [sources, view.folder, view.formulas],
+    () => buildNoteTable(sources, view.folder, view.formulas, undefined, view.filter),
+    [sources, view.folder, view.formulas, view.filter],
   );
   keysRef.current = built.keys;
   const shown = useMemo(() => {
@@ -915,6 +917,21 @@ export function NoteTable() {
     }
   };
 
+  const copyAsQuery = async () => {
+    const { text, notes } = basesViewToQuery(view, built.keys);
+    const block = `\`\`\`nexus-query\n${text}\n\`\`\`\n`;
+    try {
+      await navigator.clipboard.writeText(block);
+      setBaseNotice({ title: `Copied “${view.name}” as a query. Paste it into any note.`, lines: notes, tone: "ok", undo: null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setBaseNotice({ title: `Couldn't copy the query: ${message}`, lines: [block], tone: "error", undo: null });
+    }
+  };
+
+  const filterProblem = built.filterStatus.problem;
+  const filterExcerpt = filterProblem ? problemExcerpt(view.filter, filterProblem) : null;
+
   const renderCard = (row: NoteTableRow) => (
     <div
       key={row.id}
@@ -1187,6 +1204,19 @@ export function NoteTable() {
           data-testid="bases-filter"
         />
         <input
+          value={view.filter}
+          onChange={(e) => patchView({ filter: e.target.value })}
+          placeholder={'Where… status != "done" AND due < date(today) + 7d'}
+          title="Keep notes that match, written like a query's WHERE"
+          spellCheck={false}
+          aria-invalid={built.filterStatus.problem ? true : undefined}
+          className={cn(
+            "nexus-field h-8 min-w-0 flex-[1.4] rounded-md border bg-transparent px-2 font-mono text-[12px]",
+            built.filterStatus.problem ? "border-[var(--danger)]" : "border-[var(--border)]",
+          )}
+          data-testid="bases-where"
+        />
+        <input
           value={view.folder}
           onChange={(e) => patchView({ folder: e.target.value })}
           placeholder="Folder"
@@ -1319,12 +1349,36 @@ export function NoteTable() {
         <button
           type="button"
           className="chip-btn"
+          data-testid="bases-copy-query"
+          title="Copy this view as a query block you can paste into any note"
+          onClick={() => void copyAsQuery()}
+        >
+          Copy as query
+        </button>
+        <button
+          type="button"
+          className="chip-btn"
           data-testid="bases-close"
           onClick={() => setBasesOpen(false)}
         >
           <X size={13} /> Close
         </button>
       </div>
+      {filterProblem && filterExcerpt ? (
+        <div className="shrink-0 border-b border-[var(--border)] px-3 py-1.5" data-testid="bases-where-error" role="alert">
+          <div className="nexus-query-problem mb-0">
+            <p>
+              <span className="nexus-query-clause">Where</span>
+              {filterProblem.message} Every note shows until this is fixed.
+            </p>
+            <span className="nexus-query-excerpt">
+              {filterExcerpt.before}
+              <mark>{filterExcerpt.bad}</mark>
+              {filterExcerpt.after}
+            </span>
+          </div>
+        </div>
+      ) : null}
       {vaultBasesOpen ? (
         <div className="shrink-0 border-b border-[var(--border)] px-3 py-2 text-[12px]" data-testid="bases-vault-bases">
           {vaultBases === null ? (
@@ -1826,6 +1880,12 @@ export function NoteTable() {
           ? ` · ${view.formulas.length} formula column${view.formulas.length === 1 ? "" : "s"}`
           : ""}
         {failureLine ? ` · ${failureLine.replace(/\.$/, "")}` : ""}
+        {built.filterStatus.failed
+          ? ` · Where could not check ${built.filterStatus.failed} note${built.filterStatus.failed === 1 ? "" : "s"} (${(built.filterStatus.firstError ?? "").replace(/\.$/, "")})`
+          : ""}
+        {built.filterStatus.pending
+          ? ` · ${built.filterStatus.pending} note${built.filterStatus.pending === 1 ? "" : "s"} shown until Where can read ${built.filterStatus.pending === 1 ? "it" : "them"}`
+          : ""}
         {groups ? ` · grouped by ${columnLabel(groupColumn ?? "")}, ${groups.length} group${groups.length === 1 ? "" : "s"}` : ""}
         {readingProperties ? " · reading note properties" : ""}
         {indexFillBusy && visibleMissingIds.length > 0 && !readingProperties

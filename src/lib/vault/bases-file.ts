@@ -6,6 +6,7 @@
 
 import { parse, stringify } from "yaml";
 import { compileNoteFormula, compileSummaryFormula } from "@/lib/vault/note-formula";
+import { compileQueryFilter, filterAndParts, isCompoundFilter, joinFilterParts, toFormulaSyntax } from "@/lib/vault/query-expr";
 import {
   MAX_FORMULA_COLUMNS,
   MAX_SUMMARY_FORMULAS,
@@ -48,6 +49,11 @@ const FORMULA_REF = /\bformula\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*(["'])((?:(?!\2).)*
 /** `formula.x` and `formula["x"]` targets in an expression, in order. */
 export function formulaRefs(expr: string): string[] {
   return [...expr.matchAll(FORMULA_REF)].map((m) => m[1] ?? m[3] ?? "").filter(Boolean);
+}
+
+/** Replaces each formula reference `to` returns text for; others stay as written. */
+export function replaceFormulaRefs(expr: string, to: (ref: string) => string | null): string {
+  return expr.replace(FORMULA_REF, (match, dot?: string, _q?: string, bracket?: string) => to(dot ?? bracket ?? "") ?? match);
 }
 
 /** Rewrites each formula reference that `to` maps to `formula.<key>`; others stay as written. */
@@ -106,8 +112,8 @@ export function baseViewNode(
   summaryNames: ReadonlySet<string> | null = null,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { type: view.layout === "cards" ? "cards" : "table", name: view.name };
-  const folder = normalFolder(view.folder);
-  if (folder) out.filters = { and: [folderFilter(folder)] };
+  const atoms = viewFilterAtoms(normalFolder(view.folder) || null, view.filter ?? "");
+  if (atoms.length) out.filters = { and: atoms };
   const props = [...new Set([...(view.columns.length ? view.columns : detectedKeys), ...(view.relations ?? [])])];
   const formulaOrder = view.formulas
     .map(keyFor)
@@ -191,7 +197,31 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-/** Flattens `and` groups into expressions; `or` / `not` are reported, not guessed at. */
+function joinGroup(items: string[], op: "&&" | "||"): string {
+  const list = items.map((item) => item.trim()).filter(Boolean);
+  if (list.length <= 1) return list[0] ?? "";
+  return list.map((item) => (isCompoundFilter(item) ? `(${item})` : item)).join(` ${op} `);
+}
+
+/** An Obsidian filter tree as one expression: `and` → &&, `or` → ||, `not` → none of. */
+export function filterExpression(node: unknown, notes: string[]): string {
+  if (node == null) return "";
+  if (typeof node === "string" || typeof node === "number" || typeof node === "boolean") return String(node).trim();
+  if (Array.isArray(node)) return joinGroup(node.map((item) => filterExpression(item, notes)), "&&");
+  const rec = asRecord(node);
+  if (!rec) return "";
+  const parts: string[] = [];
+  for (const [op, value] of Object.entries(rec)) {
+    const items = (Array.isArray(value) ? value : [value]).map((item) => filterExpression(item, notes)).filter(Boolean);
+    if (op === "and") parts.push(joinGroup(items, "&&"));
+    else if (op === "or") parts.push(joinGroup(items, "||"));
+    else if (op === "not") parts.push(joinGroup(items.map((item) => `!(${item})`), "&&"));
+    else notes.push(`A “${op}” filter group was not imported.`);
+  }
+  return joinGroup(parts, "&&");
+}
+
+/** Top-level `and` conditions, each as one expression; `or` / `not` groups stay whole. */
 export function filterAtoms(node: unknown, notes: string[]): string[] {
   if (node == null) return [];
   if (typeof node === "string") return [node.trim()].filter(Boolean);
@@ -201,9 +231,22 @@ export function filterAtoms(node: unknown, notes: string[]): string[] {
   const out: string[] = [];
   for (const [op, value] of Object.entries(rec)) {
     if (op === "and") out.push(...filterAtoms(value, notes));
-    else notes.push(`A “${op}” filter group was not imported; Nexus filters by folder.`);
+    else {
+      const expr = filterExpression({ [op]: value }, notes);
+      if (expr) out.push(expr);
+    }
   }
   return out;
+}
+
+/** A view's conditions as `.base` filter atoms: its folder first, then each AND part in Bases syntax. */
+export function viewFilterAtoms(folder: string | null, filter: string, skip: ReadonlySet<string> = new Set()): string[] {
+  const atoms = folder ? [folderFilter(folder)] : [];
+  for (const part of filterAndParts(filter)) {
+    const expr = toFormulaSyntax(part).trim();
+    if (expr && !skip.has(expr)) atoms.push(expr);
+  }
+  return atoms;
 }
 
 export function folderOf(expr: string): string | null {
@@ -278,11 +321,18 @@ export function importBaseFile(text: string): BaseImport {
     const type = typeof raw.type === "string" ? raw.type : "table";
     if (type !== "table" && type !== "cards") report(`“${name}” is a ${type} view; it opens as a table.`);
     let folder = "";
+    const conditions: string[] = [];
     for (const expr of [...topFilters, ...filterAtoms(raw.filters, notes)]) {
       const found = folderOf(expr);
       if (found !== null && !folder) folder = found;
-      else if (found !== null) report(`“${name}” has more than one folder filter; only “${folder}” was kept.`);
-      else report(`Filter ${expr} was not imported; Nexus filters by folder.`);
+      else if (!conditions.includes(expr)) conditions.push(expr);
+    }
+    const filter = joinFilterParts(conditions);
+    if (filter) {
+      const compiled = compileQueryFilter(filter);
+      if (!compiled.ok) {
+        report(`“${name}” filter uses syntax Nexus does not read yet (${compiled.problem.message}); the view shows every note until it is edited.`);
+      }
     }
     const order = Array.isArray(raw.order) ? raw.order.filter((e): e is string => typeof e === "string") : null;
     const picked: Picked[] = [];
@@ -404,6 +454,7 @@ export function importBaseFile(text: string): BaseImport {
       name,
       query: "",
       folder,
+      filter,
       column,
       dir,
       formulas,
