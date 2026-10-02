@@ -26,6 +26,7 @@ import {
   Search,
   Sparkles,
   CalendarDays,
+  Clock,
   Lightbulb,
   Users,
   FolderKanban,
@@ -43,12 +44,14 @@ import {
   Pin,
   Paperclip,
   Palette,
+  LayoutTemplate,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { THEME_CHOICES, usePrefsStore } from "@/lib/prefs/preferences";
 import { useCssSnippetStore } from "@/lib/appearance/snippets";
 import { describeSearchEngine } from "@/lib/search/search-backend";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
+import { insertCurrentMoment, newNoteFromStarter, openTemplatePicker } from "@/lib/vault/template-session";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
 import {
@@ -69,6 +72,8 @@ import {
 } from "@/lib/vault/sqlite-fill-progress";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
+import { formatChord, resolveChord } from "@/lib/prefs/hotkeys";
+import { openSettingsSection } from "@/lib/prefs/settings-section";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { Hint, PaletteResults, type ActionDef } from "@/components/search/palette-results";
 import {
@@ -157,7 +162,6 @@ function CommandPaletteOpen() {
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const createNote = useVaultStore((s) => s.createNote);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
-  const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const requestDelete = useVaultStore((s) => s.requestDelete);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
@@ -183,6 +187,7 @@ function CommandPaletteOpen() {
   const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const savedSearches = usePrefsStore((s) => s.savedSearches);
+  const hotkeyOverrides = usePrefsStore((s) => s.hotkeyOverrides);
   const [query, setQuery] = useState("");
   const [recentTick, setRecentTick] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -365,13 +370,68 @@ function CommandPaletteOpen() {
             icon: TEMPLATE_ICONS[t.id] ?? <FilePlus size={15} />,
             shortcut: undefined as string | undefined,
             run: wrapRun(`tpl-${t.id}`, () => {
-              createFromTemplate(t.id);
               setCommandOpen(false);
+              void newNoteFromStarter(t.id);
             }),
           }),
         ),
+        {
+          id: "insert-template",
+          label: "Insert template…",
+          keywords: ["template", "templates", "insert", "templater", "snippet"],
+          icon: <LayoutTemplate size={15} />,
+          shortcut: formatChord(resolveChord("insertTemplate", hotkeyOverrides)) as string | undefined,
+          run: wrapRun("insert-template", () => {
+            setCommandOpen(false);
+            openTemplatePicker("insert");
+          }),
+        },
+        {
+          id: "new-from-template",
+          label: "New note from template…",
+          keywords: ["template", "templates", "create", "new", "templater"],
+          icon: <LayoutTemplate size={15} />,
+          shortcut: formatChord(resolveChord("newFromTemplate", hotkeyOverrides)) as string | undefined,
+          run: wrapRun("new-from-template", () => {
+            setCommandOpen(false);
+            openTemplatePicker("new");
+          }),
+        },
+        {
+          id: "insert-date",
+          label: "Insert current date",
+          keywords: ["template", "templates", "date", "today", "insert"],
+          icon: <CalendarDays size={15} />,
+          shortcut: formatChord(resolveChord("insertDate", hotkeyOverrides)) as string | undefined,
+          run: wrapRun("insert-date", () => {
+            setCommandOpen(false);
+            insertCurrentMoment("date");
+          }),
+        },
+        {
+          id: "insert-time",
+          label: "Insert current time",
+          keywords: ["template", "templates", "time", "now", "insert", "timestamp"],
+          icon: <Clock size={15} />,
+          shortcut: formatChord(resolveChord("insertTime", hotkeyOverrides)) as string | undefined,
+          run: wrapRun("insert-time", () => {
+            setCommandOpen(false);
+            insertCurrentMoment("time");
+          }),
+        },
+        {
+          id: "template-settings",
+          label: "Template settings",
+          keywords: ["template", "templates", "folder", "date format", "hotkey", "templater"],
+          icon: <Settings size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("template-settings", () => {
+            setCommandOpen(false);
+            openSettingsSection("templates");
+          }),
+        },
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
-    [actionQuery, nodes, createNote, openDailyNote, createFromTemplate, setCommandOpen, setQuery],
+    [actionQuery, nodes, createNote, openDailyNote, setCommandOpen, setQuery, hotkeyOverrides],
   );
 
   const navigateActions = useMemo(
@@ -843,12 +903,34 @@ function CommandPaletteOpen() {
           icon: TEMPLATE_ICONS[t.id] ?? <FilePlus size={15} />,
           shortcut: undefined as string | undefined,
           run: wrapRun(`tpl-${t.id}`, () => {
-            createFromTemplate(t.id);
             setCommandOpen(false);
             setRecentTick((t) => t + 1);
+            void newNoteFromStarter(t.id);
           }),
         }),
       ),
+      {
+        id: "insert-template",
+        label: "Insert template…",
+        icon: <LayoutTemplate size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("insert-template", () => {
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+          openTemplatePicker("insert");
+        }),
+      },
+      {
+        id: "new-from-template",
+        label: "New note from template…",
+        icon: <LayoutTemplate size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("new-from-template", () => {
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+          openTemplatePicker("new");
+        }),
+      },
       {
         id: "toggle-left",
         label: "Toggle left sidebar",
@@ -1036,7 +1118,6 @@ function CommandPaletteOpen() {
   }, [
     createNote,
     openDailyNote,
-    createFromTemplate,
     toggleLeft,
     toggleRight,
     toggleEditorMode,

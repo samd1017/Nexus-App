@@ -28,7 +28,7 @@ const outDir = join(tmpdir(), `nexus-draw-budget-${Date.now()}`);
 mkdirSync(outDir, { recursive: true });
 
 /** sha256 prefix of the planet shaders as shipped before level of detail. */
-const BODY_SHADER_HASH = "b9e60c0af4a45898";
+const BODY_SHADER_HASH = "2805598537bc3913";
 const LIMB_SHADER_HASH = "c414276d9d95f01b";
 
 async function bundle(entry, outfile) {

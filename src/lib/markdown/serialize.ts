@@ -646,6 +646,9 @@ export function htmlDocToMarkdown(root: HTMLElement): string {
     if (input) {
       li.setAttribute("data-checked", input.checked ? "true" : "false");
     }
+    // The checkbox label carries screen-reader text ("Task item checkbox for …").
+    // Keep the input itself: it is what keeps an empty task from reading as blank.
+    li.querySelectorAll(":scope > label > :not(input)").forEach((n) => n.remove());
   });
   return htmlToMarkdown(clone.innerHTML);
 }

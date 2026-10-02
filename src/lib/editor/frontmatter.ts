@@ -50,17 +50,43 @@ export function splitFrontmatter(md: string): {
   return { yaml: null, body: raw };
 }
 
+/** One list item as it would sit inside `[a, b]`. */
+export function flowItem(item: string): string {
+  const raw = item.trim();
+  const text =
+    raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
+      ? raw.slice(1, -1)
+      : raw;
+  return /[,[\]{}"']|:(?:\s|$)|\s#|^[#&*!|>%@`]|^\s|\s$/.test(text) ? JSON.stringify(text) : text;
+}
+
+/** `- item` lines after an empty key, as `[a, b]`; "" when there are none. */
+function blockListValue(lines: string[], from: number): string {
+  const items: string[] = [];
+  for (let i = from; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (!line.trim()) continue;
+    const item = /^\s*-(?:\s+(.*))?$/.exec(line);
+    if (!item) break;
+    if (item[1]?.trim()) items.push(flowItem(item[1]));
+  }
+  return items.length ? `[${items.join(", ")}]` : "";
+}
+
+/** Top-level `key: value` pairs. A block list reads as the flow list `[a, b]`. */
 export function parseFrontmatterFields(yaml: string): FrontmatterField[] {
   const fields: FrontmatterField[] = [];
-  for (const line of yaml.split(/\r?\n/)) {
-    if (!line.trim() || line.trimStart().startsWith("#")) continue;
-    if (/^\s/.test(line)) continue;
+  const lines = yaml.split(/\r?\n/);
+  lines.forEach((line, at) => {
+    if (!line.trim() || line.trimStart().startsWith("#")) return;
+    if (/^\s/.test(line)) return;
     const i = line.indexOf(":");
-    if (i <= 0) continue;
+    if (i <= 0) return;
     const key = line.slice(0, i).trim();
-    if (!/^[A-Za-z_][\w-]*$/.test(key)) continue;
-    fields.push({ key, value: line.slice(i + 1).trim() });
-  }
+    if (!/^[A-Za-z_][\w-]*$/.test(key)) return;
+    const value = line.slice(i + 1).trim();
+    fields.push({ key, value: value || blockListValue(lines, at + 1) });
+  });
   return fields;
 }
 

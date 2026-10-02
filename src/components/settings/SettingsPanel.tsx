@@ -15,9 +15,19 @@ import {
   HOTKEY_LABELS,
   conflictingHotkeyId,
   eventToChord,
+  formatChord,
   listShortcutRows,
+  resolveChord,
   type HotkeyId,
+  type HotkeyOverrides,
 } from "@/lib/prefs/hotkeys";
+import { OPEN_SETTINGS_SECTION } from "@/lib/prefs/settings-section";
+import {
+  DEFAULT_DATE_FORMAT,
+  DEFAULT_TIME_FORMAT,
+  formatDate,
+} from "@/lib/vault/template-engine";
+import { normalizeTemplateFolder, TEMPLATES_FOLDER } from "@/lib/vault/vault-templates";
 import {
   CLOUD_SYNC_HINT,
   providerLabel,
@@ -142,6 +152,8 @@ export function SettingsPanel() {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [stayHint, setStayHint] = useState(false);
   const [currentSection, setCurrentSection] = useState("appearance");
+  const landingSection = useRef("appearance");
+  const [folderDraft, setFolderDraft] = useState<string | null>(null);
 
   // The tab for the section in view carries a cyan underline, so the reader
   // knows where they are after scrolling or leaving the tabs.
@@ -193,6 +205,10 @@ export function SettingsPanel() {
   }, [open, prefs.accentCustom]);
 
   useEffect(() => {
+    if (open) setFolderDraft(null);
+  }, [open]);
+
+  useEffect(() => {
     const onOpen = () => {
       setOpen(true);
       setConfirmKind("rebuild");
@@ -202,27 +218,45 @@ export function SettingsPanel() {
   }, [setOpen]);
 
   useEffect(() => {
+    const onSection = (e: Event) => {
+      const section = String((e as CustomEvent).detail ?? "appearance");
+      if (usePrefsStore.getState().settingsOpen) {
+        document.getElementById(`settings-section-${section}`)?.scrollIntoView({ block: "start" });
+        document.querySelector<HTMLElement>(`[data-settings-nav="${section}"]`)?.focus();
+        return;
+      }
+      landingSection.current = section;
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_SETTINGS_SECTION, onSection);
+    return () => window.removeEventListener(OPEN_SETTINGS_SECTION, onSection);
+  }, [setOpen]);
+
+  useEffect(() => {
     if (!open) return;
     // Search sits above Settings; opening Settings from the menu while search
     // is up would otherwise look like nothing happened.
     if (useVaultStore.getState().commandOpen) useVaultStore.getState().setCommandOpen(false);
     const root = dialogRef.current;
+    const landing = landingSection.current;
+    landingSection.current = "appearance";
     // Focus dialog container on open
     const prev = document.activeElement as HTMLElement | null;
     let releaseFocus = () => {};
     if (root) {
       if (!root.hasAttribute("tabindex")) root.tabIndex = -1;
       // Rebuild confirm focuses Cancel itself. Do not pull that focus back.
-      // Otherwise land on Appearance — a real section, not the empty dialog shell.
+      // Otherwise land on Appearance (or the section asked for) — a real
+      // section, not the empty dialog shell.
       if (!document.querySelector("[data-nexus-confirm]")) {
         document
-          .getElementById("settings-section-appearance")
+          .getElementById(`settings-section-${landing}`)
           ?.scrollIntoView({ block: "start" });
       }
       releaseFocus = holdOpenFocus(
         root,
         () =>
-          root.querySelector<HTMLElement>('[data-settings-nav="appearance"]'),
+          root.querySelector<HTMLElement>(`[data-settings-nav="${landing}"]`),
         () => Boolean(document.querySelector("[data-nexus-confirm]")),
       );
     }
@@ -427,6 +461,7 @@ export function SettingsPanel() {
               ["editor", "Editor"],
               ["graph", "Graph"],
               ["vault", "Vault"],
+              ["templates", "Templates"],
             ] as const
           ).map(([id, label], index, all) => (
             <button
@@ -786,6 +821,92 @@ export function SettingsPanel() {
             </div>
           </Section>
 
+          <Section title="Templates" sectionId="templates">
+            <p
+              data-settings-lead="templates"
+              className="text-[15px] font-semibold leading-snug text-white"
+            >
+              Any note in your templates folder is a template. Using one copies
+              its text with the title, dates, and your answers filled in.
+            </p>
+            <div className="mt-4">
+              <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                Template folder location
+              </div>
+              <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">
+                A folder in this vault, such as Templates or Meta/Templates. A
+                template named Daily, Meeting, Idea, or Project replaces that built-in.
+              </p>
+              <input
+                type="text"
+                className="nexus-field mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[13px] text-[var(--text-primary)]"
+                value={folderDraft ?? prefs.templateFolder}
+                placeholder={TEMPLATES_FOLDER}
+                spellCheck={false}
+                aria-label="Template folder location"
+                data-testid="settings-template-folder"
+                onChange={(e) => {
+                  const typed = e.target.value;
+                  setFolderDraft(typed);
+                  const next = normalizeTemplateFolder(typed);
+                  if (typed.trim() && next === typed.trim()) updatePrefs({ templateFolder: next });
+                }}
+                onBlur={() => {
+                  if (folderDraft == null) return;
+                  updatePrefs({ templateFolder: normalizeTemplateFolder(folderDraft) });
+                  setFolderDraft(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+              />
+            </div>
+            <FormatField
+              label="Date format"
+              hint="Used by {{date}}, {{yesterday}}, {{date+7}}, and Insert current date"
+              value={prefs.templateDateFormat}
+              fallback={DEFAULT_DATE_FORMAT}
+              testId="settings-template-date-format"
+              onChange={(v) => updatePrefs({ templateDateFormat: v })}
+            />
+            <FormatField
+              label="Time format"
+              hint="Used by {{time}} and Insert current time"
+              value={prefs.templateTimeFormat}
+              fallback={DEFAULT_TIME_FORMAT}
+              testId="settings-template-time-format"
+              onChange={(v) => updatePrefs({ templateTimeFormat: v })}
+            />
+            <p className="mt-3 text-[12px] leading-snug text-[var(--text-muted)]">
+              Any token can take its own format, as in{" "}
+              <code className="font-mono text-[11.5px] text-[var(--text-secondary)]">{"{{date:dddd, MMMM Do}}"}</code>{" "}
+              or{" "}
+              <code className="font-mono text-[11.5px] text-[var(--text-secondary)]">{"{{time:h:mm A}}"}</code>.
+              YYYY year · MM, MMM, MMMM month · DD, Do day · ddd, dddd weekday ·
+              HH:mm 24-hour · h:mm A 12-hour · WW week · [text] stays as written.
+            </p>
+            <div className="mt-4 text-[13px] font-medium text-[var(--text-primary)]">Hotkeys</div>
+            <ul className="mt-1 space-y-1" data-testid="settings-template-hotkeys">
+              {(["insertTemplate", "newFromTemplate", "insertDate", "insertTime", "daily"] as const).map((id) => (
+                <HotkeyRow
+                  key={id}
+                  id={id}
+                  overrides={prefs.hotkeyOverrides}
+                  recording={recordingHotkey === id}
+                  onRecord={() => setRecordingHotkey((cur) => (cur === id ? null : id))}
+                  onReset={() => {
+                    const next = { ...prefs.hotkeyOverrides };
+                    delete next[id];
+                    updatePrefs({ hotkeyOverrides: next });
+                  }}
+                />
+              ))}
+            </ul>
+            <p className="mt-1 text-[12px] leading-snug text-[var(--text-muted)]">
+              Today&apos;s daily note uses a template named Daily when the folder has one.
+            </p>
+          </Section>
+
           <Section title="External agents">
             <p className="text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
               An agent can write Markdown in this same folder. Nexus notices the
@@ -921,61 +1042,20 @@ export function SettingsPanel() {
               shortcuts.
             </p>
             <ul className="space-y-1">
-              {listShortcutRows(prefs.hotkeyOverrides).map((s) => {
-                const clash = prefs.hotkeyOverrides?.[s.id]
-                  ? conflictingHotkeyId(
-                      s.id,
-                      prefs.hotkeyOverrides[s.id]!,
-                      prefs.hotkeyOverrides,
-                    )
-                  : null;
-                return (
-                  <li
-                    key={s.id}
-                    className="flex items-center justify-between gap-3 rounded-lg px-1 py-1 text-[13px]"
-                  >
-                    <span className="min-w-0 text-[var(--text-secondary)]">
-                      {s.action}
-                      {clash ? (
-                        <span className="ml-1 text-[11px] text-[var(--warning)]">
-                          also {HOTKEY_LABELS[clash]}
-                        </span>
-                      ) : null}
-                    </span>
-                    <div className="flex shrink-0 items-center gap-1">
-                      {s.remapped ? (
-                        <button
-                          type="button"
-                          className="text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)]"
-                          onClick={() => {
-                            const next = { ...prefs.hotkeyOverrides };
-                            delete next[s.id];
-                            updatePrefs({ hotkeyOverrides: next });
-                          }}
-                        >
-                          Reset
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className={cn(
-                          "rounded-md border px-2 py-0.5 font-mono text-[11px]",
-                          recordingHotkey === s.id
-                            ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]"
-                            : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-primary)]",
-                        )}
-                        onClick={() =>
-                          setRecordingHotkey((cur) =>
-                            cur === s.id ? null : s.id,
-                          )
-                        }
-                      >
-                        {recordingHotkey === s.id ? "Press keys…" : s.keys}
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
+              {listShortcutRows(prefs.hotkeyOverrides).map((s) => (
+                <HotkeyRow
+                  key={s.id}
+                  id={s.id}
+                  overrides={prefs.hotkeyOverrides}
+                  recording={recordingHotkey === s.id}
+                  onRecord={() => setRecordingHotkey((cur) => (cur === s.id ? null : s.id))}
+                  onReset={() => {
+                    const next = { ...prefs.hotkeyOverrides };
+                    delete next[s.id];
+                    updatePrefs({ hotkeyOverrides: next });
+                  }}
+                />
+              ))}
             </ul>
           </Section>
 
@@ -1155,6 +1235,103 @@ function HelpItem({
       <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
         {body}
       </p>
+    </div>
+  );
+}
+
+function HotkeyRow({
+  id,
+  overrides,
+  recording,
+  onRecord,
+  onReset,
+}: {
+  id: HotkeyId;
+  overrides: HotkeyOverrides;
+  recording: boolean;
+  onRecord: () => void;
+  onReset: () => void;
+}) {
+  const override = overrides?.[id];
+  const clash = override ? conflictingHotkeyId(id, override, overrides) : null;
+  return (
+    <li
+      className="flex items-center justify-between gap-3 rounded-lg px-1 py-1 text-[13px]"
+      data-hotkey-row={id}
+    >
+      <span className="min-w-0 text-[var(--text-secondary)]">
+        {HOTKEY_LABELS[id]}
+        {clash ? (
+          <span className="ml-1 text-[11px] text-[var(--warning)]">
+            also {HOTKEY_LABELS[clash]}
+          </span>
+        ) : null}
+      </span>
+      <div className="flex shrink-0 items-center gap-1">
+        {override ? (
+          <button
+            type="button"
+            className="text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)]"
+            onClick={onReset}
+          >
+            Reset
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={cn(
+            "rounded-md border px-2 py-0.5 font-mono text-[11px]",
+            recording
+              ? "border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]"
+              : "border-[var(--border)] bg-[var(--fill-subtle)] text-[var(--text-primary)]",
+          )}
+          onClick={onRecord}
+        >
+          {recording ? "Press keys…" : formatChord(resolveChord(id, overrides))}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function FormatField({
+  label,
+  hint,
+  value,
+  fallback,
+  testId,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  fallback: string;
+  testId: string;
+  onChange: (value: string) => void;
+}) {
+  const sample = formatDate(new Date(), value.trim() || fallback);
+  return (
+    <div className="mt-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-[13px] font-medium text-[var(--text-primary)]">{label}</div>
+        <div className="truncate text-[12px] text-[var(--text-secondary)]" data-testid={`${testId}-sample`}>
+          {sample}
+        </div>
+      </div>
+      <p className="mt-0.5 text-[12px] leading-snug text-[var(--text-muted)]">{hint}</p>
+      <input
+        type="text"
+        className="nexus-field mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 font-mono text-[12.5px] text-[var(--text-primary)]"
+        value={value}
+        placeholder={fallback}
+        spellCheck={false}
+        aria-label={label}
+        data-testid={testId}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={(e) => {
+          if (!e.target.value.trim()) onChange(fallback);
+        }}
+      />
     </div>
   );
 }

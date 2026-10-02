@@ -84,6 +84,9 @@ import { WikilinkSuggestMenu } from "./WikilinkSuggestMenu";
 import { SlashMenu } from "./SlashMenu";
 import { WikilinkHoverCard } from "./WikilinkHoverCard";
 import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
+import { registerInsertTemplate } from "@/lib/editor/insert-template";
+import { registerInsertText } from "@/lib/editor/insert-text";
+import { mergeTemplateProperties, splitRendered } from "@/lib/vault/template-engine";
 
 interface Props {
   noteId: string;
@@ -856,6 +859,40 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       return true;
     });
   }, [editor, refreshSuggest]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    return registerInsertTemplate((targetId, rendered) => {
+      if (editor.isDestroyed || noteIdRef.current !== targetId) return false;
+      const { yaml, body } = splitRendered(rendered);
+      // The visual doc has no properties. Merge them in the store first and
+      // mark that text as ours, so the refill does not undo the insert below.
+      const store = useVaultStore.getState();
+      const prev = store.nodes[targetId]?.content ?? lastWrittenRef.current ?? baselineMd.current;
+      if (yaml && typeof prev === "string") {
+        const merged = mergeTemplateProperties(prev, yaml).markdown;
+        if (merged !== prev) {
+          baselineMd.current = merged;
+          lastWrittenRef.current = merged;
+          store.updateNoteContent(targetId, merged, { source: true });
+        }
+      }
+      if (body.trim()) {
+        if (editor.state.selection.$from.parent.type.name === "heading") caretToWritingLine(editor);
+        editor.chain().focus().insertContent(markdownWithWikilinksToHtml(body)).run();
+      }
+      return true;
+    });
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    return registerInsertText((targetId, text) => {
+      if (editor.isDestroyed || noteIdRef.current !== targetId) return false;
+      editor.chain().focus().insertContent({ type: "text", text }).run();
+      return true;
+    });
+  }, [editor]);
 
   // Register find-in-note adapter for Visual mode
   useEffect(() => {
