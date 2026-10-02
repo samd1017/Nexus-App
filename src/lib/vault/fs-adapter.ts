@@ -662,6 +662,28 @@ export async function readFsaTextFilesIn(
   return out;
 }
 
+const MAX_LISTED_BASE_FILES = 64;
+
+/** Vault-relative `*.base` paths, skipping hidden folders. Not part of the note catalog. */
+export async function listFsaBaseFiles(root: FileSystemDirectoryHandle): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (dir: FileSystemDirectoryHandle, relDir: string): Promise<void> => {
+    if (out.length >= MAX_LISTED_BASE_FILES) return;
+    for await (const [name, handle] of dir.entries()) {
+      if (out.length >= MAX_LISTED_BASE_FILES) return;
+      if (!name || name.startsWith(".")) continue;
+      if (handle.kind === "directory") {
+        if (SKIP_DIRS.has(name)) continue;
+        await walk(handle as FileSystemDirectoryHandle, relDir ? pathJoin(relDir, name) : name);
+      } else if (handle.kind === "file" && name.toLowerCase().endsWith(".base")) {
+        out.push(relDir ? pathJoin(relDir, name) : name);
+      }
+    }
+  };
+  await walk(root, "");
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
 /** List soft-deleted notes under `.trash/` (newest first). */
 export async function listFsaTrash(
   root: FileSystemDirectoryHandle,

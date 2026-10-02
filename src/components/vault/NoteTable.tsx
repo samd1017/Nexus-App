@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
-import { setBasesOpen } from "@/lib/vault/bases-session";
+import { setBasesOpen, subscribeVaultBaseRequest, takeVaultBaseRequest } from "@/lib/vault/bases-session";
 import {
   basesPropertiesReading,
   buildNoteTable,
@@ -35,6 +35,7 @@ import { BASE_EXPORT_FILE, exportBaseFile } from "@/lib/vault/bases-file";
 import { LIVE_BASE_BACKUP, LIVE_BASE_FILE, readLiveBase, sameBasesSession, type LiveBase } from "@/lib/vault/bases-live";
 import { sentence, type LiveCheck, type LiveOpen, type LiveSave } from "@/lib/vault/bases-live-sync";
 import { liveBasesSync } from "@/lib/vault/bases-live-storage";
+import { listVaultBaseFiles, readVaultBaseText, type VaultBaseEntry } from "@/lib/vault/vault-bases";
 import { writeNoteFile } from "@/lib/vault/fs-adapter";
 import { writeDesktopNote } from "@/lib/vault/tauri-adapter";
 import {
@@ -89,6 +90,8 @@ export function NoteTable() {
   const [focusSummaryAt, setFocusSummaryAt] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [baseNotice, setBaseNotice] = useState<BaseNotice | null>(null);
+  const [vaultBasesOpen, setVaultBasesOpen] = useState(false);
+  const [vaultBases, setVaultBases] = useState<VaultBaseEntry[] | null>(null);
   const [liveState, setLiveState] = useState<"ok" | "failed" | "blocked">("ok");
   const baseInput = useRef<HTMLInputElement>(null);
   const [hydratingProps, setHydratingProps] = useState(false);
@@ -699,13 +702,17 @@ export function NoteTable() {
     setFocusSummaryAt(null);
   }, [focusSummaryAt, session.summaryFormulas]);
 
-  const importBase = async (file: File) => {
-    if (file.size > 1024 * 1024) {
-      setBaseNotice({ title: `${file.name} is larger than 1 MB, so it was not imported.`, lines: [], tone: "error", undo: null });
+  const applyBaseText = (name: string, text: string, how: "import" | "vault") => {
+    if (text.length > 1024 * 1024) {
+      setBaseNotice({
+        title: `${name} is larger than 1 MB, so it was not ${how === "import" ? "imported" : "opened"}.`,
+        lines: [],
+        tone: "error",
+        undo: null,
+      });
       return;
     }
-    const text = await file.text();
-    const result = readLiveBase(text, file.name);
+    const result = readLiveBase(text, name);
     if (!result.ok) {
       setBaseNotice({ title: result.error, lines: [], tone: "error", undo: null });
       return;
@@ -714,13 +721,58 @@ export function NoteTable() {
     const previousBase = live?.sync.template() ?? null;
     live?.sync.adopt({ text, session: result.session });
     setSession(result.session);
+    const savedTo = live?.onDisk ? `${LIVE_BASE_FILE} still holds these views.` : "Views still save in browser storage.";
     setBaseNotice({
-      title: live?.onDisk ? `Imported ${file.name}; ${LIVE_BASE_FILE} now holds its views.` : `Imported ${file.name}.`,
+      title:
+        how === "import"
+          ? live?.onDisk
+            ? `Imported ${name}; ${LIVE_BASE_FILE} now holds its views.`
+            : `Imported ${name}.`
+          : `Opened ${name}. ${savedTo}`,
       lines: result.notes.length ? result.notes : ["Every view, column, formula, filter, and sort carried over."],
       tone: "ok",
-      undo: { session: previous, base: previousBase, label: "Undo import", kind: "import" },
+      undo: { session: previous, base: previousBase, label: how === "import" ? "Undo import" : "Undo open", kind: "import" },
     });
   };
+
+  const importBase = async (file: File) => {
+    if (file.size > 1024 * 1024) {
+      setBaseNotice({ title: `${file.name} is larger than 1 MB, so it was not imported.`, lines: [], tone: "error", undo: null });
+      return;
+    }
+    applyBaseText(file.name, await file.text(), "import");
+  };
+
+  const showVaultBases = async () => {
+    setVaultBasesOpen(true);
+    setVaultBases(null);
+    try {
+      setVaultBases(await listVaultBaseFiles());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setVaultBases([]);
+      setBaseNotice({ title: `Couldn't list .base files: ${message}`, lines: [], tone: "error", undo: null });
+    }
+  };
+
+  const openVaultBase = async (file: VaultBaseEntry) => {
+    try {
+      const text = await readVaultBaseText(file.path);
+      applyBaseText(file.name, text, "vault");
+      setVaultBasesOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setBaseNotice({ title: `Couldn't open ${file.name}: ${message}`, lines: [], tone: "error", undo: null });
+    }
+  };
+
+  useEffect(() => {
+    const openPicker = () => {
+      if (takeVaultBaseRequest()) void showVaultBases();
+    };
+    openPicker();
+    return subscribeVaultBaseRequest(openPicker);
+  }, []);
 
   const replaceLive = () => {
     if (!live) return;
@@ -977,7 +1029,8 @@ export function NoteTable() {
             {live?.onDisk
               ? `Views live in ${LIVE_BASE_FILE} at the vault root, an Obsidian .base file Nexus saves to and reloads when it changes.`
               : "Views live in a .base kept in browser storage for this vault."}{" "}
-            Not Obsidian Bases — link.asFile() opens that note, and link.linksTo() checks its links. Some Obsidian functions are missing (Formula help lists what works); other .base files open only through Import.
+            Not Obsidian Bases — link.asFile() opens that note, and link.linksTo() checks its links. Some Obsidian functions are missing (Formula help lists what works). asFile() opens a note, not a full file (.name, .path, properties, size, and ctime are not on it). Opening another vault .base loads its views here;{" "}
+            {live?.onDisk ? `Nexus still saves them to ${LIVE_BASE_FILE}.` : "Nexus still saves them in browser storage."}
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -1130,8 +1183,21 @@ export function NoteTable() {
         <button
           type="button"
           className="chip-btn"
+          data-testid="bases-open-vault-base"
+          aria-expanded={vaultBasesOpen}
+          title="Open a .base file that is already in this vault. Nexus still saves views to the live file."
+          onClick={() => {
+            if (vaultBasesOpen) setVaultBasesOpen(false);
+            else void showVaultBases();
+          }}
+        >
+          Open .base
+        </button>
+        <button
+          type="button"
+          className="chip-btn"
           data-testid="bases-import-base"
-          title="Replace the open views with the views in an Obsidian .base file"
+          title="Replace the open views with a .base file from outside the vault"
           onClick={() => baseInput.current?.click()}
         >
           Import .base
@@ -1166,6 +1232,33 @@ export function NoteTable() {
           <X size={13} /> Close
         </button>
       </div>
+      {vaultBasesOpen ? (
+        <div className="shrink-0 border-b border-[var(--border)] px-3 py-2 text-[12px]" data-testid="bases-vault-bases">
+          {vaultBases === null ? (
+            <p className="text-[var(--text-muted)]">Looking for .base files…</p>
+          ) : vaultBases.length === 0 ? (
+            <p className="text-[var(--text-muted)]" data-testid="bases-vault-bases-empty">
+              No .base files in this vault.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1">
+              {vaultBases.map((file) => (
+                <button
+                  key={file.path}
+                  type="button"
+                  className="chip-btn"
+                  data-testid="bases-vault-base"
+                  data-path={file.path}
+                  title={file.path}
+                  onClick={() => void openVaultBase(file)}
+                >
+                  {file.path}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
       {baseNotice ? (
         <div
           role="status"

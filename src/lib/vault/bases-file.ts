@@ -28,7 +28,7 @@ import {
 export const BASE_EXPORT_FILE = "Nexus Bases export.base";
 
 const EXPORT_HEADER = [
-  "# Exported from Nexus as a copy. Nexus keeps its live views in Nexus Bases.base; edits here load only through Import .base.",
+  "# Exported from Nexus as a copy. Nexus keeps its live views in Nexus Bases.base; open this file from Bases to load its views there.",
   "# Formulas use Nexus syntax, which mostly matches Obsidian Bases; check any that error there.",
 ].join("\n");
 

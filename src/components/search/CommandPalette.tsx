@@ -7,7 +7,7 @@ import { paletteEnterOpensNow } from "@/lib/search/palette-enter";
 import { focusEditorPane } from "@/lib/editor/pane-focus";
 import { getFindFocusPane } from "@/lib/editor/find-target";
 import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
-import { setBasesOpen } from "@/lib/vault/bases-session";
+import { requestOpenVaultBase, setBasesOpen } from "@/lib/vault/bases-session";
 import { setSwitcherOpen } from "@/lib/search/switcher-session";
 import { isCanvasPath } from "@/lib/vault/canvas";
 import { switcherHits } from "@/lib/search/switcher-order";
@@ -1293,6 +1293,16 @@ function CommandPaletteOpen() {
           }),
         },
         {
+          id: "open-vault-base",
+          label: "Open .base from vault",
+          keywords: ["bases", "base", "obsidian", "import", "views"],
+          icon: <Table2 size={15} />,
+          run: wrapRun("open-vault-base", () => {
+            requestOpenVaultBase();
+            setCommandOpen(false);
+          }),
+        },
+        {
           id: "open-graph-overview",
           label: "Graph overview",
           keywords: ["graph", "overview", "vault", "folder", "tag", "filters"],
@@ -1764,6 +1774,17 @@ function CommandPaletteOpen() {
         shortcut: undefined as string | undefined,
         run: wrapRun("open-bases", () => {
           setBasesOpen(true);
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+        }),
+      },
+      {
+        id: "open-vault-base",
+        label: "Open .base from vault",
+        icon: <Table2 size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("open-vault-base", () => {
+          requestOpenVaultBase();
           setCommandOpen(false);
           setRecentTick((t) => t + 1);
         }),

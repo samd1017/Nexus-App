@@ -573,6 +573,36 @@ export async function statDesktopFolder(
   }
 }
 
+const MAX_LISTED_BASE_FILES = 64;
+
+/** Vault-relative `*.base` paths, skipping hidden folders. Not part of the note catalog. */
+export async function listDesktopBaseFiles(root: string): Promise<string[]> {
+  const { readDir } = await import("@tauri-apps/plugin-fs");
+  const out: string[] = [];
+  const walk = async (relDir: string): Promise<void> => {
+    if (out.length >= MAX_LISTED_BASE_FILES) return;
+    let entries;
+    try {
+      entries = await readDir(joinRoot(root, relDir));
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (out.length >= MAX_LISTED_BASE_FILES) return;
+      const name = entry.name;
+      if (!name || name.startsWith(".")) continue;
+      if (entry.isDirectory) {
+        if (SKIP_DIRS.has(name)) continue;
+        await walk(relDir ? pathJoin(relDir, name) : name);
+      } else if (entry.isFile && name.toLowerCase().endsWith(".base")) {
+        out.push(relDir ? pathJoin(relDir, name) : name);
+      }
+    }
+  };
+  await walk("");
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
 /** Notes and folders directly inside `relPath` on disk (hidden entries skipped), or null. */
 export async function countDesktopFolderEntries(
   root: string,

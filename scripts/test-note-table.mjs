@@ -945,6 +945,10 @@ assert.match(table, /SUMMARY_FORMULA_EXAMPLES\.map/);
 assert.match(table, /data-testid="bases-formula-summaries"/);
 assert.match(table, /summarize\(rows, column, kind, summaryFormulas\)/);
 assert.match(table, /Some Obsidian functions are missing/);
+assert.match(table, /asFile\(\) opens a note, not a full file/);
+assert.match(table, /Opening another vault \.base loads its views here/);
+assert.match(table, /Nexus still saves them to \$\{LIVE_BASE_FILE\}/);
+assert.match(table, /Nexus still saves them in browser storage/);
 assert.match(table, /data-testid="bases-formula-link"/);
 assert.match(table, /data-testid="bases-formula-lists"/);
 assert.match(table, /FORMULA_FUNCTION_GROUPS\.map/);
@@ -954,7 +958,12 @@ assert.match(table, /data-testid="bases-group-by"/);
 assert.match(table, /data-testid="bases-summary-select"/);
 assert.match(table, /data-testid="bases-group"/);
 assert.match(table, /data-testid="bases-card-group"/);
-assert.match(table, /other \.base files open only through Import/);
+assert.doesNotMatch(table, /open only through Import/);
+assert.doesNotMatch(readFileSync("src/lib/vault/bases-file.ts", "utf8"), /only through Import/);
+assert.match(table, /data-testid="bases-open-vault-base"/);
+assert.match(table, /data-testid="bases-vault-base"/);
+assert.match(table, /Undo open/);
+assert.match(readFileSync("src/components/search/CommandPalette.tsx", "utf8"), /Open \.base from vault/);
 assert.match(table, /data-testid="bases-add-formula"/);
 assert.match(table, /data-testid="bases-formula-remove"/);
 assert.match(table, /data-testid="bases-import-base"/);
@@ -1157,6 +1166,34 @@ assert.equal(buildNoteTable(formulaNotes, "", bare.session.views[0].formulas, NO
 assert.match(importBaseFile("views: [\n").error, /^Not a readable \.base file/);
 assert.equal(importBaseFile("formulas:\n  a: '1'\n").error, "This .base file has no views to import.");
 assert.equal(importBaseFile("").error, "This .base file has no views to import.");
+const { demoBaseFile } = await import("../src/lib/vault/demo-bases.ts");
+const { vaultBaseEntries } = await import("../src/lib/vault/vault-base-list.ts");
+const threeViews = demoBaseFile("Soak-ThreeViews.base");
+assert.ok(threeViews);
+const openedThree = importBaseFile(threeViews.text);
+assert.ok(!("error" in openedThree));
+assert.equal(openedThree.session.views.length, 3);
+assert.deepEqual(openedThree.session.views.map((view) => view.name), ["Soak all", "Soak cards", "Soak third"]);
+assert.equal(openedThree.session.views[1].layout, "cards");
+assert.equal(openedThree.session.views[2].folder, "Research");
+const groupedBase = importBaseFile(demoBaseFile("Soak-GroupBy.base").text);
+assert.deepEqual(groupedBase.session.views[0].groupBy, { column: "status", dir: "asc" });
+assert.deepEqual(
+  vaultBaseEntries({
+    nodes: {
+      mine: { path: "Notes/Mine.base", name: "Mine.base", kind: "note" },
+      welcome: { path: "Welcome.md", name: "Welcome.md", kind: "note" },
+      folder: { path: "Notes", kind: "folder" },
+    },
+    diskPaths: ["Soak-ThreeViews.base", "Notes/Mine.base"],
+    includeDemo: true,
+  }).map((file) => file.path),
+  ["Nexus Bases export.base", "Notes/Mine.base", "Soak-GroupBy.base", "Soak-MultiFormula.base", "Soak-ThreeViews.base"],
+);
+assert.deepEqual(
+  vaultBaseEntries({ nodes: {}, diskPaths: ["Projects/Other.base"], includeDemo: false }).map((file) => file.path),
+  ["Projects/Other.base"],
+);
 assert.equal(importBaseFile("- 1\n- 2\n").error, "This .base file has no views to import.");
 const many = importBaseFile(
   `formulas:\n${Array.from({ length: 10 }, (_, i) => `  f${i}: '${i}'`).join("\n")}\nviews:\n  - type: table\n    name: Wide\n`,
