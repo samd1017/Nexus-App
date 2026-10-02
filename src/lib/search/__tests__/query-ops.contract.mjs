@@ -1,5 +1,5 @@
 /**
- * tag:, uppercase OR, and honest line:/section: hints.
+ * tag:, uppercase OR, and line:/section: filters.
  * Run: node src/lib/search/__tests__/query-ops.contract.mjs
  */
 import assert from "node:assert/strict";
@@ -56,11 +56,13 @@ await build({
 });
 
 const {
+  LINE_SECTION_WINDOW_HINT,
   SEARCH_OPERATOR_HELP,
   hasOrQuery,
   isTagOnlyQuery,
   parseSearchOps,
   planPagedDesktopSearch,
+  searchUsesLoadedBodies,
   searchWithOps,
   unsupportedSearchHint,
   WINDOW_SCOPED_SEARCH_HINT,
@@ -82,6 +84,19 @@ const nodes = {
   a: note("a", "Alpha Note", "alpha apples\n\n#work"),
   b: note("b", "Beta Note", "beta berries\n\n#home"),
   c: note("c", "Shared Note", "alpha beta together"),
+  w: note(
+    "w",
+    "Welcome",
+    "# Welcome\n\n## Soak tasks\n\nSoak the LIVECOMPAREBODYTOKEN991 line\n\n## Other\n\nnope",
+  ),
+  ghost: {
+    id: "ghost",
+    path: "Ghost.md",
+    name: "Ghost.md",
+    kind: "note",
+    parentId: null,
+    mtime: 1,
+  },
 };
 
 function ids(query) {
@@ -139,24 +154,45 @@ function ids(query) {
 
 {
   const line = parseSearchOps("line:12");
-  assert.deepEqual(line.unsupported, ["line"]);
+  assert.deepEqual(line.unsupported, []);
+  assert.equal(line.lineFilter, 12);
+  assert.equal(line.sectionFilter, null);
   assert.equal(line.rest, "");
-  assert.equal(unsupportedSearchHint(line), "line: is not supported yet.");
+  assert.equal(unsupportedSearchHint(line), null);
+  assert.equal(searchUsesLoadedBodies(line), true);
   assert.deepEqual(ids("line:12"), []);
-  const section = parseSearchOps('section:"Daily notes"');
-  assert.deepEqual(section.unsupported, ["section"]);
-  assert.equal(unsupportedSearchHint(section), "section: is not supported yet.");
+  const section = parseSearchOps('section:"Soak tasks"');
+  assert.deepEqual(section.unsupported, []);
+  assert.equal(section.sectionFilter, "Soak tasks");
+  assert.equal(section.rest, "");
+  assert.equal(unsupportedSearchHint(section), null);
+  assert.deepEqual(ids('section:"Soak tasks"'), ["w"]);
+  assert.deepEqual(ids('section:"Soak tasks" Soak'), ["w"]);
+  assert.deepEqual(ids('section:"Soak tasks" nope'), []);
+  assert.deepEqual(ids('section:"Other" nope'), ["w"]);
+  assert.ok(!ids('section:"Soak tasks"').includes("ghost"));
   const both = parseSearchOps("section:Intro line:4 alpha");
-  assert.deepEqual(both.unsupported, ["line", "section"]);
+  assert.deepEqual(both.unsupported, []);
+  assert.equal(both.lineFilter, 4);
+  assert.equal(both.sectionFilter, "Intro");
   assert.equal(both.rest, "alpha");
-  assert.equal(unsupportedSearchHint(both), "line: and section: are not supported yet.");
-  assert.deepEqual(ids("alpha line:4"), ids("alpha"));
+  assert.equal(unsupportedSearchHint(both), null);
+  assert.deepEqual(ids("alpha line:1"), ["a", "c"]);
+  assert.deepEqual(ids("alpha line:4"), []);
+  assert.deepEqual(ids("LIVECOMPAREBODYTOKEN991 line:5"), ["w"]);
+  assert.deepEqual(ids("LIVECOMPAREBODYTOKEN991 line:9"), []);
   assert.deepEqual(ids("line:1 OR beta"), ["b", "c"]);
-  assert.deepEqual(parseSearchOps("line:1 OR beta").unsupported, ["line"]);
+  const lineOr = parseSearchOps("line:1 OR beta");
+  assert.deepEqual(lineOr.unsupported, []);
+  assert.equal(lineOr.orClauses[0].lineFilter, 1);
+  assert.equal(lineOr.orClauses[1].lineFilter, null);
   const quotedPath = parseSearchOps('path:"section:Intro" hello');
   assert.deepEqual(quotedPath.unsupported, []);
+  assert.equal(quotedPath.lineFilter, null);
+  assert.equal(quotedPath.sectionFilter, null);
   assert.equal(quotedPath.pathFilter, "section:Intro");
   assert.equal(quotedPath.rest, "hello");
+  assert.equal(searchUsesLoadedBodies(quotedPath), false);
 }
 
 {
@@ -173,16 +209,20 @@ function ids(query) {
   assert.match(SEARCH_OPERATOR_HELP, /foo OR bar/);
   assert.match(SEARCH_OPERATOR_HELP, /line:/);
   assert.match(SEARCH_OPERATOR_HELP, /section:/);
-  assert.match(SEARCH_OPERATOR_HELP, /not supported yet/);
+  assert.match(SEARCH_OPERATOR_HELP, /body line/);
+  assert.doesNotMatch(SEARCH_OPERATOR_HELP, /not supported yet/);
   const settings = readFileSync(path.join(root, "src/components/settings/SettingsPanel.tsx"), "utf8");
   const shortcuts = readFileSync(path.join(root, "src/components/chrome/ShortcutsSheet.tsx"), "utf8");
   const palette = readFileSync(path.join(root, "src/components/search/CommandPalette.tsx"), "utf8");
   assert.match(settings, /SEARCH_OPERATOR_HELP/);
   assert.match(shortcuts, /SEARCH_OPERATOR_HELP/);
   assert.match(shortcuts, /data-testid="search-operator-help"/);
-  for (const phrase of ["tag:", ">OR</span>", "line:", "section:", "not supported yet", "search-unsupported-hint"]) {
+  for (const phrase of ["tag:", ">OR</span>", "line:", "section:", "filter loaded notes", "search-unsupported-hint"]) {
     assert.match(palette, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.doesNotMatch(palette, /not supported yet/);
+  assert.doesNotMatch(settings, /not supported yet/);
+  assert.doesNotMatch(shortcuts, /not supported yet/);
 }
 
 {
@@ -217,6 +257,15 @@ function ids(query) {
   });
   assert.equal(windowOr.engine, "window");
   assert.equal(windowOr.hint, WINDOW_SCOPED_SEARCH_HINT);
+  const lineWords = parseSearchOps("alpha line:1");
+  const sqliteLine = planPagedDesktopSearch({
+    shellCatalog: true,
+    sqlite: true,
+    ops: lineWords,
+  });
+  assert.equal(sqliteLine.engine, "default");
+  assert.notEqual(sqliteLine.engine, "sqlite-ops");
+  assert.equal(sqliteLine.hint, LINE_SECTION_WINDOW_HINT);
   const palette = readFileSync(path.join(root, "src/components/search/CommandPalette.tsx"), "utf8");
   assert.match(palette, /planPagedDesktopSearch/);
   assert.match(palette, /searchDesktopOps/);

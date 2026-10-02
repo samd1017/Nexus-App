@@ -67,6 +67,7 @@ import {
   parseSearchOps,
   planPagedDesktopSearch,
   searchDesktopOps,
+  searchUsesLoadedBodies,
   searchWithOps,
   unsupportedSearchHint,
 } from "@/lib/search/query-ops";
@@ -454,7 +455,7 @@ function CommandPaletteOpen() {
   const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
 
   const syncHits = useMemo(() => {
-    if (shellCatalog && shellDbPath && !hasOr) {
+    if (shellCatalog && shellDbPath && !hasOr && !searchUsesLoadedBodies(pathFolderOps)) {
       if (isEmptyQuery) return topNotesByVisitMtime(nodes, 10, vaultId);
       if ((exactTagQuery || isTagBrowse) && !hasPathFolderOp) return [];
       const needle = debouncedSearch.trim() || searchText || raw;
@@ -538,6 +539,8 @@ function CommandPaletteOpen() {
     pathFolderOps.folderFilter,
     pathFolderOps.fileFilter,
     pathFolderOps.tagFilter,
+    pathFolderOps.lineFilter,
+    pathFolderOps.sectionFilter,
     pathFolderOps.excludes,
     isAskMode,
     activeNoteId,
@@ -590,7 +593,7 @@ function CommandPaletteOpen() {
       setAsyncHits([]);
       return;
     }
-    if (shellCatalog && shellDbPath && !hasOr) {
+    if (shellCatalog && shellDbPath && !hasOr && !searchUsesLoadedBodies(pathFolderOps)) {
       let cancelled = false;
       const db = shellDbPath;
       const asHit = (id: string, path: string, title: string, snippet: string): SearchHit => ({
@@ -863,6 +866,8 @@ function CommandPaletteOpen() {
     pathFolderOps.pathFilter,
     pathFolderOps.folderFilter,
     pathFolderOps.tagFilter,
+    pathFolderOps.lineFilter,
+    pathFolderOps.sectionFilter,
     searchIndexState,
   ]);
   const hits = asyncHits ?? syncHits;
@@ -2124,7 +2129,7 @@ function CommandPaletteOpen() {
             <span className="font-mono text-[var(--text-secondary)]">&gt;</span> for commands.
             {" "}
             <span className="font-mono text-[var(--text-secondary)]">line:</span> and{" "}
-            <span className="font-mono text-[var(--text-secondary)]">section:</span> are not supported yet.
+            <span className="font-mono text-[var(--text-secondary)]">section:</span> filter loaded notes.
           </div>
         ) : null}
         {unsupportedHint ? (

@@ -65,7 +65,7 @@ export function QueryView({ node, updateAttributes }: NodeViewProps) {
         ) : null}
         {hits.length === 0 ? (
           <p className="nexus-query-empty">
-            No matches. Try path:, folder:, file:, #tag, tag:, OR, or -exclude.
+            No matches. Try path:, folder:, file:, #tag, tag:, line:, section:, OR, or -exclude.
           </p>
         ) : (
           <ul className="space-y-1.5">
