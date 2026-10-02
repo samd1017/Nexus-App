@@ -96,3 +96,25 @@ export function taskMatchesPath(task: VaultTask, prefix: string): boolean {
   if (!want) return true;
   return task.path.toLowerCase().startsWith(want);
 }
+
+/**
+ * Local calendar day as YYYY-MM-DD (the runtime's local zone, not a fixed offset).
+ * `now` defaults to the current instant.
+ */
+export function localToday(now = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Due today when `due` equals `today`. Overdue when `due` is a calendar date strictly before `today`.
+ * Null, blank, and non-dates are neither. YYYY-MM-DD compares in calendar order.
+ */
+export function taskDueBucket(due: string | null, today: string): "today" | "overdue" | null {
+  if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
+  if (due === today) return "today";
+  if (due < today) return "overdue";
+  return null;
+}

@@ -4,7 +4,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle } from "@/lib/vault/types";
 import { getSearchIndexState } from "@/lib/vault/sqlite-fill-progress";
 import { BROWSER_SHELL_DB } from "@/lib/vault/shell-catalog";
-import { completeTaskLine, taskMatchesPath, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
+import { completeTaskLine, localToday, taskDueBucket, taskMatchesPath, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
 import { fetchTaskPage } from "@/lib/tasks/sqlite-page";
 import { jumpToTaskText } from "@/lib/tasks/jump";
 import { getFindFocusPane } from "@/lib/editor/find-target";
@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 const TASK_CAP = 400;
 const CHUNK = 80;
 
-type Scope = "all" | "note";
+type Scope = "all" | "note" | "due-today" | "overdue";
 
 function liveTitle(id: string, path: string, fallback: string): string {
   const node = useVaultStore.getState().nodes[id];
@@ -98,14 +98,17 @@ export function TasksRail() {
     };
   }, [vaultId, shellDbPath, shellCatalog, refresh]);
 
+  const today = localToday();
   const visible = useMemo(() => {
     const note = activeNoteId ? useVaultStore.getState().nodes[activeNoteId] : null;
     const notePath = note?.kind === "note" ? note.path : "";
     return tasks.filter((task) => {
       if (scope === "note" && task.noteId !== activeNoteId && task.path !== notePath) return false;
+      if (scope === "due-today" && taskDueBucket(task.due, today) !== "today") return false;
+      if (scope === "overdue" && taskDueBucket(task.due, today) !== "overdue") return false;
       return taskMatchesPath(task, pathPrefix);
     });
-  }, [tasks, scope, pathPrefix, activeNoteId]);
+  }, [tasks, scope, pathPrefix, activeNoteId, today]);
 
   const openTask = (task: VaultTask) => {
     const store = useVaultStore.getState();
@@ -142,6 +145,7 @@ export function TasksRail() {
         Unchecked <span className="font-mono">- [ ]</span> and <span className="font-mono">* [ ]</span> lines.
         A <span className="font-mono">📅 YYYY-MM-DD</span> on the line is the due date and wins.
         Otherwise the note <span className="font-mono">due:</span> YAML applies.
+        Due today and Overdue keep incomplete tasks due on this local day, or before it.
         Recurrence, priorities, and Dataview queries are not supported.
       </p>
       <div className="flex flex-wrap items-center gap-1">
@@ -162,6 +166,24 @@ export function TasksRail() {
           onClick={() => setScope("note")}
         >
           This note
+        </button>
+        <button
+          type="button"
+          data-testid="tasks-filter-due-today"
+          aria-pressed={scope === "due-today"}
+          className={cn("chip-btn", scope === "due-today" && "is-active")}
+          onClick={() => setScope("due-today")}
+        >
+          Due today
+        </button>
+        <button
+          type="button"
+          data-testid="tasks-filter-overdue"
+          aria-pressed={scope === "overdue"}
+          className={cn("chip-btn", scope === "overdue" && "is-active")}
+          onClick={() => setScope("overdue")}
+        >
+          Overdue
         </button>
         <input
           value={pathPrefix}

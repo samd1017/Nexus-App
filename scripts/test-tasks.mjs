@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine } = await import(
+const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday } = await import(
   "../src/lib/tasks/extract.ts"
 );
 
@@ -76,6 +76,45 @@ const bad = tasksInNote({
 });
 assert.equal(bad[0].due, null);
 
+const today = "2026-10-02";
+assert.equal(taskDueBucket("2026-10-02", today), "today");
+assert.equal(taskDueBucket("2026-10-01", today), "overdue");
+assert.equal(taskDueBucket("2020-01-01", today), "overdue");
+assert.equal(taskDueBucket("2026-10-03", today), null);
+assert.equal(taskDueBucket(null, today), null);
+assert.equal(taskDueBucket("tomorrow", today), null);
+assert.match(localToday(new Date(2026, 9, 2, 15, 0)), /^2026-10-02$/);
+
+const dated = tasksInNote({
+  id: "due",
+  path: "Research/Callouts.md",
+  title: "Callouts",
+  body: [
+    "---",
+    "due: 2026-09-01",
+    "---",
+    "",
+    "- [ ] Inherit overdue",
+    "- [ ] Line today 📅 2026-10-02",
+    "- [ ] Line future 📅 2026-10-03",
+  ].join("\n"),
+});
+const undated = tasksInNote({
+  id: "plain",
+  path: "Journal/Plain.md",
+  title: "Plain",
+  body: "- [ ] No due\n",
+});
+const pool = [...dated, ...undated];
+const inBucket = (bucket) =>
+  pool.filter((task) => taskDueBucket(task.due, today) === bucket && taskMatchesPath(task, "Research"));
+assert.deepEqual(inBucket("today").map((task) => task.text), ["Line today"]);
+assert.deepEqual(inBucket("overdue").map((task) => task.text), ["Inherit overdue"]);
+assert.equal(dated.find((task) => task.text === "Line today").due, "2026-10-02");
+assert.equal(pool.filter((task) => taskDueBucket(task.due, today) === "today" && task.text === "Line future").length, 0);
+assert.equal(pool.filter((task) => taskDueBucket(task.due, today) != null && task.text === "No due").length, 0);
+assert.equal(inBucket("today").some((task) => task.path.startsWith("Journal")), false);
+
 const { readFileSync } = await import("node:fs");
 const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");
 assert.match(panel, /TasksRail/);
@@ -89,10 +128,16 @@ assert.match(welcome, /No plugin API/);
 const help = readFileSync("src/components/settings/SettingsPanel.tsx", "utf8");
 assert.match(help, /Dataview queries are not supported/);
 assert.match(help, /Recurrence/);
+assert.match(help, /Due today and Overdue/);
 assert.doesNotMatch(help, /due: frontmatter/);
 const rail = readFileSync("src/components/right/TasksRail.tsx", "utf8");
 assert.match(rail, /due:/);
 assert.match(rail, /Recurrence/);
+assert.match(rail, /tasks-filter-due-today/);
+assert.match(rail, /tasks-filter-overdue/);
+assert.match(rail, /Due today/);
+assert.match(rail, /Overdue/);
+assert.match(rail, /taskDueBucket/);
 assert.doesNotMatch(rail, /due: frontmatter/);
 assert.match(rail, /setActiveNote\(task\.noteId/);
 assert.match(rail, /completeTaskLine/);
