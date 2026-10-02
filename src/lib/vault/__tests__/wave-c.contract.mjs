@@ -26,6 +26,25 @@ import { join } from "node:path";
 const outDir = join(tmpdir(), `nexus-wave-c-${Date.now()}`);
 mkdirSync(outDir, { recursive: true });
 
+function sqlRawPlugin() {
+  return {
+    name: "sql-raw",
+    setup(build) {
+      build.onResolve({ filter: /\.sql\?raw$/ }, (args) => {
+        const spec = args.path.replace(/\?raw$/, "");
+        return {
+          path: path.isAbsolute(spec) ? spec : path.resolve(args.resolveDir, spec),
+          namespace: "sql-raw",
+        };
+      });
+      build.onLoad({ filter: /.*/, namespace: "sql-raw" }, (args) => ({
+        contents: `export default ${JSON.stringify(readFileSync(args.path, "utf8"))};`,
+        loader: "js",
+      }));
+    },
+  };
+}
+
 async function bundle(entry, outfile) {
   await build({
     entryPoints: [entry],
@@ -35,6 +54,7 @@ async function bundle(entry, outfile) {
     platform: "neutral",
     packages: "external",
     logLevel: "silent",
+    plugins: [sqlRawPlugin()],
   });
 }
 
@@ -59,6 +79,7 @@ async function main() {
     format: "esm",
     platform: "neutral",
     logLevel: "silent",
+    plugins: [sqlRawPlugin()],
   });
 
   const conflicts = await import(pathToFileURL(conflictsOut).href);
@@ -165,8 +186,16 @@ async function main() {
   // --- contract ---
   assert.equal(contract.DURABLE_INDEX_SCHEMA_VERSION, 3);
   contract.assertContractInvariants();
-  assert.ok(contract.DURABLE_INDEX_SQL.includes("note_fts"));
-  assert.equal(contract.DURABLE_INDEX_TABLES.length, 7);
+  const canonical = readFileSync(path.join(root, "schema/durable-index.sql"), "utf8");
+  assert.equal(contract.DURABLE_INDEX_SQL, canonical);
+  assert.match(canonical, /fill_depth INTEGER/);
+  assert.match(canonical, /CREATE TABLE IF NOT EXISTS note_fts_row/);
+  assert.ok(contract.DURABLE_INDEX_TABLES.includes("note_fts_row"));
+  assert.equal(contract.DURABLE_INDEX_TABLES.length, 8);
+  const rustSchema = readFileSync(path.join(root, "src-tauri/src/schema.rs"), "utf8");
+  assert.match(rustSchema, /include_str!\("\.\.\/\.\.\/schema\/durable-index\.sql"\)/);
+  const durable = readFileSync(path.join(root, "src-tauri/src/durable_index.rs"), "utf8");
+  assert.equal(durable.includes("const DDL:"), false);
 
   // --- body cache ---
   bodyCache.clearBodyTouches();

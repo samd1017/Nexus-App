@@ -1,12 +1,15 @@
+import durableIndexSql from "../../../schema/durable-index.sql?raw";
+
 /**
  * DurableIndex schema contract (v3) — mobile + desktop.
  *
  * Markdown on disk is canonical. SQLite/memory index is a disposable cache.
  * Native layers (desktop Rust, future Tauri Mobile) MUST implement this schema.
+ * The SQL text is `schema/durable-index.sql`, which the Rust index includes.
  * Do not bump SCHEMA_VERSION without coordinated TS + Rust + rebuild rules.
  */
 
-/** Locked at 3 until a coordinated migration. Mirrors durable_index.rs SCHEMA_VERSION. */
+/** Locked at 3 until a coordinated migration. Mirrors schema.rs SCHEMA_VERSION. */
 export const DURABLE_INDEX_SCHEMA_VERSION = 3 as const;
 export type DurableIndexSchemaVersion = typeof DURABLE_INDEX_SCHEMA_VERSION;
 
@@ -19,6 +22,7 @@ export const DURABLE_INDEX_TABLES = [
   "link_edge",
   "tag_map",
   "note_fts",
+  "note_fts_row",
   "vault_registry",
   "capture_queue",
 ] as const;
@@ -36,74 +40,9 @@ export const META_KV_KEYS = {
 } as const;
 
 /**
- * SQL DDL for SQLite / mobile — executed by native layer.
- * Must stay aligned with src-tauri/src/durable_index.rs DDL.
+ * SQL DDL for SQLite / mobile — the native layer includes the same file.
  */
-export const DURABLE_INDEX_SQL = `
-CREATE TABLE IF NOT EXISTS meta_kv (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS note_meta (
-  id TEXT PRIMARY KEY,
-  path TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('folder','note')),
-  parent_id TEXT,
-  mtime INTEGER NOT NULL,
-  size INTEGER,
-  content_hash TEXT,
-  title TEXT,
-  deleted INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS note_meta_parent ON note_meta(parent_id);
-CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);
-
-CREATE TABLE IF NOT EXISTS link_edge (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_id TEXT NOT NULL,
-  target_raw TEXT NOT NULL,
-  target_norm TEXT NOT NULL,
-  target_id TEXT,
-  UNIQUE (source_id, target_norm)
-);
-CREATE INDEX IF NOT EXISTS link_fwd ON link_edge(source_id);
-CREATE INDEX IF NOT EXISTS link_rev ON link_edge(target_norm);
-
-CREATE TABLE IF NOT EXISTS tag_map (
-  tag TEXT NOT NULL,
-  note_id TEXT NOT NULL,
-  PRIMARY KEY (tag, note_id)
-);
-CREATE INDEX IF NOT EXISTS tag_by_note ON tag_map(note_id);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
-  note_id UNINDEXED,
-  title,
-  path,
-  body,
-  tokenize = 'unicode61 remove_diacritics 2'
-);
-
-CREATE TABLE IF NOT EXISTS vault_registry (
-  vault_id TEXT PRIMARY KEY,
-  display_name TEXT NOT NULL,
-  root_rel TEXT NOT NULL,
-  created_ms INTEGER NOT NULL,
-  opened_ms INTEGER NOT NULL,
-  note_count INTEGER NOT NULL DEFAULT 0,
-  index_path TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS capture_queue (
-  id TEXT PRIMARY KEY,
-  vault_id TEXT NOT NULL,
-  path_hint TEXT,
-  body TEXT NOT NULL,
-  created_ms INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending'
-);
-`;
+export const DURABLE_INDEX_SQL = durableIndexSql;
 
 export type NoteMetaKind = "folder" | "note";
 
@@ -223,6 +162,9 @@ export function assertContractInvariants(): void {
     if (!DURABLE_INDEX_SQL.includes(t)) {
       throw new Error(`DDL missing table ${t}`);
     }
+  }
+  if (!DURABLE_INDEX_SQL.includes("fill_depth")) {
+    throw new Error("DDL missing fill_depth");
   }
   if (DURABLE_INDEX_REBUILD_RULES.bodySnippetMaxChars <= 0) {
     throw new Error("bodySnippetMaxChars must be positive");
