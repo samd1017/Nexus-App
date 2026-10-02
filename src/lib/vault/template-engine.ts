@@ -201,28 +201,123 @@ export function renderTemplate(source: string, values: TemplateValues): string {
 
 type YamlEntry = { key: string | null; lines: string[] };
 
+/** Properties Obsidian always treats as lists, even when written as one value. */
+const LIST_PROPERTIES = new Set(["tags", "tag", "aliases", "alias", "cssclasses", "cssclass"]);
+
+function unquote(text: string): string {
+  return text.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+}
+
 /** Top-level YAML keys, each with its indented continuation lines. */
 function yamlEntries(yaml: string): YamlEntry[] {
   const out: YamlEntry[] = [];
   for (const line of yaml.replace(/\r\n/g, "\n").split("\n")) {
     const continues = /^\s/.test(line) || /^-(\s|$)/.test(line);
-    const top = continues ? null : /^([^\s#][^:]*?)\s*:/.exec(line);
-    if (top) out.push({ key: top[1].trim().toLowerCase(), lines: [line] });
+    const top = continues ? null : /^([^\s#][^:]*?)\s*:(?:\s|$)/.exec(line);
+    if (top) out.push({ key: unquote(top[1]).toLowerCase(), lines: [line] });
     else if (out.length && continues) out[out.length - 1].lines.push(line);
     else if (line.trim()) out.push({ key: null, lines: [line] });
   }
   return out;
 }
 
-/** Template properties the note lacks, appended. Null when nothing changes. */
+type YamlValue =
+  | { kind: "empty" }
+  | { kind: "list"; items: string[]; flow: boolean }
+  | { kind: "scalar"; text: string };
+
+const stripComment = (s: string) => s.replace(/\s+#.*$/, "").trim();
+
+function entryValue(e: YamlEntry): YamlValue {
+  const first = e.lines[0];
+  const rest = stripComment(first.slice(first.search(/:(?:\s|$)/) + 1));
+  const more = e.lines.slice(1).filter((l) => l.trim() && !/^\s*#/.test(l));
+  if (!rest || /^(~|null|""|'')$/i.test(rest)) {
+    if (!more.length) return { kind: "empty" };
+    if (more.every((l) => /^\s*-(\s|$)/.test(l))) {
+      const items = more.map((l) => stripComment(l.replace(/^\s*-\s*/, ""))).filter(Boolean);
+      return items.length ? { kind: "list", items, flow: false } : { kind: "empty" };
+    }
+    return { kind: "scalar", text: more.join("\n") };
+  }
+  if (/^\[.*\]$/.test(rest)) {
+    const items = rest.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+    return items.length ? { kind: "list", items, flow: true } : { kind: "empty" };
+  }
+  return { kind: "scalar", text: rest };
+}
+
+function listItems(value: YamlValue, key: string): string[] {
+  if (value.kind === "list") return value.items;
+  if (value.kind === "scalar" && LIST_PROPERTIES.has(key)) {
+    return value.text.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function itemKey(item: string, key: string): string {
+  const v = unquote(item);
+  return key === "tags" || key === "tag" ? v.replace(/^#/, "").toLowerCase() : v;
+}
+
+/** The note's entry with the template's list items it lacks, or null when it already has them all. */
+function mergeListEntry(note: YamlEntry, noteValue: YamlValue, template: YamlValue, key: string): string[] | null {
+  const have = listItems(noteValue, key);
+  const seen = new Set(have.map((i) => itemKey(i, key)));
+  const extra: string[] = [];
+  for (const item of listItems(template, key)) {
+    const k = itemKey(item, key);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    extra.push(item);
+  }
+  if (!extra.length) return null;
+  const head = note.lines[0].slice(0, note.lines[0].search(/:(?:\s|$)/));
+  if (noteValue.kind === "list" && noteValue.flow) return [`${head}: [${[...have, ...extra].join(", ")}]`];
+  if (noteValue.kind === "list") {
+    const last = [...note.lines].reverse().find((l) => /^\s*-(\s|$)/.test(l)) ?? "  - ";
+    const bullet = /^\s*-\s*/.exec(last)?.[0] ?? "  - ";
+    return [...note.lines, ...extra.map((i) => `${bullet}${i}`)];
+  }
+  return [`${head}:`, ...[...have, ...extra].map((i) => `  - ${i}`)];
+}
+
+/**
+ * Template properties merged into the note's. Missing properties are added,
+ * list properties (tags, aliases, any list on both sides) gain the template's
+ * items, and an empty property takes the template's value. Any other value the
+ * note already has stays. Null when nothing changes.
+ */
 function mergeYaml(noteYaml: string | null, templateYaml: string | null): string | null {
   if (!templateYaml?.trim()) return null;
-  const base = (noteYaml ?? "").replace(/\s+$/, "");
-  const have = new Set(yamlEntries(base).map((e) => e.key).filter(Boolean));
-  const added = yamlEntries(templateYaml).filter((e) => e.key && !have.has(e.key));
-  if (!added.length) return null;
-  const lines = added.flatMap((e) => e.lines);
-  return base ? `${base}\n${lines.join("\n")}` : lines.join("\n");
+  const note = yamlEntries((noteYaml ?? "").replace(/\s+$/, ""));
+  const byKey = new Map(note.flatMap((e, i) => (e.key ? [[e.key, i] as const] : [])));
+  let changed = false;
+  for (const t of yamlEntries(templateYaml)) {
+    if (!t.key) continue;
+    const tv = entryValue(t);
+    const at = byKey.get(t.key);
+    if (at === undefined) {
+      byKey.set(t.key, note.length);
+      note.push(t);
+      changed = true;
+      continue;
+    }
+    if (tv.kind === "empty") continue;
+    const nv = entryValue(note[at]);
+    if (nv.kind === "empty") {
+      note[at] = { key: t.key, lines: t.lines };
+      changed = true;
+      continue;
+    }
+    const listy = LIST_PROPERTIES.has(t.key) || (nv.kind === "list" && tv.kind === "list");
+    const lines = listy ? mergeListEntry(note[at], nv, tv, t.key) : null;
+    if (lines) {
+      note[at] = { key: t.key, lines };
+      changed = true;
+    }
+  }
+  return changed ? note.flatMap((e) => e.lines).join("\n") : null;
 }
 
 export type PropertyMerge = {

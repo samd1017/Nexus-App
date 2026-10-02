@@ -85,6 +85,7 @@ import { SlashMenu } from "./SlashMenu";
 import { WikilinkHoverCard } from "./WikilinkHoverCard";
 import { registerInsertWikilink } from "@/lib/editor/insert-wikilink";
 import { registerInsertTemplate } from "@/lib/editor/insert-template";
+import { registerInsertText } from "@/lib/editor/insert-text";
 import { mergeTemplateProperties, splitRendered } from "@/lib/vault/template-engine";
 
 interface Props {
@@ -867,7 +868,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       // The visual doc has no properties. Merge them in the store first and
       // mark that text as ours, so the refill does not undo the insert below.
       const store = useVaultStore.getState();
-      const prev = store.nodes[targetId]?.content;
+      const prev = store.nodes[targetId]?.content ?? lastWrittenRef.current ?? baselineMd.current;
       if (yaml && typeof prev === "string") {
         const merged = mergeTemplateProperties(prev, yaml).markdown;
         if (merged !== prev) {
@@ -880,6 +881,15 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         if (editor.state.selection.$from.parent.type.name === "heading") caretToWritingLine(editor);
         editor.chain().focus().insertContent(markdownWithWikilinksToHtml(body)).run();
       }
+      return true;
+    });
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    return registerInsertText((targetId, text) => {
+      if (editor.isDestroyed || noteIdRef.current !== targetId) return false;
+      editor.chain().focus().insertContent({ type: "text", text }).run();
       return true;
     });
   }, [editor]);
