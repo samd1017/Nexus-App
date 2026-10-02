@@ -2,7 +2,7 @@
  * Built-in note list for one fenced block.
  * LIST or TABLE, FROM a folder or tag, WHERE on one field,
  * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
- * one + - * / formula column, tags joined by OR or AND, SORT title|mtime.
+ * one + - * / formula column, tags joined by OR or AND, SORT title|mtime|size|ctime.
  * FLATTEN file.outlinks is one row per outgoing link.
  * FLATTEN file.inlinks is one row per incoming link.
  * One of those joins, not both, and not a join of two queries.
@@ -24,13 +24,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. A TABLE formula is one + - * /.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, or SORT file.ctime, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, or SORT file.ctime.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -67,7 +67,7 @@ export type NexusQueryModel = {
 
 type TagJoin = "or" | "and";
 
-type QuerySort = { key: "title" | "mtime"; dir: "asc" | "desc" };
+type QuerySort = { key: "title" | "mtime" | "size" | "ctime"; dir: "asc" | "desc" };
 
 type WhereOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte";
 
@@ -111,7 +111,7 @@ type Parsed =
       limit: number | null;
     };
 
-const FILE_META = new Set(["file.name", "file.path", "file.folder", "file.mtime", "file.tags", "file.outlinks", "file.inlinks"]);
+const FILE_META = new Set(["file.name", "file.path", "file.folder", "file.mtime", "file.ctime", "file.size", "file.tags", "file.outlinks", "file.inlinks"]);
 
 function linkListField(name: string): "out" | "in" | null {
   const key = name.toLowerCase();
@@ -147,15 +147,17 @@ function groupFieldName(raw: string): string | null {
   const field = raw.trim().replace(/,+$/, "");
   if (!field || linkListField(field)) return null;
   const key = field.toLowerCase();
-  if (key === "file.name" || key === "file.path" || key === "file.folder" || key === "file.mtime" || key === "file.tags") return field;
+  if (key === "file.name" || key === "file.path" || key === "file.folder" || key === "file.mtime" || key === "file.ctime" || key === "file.size" || key === "file.tags") return field;
   if (/^[A-Za-z_][\w-]*$/.test(field)) return field;
   return null;
 }
 
-/** `mtime` and `file.mtime` are one column, and the same for tags. */
+/** `mtime` and `file.mtime` are one column, and the same for tags. `file.size` and `file.ctime` stay file columns. */
 function columnKey(name: string): string {
   const key = name.toLowerCase();
   if (key === "file.mtime") return "mtime";
+  if (key === "file.ctime") return "file.ctime";
+  if (key === "file.size") return "file.size";
   if (key === "file.tags") return "tags";
   return key;
 }
@@ -164,6 +166,8 @@ export function queryColumnLabel(name: string): string {
   const key = columnKey(name);
   if (key === "tags") return "Tags";
   if (key === "mtime") return "Modified";
+  if (key === "file.ctime") return "Created";
+  if (key === "file.size") return "Size";
   if (key === "file.name") return "Name";
   if (key === "file.folder") return "Folder";
   if (key === "file.path") return "Path";
@@ -178,7 +182,7 @@ function columnParts(token: string): string[] | null {
   return ok ? parts : null;
 }
 
-const CMP_FIELD = "(?:file\\.(?:name|path|folder|mtime|tags|outlinks|inlinks)|[A-Za-z_][\\w-]*)";
+const CMP_FIELD = "(?:file\\.(?:name|path|folder|mtime|ctime|size|tags|outlinks|inlinks)|[A-Za-z_][\\w-]*)";
 const CMP_OP = "(?:>=|<=|!=|=|>|<)";
 
 function opOf(raw: string): WhereOp | null {
@@ -322,7 +326,7 @@ function parseContainsAt(tokens: string[], at: number): CmpParse | null {
   const needle = unquote(inner.slice(comma + 1).trim());
   if (!field || !new RegExp(`^${CMP_FIELD}$`).test(field)) {
     return {
-      error: `contains() does not read “${field || "that"}”. Use a frontmatter field, file.name, file.path, file.folder, file.tags, or file.mtime.`,
+      error: `contains() does not read “${field || "that"}”. Use a frontmatter field, file.name, file.path, file.folder, file.tags, file.mtime, file.ctime, or file.size.`,
     };
   }
   if (!needle) return { error: 'contains() needs text to look for, such as contains(status, "draft").' };
@@ -477,6 +481,12 @@ export function parseNexusQuery(source: string): Parsed {
     if (key === "mtime" && cmp.value.kind === "text") {
       return "file.mtime compares a date, such as file.mtime > date(today).";
     }
+    if (key === "file.ctime" && cmp.value.kind === "text") {
+      return "file.ctime compares a date, such as file.ctime > date(today).";
+    }
+    if (key === "file.size" && cmp.value.kind !== "number") {
+      return "file.size compares a number, such as file.size > 10.";
+    }
     where = cmp;
     return null;
   };
@@ -596,9 +606,18 @@ export function parseNexusQuery(source: string): Parsed {
     }
     if (upper === "SORT") {
       const keyRaw = (tokens[++i] || "").toLowerCase();
-      const key = keyRaw === "file.mtime" ? "mtime" : keyRaw === "file.name" || keyRaw === "name" ? "title" : keyRaw;
-      if (key !== "title" && key !== "mtime") {
-        return { kind: "error", error: "SORT title or SORT mtime. asc or desc follows." };
+      const key =
+        keyRaw === "file.mtime" || keyRaw === "mtime"
+          ? "mtime"
+          : keyRaw === "file.size" || keyRaw === "size"
+            ? "size"
+            : keyRaw === "file.ctime" || keyRaw === "ctime"
+              ? "ctime"
+              : keyRaw === "file.name" || keyRaw === "name"
+                ? "title"
+                : keyRaw;
+      if (key !== "title" && key !== "mtime" && key !== "size" && key !== "ctime") {
+        return { kind: "error", error: "SORT title, mtime, file.size, or file.ctime. asc or desc follows." };
       }
       let dir: "asc" | "desc" = "asc";
       const maybe = tokens[i + 1];
@@ -747,6 +766,12 @@ function formatMtime(mtime: number): string {
   return d.toISOString().slice(0, 16).replace("T", " ");
 }
 
+/** Byte length already stored on the note. Missing stays blank so the cell shows —. */
+function formatSize(size: number | undefined): string {
+  if (typeof size !== "number" || !Number.isFinite(size) || size < 0) return "";
+  return String(Math.trunc(size));
+}
+
 function hasTags(node: VaultNode, tags: string[], mode: TagJoin): boolean {
   if (!tags.length) return true;
   const have = tagsOf(node);
@@ -775,6 +800,8 @@ function fieldActual(node: VaultNode, field: string): string | null {
   const key = columnKey(field);
   if (key === "tags") return tagsOf(node).join(", ");
   if (key === "mtime") return formatMtime(node.mtime);
+  if (key === "file.ctime") return formatMtime(node.ctime || 0);
+  if (key === "file.size") return formatSize(node.size);
   if (key === "file.name") return noteTitle(node);
   if (key === "file.path") return node.path;
   if (key === "file.folder") return folderOf(node.path);
@@ -859,6 +886,19 @@ function whereMatch(
       return ordered(startOfUtcDay(node.mtime || 0), dateValueMs(where.value, now), where.op) ? "yes" : "no";
     }
     return ordered(node.mtime || 0, where.value.n, where.op) ? "yes" : "no";
+  }
+  if (key === "file.ctime" && where.value.kind !== "text") {
+    const stamp = node.ctime || 0;
+    if (where.value.kind === "date") {
+      return ordered(startOfUtcDay(stamp), dateValueMs(where.value, now), where.op) ? "yes" : "no";
+    }
+    return ordered(stamp, where.value.n, where.op) ? "yes" : "no";
+  }
+  if (key === "file.size" && where.value.kind === "number") {
+    if (typeof node.size !== "number" || !Number.isFinite(node.size) || node.size < 0) {
+      return where.op === "neq" ? "yes" : "no";
+    }
+    return ordered(node.size, where.value.n, where.op) ? "yes" : "no";
   }
   const actual = fieldActual(node, where.field);
   if (actual === null) return "unloaded";
@@ -1199,9 +1239,16 @@ export function runNexusQuery(
   const dir = parsed.sort?.dir === "desc" ? -1 : 1;
   const sortKey = parsed.sort?.key ?? "title";
   notes.sort((a, b) => {
-    if (sortKey === "mtime") {
-      const delta = (a.mtime || 0) - (b.mtime || 0);
+    if (sortKey === "mtime" || sortKey === "ctime") {
+      const av = sortKey === "ctime" ? a.ctime || 0 : a.mtime || 0;
+      const bv = sortKey === "ctime" ? b.ctime || 0 : b.mtime || 0;
+      const delta = av - bv;
       if (delta) return delta * dir;
+    } else if (sortKey === "size") {
+      const aMissing = typeof a.size !== "number" || !Number.isFinite(a.size) || a.size < 0;
+      const bMissing = typeof b.size !== "number" || !Number.isFinite(b.size) || b.size < 0;
+      if (aMissing !== bMissing) return aMissing ? 1 : -1;
+      if (!aMissing && !bMissing && a.size !== b.size) return ((a.size ?? 0) - (b.size ?? 0)) * dir;
     }
     return noteTitle(a).localeCompare(noteTitle(b)) * dir || a.path.localeCompare(b.path) * dir;
   });

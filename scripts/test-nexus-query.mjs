@@ -192,6 +192,8 @@ assert.equal(NEXUS_QUERY_DQL.includes("use contains"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("GROUP BY status"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("LIMIT 3"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("Nested rows after GROUP BY"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("file.size"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("file.ctime"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("No joins"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("WHERE field"), true);
 
@@ -269,6 +271,9 @@ assert.doesNotMatch(lib, /no contains\(\)/);
 assert.match(noteList.content, /contains\(file\.name, "Graph"\)/);
 assert.match(noteList.content, /GROUP BY status/);
 assert.match(noteList.content, /LIMIT 3/);
+assert.match(noteList.content, /TABLE file\.size, file\.ctime/);
+assert.match(noteList.content, /WHERE file\.size > 10/);
+assert.match(noteList.content, /SORT file\.ctime/);
 assert.doesNotMatch(lib, /no full DQL/);
 assert.match(view, /queryColumnLabel/);
 assert.match(view, /data-testid="nexus-query-field"/);
@@ -377,6 +382,33 @@ const tagContains = runNexusQuery('LIST FROM path:Research WHERE contains(file.t
 assert.deepEqual(tagContains.rows.map((r) => r.id), ["g"]);
 const mtimeContains = runNexusQuery('LIST FROM path:Journal WHERE contains(file.mtime, "2026-10-01")', nodes);
 assert.deepEqual(mtimeContains.rows.map((r) => r.id), ["f"]);
+const sized = {
+  r: folder("r", "Research"),
+  big: { ...note("big", "Research/Big.md", "# Big\n"), parentId: "r", mtime: 10, size: 400, ctime: Date.UTC(2026, 9, 1, 8, 0) },
+  small: { ...note("small", "Research/Small.md", "# Small\n"), parentId: "r", mtime: 20, size: 40, ctime: Date.UTC(2026, 7, 1, 8, 0) },
+  bare: { ...note("bare", "Research/Bare.md", "# Bare\n"), parentId: "r", mtime: 30 },
+};
+const sizeTable = runNexusQuery("TABLE file.size, file.ctime FROM path:Research", sized);
+assert.equal(sizeTable.error, null);
+assert.equal(sizeTable.rows.find((r) => r.id === "big").fields.map((f) => f.value).join("|"), "400|2026-10-01 08:00");
+assert.equal(sizeTable.rows.find((r) => r.id === "small").fields[0].value, "40");
+assert.equal(sizeTable.rows.find((r) => r.id === "bare").fields.map((f) => f.value).join("|"), "—|—");
+assert.doesNotMatch(sizeTable.error ?? "", /not Dataview/);
+const bigger = runNexusQuery("LIST FROM path:Research WHERE file.size > 100", sized);
+assert.deepEqual(bigger.rows.map((r) => r.id), ["big"]);
+const anySize = runNexusQuery("LIST FROM path:Research WHERE file.size > 10", sized);
+assert.deepEqual(anySize.rows.map((r) => r.id).sort(), ["big", "small"]);
+const born = runNexusQuery("LIST FROM path:Research WHERE file.ctime >= date(today) - 30d", sized, null, Date.UTC(2026, 9, 1, 15, 0));
+assert.deepEqual(born.rows.map((r) => r.id), ["big"]);
+const bySize = runNexusQuery("LIST FROM path:Research SORT file.size desc", sized);
+assert.deepEqual(bySize.rows.map((r) => r.id), ["big", "small", "bare"]);
+const byBorn = runNexusQuery("LIST FROM path:Research SORT file.ctime", sized);
+assert.deepEqual(byBorn.rows.map((r) => r.id), ["bare", "small", "big"]);
+const sizeGroups = runNexusQuery("LIST FROM path:Research GROUP BY file.size", sized);
+assert.deepEqual(sizeGroups.rows.map((r) => r.group), ["40", "400", "—"]);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE file.size = "soon"', sized).error, /compares a number/);
+assert.doesNotMatch(runNexusQuery('LIST FROM path:Research WHERE file.size = "soon"', sized).error, /not Dataview/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE file.ctime = "soon"', sized).error, /compares a date/);
 const commaNeedle = runNexusQuery('LIST FROM path:Research WHERE contains(file.name, "a, b")', shop);
 assert.equal(commaNeedle.error, null);
 assert.equal(commaNeedle.rows.length, 0);
