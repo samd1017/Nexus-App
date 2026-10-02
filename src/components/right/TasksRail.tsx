@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 const TASK_CAP = 400;
 const CHUNK = 80;
 
-type Scope = "all" | "note" | "due-today" | "overdue" | "high" | "medium" | "low" | "recurring";
+type Scope = "all" | "note" | "due-today" | "overdue" | "upcoming" | "high" | "medium" | "low" | "recurring";
 
 function liveTitle(id: string, path: string, fallback: string): string {
   const node = useVaultStore.getState().nodes[id];
@@ -106,6 +106,7 @@ export function TasksRail() {
       if (scope === "note" && task.noteId !== activeNoteId && task.path !== notePath) return false;
       if (scope === "due-today" && taskDueBucket(task.due, today) !== "today") return false;
       if (scope === "overdue" && taskDueBucket(task.due, today) !== "overdue") return false;
+      if (scope === "upcoming" && taskDueBucket(task.due, today) !== "upcoming") return false;
       if (scope === "high" && !taskIsHigh(task.priority)) return false;
       if (scope === "medium" && !taskIsMedium(task.priority)) return false;
       if (scope === "low" && !taskIsLow(task.priority)) return false;
@@ -150,6 +151,7 @@ export function TasksRail() {
         A <span className="font-mono">📅 YYYY-MM-DD</span> on the line is the due date and wins.
         Otherwise the note <span className="font-mono">due:</span> YAML applies.
         Due today and Overdue keep incomplete tasks due on this local day, or before it.
+        Upcoming keeps incomplete tasks due after this local day.
         <span className="font-mono">⏫</span> and <span className="font-mono">❗</span> are high priority.
         High keeps those incomplete tasks.
         <span className="font-mono">🔽</span> is medium. Med keeps those incomplete tasks.
@@ -194,6 +196,15 @@ export function TasksRail() {
           onClick={() => setScope("overdue")}
         >
           Overdue
+        </button>
+        <button
+          type="button"
+          data-testid="tasks-filter-upcoming"
+          aria-pressed={scope === "upcoming"}
+          className={cn("chip-btn", scope === "upcoming" && "is-active")}
+          onClick={() => setScope("upcoming")}
+        >
+          Upcoming
         </button>
         <button
           type="button"

@@ -169,12 +169,13 @@ export function localToday(now = new Date()): string {
 }
 
 /**
- * Due today when `due` equals `today`. Overdue when `due` is a calendar date strictly before `today`.
- * Null, blank, and non-dates are neither. YYYY-MM-DD compares in calendar order.
+ * Due today when `due` equals `today`. Overdue when `due` is strictly before `today`.
+ * Upcoming when `due` is a calendar day strictly after `today`.
+ * Null, blank, and non-dates are none of the three. YYYY-MM-DD compares in calendar order.
  */
-export function taskDueBucket(due: string | null, today: string): "today" | "overdue" | null {
+export function taskDueBucket(due: string | null, today: string): "today" | "overdue" | "upcoming" | null {
   if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
   if (due === today) return "today";
   if (due < today) return "overdue";
-  return null;
+  return "upcoming";
 }
