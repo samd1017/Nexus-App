@@ -4,7 +4,7 @@ import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle } from "@/lib/vault/types";
 import { getSearchIndexState } from "@/lib/vault/sqlite-fill-progress";
 import { BROWSER_SHELL_DB } from "@/lib/vault/shell-catalog";
-import { completeTaskLine, localToday, priorityMarker, taskDueBucket, taskIsHigh, taskIsLow, taskIsMedium, taskMatchesPath, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
+import { completeTaskLine, localToday, priorityMarker, taskDueBucket, taskHasNoDue, taskIsHigh, taskIsLow, taskIsMedium, taskMatchesPath, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
 import { fetchTaskPage } from "@/lib/tasks/sqlite-page";
 import { jumpToTaskText } from "@/lib/tasks/jump";
 import { getFindFocusPane } from "@/lib/editor/find-target";
@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 const TASK_CAP = 400;
 const CHUNK = 80;
 
-type Scope = "all" | "note" | "due-today" | "overdue" | "upcoming" | "high" | "medium" | "low" | "recurring";
+type Scope = "all" | "note" | "due-today" | "overdue" | "upcoming" | "no-due" | "high" | "medium" | "low" | "recurring";
 
 function liveTitle(id: string, path: string, fallback: string): string {
   const node = useVaultStore.getState().nodes[id];
@@ -107,6 +107,7 @@ export function TasksRail() {
       if (scope === "due-today" && taskDueBucket(task.due, today) !== "today") return false;
       if (scope === "overdue" && taskDueBucket(task.due, today) !== "overdue") return false;
       if (scope === "upcoming" && taskDueBucket(task.due, today) !== "upcoming") return false;
+      if (scope === "no-due" && !taskHasNoDue(task.due, today)) return false;
       if (scope === "high" && !taskIsHigh(task.priority)) return false;
       if (scope === "medium" && !taskIsMedium(task.priority)) return false;
       if (scope === "low" && !taskIsLow(task.priority)) return false;
@@ -152,6 +153,7 @@ export function TasksRail() {
         Otherwise the note <span className="font-mono">due:</span> YAML applies.
         Due today and Overdue keep incomplete tasks due on this local day, or before it.
         Upcoming keeps incomplete tasks due after this local day.
+        No due keeps incomplete tasks with no calendar date.
         <span className="font-mono">⏫</span> and <span className="font-mono">❗</span> are high priority.
         High keeps those incomplete tasks.
         <span className="font-mono">🔽</span> is medium. Med keeps those incomplete tasks.
@@ -205,6 +207,15 @@ export function TasksRail() {
           onClick={() => setScope("upcoming")}
         >
           Upcoming
+        </button>
+        <button
+          type="button"
+          data-testid="tasks-filter-no-due"
+          aria-pressed={scope === "no-due"}
+          className={cn("chip-btn", scope === "no-due" && "is-active")}
+          onClick={() => setScope("no-due")}
+        >
+          No due
         </button>
         <button
           type="button"

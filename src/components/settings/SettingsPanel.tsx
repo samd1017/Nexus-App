@@ -1000,7 +1000,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Tasks"
-                body="Built-in Tasks lists unchecked - [ ] and * [ ] lines. A 📅 YYYY-MM-DD on the line is the due date and wins. Otherwise a note due: YYYY-MM-DD applies to open tasks on that note. Due today and Overdue filter incomplete tasks by that date. Upcoming keeps incomplete tasks whose due date is after today. Priority markers ⏫ 🔼 🔽 ⏬ ❗ are read from the line. High keeps incomplete tasks marked ⏫ or ❗. Med keeps incomplete tasks marked 🔽. Low keeps incomplete tasks marked ⏬. A 🔁 plus a rule, such as every day, is a recurrence label. Recurring keeps those incomplete tasks. Completing a row does not schedule the next one. Dataview queries are not supported. Open a row to jump to that note. The box marks the line done in the file."
+                body="Built-in Tasks lists unchecked - [ ] and * [ ] lines. A 📅 YYYY-MM-DD on the line is the due date and wins. Otherwise a note due: YYYY-MM-DD applies to open tasks on that note. Due today and Overdue filter incomplete tasks by that date. Upcoming keeps incomplete tasks whose due date is after today. No due keeps incomplete tasks with no calendar date. Priority markers ⏫ 🔼 🔽 ⏬ ❗ are read from the line. High keeps incomplete tasks marked ⏫ or ❗. Med keeps incomplete tasks marked 🔽. Low keeps incomplete tasks marked ⏬. A 🔁 plus a rule, such as every day, is a recurrence label. Recurring keeps those incomplete tasks. Completing a row does not schedule the next one. Dataview queries are not supported. Open a row to jump to that note. The box marks the line done in the file."
               />
               <HelpItem
                 title="Graph"

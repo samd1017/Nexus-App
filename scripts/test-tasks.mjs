@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday, priorityOnTaskLine, taskIsHigh, taskIsMedium, taskIsLow, recurrenceOnTaskLine } = await import(
+const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, taskHasNoDue, localToday, priorityOnTaskLine, taskIsHigh, taskIsMedium, taskIsLow, recurrenceOnTaskLine } = await import(
   "../src/lib/tasks/extract.ts"
 );
 
@@ -86,6 +86,12 @@ assert.equal(taskDueBucket("2026-10-03", today), "upcoming");
 assert.equal(taskDueBucket("2027-01-15", today), "upcoming");
 assert.equal(taskDueBucket(null, today), null);
 assert.equal(taskDueBucket("tomorrow", today), null);
+assert.equal(taskHasNoDue(null, today), true);
+assert.equal(taskHasNoDue("tomorrow", today), true);
+assert.equal(taskHasNoDue("", today), true);
+assert.equal(taskHasNoDue("2026-10-02", today), false);
+assert.equal(taskHasNoDue("2026-10-01", today), false);
+assert.equal(taskHasNoDue("2026-10-03", today), false);
 assert.match(localToday(new Date(2026, 9, 2, 15, 0)), /^2026-10-02$/);
 
 const dated = tasksInNote({
@@ -118,6 +124,12 @@ assert.equal(dated.find((task) => task.text === "Line today").due, "2026-10-02")
 assert.equal(pool.filter((task) => taskDueBucket(task.due, today) === "today" && task.text === "Line future").length, 0);
 assert.equal(pool.filter((task) => taskDueBucket(task.due, today) === "overdue" && task.text === "Line future").length, 0);
 assert.equal(pool.filter((task) => taskDueBucket(task.due, today) != null && task.text === "No due").length, 0);
+const noDue = pool.filter((task) => taskHasNoDue(task.due, today));
+assert.deepEqual(noDue.map((task) => task.text), ["No due"]);
+assert.equal(noDue.some((task) => task.text === "Line today" || task.text === "Line future" || task.text === "Inherit overdue"), false);
+const noDueJournal = noDue.filter((task) => taskMatchesPath(task, "Journal"));
+assert.deepEqual(noDueJournal.map((task) => task.text), ["No due"]);
+assert.equal(noDue.filter((task) => taskMatchesPath(task, "Research")).length, 0);
 assert.equal(inBucket("upcoming").some((task) => task.text === "Line today" || task.text === "Inherit overdue" || task.text === "No due"), false);
 assert.equal(inBucket("today").some((task) => task.path.startsWith("Journal")), false);
 
@@ -222,6 +234,7 @@ assert.match(help, /Dataview queries are not supported/);
 assert.match(help, /recurrence/i);
 assert.match(help, /Due today and Overdue/);
 assert.match(help, /Upcoming keeps incomplete tasks whose due date is after today/);
+assert.match(help, /No due keeps incomplete tasks with no calendar date/);
 assert.match(help, /High keeps incomplete tasks marked/);
 assert.match(help, /Med keeps incomplete tasks marked/);
 assert.match(help, /Low keeps incomplete tasks marked/);
@@ -239,6 +252,9 @@ assert.match(rail, /tasks-filter-upcoming/);
 assert.match(rail, /Due today/);
 assert.match(rail, /Overdue/);
 assert.match(rail, /Upcoming keeps incomplete tasks due after this local day/);
+assert.match(rail, /tasks-filter-no-due/);
+assert.match(rail, /taskHasNoDue/);
+assert.match(rail, /No due keeps incomplete tasks with no calendar date/);
 assert.match(rail, /taskDueBucket/);
 assert.match(rail, /tasks-filter-high/);
 assert.match(rail, /taskIsHigh/);

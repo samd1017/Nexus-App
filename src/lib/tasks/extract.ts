@@ -179,3 +179,8 @@ export function taskDueBucket(due: string | null, today: string): "today" | "ove
   if (due < today) return "overdue";
   return "upcoming";
 }
+
+/** No due chip: missing due, or a value that is not YYYY-MM-DD. */
+export function taskHasNoDue(due: string | null, today: string): boolean {
+  return taskDueBucket(due, today) === null;
+}
