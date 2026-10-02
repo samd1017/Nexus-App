@@ -1,6 +1,6 @@
 /**
  * Built-in note list for one fenced block.
- * LIST or TABLE, FROM a folder or tag, WHERE on one field,
+ * LIST or TABLE, FROM a folder or tag, WHERE comparisons joined by AND (up to 8),
  * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
  * one + - * / formula column, tags joined by OR or AND, SORT title|mtime|size|ctime or a field.
  * FLATTEN file.outlinks is one row per outgoing link.
@@ -24,13 +24,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE OR between field comparisons is not supported — use AND. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE OR between field comparisons is not supported — use AND. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -80,6 +80,9 @@ type WhereCmp =
   | { kind: "cmp"; field: string; op: WhereOp; value: WhereValue }
   | { kind: "contains"; field: string; needle: string };
 
+/** Field comparisons in one WHERE, joined by AND. */
+const MAX_WHERE = 8;
+
 const DAY_MS = 86_400_000;
 
 type FormulaOp = "+" | "-" | "*" | "/";
@@ -103,7 +106,7 @@ type Parsed =
       tags: string[];
       tagMode: TagJoin;
       columns: QueryColumn[];
-      where: WhereCmp | null;
+      where: WhereCmp[];
       sort: QuerySort | null;
       /** One link join. Outgoing and incoming are not combined. */
       flattenLinks: "out" | "in" | null;
@@ -438,7 +441,7 @@ export function parseNexusQuery(source: string): Parsed {
   let tagMode: TagJoin = "or";
   let sawJoin = false;
   const columns: QueryColumn[] = [];
-  let where: WhereCmp | null = null;
+  const where: WhereCmp[] = [];
   let sort: QuerySort | null = null;
   let flattenLinks: "out" | "in" | null = null;
   let groupBy: string | null = null;
@@ -461,33 +464,29 @@ export function parseNexusQuery(source: string): Parsed {
     columns.push(col);
     return null;
   };
-  const addWhere = (cmp: WhereCmp): string | null => {
-    if (where) return "Only one WHERE comparison is supported.";
-    if (linkListField(cmp.field)) {
-      if (cmp.kind === "contains") {
-        where = cmp;
-        return null;
-      }
+  const addWhere = (cmp: WhereCmp, join: "and" | "or" | null): string | null => {
+    if (join === "or") return "WHERE OR between field comparisons is not supported. Use AND.";
+    if (where.length && join !== "and") return "Join WHERE comparisons with AND.";
+    if (where.length >= MAX_WHERE) return `Only ${MAX_WHERE} WHERE comparisons fit. Join them with AND.`;
+    if (linkListField(cmp.field) && cmp.kind !== "contains") {
       return `Use contains(${cmp.field}, "…"). WHERE ${cmp.field} = "…" is not supported.`;
     }
-    if (cmp.kind === "contains") {
-      where = cmp;
-      return null;
+    if (cmp.kind !== "contains") {
+      const key = columnKey(cmp.field);
+      if (key === "tags") {
+        return `WHERE compares a frontmatter field, such as status = "draft". ${cmp.field} is a column.`;
+      }
+      if (key === "mtime" && cmp.value.kind === "text") {
+        return "file.mtime compares a date, such as file.mtime > date(today).";
+      }
+      if (key === "file.ctime" && cmp.value.kind === "text") {
+        return "file.ctime compares a date, such as file.ctime > date(today).";
+      }
+      if (key === "file.size" && cmp.value.kind !== "number") {
+        return "file.size compares a number, such as file.size > 10.";
+      }
     }
-    const key = columnKey(cmp.field);
-    if (key === "tags") {
-      return `WHERE compares a frontmatter field, such as status = "draft". ${cmp.field} is a column.`;
-    }
-    if (key === "mtime" && cmp.value.kind === "text") {
-      return "file.mtime compares a date, such as file.mtime > date(today).";
-    }
-    if (key === "file.ctime" && cmp.value.kind === "text") {
-      return "file.ctime compares a date, such as file.ctime > date(today).";
-    }
-    if (key === "file.size" && cmp.value.kind !== "number") {
-      return "file.size compares a number, such as file.size > 10.";
-    }
-    where = cmp;
+    where.push(cmp);
     return null;
   };
 
@@ -511,7 +510,7 @@ export function parseNexusQuery(source: string): Parsed {
         const contains = parseContainsAt(tokens, i + 1);
         if (contains && "error" in contains) return { kind: "error", error: contains.error };
         if (contains) {
-          const err = addWhere(contains.cmp);
+          const err = addWhere(contains.cmp, null);
           if (err) return { kind: "error", error: err };
           i = contains.end;
           continue;
@@ -519,7 +518,7 @@ export function parseNexusQuery(source: string): Parsed {
         const cmp = parseCmpAt(tokens, i + 1);
         if (cmp && "error" in cmp) return { kind: "error", error: cmp.error };
         if (cmp) {
-          const err = addWhere(cmp.cmp);
+          const err = addWhere(cmp.cmp, null);
           if (err) return { kind: "error", error: err };
           i = cmp.end;
           continue;
@@ -548,7 +547,7 @@ export function parseNexusQuery(source: string): Parsed {
       const contains = parseContainsAt(tokens, i + 1);
       if (contains && "error" in contains) return { kind: "error", error: contains.error };
       if (contains) {
-        const err = addWhere(contains.cmp);
+        const err = addWhere(contains.cmp, upper === "OR" ? "or" : "and");
         if (err) return { kind: "error", error: err };
         i = contains.end;
         continue;
@@ -556,7 +555,7 @@ export function parseNexusQuery(source: string): Parsed {
       const cmp = parseCmpAt(tokens, i + 1);
       if (cmp && "error" in cmp) return { kind: "error", error: cmp.error };
       if (cmp) {
-        const err = addWhere(cmp.cmp);
+        const err = addWhere(cmp.cmp, upper === "OR" ? "or" : "and");
         if (err) return { kind: "error", error: err };
         i = cmp.end;
         continue;
@@ -964,6 +963,35 @@ function whereMatch(
   return ordered(day, dateValueMs(where.value, now), where.op) ? "yes" : "no";
 }
 
+/** Every comparison must match. A definite miss wins over an unloaded field. */
+function whereAll(
+  node: VaultNode,
+  where: WhereCmp[],
+  now: number,
+  nodes?: Record<string, VaultNode>,
+  links?: LinkScan | null,
+): "yes" | "no" | "unloaded" {
+  let unloaded = false;
+  for (const cmp of where) {
+    const match = whereMatch(node, cmp, now, nodes, links);
+    if (match === "no") return "no";
+    if (match === "unloaded") unloaded = true;
+  }
+  return unloaded ? "unloaded" : "yes";
+}
+
+function whereLinkNeeds(where: WhereCmp[]): { out: boolean; inn: boolean } {
+  let out = false;
+  let inn = false;
+  for (const cmp of where) {
+    if (cmp.kind !== "contains") continue;
+    const join = linkListField(cmp.field);
+    if (join === "out") out = true;
+    if (join === "in") inn = true;
+  }
+  return { out, inn };
+}
+
 function formatNum(n: number): string {
   if (!Number.isFinite(n)) return "—";
   const rounded = Math.round(n * 1000) / 1000;
@@ -1143,7 +1171,7 @@ function collectInFolder(
   prefix: string,
   tags: string[],
   tagMode: TagJoin,
-  where: WhereCmp | null,
+  where: WhereCmp[],
   now: number,
   links: LinkScan | null = null,
 ): { notes: VaultNode[]; truncated: boolean; budgetHit: boolean; unloaded: number } {
@@ -1171,8 +1199,8 @@ function collectInFolder(
     }
     if (!pathHasPrefix(node.path, prefix)) continue;
     if (!hasTags(node, tags, tagMode)) continue;
-    if (where) {
-      const match = whereMatch(node, where, now, nodes, links);
+    if (where.length) {
+      const match = whereAll(node, where, now, nodes, links);
       if (match === "unloaded") {
         unloaded += 1;
         continue;
@@ -1197,7 +1225,7 @@ export function queryNeedsFrontmatter(source: string): boolean {
   const parsed = parseNexusQuery(source);
   if (parsed.kind !== "ok") return false;
   if (parsed.groupBy && readsFrontmatter(parsed.groupBy)) return true;
-  if (parsed.where && readsFrontmatter(parsed.where.field)) return true;
+  if (parsed.where.some((cmp) => readsFrontmatter(cmp.field))) return true;
   if (
     parsed.sort &&
     parsed.sort.key !== "title" &&
@@ -1234,7 +1262,7 @@ export function queryNeedsSizeBody(source: string): boolean {
   const parsed = parseNexusQuery(source);
   if (parsed.kind !== "ok") return false;
   if (parsed.groupBy && usesFileSize(parsed.groupBy)) return true;
-  if (parsed.where && usesFileSize(parsed.where.field)) return true;
+  if (parsed.where.some((cmp) => usesFileSize(cmp.field))) return true;
   if (parsed.sort?.key === "size") return true;
   for (const column of parsed.columns) {
     if (column.kind === "field" && usesFileSize(column.name)) return true;
@@ -1366,12 +1394,12 @@ export function runNexusQuery(
   let budgetHit = false;
   let unloaded = 0;
   let tagsIncomplete = false;
-  const whereJoin = parsed.where?.kind === "contains" ? linkListField(parsed.where.field) : null;
+  const linkNeed = whereLinkNeeds(parsed.where);
   const linkScan =
-    parsed.flattenLinks || whereJoin
+    parsed.flattenLinks || linkNeed.out || linkNeed.inn
       ? scanLinks(nodes, {
-          out: parsed.flattenLinks === "out" || whereJoin === "out",
-          inn: parsed.flattenLinks === "in" || whereJoin === "in",
+          out: parsed.flattenLinks === "out" || linkNeed.out,
+          inn: parsed.flattenLinks === "in" || linkNeed.inn,
         })
       : null;
   if (parsed.path) {
@@ -1411,10 +1439,10 @@ export function runNexusQuery(
         parsed.tagMode,
       );
     }
-    if (parsed.where) {
+    if (parsed.where.length) {
       const kept: VaultNode[] = [];
       for (const note of notes) {
-        const match = whereMatch(note, parsed.where, now, nodes, linkScan);
+        const match = whereAll(note, parsed.where, now, nodes, linkScan);
         if (match === "unloaded") unloaded += 1;
         else if (match === "yes") kept.push(note);
       }
@@ -1459,7 +1487,7 @@ export function runNexusQuery(
       for (const label of linkScan.incoming.get(node.id) ?? []) joined.push({ node, link: label });
     }
   } else {
-    if (whereJoin === "in" && linkScan) linkUnloaded = linkScan.incomingUnloaded;
+    if (linkNeed.inn && linkScan) linkUnloaded = linkScan.incomingUnloaded;
     joined = notes.map((node) => ({ node, link: null }));
   }
   let ordered = joined;

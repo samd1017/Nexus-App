@@ -196,6 +196,8 @@ assert.equal(NEXUS_QUERY_DQL.includes("file.size"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("file.ctime"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("SORT due"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("SORT file.folder"), true);
+assert.equal(NEXUS_QUERY_DQL.includes('AND contains(file.name, "Graph")'), true);
+assert.equal(NEXUS_QUERY_DQL.includes("WHERE OR between field comparisons is not supported"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("No joins"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("WHERE field"), true);
 
@@ -285,6 +287,9 @@ assert.match(noteList.content, /WHERE file\.size > 10/);
 assert.match(noteList.content, /SORT file\.ctime/);
 assert.match(noteList.content, /SORT due/);
 assert.match(noteList.content, /SORT file\.folder/);
+assert.match(noteList.content, /AND contains\(file\.name, "Call"\)/);
+assert.match(noteList.content, /WHERE OR between field comparisons is not supported/);
+assert.doesNotMatch(lib, /Only one WHERE/);
 assert.doesNotMatch(lib, /no full DQL/);
 assert.match(view, /queryColumnLabel/);
 assert.match(view, /data-testid="nexus-query-field"/);
@@ -397,7 +402,9 @@ const unloaded = {
 const leftOut = runNexusQuery('LIST FROM path:Research WHERE status = "draft"', unloaded);
 assert.deepEqual(leftOut.rows.map((r) => r.id), ["draft"]);
 assert.match(leftOut.fieldNote, /1 note is not loaded/);
-assert.match(runNexusQuery('LIST FROM path:Research WHERE status = "a" AND status = "b"', shop).error, /Only one WHERE/);
+const emptyAnd = runNexusQuery('LIST FROM path:Research WHERE status = "a" AND status = "b"', shop);
+assert.equal(emptyAnd.error, null);
+assert.deepEqual(emptyAnd.rows, []);
 assert.match(runNexusQuery("TABLE a, b, c, d, e FROM path:Research", shop).error, /Only 4 TABLE columns/);
 assert.match(runNexusQuery("LIST status FROM path:Research", shop).error, /Columns belong on TABLE/);
 assert.match(runNexusQuery('TABLE file.link FROM path:Research', shop).error, /not Dataview/);
@@ -479,7 +486,49 @@ assert.equal(commaNeedle.rows.length, 0);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE contains(status)', shop).error, /contains\(\) needs a field and text/);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE contains(status, "")', shop).error, /text to look for/);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE contains(file.link, "a")', shop).error, /does not read/);
-assert.match(runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(status, "dra")', shop).error, /Only one WHERE/);
+resetVaultIndex();
+const andStatus = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(status, "dra")', shop);
+assert.equal(andStatus.error, null);
+assert.deepEqual(andStatus.rows.map((r) => r.id), ["draft"]);
+const andName = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call")', shop);
+assert.equal(andName.error, null);
+assert.deepEqual(andName.rows.map((r) => r.id), ["draft"]);
+const andMiss = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Graph")', shop);
+assert.equal(andMiss.error, null);
+assert.equal(andMiss.rows.length, 0);
+const andThree = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call") AND price > 10', shop);
+assert.deepEqual(andThree.rows.map((r) => r.id), ["draft"]);
+const fieldOr = runNexusQuery('LIST FROM path:Research WHERE status = "draft" OR status = "live"', shop);
+assert.match(fieldOr.error, /Use AND/);
+assert.match(fieldOr.error, /OR/);
+assert.doesNotMatch(fieldOr.error, /not Dataview/);
+assert.doesNotMatch(fieldOr.error, /Only one WHERE/);
+const sizedShop = {
+  ...shop,
+  draft: { ...shop.draft, size: 800 },
+  live: { ...shop.live, size: 200 },
+  plain: { ...shop.plain, size: 900 },
+};
+const andSize = runNexusQuery('LIST FROM path:Research WHERE file.size > 500 AND status = "draft"', sizedShop);
+assert.deepEqual(andSize.rows.map((r) => r.id), ["draft"]);
+const andSizeMiss = runNexusQuery('LIST FROM path:Research WHERE file.size > 500 AND status = "live"', sizedShop);
+assert.equal(andSizeMiss.rows.length, 0);
+const andDue = runNexusQuery(
+  'LIST FROM path:Research WHERE due > date(today) AND status = "draft"',
+  shop,
+  null,
+  Date.UTC(2026, 9, 1, 15, 0),
+);
+assert.deepEqual(andDue.rows.map((r) => r.id), ["draft"]);
+const andUnloaded = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(status, "dra")', unloaded);
+assert.deepEqual(andUnloaded.rows.map((r) => r.id), ["draft"]);
+assert.match(andUnloaded.fieldNote, /1 note is not loaded/);
+const eight = Array.from({ length: 8 }, () => `status = "draft"`).join(" AND ");
+const eightOk = runNexusQuery(`LIST FROM path:Research WHERE ${eight}`, shop);
+assert.equal(eightOk.error, null);
+assert.deepEqual(eightOk.rows.map((r) => r.id), ["draft"]);
+const nine = Array.from({ length: 9 }, () => `status = "draft"`).join(" AND ");
+assert.match(runNexusQuery(`LIST FROM path:Research WHERE ${nine}`, shop).error, /Only 8 WHERE/);
 const containsUnloaded = runNexusQuery('LIST FROM path:Research WHERE contains(status, "draft")', unloaded);
 assert.deepEqual(containsUnloaded.rows.map((r) => r.id), ["draft"]);
 assert.match(containsUnloaded.fieldNote, /1 note is not loaded/);
@@ -600,6 +649,13 @@ assert.match(runNexusQuery('LIST FROM path:Research WHERE file.inlinks = "Alpha"
 assert.match(runNexusQuery('LIST FROM path:Research WHERE file.outlinks = "Beta"', linked).error, /not supported/);
 const outBeta = runNexusQuery('LIST FROM path:Research WHERE contains(file.outlinks, "Beta")', linked);
 assert.deepEqual(outBeta.rows.map((r) => r.id), ["a"]);
+const andOut = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(file.outlinks, "Beta")', linked);
+assert.equal(andOut.error, null);
+assert.deepEqual(andOut.rows.map((r) => r.id), ["a"]);
+const andOutMiss = runNexusQuery('LIST FROM path:Research WHERE status = "live" AND contains(file.outlinks, "Beta")', linked);
+assert.equal(andOutMiss.rows.length, 0);
+const andIn = runNexusQuery('LIST FROM path:Research WHERE contains(file.inlinks, "Alpha") AND contains(file.name, "Beta")', linked);
+assert.deepEqual(andIn.rows.map((r) => r.id), ["b"]);
 const outAlpha = runNexusQuery('LIST FROM path:Research WHERE contains(file.outlinks, "Alpha")', linked);
 assert.deepEqual(outAlpha.rows.map((r) => r.id), ["b"]);
 const outMissing = runNexusQuery('LIST FROM path:Research WHERE contains(file.outlinks, "Missing Note")', linked);
@@ -698,6 +754,9 @@ assert.equal(queryNeedsFrontmatter("LIST FROM path:Research SORT title"), false)
 assert.equal(queryNeedsFrontmatter("TABLE file.size, file.ctime FROM path:Research"), false);
 assert.equal(queryNeedsFrontmatter("LIST FROM path:Research SORT file.folder"), false);
 assert.equal(queryNeedsFrontmatter("LIST FROM path:Research GROUP BY file.folder"), false);
+assert.equal(queryNeedsFrontmatter('LIST FROM path:Research WHERE file.size > 10 AND status = "draft"'), true);
+assert.equal(queryNeedsSizeBody('LIST FROM path:Research WHERE file.size > 10 AND status = "draft"'), true);
+assert.equal(queryNeedsSizeBody('LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call")'), false);
 const metaOnly = {
   r: folder("r", "Research"),
   crave: {
@@ -717,6 +776,10 @@ const metaOnly = {
 resetVaultIndex();
 assert.deepEqual(frontmatterHydrateIds("TABLE status FROM path:Research GROUP BY status", metaOnly).sort(), ["nograph", "overview", "probe"]);
 assert.deepEqual(frontmatterHydrateIds("LIST FROM path:Research SORT title", metaOnly), []);
+assert.deepEqual(
+  frontmatterHydrateIds('LIST FROM path:Research WHERE file.size > 10 AND status = "draft"', metaOnly).sort(),
+  ["nograph", "overview", "probe"],
+);
 const thin = runNexusQuery("TABLE status FROM path:Research GROUP BY status", metaOnly);
 assert.deepEqual(thin.rows.filter((r) => r.group === "draft").map((r) => r.title), ["CRAVE Draft Status"]);
 assert.equal(thin.rows.some((r) => r.title === "Graph Overview" && r.group === "live"), false);
@@ -756,6 +819,10 @@ const coldSize = {
 resetVaultIndex();
 assert.deepEqual(sizeHydrateIds("TABLE file.size, file.ctime FROM path:SizeResearch", coldSize), ["md"]);
 assert.deepEqual(sizeHydrateIds("LIST FROM path:SizeResearch SORT title", coldSize), []);
+assert.deepEqual(
+  sizeHydrateIds('LIST FROM path:SizeResearch WHERE status = "draft" AND file.size > 10', coldSize),
+  ["md"],
+);
 const coldTable = runNexusQuery("TABLE file.size, file.ctime FROM path:SizeResearch", coldSize);
 assert.equal(coldTable.rows.find((r) => r.id === "md").fields.map((f) => f.value).join("|"), "—|2026-10-01 08:00");
 assert.equal(coldTable.rows.find((r) => r.id === "cv").fields[0].value, "33");
