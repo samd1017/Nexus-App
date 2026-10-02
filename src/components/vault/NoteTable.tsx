@@ -1029,7 +1029,7 @@ export function NoteTable() {
             {live?.onDisk
               ? `Views live in ${LIVE_BASE_FILE} at the vault root, an Obsidian .base file Nexus saves to and reloads when it changes.`
               : "Views live in a .base kept in browser storage for this vault."}{" "}
-            Not Obsidian Bases — link.asFile() opens that note, and link.linksTo() checks its links. Some Obsidian functions are missing (Formula help lists what works). asFile() opens a note, not a full file (.name, .path, properties, size, and ctime are not on it). Opening another vault .base loads its views here;{" "}
+            Not Obsidian Bases — link.asFile() opens that note, and link.linksTo() checks its links. Some Obsidian functions are missing (Formula help lists what works). asFile().name, .path, and .properties read that note; size and created time are not on it. Opening another vault .base loads its views here;{" "}
             {live?.onDisk ? `Nexus still saves them to ${LIVE_BASE_FILE}.` : "Nexus still saves them in browser storage."}
           </p>
         </div>

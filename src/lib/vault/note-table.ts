@@ -704,8 +704,17 @@ export function buildNoteTable(
       const hit = resolve(noteTarget);
       if (!hit.id) return null;
       const source = notes.find((item) => item.id === hit.id);
-      const path = (source?.path ?? noteTarget).replace(/\\/g, "/").replace(/\.md$/i, "");
-      return { kind: "file" as const, id: hit.id, target: path, name: hit.title };
+      const stored = (source?.path ?? noteTarget).replace(/\\/g, "/");
+      const props = typeof source?.content === "string" ? noteTableProperties(source.content) : {};
+      return {
+        kind: "file" as const,
+        id: hit.id,
+        target: stored.replace(/\.md$/i, ""),
+        name: hit.title,
+        path: stored,
+        props,
+        mtime: source?.mtime || 0,
+      };
     };
     const formulaRow: FormulaRow = {
       ...built,

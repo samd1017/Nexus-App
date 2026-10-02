@@ -9,9 +9,21 @@ import { parseWikilinkInner } from "@/lib/markdown/wikilinks";
 
 type DateValue = { kind: "date"; ms: number; dateOnly: boolean };
 type LinkValue = { kind: "link"; target: string; display: string | null };
-type FileValue = { kind: "file"; id: string; target: string; name: string };
+type FileValue = {
+  kind: "file";
+  id: string;
+  /** Path without `.md`, used to match links. */
+  target: string;
+  name: string;
+  /** Vault path, including `.md`, same as `file.path` on that note. */
+  path: string;
+  props: Record<string, string>;
+  /** Edited time. Notes do not store size or created time. */
+  mtime: number;
+};
+type PropsValue = { kind: "props"; fields: Record<string, string> };
 type RegexValue = { kind: "regex"; source: string; flags: string };
-type Value = null | string | number | boolean | DateValue | LinkValue | FileValue | RegexValue | Value[];
+type Value = null | string | number | boolean | DateValue | LinkValue | FileValue | PropsValue | RegexValue | Value[];
 /** A computed formula value, kept typed so later columns can do date math on it. */
 export type FormulaValue = Value;
 /** Results of columns to the left, by lowercased column id and name. */
@@ -55,6 +67,7 @@ type Node =
   | { k: "local"; name: Local }
   | { k: "list"; items: Node[] }
   | { k: "index"; a: Node; i: Node }
+  | { k: "get"; a: Node; key: string }
   | { k: "call"; name: string; args: Node[] }
   | { k: "bin"; op: string; a: Node; b: Node }
   | { k: "un"; op: "!" | "-"; a: Node };
@@ -184,6 +197,10 @@ function isFile(v: Value): v is FileValue {
   return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "file";
 }
 
+function isProps(v: Value): v is PropsValue {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && v.kind === "props";
+}
+
 function linkTargetOf(v: Value): string | null {
   if (isLink(v) || isFile(v)) return v.target;
   if (typeof v === "string" && v.trim()) return v;
@@ -303,6 +320,7 @@ function show(v: Value): string {
   if (Array.isArray(v)) return v.map(show).filter((s) => s !== "").join(", ");
   if (v.kind === "link") return v.display || linkLabel(v.target);
   if (v.kind === "file") return v.name || linkLabel(v.target);
+  if (v.kind === "props") return Object.entries(v.fields).map(([key, value]) => `${key}: ${value}`).join(", ");
   if (v.kind === "regex") return `/${v.source}/${v.flags}`;
   return formatDate(v, v.dateOnly ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm");
 }
@@ -310,6 +328,7 @@ function show(v: Value): string {
 function quote(v: Value): string {
   if (Array.isArray(v)) return `[${v.map(quote).join(", ")}]`;
   if (isLink(v) || isFile(v)) return `[[${v.target}]]`;
+  if (isProps(v)) return "properties";
   return typeof v === "string" ? `“${v}”` : show(v);
 }
 
@@ -999,6 +1018,7 @@ export const FORMULA_EXAMPLES: { formula: string; label: string; name: string }[
   { formula: 'if(contains(lower(tags), "writing"), "Writing", file.folder)', label: "Text contains", name: "Area" },
   { formula: "file.backlinks", label: "Links: notes that link here", name: "Backlinks" },
   { formula: "file.asLink().asFile()", label: "This note, opened as a file", name: "This file" },
+  { formula: "file.asLink().asFile().name", label: "Name of the note a link opens", name: "Linked name" },
   { formula: 'file.links.filter(!value.matches(/^\\d{4}-/)).slice(0, 3)', label: "List + regex: first 3 links, no dailies", name: "Links" },
   { formula: 'file.tags.map("#" & value).join(" ")', label: "List: every tag", name: "Tags" },
 ];
@@ -1122,7 +1142,11 @@ class Parser {
       if (t?.t !== "id") throw new FormulaError("A name must follow the dot.");
       this.i += 1;
       const fn = FUNCTIONS.get(t.v.toLowerCase());
-      if (!fn || fn.name === "if" || fn.max === 0) throw new FormulaError(`.${t.v}() is not a formula function.`);
+      if (!fn || fn.name === "if" || fn.max === 0) {
+        if (this.isOp("(")) throw new FormulaError(`.${t.v}() is not a formula function.`);
+        node = { k: "get", a: node, key: t.v };
+        continue;
+      }
       if ((fn.name === "asFile" || fn.name === "linksTo") && !this.isOp("(")) {
         throw new FormulaError(
           fn.name === "asFile"
@@ -1343,19 +1367,42 @@ function arithmetic(op: string, a: Value, b: Value): Value {
 
 const typedProps = new WeakMap<Record<string, string>, Map<string, Value>>();
 
-function readProp(row: FormulaRow, key: string): Value {
-  const found = Object.prototype.hasOwnProperty.call(row.props, key)
+function lookupFields(fields: Record<string, string>, key: string): Value {
+  const found = Object.prototype.hasOwnProperty.call(fields, key)
     ? key
-    : Object.keys(row.props).find((k) => k.toLowerCase() === key.toLowerCase());
-  const raw = found === undefined ? undefined : row.props[found];
+    : Object.keys(fields).find((k) => k.toLowerCase() === key.toLowerCase());
+  const raw = found === undefined ? undefined : fields[found];
   if (raw === undefined || found === undefined) return null;
-  let cache = typedProps.get(row.props);
+  let cache = typedProps.get(fields);
   if (!cache) {
     cache = new Map();
-    typedProps.set(row.props, cache);
+    typedProps.set(fields, cache);
   }
   if (!cache.has(found)) cache.set(found, typedProp(raw));
   return cache.get(found) ?? null;
+}
+
+function readProp(row: FormulaRow, key: string): Value {
+  return lookupFields(row.props, key);
+}
+
+/** `.name`, `.path`, `.properties`, and `.mtime` on the file `asFile()` returned. */
+function readFileField(file: FileValue, key: string): Value {
+  const field = key.trim().toLowerCase();
+  if (field === "name") return file.name;
+  if (field === "path") return file.path;
+  if (field === "properties") return { kind: "props", fields: file.props };
+  if (field === "mtime") return file.mtime ? { kind: "date", ms: file.mtime, dateOnly: false } : null;
+  if (field === "size") throw new FormulaError("asFile() has no size. Nexus does not store how many bytes a note is.");
+  if (field === "ctime") throw new FormulaError("asFile() has no ctime. Nexus keeps when a note was edited, not when it was created.");
+  throw new FormulaError(`A file has no .${key}. It has name, path, properties, and mtime.`);
+}
+
+function readMember(v: Value, key: string): Value {
+  if (v === null || v === "") return null;
+  if (isFile(v)) return readFileField(v, key);
+  if (isProps(v)) return lookupFields(v.fields, key);
+  throw new FormulaError(`${quote(v)} has no .${key}.`);
 }
 
 function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
@@ -1398,8 +1445,21 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
     }
     case "list":
       return node.items.map((item) => evalNode(item, row, ctx));
+    case "get":
+      return readMember(evalNode(node.a, row, ctx), node.key);
     case "index": {
       const list = evalNode(node.a, row, ctx);
+      if (isFile(list) || isProps(list)) {
+        const key = evalNode(node.i, row, ctx);
+        if (typeof key !== "string" || !key.trim()) {
+          throw new FormulaError(
+            isFile(list)
+              ? 'A file field needs a name in quotes, like asFile()["path"].'
+              : 'A property name needs quotes, like .properties["due date"].',
+          );
+        }
+        return isFile(list) ? readFileField(list, key) : lookupFields(list.fields, key);
+      }
       const at = needNumber(evalNode(node.i, row, ctx));
       if (list === null || at === null) return null;
       if (!Array.isArray(list)) throw new FormulaError(`${quote(list)} is not a list, so it has no [${at}]. Use list(x) to make one.`);

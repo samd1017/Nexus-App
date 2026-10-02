@@ -782,6 +782,54 @@ assert.equal(got("hub", "heading").value, "Spec");
 assert.deepEqual(got("hub", "heading").links, [{ id: "spec", title: "Spec" }]);
 assert.equal(got("hub", "eq").value, "true");
 assert.equal(got("hub", "specTo").value, "false");
+const resolvedFields = buildNoteTable(
+  linkVault,
+  "",
+  [
+    col("fname", 'link("Ada").asFile().name'),
+    col("fpath", 'link("Ada").asFile().path'),
+    col("owner", 'link("Hub").asFile().properties.owner'),
+    col("bracket", 'link("Hub").asFile().properties["owner"]'),
+    col("missingKey", 'link("Hub").asFile().properties.nope'),
+    col("missingName", 'link("Nope").asFile().name'),
+    col("lazyName", 'link("Lazy").asFile().name'),
+    col("edited", 'link("Ada").asFile().mtime'),
+  ],
+  NOW,
+);
+const resolvedFieldsMore = buildNoteTable(
+  linkVault,
+  "",
+  [
+    col("size", 'link("Ada").asFile().size'),
+    col("ctime", 'link("Ada").asFile().ctime'),
+    col("lazyPath", 'link("Lazy").asFile().path'),
+    col("selfPath", "file.asLink().asFile().path"),
+    col("lower", 'link("Ada").asFile().name.lower()'),
+  ],
+  NOW,
+);
+const field = (id, column) =>
+  (resolvedFields.rows.find((row) => row.id === id).formulas[column] ??
+    resolvedFieldsMore.rows.find((row) => row.id === id).formulas[column]);
+assert.equal(field("hub", "fname").value, "Ada");
+assert.equal(field("hub", "fname").links, undefined);
+assert.equal(field("spec", "fname").value, "Ada");
+assert.equal(field("hub", "fpath").value, "People/Ada.md");
+assert.equal(field("hub", "owner").value, "Ada");
+assert.equal(field("hub", "bracket").value, "Ada");
+assert.equal(field("hub", "missingKey").value, "");
+assert.equal(field("hub", "missingKey").kind, "empty");
+assert.equal(field("hub", "missingName").value, "");
+assert.equal(field("hub", "missingName").error, null);
+assert.equal(field("hub", "lazyName").value, "Lazy");
+assert.equal(field("hub", "lazyPath").value, "Projects/Lazy.md");
+assert.equal(field("hub", "edited").value, "2026-10-01 12:00");
+assert.match(field("hub", "size").error, /asFile\(\) has no size/);
+assert.match(field("hub", "ctime").error, /asFile\(\) has no ctime/);
+assert.equal(field("hub", "selfPath").value, "Hub.md");
+assert.equal(field("spec", "selfPath").value, "Projects/Spec.md");
+assert.equal(field("hub", "lower").value, "ada");
 // Group and summarize a list formula by its text
 const { groupNoteRows: groupLinkRows, summarize: summarizeLinks } = await import("../src/lib/vault/bases-groups.ts");
 assert.deepEqual(
@@ -945,7 +993,10 @@ assert.match(table, /SUMMARY_FORMULA_EXAMPLES\.map/);
 assert.match(table, /data-testid="bases-formula-summaries"/);
 assert.match(table, /summarize\(rows, column, kind, summaryFormulas\)/);
 assert.match(table, /Some Obsidian functions are missing/);
-assert.match(table, /asFile\(\) opens a note, not a full file/);
+assert.doesNotMatch(table, /not a full file/);
+assert.doesNotMatch(table, /\.name, \.path, properties, size, and ctime are not on it/);
+assert.match(table, /asFile\(\)\.name, \.path, and \.properties read that note/);
+assert.match(table, /size and created time are not on it/);
 assert.match(table, /Opening another vault \.base loads its views here/);
 assert.match(table, /Nexus still saves them to \$\{LIVE_BASE_FILE\}/);
 assert.match(table, /Nexus still saves them in browser storage/);
