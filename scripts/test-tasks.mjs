@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday, priorityOnTaskLine, taskIsHigh } = await import(
+const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday, priorityOnTaskLine, taskIsHigh, recurrenceOnTaskLine } = await import(
   "../src/lib/tasks/extract.ts"
 );
 
@@ -36,6 +36,7 @@ const tasks = tasksInNote({ id: "n1", path: "Day.md", title: "Day", body });
 assert.equal(tasks.length, 3);
 assert.equal(tasks[0].text, "Buy milk");
 assert.equal(tasks[0].priority, null);
+assert.equal(tasks[0].recurrence, null);
 assert.equal(tasks[0].due, "2026-04-01");
 assert.equal(tasks[0].line, 6);
 assert.equal(tasks[1].text, "Call home");
@@ -154,6 +155,37 @@ const highHere = ranked.filter((task) => taskIsHigh(task.priority) && taskMatche
 assert.deepEqual(highHere.map((task) => task.text), ["Ship highest", "Alt high"]);
 assert.equal(highHere.some((task) => task.text === "Medium down" || task.text === "Low down" || task.text === "Unmarked plain"), false);
 
+assert.equal(recurrenceOnTaskLine("Water 🔁 every day"), "every day");
+assert.equal(recurrenceOnTaskLine("Water 🔁 every week"), "every week");
+assert.equal(recurrenceOnTaskLine("Water 🔁 every week 📅 2026-10-02 ⏫"), "every week");
+assert.equal(recurrenceOnTaskLine("plain"), null);
+assert.equal(recurrenceOnTaskLine("Water 🔁"), null);
+const recurred = tasksInNote({
+  id: "rec",
+  path: "Research/Loop.md",
+  title: "Loop",
+  body: [
+    "- [ ] Water 🔁 every day 📅 2026-10-02 ⏫",
+    "- [ ] Weekly 🔁 every week",
+    "- [ ] Once",
+    "- [ ] Elsewhere 🔁 every day",
+  ].join("\n"),
+});
+recurred[3].path = "Journal/Elsewhere.md";
+assert.equal(recurred[0].text, "Water");
+assert.equal(recurred[0].recurrence, "every day");
+assert.equal(recurred[0].due, "2026-10-02");
+assert.equal(recurred[0].priority, "highest");
+assert.equal(recurred[1].recurrence, "every week");
+assert.equal(recurred[2].recurrence, null);
+const recurringHere = recurred.filter((task) => task.recurrence && taskMatchesPath(task, "Research"));
+assert.deepEqual(recurringHere.map((task) => task.text), ["Water", "Weekly"]);
+const recurBody = "- [ ] Water 🔁 every day 📅 2026-10-02\n";
+const recurDone = completeTaskLine(recurBody, 1);
+assert.match(recurDone, /- \[x\] Water 🔁 every day 📅 2026-10-02/);
+assert.equal(recurDone.split("\n").filter((line) => line.includes("[ ]")).length, 0);
+assert.equal(tasksInNote({ id: "rec", path: "Research/Loop.md", title: "Loop", body: recurDone }).length, 0);
+
 const { readFileSync } = await import("node:fs");
 const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");
 assert.match(panel, /TasksRail/);
@@ -166,15 +198,17 @@ assert.match(welcome, /Tasks list/);
 assert.match(welcome, /No plugin API/);
 const help = readFileSync("src/components/settings/SettingsPanel.tsx", "utf8");
 assert.match(help, /Dataview queries are not supported/);
-assert.match(help, /Recurrence/);
+assert.match(help, /recurrence/i);
 assert.match(help, /Due today and Overdue/);
 assert.match(help, /High keeps incomplete tasks marked/);
-assert.match(help, /Recurrence and Dataview queries are not supported/);
+assert.match(help, /Dataview queries are not supported/);
+assert.match(help, /does not schedule the next one/);
+assert.doesNotMatch(help, /Recurrence and Dataview queries are not supported/);
 assert.doesNotMatch(help, /priorities, and Dataview/);
 assert.doesNotMatch(help, /due: frontmatter/);
 const rail = readFileSync("src/components/right/TasksRail.tsx", "utf8");
 assert.match(rail, /due:/);
-assert.match(rail, /Recurrence/);
+assert.match(rail, /recurrence/i);
 assert.match(rail, /tasks-filter-due-today/);
 assert.match(rail, /tasks-filter-overdue/);
 assert.match(rail, /Due today/);
@@ -182,7 +216,10 @@ assert.match(rail, /Overdue/);
 assert.match(rail, /taskDueBucket/);
 assert.match(rail, /tasks-filter-high/);
 assert.match(rail, /taskIsHigh/);
-assert.match(rail, /Recurrence and Dataview queries are not supported/);
+assert.match(rail, /tasks-filter-recurring/);
+assert.match(rail, /does not schedule the next one/);
+assert.match(rail, /Dataview queries are not supported/);
+assert.doesNotMatch(rail, /Recurrence and Dataview queries are not supported/);
 assert.doesNotMatch(rail, /priorities, and Dataview/);
 assert.doesNotMatch(rail, /due: frontmatter/);
 assert.match(rail, /setActiveNote\(task\.noteId/);

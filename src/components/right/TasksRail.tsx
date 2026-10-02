@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 const TASK_CAP = 400;
 const CHUNK = 80;
 
-type Scope = "all" | "note" | "due-today" | "overdue" | "high";
+type Scope = "all" | "note" | "due-today" | "overdue" | "high" | "recurring";
 
 function liveTitle(id: string, path: string, fallback: string): string {
   const node = useVaultStore.getState().nodes[id];
@@ -107,6 +107,7 @@ export function TasksRail() {
       if (scope === "due-today" && taskDueBucket(task.due, today) !== "today") return false;
       if (scope === "overdue" && taskDueBucket(task.due, today) !== "overdue") return false;
       if (scope === "high" && !taskIsHigh(task.priority)) return false;
+      if (scope === "recurring" && !task.recurrence) return false;
       return taskMatchesPath(task, pathPrefix);
     });
   }, [tasks, scope, pathPrefix, activeNoteId, today]);
@@ -149,7 +150,9 @@ export function TasksRail() {
         Due today and Overdue keep incomplete tasks due on this local day, or before it.
         <span className="font-mono">⏫</span> and <span className="font-mono">❗</span> are high priority.
         High keeps those incomplete tasks.
-        Recurrence and Dataview queries are not supported.
+        <span className="font-mono">🔁</span> plus a rule, such as every day, is a recurrence label.
+        Recurring keeps those incomplete tasks. Completing a row does not schedule the next one.
+        Dataview queries are not supported.
       </p>
       <div className="flex flex-wrap items-center gap-1">
         <button
@@ -196,6 +199,15 @@ export function TasksRail() {
           onClick={() => setScope("high")}
         >
           High
+        </button>
+        <button
+          type="button"
+          data-testid="tasks-filter-recurring"
+          aria-pressed={scope === "recurring"}
+          className={cn("chip-btn", scope === "recurring" && "is-active")}
+          onClick={() => setScope("recurring")}
+        >
+          Recurring
         </button>
         <input
           value={pathPrefix}
@@ -247,6 +259,9 @@ export function TasksRail() {
                     {liveTitle(task.noteId, task.path, task.title)}
                     <span className="opacity-70"> · {task.path}</span>
                     {task.due ? <span className="text-[var(--accent)]"> · {task.due}</span> : null}
+                    {task.recurrence ? (
+                      <span data-testid="tasks-recurrence"> · 🔁 {task.recurrence}</span>
+                    ) : null}
                   </div>
                 </button>
               </div>

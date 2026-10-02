@@ -2,7 +2,8 @@
  * Incomplete Markdown tasks. A 📅 YYYY-MM-DD on the line is the due date.
  * When the line has no emoji date, the note YAML `due:` (YYYY-MM-DD) applies.
  * The first priority marker on the line is ⏫ 🔼 🔽 ⏬ or ❗.
- * Not supported: recurrence and Dataview queries.
+ * A 🔁 plus following rule text is a recurrence label. Completing a task does not schedule the next one.
+ * Not supported: Dataview queries.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
@@ -17,6 +18,8 @@ export type VaultTask = {
   due: string | null;
   /** First priority marker on the line. Null when the line has none. */
   priority: TaskPriority | null;
+  /** Rule text after the first 🔁. Null when the line has no rule. */
+  recurrence: string | null;
 };
 
 /** Tasks-plugin markers. High chip uses highest (⏫) and high-alt (❗) only. */
@@ -25,6 +28,8 @@ export type TaskPriority = "highest" | "high" | "medium" | "low" | "high-alt";
 const TASK_RE = /^(\s*)([-*])\s+\[ \]\s+(\S.*)$/;
 const DUE_RE = /📅\s*(\d{4}-\d{2}-\d{2})/;
 const PRIORITY_RE = /[⏫🔼🔽⏬❗]/u;
+/** First 🔁 and the rule text up to the next task emoji, or the end of the line. */
+const RECURRENCE_RE = /🔁\s*([^📅⏫🔼🔽⏬❗🔁]*)/u;
 const PER_NOTE_CAP = 40;
 
 const PRIORITY_OF: Record<string, TaskPriority> = {
@@ -53,6 +58,14 @@ export function priorityMarker(priority: TaskPriority | null): string {
 /** High chip: ⏫ or ❗. 🔼, 🔽, ⏬, and unmarked lines stay out. */
 export function taskIsHigh(priority: TaskPriority | null): boolean {
   return priority === "highest" || priority === "high-alt";
+}
+
+/** Rule after the first 🔁, or null when the marker is missing or has no text. Display and filter only. */
+export function recurrenceOnTaskLine(text: string): string | null {
+  const match = RECURRENCE_RE.exec(text);
+  if (!match) return null;
+  const rule = (match[1] ?? "").replace(/\s+/g, " ").trim();
+  return rule || null;
 }
 
 export function dueOnTaskLine(text: string): string | null {
@@ -84,7 +97,7 @@ function normalizeDueValue(value: string): string | null {
 }
 
 export function taskDisplayText(text: string): string {
-  return text.replace(DUE_RE, "").replace(PRIORITY_RE, "").replace(/\s+/g, " ").trim();
+  return text.replace(DUE_RE, "").replace(PRIORITY_RE, "").replace(RECURRENCE_RE, "").replace(/\s+/g, " ").trim();
 }
 
 export function tasksInNote(note: {
@@ -109,6 +122,7 @@ export function tasksInNote(note: {
       text: taskDisplayText(raw),
       due: dueOnTaskLine(raw) ?? noteDue,
       priority: priorityOnTaskLine(raw),
+      recurrence: recurrenceOnTaskLine(raw),
     });
     if (out.length >= PER_NOTE_CAP) break;
   }
