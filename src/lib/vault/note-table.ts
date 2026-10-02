@@ -11,6 +11,7 @@ import {
   type FormulaValue,
 } from "@/lib/vault/note-formula";
 import { extractTagsFromMarkdown } from "@/lib/vault/tags";
+import { withInlineFields } from "@/lib/vault/inline-fields";
 import { compileQueryFilter, readsNoteBody, runQueryFilter, type QueryProblem } from "@/lib/vault/query-expr";
 
 export type NoteTableSource = {
@@ -246,18 +247,18 @@ export function resolveNoteLink(
 /**
  * One string per top-level key. A block list (`key:` then `- item` lines)
  * reads as the flow list `[a, b]`, so formulas see the same list either way.
+ * Inline `key:: value` fields in the body are read too; frontmatter wins.
  */
 export function noteTableProperties(content: string | null | undefined): Record<string, string> {
   if (!content) return {};
   const { yaml } = splitFrontmatter(content);
-  if (!yaml) return {};
   const props: Record<string, string> = {};
-  for (const field of parseFrontmatterFields(yaml)) {
+  for (const field of yaml ? parseFrontmatterFields(yaml) : []) {
     const value = field.value.replace(/^['"]|['"]$/g, "").trim();
     if (!value) continue;
     props[field.key] = value;
   }
-  return props;
+  return withInlineFields(props, content);
 }
 
 export function defaultBasesSession(): BasesSession {

@@ -27,6 +27,7 @@ const { readLiveBase, writeLiveBase } = await import("../src/lib/vault/bases-liv
 const { basesViewToQuery } = await import("../src/lib/vault/bases-query.ts");
 const { queryStarters } = await import("../src/lib/vault/query-starters.ts");
 const { invalidateVaultTagsCache } = await import("../src/lib/vault/tags.ts");
+const { inlineFields } = await import("../src/lib/vault/inline-fields.ts");
 const { buildDemoVault } = await import("../src/lib/vault/demo-vault.ts");
 const { markdownToHtml, htmlToMarkdown, htmlDocToMarkdown } = await import("../src/lib/markdown/serialize.ts");
 const { promoteNexusQueryBlocks } = await import("../src/lib/editor/special-blocks.ts");
@@ -194,7 +195,7 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   const typoProp = run('TABLE stauts FROM "Projects"');
   assert.equal(typoProp.error, null);
   assert.match(typoProp.fieldNote, /“stauts”.*Did you mean “status”\?/);
-  assert.match(run('TABLE stauts AS "S" FROM "Projects"').fieldNote, /No note in scope has the property “stauts”\. Did you mean “status”\?/);
+  assert.match(run('TABLE stauts AS "S" FROM "Projects"').fieldNote, /No note in scope has the property “stauts” in frontmatter or as an inline stauts:: field\. Did you mean “status”\?/);
 
   const columnFail = run('TABLE number(author) * 2 AS "Twice" FROM "Reading"');
   assert.equal(columnFail.error, null);
@@ -303,6 +304,73 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   assert.equal(days.rows[0].fields[1].value, "17");
   const dvDays = runNexusQuery('TABLE (date(due) - date(today)).days AS "D" FROM "Research" WHERE due', demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"));
   assert.match(dvDays.fieldNote, /already gives a number of days, so leave \.days off/);
+}
+
+// --- Inline `key:: value` fields are read from the body; frontmatter wins.
+{
+  const body = [
+    "# Alpha",
+    "owner:: Sam",
+    "**Due Date**:: 2026-10-05",
+    "- reviewer:: Ana",
+    "- [ ] ship it [priority:: 2] and (effort:: small)",
+    "> quoted:: yes",
+    "project:: Apollo",
+    "project:: Zeus",
+    "empty::",
+    "```",
+    "fenced:: no",
+    "```",
+    "Use `code:: no` and std::vector here.",
+    "See [[Beta]] and [label](https://x.dev/a::b).",
+  ].join("\n");
+  assert.deepEqual(inlineFields(body), {
+    owner: "Sam",
+    "Due Date": "2026-10-05",
+    reviewer: "Ana",
+    priority: "2",
+    effort: "small",
+    quoted: "yes",
+    project: "[Apollo, Zeus]",
+  });
+  assert.deepEqual(inlineFields("No fields here: just a colon."), {});
+  assert.deepEqual(inlineFields("[related:: [[Beta]]] next"), { related: "[[Beta]]" });
+
+  resetVaultIndex();
+  const inl = {
+    p: folder("p", "P"),
+    alpha: note("alpha", "P/Alpha.md", "---\nstatus: active\n---\n# Alpha\nstatus:: ignored\nowner:: Sam\n- [ ] ship [due:: 2026-10-05]\n", { parentId: "p" }),
+    beta: note("beta", "P/Beta.md", "# Beta\nstatus:: blocked\nowner:: Ana\nproject:: Apollo\nproject:: Zeus\n", { parentId: "p" }),
+    gamma: note("gamma", "P/Gamma.md", "# Gamma\nNothing inline.\n", { parentId: "p" }),
+  };
+  const dialect = runNexusQuery('TABLE status AS "S", owner, due FROM "P" SORT file.name', inl, null, NOW);
+  assert.equal(dialect.dialect, true);
+  assert.deepEqual(dialect.rows.map((r) => r.fields.map((f) => f.value)), [
+    ["active", "Sam", "2026-10-05"],
+    ["blocked", "Ana", "—"],
+    ["—", "—", "—"],
+  ]);
+  assert.deepEqual(ids(runNexusQuery('LIST FROM "P" WHERE status = "blocked"', inl, null, NOW)), ["beta"]);
+  assert.deepEqual(ids(runNexusQuery('LIST FROM "P" WHERE status = "ignored"', inl, null, NOW)), []);
+  assert.deepEqual(ids(runNexusQuery('LIST FROM "P" WHERE contains(project, "Zeus")', inl, null, NOW)), ["beta"]);
+  assert.deepEqual(ids(runNexusQuery('LIST FROM "P" WHERE due < date(today) + 7d', inl, null, NOW)), ["alpha"]);
+
+  const classic = runNexusQuery("TABLE status, owner FROM path:P", inl, null, NOW);
+  assert.equal(parseNexusQuery("TABLE status, owner FROM path:P").kind, "ok");
+  const byId = Object.fromEntries(classic.rows.map((r) => [r.id, r.fields.map((f) => f.value)]));
+  assert.deepEqual(byId.alpha, ["active", "Sam"]);
+  assert.deepEqual(byId.beta, ["blocked", "Ana"]);
+  assert.deepEqual(ids(runNexusQuery('LIST FROM path:P WHERE owner = "Ana"', inl, null, NOW)), ["beta"]);
+
+  assert.match(runNexusQuery("TABLE ownr FROM path:P", inl, null, NOW).fieldNote, /in its frontmatter or as an inline ownr:: field\. Did you mean “owner”\?/);
+  assert.match(runNexusQuery('TABLE ownr AS "O" FROM "P"', inl, null, NOW).fieldNote, /in frontmatter or as an inline ownr:: field\. Did you mean “owner”\?/);
+  assert.match(runNexusQuery('TABLE x AS "x" FROM "P"', inl, null, NOW).footer, /inline key:: value fields; frontmatter wins/);
+
+  const table = buildNoteTable(Object.values(inl).filter((n) => n.kind === "note"), "P", [], NOW, 'owner = "Sam"');
+  assert.deepEqual(table.rows.map((r) => r.id), ["alpha"]);
+  assert.equal(table.rows[0].props.status, "active");
+  assert.equal(table.rows[0].props.owner, "Sam");
+  assert.ok(table.keys.includes("owner"), "inline keys show as Bases columns");
 }
 
 // --- ```dataview renders natively and saves back as ```dataview; dataviewjs is never run.

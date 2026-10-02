@@ -15,7 +15,6 @@
  * formula language, so a query block and a Bases view filter read the same way.
  */
 
-import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
 import { extractWikilinks, normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import { extractTagsFromMarkdown, notesForTag } from "@/lib/vault/tags";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
@@ -33,7 +32,7 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Fields come from frontmatter and inline key:: value fields in the note; frontmatter wins when both set one.';
 
 export const NEXUS_QUERY_HELP =
   'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status rows lists one level of notes in each partition. A TABLE formula is up to three + - * /, left to right, with no parentheses. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
@@ -364,7 +363,7 @@ function parseContainsAt(tokens: string[], at: number): CmpParse | null {
   const needle = unquote(inner.slice(comma + 1).trim());
   if (!field || !new RegExp(`^${CMP_FIELD}$`).test(field)) {
     return {
-      error: `contains() does not read “${field || "that"}”. Use a frontmatter field, file.name, file.path, file.folder, file.tags, file.mtime, file.ctime, or file.size.`,
+      error: `contains() does not read “${field || "that"}”. Use a property (frontmatter or an inline key:: field), file.name, file.path, file.folder, file.tags, file.mtime, file.ctime, or file.size.`,
     };
   }
   if (!needle) return { error: 'contains() needs text to look for, such as contains(status, "draft").' };
@@ -1076,15 +1075,18 @@ function hasTags(node: VaultNode, tags: string[], mode: TagJoin): boolean {
   return tags.some((tag) => have.includes(tag));
 }
 
-function frontmatterProps(content: string): Record<string, string> {
-  const { yaml } = splitFrontmatter(content);
-  if (!yaml) return {};
-  const props: Record<string, string> = {};
-  for (const field of parseFrontmatterFields(yaml)) {
-    const value = field.value.replace(/^['"]|['"]$/g, "").trim();
-    if (value) props[field.key.toLowerCase()] = value;
+const lowerProps = new WeakMap<Record<string, string>, Record<string, string>>();
+
+/** Frontmatter and inline `key:: value` fields with lowercased keys; frontmatter wins. */
+function classicProps(node: VaultNode, content: string): Record<string, string> {
+  const props = cachedProps(node, content);
+  let lower = lowerProps.get(props);
+  if (!lower) {
+    lower = {};
+    for (const [key, value] of Object.entries(props)) lower[key.toLowerCase()] ??= value;
+    lowerProps.set(props, lower);
   }
-  return props;
+  return lower;
 }
 
 function folderOf(path: string): string {
@@ -1092,7 +1094,7 @@ function folderOf(path: string): string {
   return i <= 0 ? "" : path.slice(0, i);
 }
 
-/** A frontmatter value, or null when the note body is not loaded. File columns never need the body. */
+/** A property value, or null when the note body is not loaded. File columns never need the body. */
 function fieldActual(node: VaultNode, field: string): string | null {
   const key = columnKey(field);
   if (key === "tags") return tagsOf(node).join(", ");
@@ -1103,7 +1105,7 @@ function fieldActual(node: VaultNode, field: string): string | null {
   if (key === "file.path") return node.path;
   if (key === "file.folder") return folderOf(node.path);
   if (typeof node.content !== "string") return null;
-  return frontmatterProps(node.content)[key] ?? "";
+  return classicProps(node, node.content)[key] ?? "";
 }
 
 function startOfUtcDay(ms: number): number {
@@ -1968,10 +1970,10 @@ export function runNexusQuery(
     if (missing.length) {
       const seen = new Set<string>();
       for (const item of ordered.slice(0, 300)) {
-        if (typeof item.node.content === "string") for (const key of Object.keys(frontmatterProps(item.node.content))) seen.add(key);
+        if (typeof item.node.content === "string") for (const key of Object.keys(classicProps(item.node, item.node.content))) seen.add(key);
       }
       const guess = missing.length === 1 ? didYouMean(columnKey(missing[0]!), seen) : null;
-      fieldNote = `No loaded note has ${missing.map((name) => `“${name}”`).join(" or ")} in its frontmatter.${guess ? ` Did you mean “${guess}”?` : ""}`;
+      fieldNote = `No loaded note has ${missing.map((name) => `“${name}”`).join(" or ")} in its frontmatter or as an inline ${columnKey(missing[0]!)}:: field.${guess ? ` Did you mean “${guess}”?` : ""}`;
     }
   }
   return {
@@ -1999,7 +2001,7 @@ export function runNexusQuery(
 }
 
 export const NEXUS_DIALECT_FOOTER =
-  'LIST, TABLE, or CARDS · FROM "Folder", #tag, -#tag, or [[Note]] · WHERE, columns, SORT, and GROUP BY take any Bases formula, and Dataview spellings like =, AND, OR, date(today), and dur(7 days) read the same · AS "Label" names a column · LIMIT n. Runs inside Nexus; nothing in a note is run as code.';
+  'LIST, TABLE, or CARDS · FROM "Folder", #tag, -#tag, or [[Note]] · WHERE, columns, SORT, and GROUP BY take any Bases formula, and Dataview spellings like =, AND, OR, date(today), and dur(7 days) read the same · AS "Label" names a column · LIMIT n · Properties are frontmatter plus inline key:: value fields; frontmatter wins when both set one. Runs inside Nexus; nothing in a note is run as code.';
 
 /** Rows the full form shows at most. LIMIT asks for fewer. */
 export const NEXUS_DIALECT_CAP = 500;
@@ -2391,7 +2393,7 @@ function runDialect(
     const missing = [...asked].filter((key) => key && !lowerSeen.has(key.toLowerCase()));
     for (const key of missing.slice(0, 2)) {
       const guess = didYouMean(key, seenKeys);
-      notes.push(`No note in scope has the property “${key}”.${guess ? ` Did you mean “${guess}”?` : ""}`);
+      notes.push(`No note in scope has the property “${key}” in frontmatter or as an inline ${key}:: field.${guess ? ` Did you mean “${guess}”?` : ""}`);
     }
     if (missing.length > 2) notes.push(`${missing.length - 2} more properties are missing too.`);
   }
