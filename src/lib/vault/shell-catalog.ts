@@ -51,6 +51,10 @@ export type ShellRow = {
   parentId?: string | null;
   mtime: number;
   childNotes?: number;
+  /** Catalog byte size. Null when the row has none. */
+  size?: number | null;
+  /** Birth time in ms. Null or 0 when unknown. */
+  ctime?: number | null;
 };
 
 export type ShellLoaded = {
@@ -199,6 +203,13 @@ function num(v: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Null stays null. `num()` would turn a missing size or ctime into 0. */
+function optNum(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function asRow(raw: Record<string, unknown>): ShellRow {
   return {
     id: String(raw.id ?? ""),
@@ -208,11 +219,13 @@ function asRow(raw: Record<string, unknown>): ShellRow {
     parentId: (raw.parentId ?? raw.parent_id ?? null) as string | null,
     mtime: num(raw.mtime),
     childNotes: num(raw.childNotes ?? raw.child_notes),
+    size: optNum(raw.size),
+    ctime: optNum(raw.ctime),
   };
 }
 
 export function shellRowToNode(row: ShellRow): VaultNode {
-  return {
+  const node: VaultNode = {
     id: row.id,
     path: row.path,
     name: row.name,
@@ -220,6 +233,9 @@ export function shellRowToNode(row: ShellRow): VaultNode {
     parentId: row.parentId ?? null,
     mtime: row.mtime || Date.now(),
   };
+  if (row.size != null && row.size >= 0) node.size = row.size;
+  if (row.ctime) node.ctime = row.ctime;
+  return node;
 }
 
 /** The node map the renderer is allowed to keep from a mount payload. */
@@ -294,6 +310,9 @@ export function mergeShellRows(
     const kind = row.kind === "folder" ? "folder" : "note";
     const parentId = row.parentId ?? null;
     const mtime = row.mtime || prev?.mtime || 0;
+    // A later page may omit size or ctime. Keep the value already on the node.
+    const size = row.size != null ? row.size : prev?.size;
+    const ctime = row.ctime ? row.ctime : prev?.ctime;
     // A fill reload of the same page must not mint a new object for the
     // open note. A new object re-renders the editor on every catalog tick.
     if (
@@ -302,7 +321,9 @@ export function mergeShellRows(
       prev.name === row.name &&
       prev.kind === kind &&
       (prev.parentId ?? null) === parentId &&
-      prev.mtime === mtime
+      prev.mtime === mtime &&
+      (prev.size ?? null) === (size ?? null) &&
+      (prev.ctime ?? 0) === (ctime ?? 0)
     ) {
       if (!parentId) roots.add(prev.id);
       continue;
@@ -310,6 +331,8 @@ export function mergeShellRows(
     const node = shellRowToNode(row);
     if (prev?.content !== undefined) node.content = prev.content;
     if (prev && prev.mtime > node.mtime) node.mtime = prev.mtime;
+    if (node.size == null && prev?.size != null) node.size = prev.size;
+    if (!node.ctime && prev?.ctime) node.ctime = prev.ctime;
     next[row.id] = node;
     changed = true;
     if (!node.parentId) roots.add(node.id);

@@ -112,6 +112,12 @@ pub struct ShellRow {
     pub parent_id: Option<String>,
     pub mtime: i64,
     pub child_notes: i64,
+    /// Byte size from `note_meta.size`. Absent on a folder or an old row.
+    #[serde(default)]
+    pub size: Option<i64>,
+    /// Birth time in ms from `note_meta.ctime`. Absent when the file has none.
+    #[serde(default)]
+    pub ctime: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -458,7 +464,24 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShellRow> {
         parent_id: row.get(4)?,
         mtime: row.get(5)?,
         child_notes: row.get(6)?,
+        size: row.get(7)?,
+        ctime: row.get(8)?,
     })
+}
+
+/// `note_meta.ctime` is added by fill. A catalog opened before that column
+/// existed still has to answer the page query.
+fn ensure_shell_meta(conn: &Connection) {
+    let has = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('note_meta') WHERE name='ctime' LIMIT 1",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .is_ok();
+    if !has {
+        crate::index_fill::ensure_fill_depth_column(conn);
+    }
 }
 
 const PAGE_SQL_ROOT: &str = "
@@ -466,7 +489,8 @@ SELECT id, path, name, kind, parent_id, mtime,
        CASE WHEN kind='folder' THEN (
          SELECT COUNT(*) FROM note_meta c
          WHERE c.deleted=0 AND c.kind='note' AND c.parent_id = note_meta.id
-       ) ELSE 0 END
+       ) ELSE 0 END,
+       size, ctime
 FROM note_meta
 WHERE deleted=0 AND parent_id IS NULL
 ORDER BY CASE kind WHEN 'folder' THEN 0 ELSE 1 END, name COLLATE NOCASE
@@ -477,7 +501,8 @@ SELECT id, path, name, kind, parent_id, mtime,
        CASE WHEN kind='folder' THEN (
          SELECT COUNT(*) FROM note_meta c
          WHERE c.deleted=0 AND c.kind='note' AND c.parent_id = note_meta.id
-       ) ELSE 0 END
+       ) ELSE 0 END,
+       size, ctime
 FROM note_meta
 WHERE deleted=0 AND parent_id = ?1
 ORDER BY CASE kind WHEN 'folder' THEN 0 ELSE 1 END, name COLLATE NOCASE
@@ -507,6 +532,7 @@ pub fn query_children(
     limit: i64,
     offset: i64,
 ) -> Result<ShellPage, String> {
+    ensure_shell_meta(conn);
     let parent_path = normalize_rel(parent_path);
     let limit = limit.clamp(1, 2_000);
     let offset = offset.max(0);
@@ -561,13 +587,15 @@ pub fn query_level(
 }
 
 fn row_by_path(conn: &Connection, path: &str) -> Result<Option<ShellRow>, String> {
+    ensure_shell_meta(conn);
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime,
                     CASE WHEN kind='folder' THEN (
                       SELECT COUNT(*) FROM note_meta c
                       WHERE c.deleted=0 AND c.kind='note' AND c.parent_id = note_meta.id
-                    ) ELSE 0 END
+                    ) ELSE 0 END,
+                    size, ctime
              FROM note_meta WHERE deleted=0 AND path=?1 LIMIT 1",
         )
         .map_err(|e| e.to_string())?;
@@ -581,13 +609,15 @@ fn row_by_path(conn: &Connection, path: &str) -> Result<Option<ShellRow>, String
 }
 
 pub fn query_note(conn: &Connection, id: &str) -> Result<Option<ShellRow>, String> {
+    ensure_shell_meta(conn);
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime,
                     CASE WHEN kind='folder' THEN (
                       SELECT COUNT(*) FROM note_meta c
                       WHERE c.deleted=0 AND c.kind='note' AND c.parent_id = note_meta.id
-                    ) ELSE 0 END
+                    ) ELSE 0 END,
+                    size, ctime
              FROM note_meta WHERE deleted=0 AND id=?1 LIMIT 1",
         )
         .map_err(|e| e.to_string())?;
@@ -599,13 +629,15 @@ pub fn query_note(conn: &Connection, id: &str) -> Result<Option<ShellRow>, Strin
 }
 
 fn query_all_bounded(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
+    ensure_shell_meta(conn);
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime,
                     CASE WHEN kind='folder' THEN (
                       SELECT COUNT(*) FROM note_meta c
                       WHERE c.deleted=0 AND c.kind='note' AND c.parent_id = note_meta.id
-                    ) ELSE 0 END
+                    ) ELSE 0 END,
+                    size, ctime
              FROM note_meta WHERE deleted=0
              ORDER BY path
              LIMIT ?1",
@@ -718,12 +750,13 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<ShellRow>) -> Result<(), S
     if batch.is_empty() {
         return Ok(());
     }
+    ensure_shell_meta(conn);
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx
             .prepare_cached(
-                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth)
-                 VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,?7,0,0)
+                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth, ctime)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,?8,0,0,?9)
                  ON CONFLICT(id) DO UPDATE SET
                    path=excluded.path,
                    name=excluded.name,
@@ -731,7 +764,9 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<ShellRow>) -> Result<(), S
                    parent_id=excluded.parent_id,
                    mtime=CASE WHEN excluded.mtime>0 THEN excluded.mtime ELSE note_meta.mtime END,
                    title=excluded.title,
-                   deleted=0",
+                   deleted=0,
+                   size=COALESCE(excluded.size, note_meta.size),
+                   ctime=COALESCE(note_meta.ctime, excluded.ctime)",
             )
             .map_err(|e| e.to_string())?;
         for row in batch.iter() {
@@ -747,7 +782,9 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<ShellRow>) -> Result<(), S
                 row.kind,
                 row.parent_id,
                 row.mtime,
+                row.size,
                 title,
+                row.ctime,
             ])
             .map_err(|e| e.to_string())?;
         }
@@ -757,7 +794,23 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<ShellRow>) -> Result<(), S
     Ok(())
 }
 
-fn push_insert(batch: &mut Vec<ShellRow>, rel: &str, name: &str, kind: &str, mtime: i64) {
+fn created_of(meta: &std::fs::Metadata) -> Option<i64> {
+    meta.created()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .filter(|ms| *ms > 0)
+}
+
+fn push_insert(
+    batch: &mut Vec<ShellRow>,
+    rel: &str,
+    name: &str,
+    kind: &str,
+    mtime: i64,
+    size: Option<i64>,
+    ctime: Option<i64>,
+) {
     batch.push(ShellRow {
         id: shell_node_id(rel),
         path: rel.to_string(),
@@ -766,6 +819,8 @@ fn push_insert(batch: &mut Vec<ShellRow>, rel: &str, name: &str, kind: &str, mti
         parent_id: parent_id_of(rel),
         mtime,
         child_notes: 0,
+        size,
+        ctime,
     });
 }
 
@@ -795,15 +850,20 @@ pub fn write_catalog(conn: &mut Connection, root: &Path) -> Result<(), String> {
                 format!("{rel}/{name}")
             };
             if ft.is_dir() {
-                let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
-                push_insert(&mut batch, &child_rel, &name, "folder", mtime);
+                let meta = entry.metadata().ok();
+                let mtime = meta.as_ref().map(mtime_of).unwrap_or(0);
+                let ctime = meta.as_ref().and_then(created_of);
+                push_insert(&mut batch, &child_rel, &name, "folder", mtime, None, ctime);
                 stack.push((entry.path(), child_rel));
             } else if ft.is_file()
                 && (name.to_ascii_lowercase().ends_with(".md")
                     || name.to_ascii_lowercase().ends_with(".canvas"))
             {
-                let mtime = entry.metadata().map(|m| mtime_of(&m)).unwrap_or(0);
-                push_insert(&mut batch, &child_rel, &name, "note", mtime);
+                let meta = entry.metadata().ok();
+                let mtime = meta.as_ref().map(mtime_of).unwrap_or(0);
+                let size = meta.as_ref().map(|m| m.len() as i64);
+                let ctime = meta.as_ref().and_then(created_of);
+                push_insert(&mut batch, &child_rel, &name, "note", mtime, size, ctime);
             }
             if batch.len() >= SHELL_WRITE_BATCH {
                 flush_batch(conn, &mut batch)?;
@@ -863,7 +923,7 @@ pub fn derive_folders_page(
                 acc = format!("{acc}/{part}");
             }
             if seen.insert(acc.clone()) {
-                push_insert(&mut batch, &acc, part, "folder", 0);
+                push_insert(&mut batch, &acc, part, "folder", 0, None, None);
             }
         }
     }
@@ -895,6 +955,8 @@ struct PageSlot {
     name: String,
     folder: bool,
     mtime: i64,
+    size: Option<i64>,
+    ctime: Option<i64>,
 }
 
 fn cmp_ascii_ignore(a: &str, b: &str) -> std::cmp::Ordering {
@@ -969,6 +1031,8 @@ fn slot_for(rel: &str, name: &str, folder: bool) -> PageSlot {
         name: name.to_string(),
         folder,
         mtime: 0,
+        size: None,
+        ctime: None,
     }
 }
 
@@ -1040,12 +1104,26 @@ pub fn dir_page_rows(root: &Path, rel: &str, limit: i64) -> Result<Vec<ShellRow>
     }
     for slot in &mut entries {
         let abs = root.join(&slot.rel);
-        slot.mtime = std::fs::metadata(&abs).map(|m| mtime_of(&m)).unwrap_or(0);
+        if let Ok(meta) = std::fs::metadata(&abs) {
+            slot.mtime = mtime_of(&meta);
+            slot.ctime = created_of(&meta);
+            if !slot.folder {
+                slot.size = Some(meta.len() as i64);
+            }
+        }
     }
     let mut rows = Vec::with_capacity(entries.len());
     for slot in entries {
         let kind = if slot.folder { "folder" } else { "note" };
-        push_insert(&mut rows, &slot.rel, &slot.name, kind, slot.mtime);
+        push_insert(
+            &mut rows,
+            &slot.rel,
+            &slot.name,
+            kind,
+            slot.mtime,
+            slot.size,
+            slot.ctime,
+        );
     }
     Ok(rows)
 }
@@ -1136,6 +1214,7 @@ pub fn mount_disk_window(root: &Path, prefer: Option<&str>) -> Result<ShellMount
             let abs = root.join(&path);
             if abs.is_file() {
                 let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+                let meta = std::fs::metadata(&abs).ok();
                 push_unique(
                     &mut rows,
                     &mut seen,
@@ -1145,8 +1224,10 @@ pub fn mount_disk_window(root: &Path, prefer: Option<&str>) -> Result<ShellMount
                         name,
                         kind: "note".into(),
                         parent_id: parent_id_of(&path),
-                        mtime: std::fs::metadata(&abs).map(|m| mtime_of(&m)).unwrap_or(0),
+                        mtime: meta.as_ref().map(mtime_of).unwrap_or(0),
                         child_notes: 0,
+                        size: meta.as_ref().map(|m| m.len() as i64),
+                        ctime: meta.as_ref().and_then(created_of),
                     }],
                 );
             }
@@ -1732,8 +1813,9 @@ pub fn query_tag_notes(conn: &Connection, tag: &str, limit: i64) -> Result<Vec<S
             Some(out)
         })
     };
+    ensure_shell_meta(conn);
     if let Some(rows) = collect(
-        "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
+        "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0, m.size, m.ctime
          FROM note_meta m
          JOIN tag_map t ON t.note_id = m.id
          WHERE m.deleted=0 AND m.kind='note' AND t.tag = ?1
@@ -1744,7 +1826,7 @@ pub fn query_tag_notes(conn: &Connection, tag: &str, limit: i64) -> Result<Vec<S
         return Ok(rows);
     }
     Ok(collect(
-        "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
+        "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0, m.size, m.ctime
          FROM note_meta m
          WHERE m.deleted=0 AND m.kind='note'
            AND EXISTS (SELECT 1 FROM tag_map t WHERE t.tag = ?1 AND t.note_id = m.id)
@@ -1979,9 +2061,10 @@ fn query_recent_hits(conn: &Connection, limit: i64) -> Result<Vec<ShellSuggestHi
 
 /// Resolve a handful of pinned paths. Missing paths are omitted.
 pub fn query_by_paths(conn: &Connection, paths: &[String]) -> Result<Vec<ShellRow>, String> {
+    ensure_shell_meta(conn);
     let mut stmt = conn
         .prepare(
-            "SELECT id, path, name, kind, parent_id, mtime, 0
+            "SELECT id, path, name, kind, parent_id, mtime, 0, size, ctime
              FROM note_meta
              WHERE deleted=0 AND path=?1
              LIMIT 1",
@@ -2157,9 +2240,10 @@ pub fn query_path_page(
     if path_q.is_empty() && folder_q.is_empty() {
         return Ok(Vec::new());
     }
+    ensure_shell_meta(conn);
     let mut stmt = conn
         .prepare(
-            "SELECT id, path, name, kind, parent_id, mtime, 0
+            "SELECT id, path, name, kind, parent_id, mtime, 0, size, ctime
              FROM note_meta
              WHERE deleted=0 AND kind='note'
                AND (?1 = '' OR instr(lower(path), ?1) > 0)
@@ -2187,9 +2271,10 @@ pub fn query_path_page(
 /// Notes with no stored link in or out. A page, not the vault.
 pub fn query_orphans(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
     let limit = limit.clamp(1, 24);
+    ensure_shell_meta(conn);
     let mut stmt = conn
         .prepare(
-            "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0
+            "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0, m.size, m.ctime
              FROM note_meta m
              WHERE m.deleted=0 AND m.kind='note'
                AND NOT EXISTS (SELECT 1 FROM link_edge e WHERE e.source_id = m.id)
@@ -2463,9 +2548,10 @@ pub fn query_mention_heads(
 
 pub fn query_recent(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
     let limit = limit.clamp(1, SHELL_RECENT_LIMIT);
+    ensure_shell_meta(conn);
     let mut stmt = conn
         .prepare(
-            "SELECT id, path, name, kind, parent_id, mtime, 0
+            "SELECT id, path, name, kind, parent_id, mtime, 0, size, ctime
              FROM note_meta
              WHERE deleted=0 AND kind='note'
              ORDER BY mtime DESC, name COLLATE NOCASE
@@ -2568,7 +2654,8 @@ mod tests {
                content_hash TEXT,
                title TEXT,
                deleted INTEGER NOT NULL DEFAULT 0,
-               fill_depth INTEGER
+               fill_depth INTEGER,
+               ctime INTEGER
              );
              CREATE TABLE link_edge (
                id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2595,6 +2682,39 @@ mod tests {
             params![shell_node_id(path), path, name, parent, title],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn shell_row_reads_note_meta_size_and_ctime() {
+        let conn = open_mem();
+        let ctime = 1_759_190_400_000i64;
+        conn.execute(
+            "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, title, deleted, ctime)
+             VALUES (?1,?2,?3,'note',NULL,?4,?5,?6,0,?7)",
+            params![
+                shell_node_id("Welcome.md"),
+                "Welcome.md",
+                "Welcome.md",
+                1_700_000_000_000i64,
+                293i64,
+                "Welcome",
+                ctime,
+            ],
+        )
+        .unwrap();
+        let id = shell_node_id("Welcome.md");
+        let note = query_note(&conn, &id).unwrap().expect("welcome");
+        assert_eq!(note.size, Some(293));
+        assert_eq!(note.ctime, Some(ctime));
+        let page = query_children(&conn, "", 10, 0).unwrap();
+        let row = page.rows.iter().find(|r| r.path == "Welcome.md").expect("page");
+        assert_eq!(row.size, Some(293));
+        assert_eq!(row.ctime, Some(ctime));
+        let recent = query_recent(&conn, 10).unwrap();
+        assert_eq!(recent[0].ctime, Some(ctime));
+        assert_eq!(recent[0].size, Some(293));
+        let by_path = query_by_paths(&conn, &["Welcome.md".into()]).unwrap();
+        assert_eq!(by_path[0].ctime, Some(ctime));
     }
 
     #[test]
@@ -3213,6 +3333,8 @@ mod tests {
                 parent_id: Some("inbox".into()),
                 mtime: 1,
                 child_notes: 0,
+                size: None,
+                ctime: None,
             }],
             root_ids: vec!["inbox".into()],
             active_note_id: Some("hub".into()),
@@ -3345,6 +3467,8 @@ mod tests {
                 parent_id: Some("inbox".into()),
                 mtime: 1,
                 child_notes: 0,
+                size: None,
+                ctime: None,
             }],
             root_ids: vec!["inbox".into()],
             active_note_id: Some("hub".into()),

@@ -2733,6 +2733,8 @@ fn folder_rows_for(dirs: &[String]) -> Vec<crate::shell_catalog::ShellRow> {
             parent_id: parent_id_for(rel),
             mtime: 0,
             child_notes: 0,
+            size: None,
+            ctime: None,
         })
         .collect()
 }

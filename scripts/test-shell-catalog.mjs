@@ -22,10 +22,12 @@ import {
   isShellBusyMessage,
   mergeShellRows,
   nodesFromShellRows,
+  shellRowToNode,
   shellBusyBudgetMs,
   shellBusyDelayMs,
   shellSessionFromMount,
 } from "./src/lib/vault/shell-catalog.ts";
+import { buildNoteTable } from "./src/lib/vault/note-table.ts";
 import { unlinkedFromHeads } from "./src/lib/vault/unlinked-mentions.ts";
 import { graphFromShellLevel, pinFolderLayout } from "./src/lib/graph/shell-graph.ts";
 import {
@@ -118,6 +120,71 @@ const again = mergeShellRows(merged.nodes, merged.rootIds, [{
 }]);
 assert.equal(again.nodes, merged.nodes, "unchanged catalog page keeps node identity");
 assert.equal(again.nodes.n0, merged.nodes.n0);
+const birth = Date.UTC(2026, 8, 30, 12, 0);
+const welcome = shellRowToNode({
+  id: "welcome",
+  path: "Welcome.md",
+  name: "Welcome.md",
+  kind: "note",
+  parentId: null,
+  mtime: birth + 86_400_000,
+  size: 293,
+  ctime: birth,
+});
+assert.equal(welcome.ctime, birth);
+assert.equal(welcome.size, 293);
+merged.nodes.n0.content = "keep";
+const withBirth = mergeShellRows(merged.nodes, merged.rootIds, [{
+  id: "n0",
+  path: "n0.md",
+  name: "n0.md",
+  kind: "note",
+  parentId: null,
+  mtime: 1,
+  size: 293,
+  ctime: birth,
+}]);
+assert.equal(withBirth.nodes.n0.ctime, birth);
+assert.equal(withBirth.nodes.n0.size, 293);
+assert.equal(withBirth.nodes.n0.content, "keep");
+const held = mergeShellRows(withBirth.nodes, withBirth.rootIds, [{
+  id: "n0",
+  path: "n0.md",
+  name: "n0.md",
+  kind: "note",
+  parentId: null,
+  mtime: 1,
+  size: 293,
+  ctime: birth,
+}]);
+assert.equal(held.nodes.n0, withBirth.nodes.n0, "same size and ctime keep the open note");
+const omitted = mergeShellRows(withBirth.nodes, withBirth.rootIds, [{
+  id: "n0",
+  path: "n0.md",
+  name: "n0.md",
+  kind: "note",
+  parentId: null,
+  mtime: 1,
+}]);
+assert.equal(omitted.nodes.n0, withBirth.nodes.n0, "a row without size or ctime keeps them");
+const catalog = buildNoteTable(
+  [{ id: welcome.id, path: welcome.path, name: welcome.name, mtime: welcome.mtime, size: welcome.size, ctime: welcome.ctime }],
+  "",
+  [
+    { id: "ctime", name: "ctime", expr: 'link("Welcome").asFile().ctime' },
+    { id: "size", name: "size", expr: 'link("Welcome").asFile().size' },
+  ],
+  Date.UTC(2026, 9, 1, 12, 0),
+);
+assert.equal(catalog.rows[0].formulas.ctime.value, "2026-09-30 12:00");
+assert.equal(catalog.rows[0].formulas.size.value, "293");
+const loadedBody = buildNoteTable(
+  [{ id: welcome.id, path: welcome.path, name: welcome.name, content: "hi", mtime: welcome.mtime, size: welcome.size, ctime: welcome.ctime }],
+  "",
+  [{ id: "size", name: "size", expr: 'link("Welcome").asFile().size' }],
+  Date.UTC(2026, 9, 1, 12, 0),
+);
+assert.equal(loadedBody.rows[0].formulas.size.value, "2");
 const pinned = pinFolderLayout([
   { id: "f", kind: "folder" },
   { id: "n", kind: "note" },
