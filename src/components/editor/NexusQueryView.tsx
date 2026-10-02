@@ -1,8 +1,9 @@
 import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { List } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useVaultStore } from "@/lib/vault/store";
+import { getBodyGen, subscribeBodyGen } from "@/lib/vault/content";
 import { getFindFocusPane } from "@/lib/editor/find-target";
 import type { VaultNode } from "@/lib/vault/types";
 import { loadTagExtras } from "@/lib/vault/nexus-query-tags";
@@ -31,6 +32,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
   const [tagExtras, setTagExtras] = useState<(VaultNode[] | null)[] | null>(null);
   const [tagsLoading, setTagsLoading] = useState(false);
   const [hydrating, setHydrating] = useState(false);
+  const bodyGen = useSyncExternalStore(subscribeBodyGen, getBodyGen, getBodyGen);
   const triedBodyIds = useRef(new Set<string>());
   const queryKey = useRef(query);
   if (queryKey.current !== query) {
@@ -47,7 +49,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
       ids.push(id);
     }
     return ids;
-  }, [query, nodes]);
+  }, [query, nodes, bodyGen]);
 
   useEffect(() => {
     const pending = missingBodyIds.filter((id) => !triedBodyIds.current.has(id)).slice(0, BODY_BATCH);
@@ -93,7 +95,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
 
   const model = useMemo(
     () => runNexusQuery(query, nodes, tagExtras),
-    [query, nodes, tagExtras],
+    [query, nodes, tagExtras, bodyGen],
   );
 
   const openRow = (id: string) => {
