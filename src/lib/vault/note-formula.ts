@@ -1410,6 +1410,9 @@ function readMember(v: Value, key: string): Value {
   if (v === null || v === "") return null;
   if (isFile(v)) return readFileField(v, key);
   if (isProps(v)) return lookupFields(v.fields, key);
+  if (typeof v === "number" && /^(days|weeks|hours|minutes|months|years)$/i.test(key.trim())) {
+    throw new FormulaError(`${quote(v)} has no .${key}. Subtracting two dates already gives a number of days, so leave .${key} off.`);
+  }
   throw new FormulaError(`${quote(v)} has no .${key}.`);
 }
 
