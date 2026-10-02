@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import { holdOpenFocus, restoreFocusOrList } from "@/lib/chrome/focus-ring";
-import { revealFolderInList, revealInFlight } from "@/lib/chrome/reveal-list";
-import { diskFolderRow, folderForEnter } from "@/lib/search/folder-enter";
+import { revealInFlight } from "@/lib/chrome/reveal-list";
+import { folderForEnter } from "@/lib/search/folder-enter";
 import { paletteEnterOpensNow } from "@/lib/search/palette-enter";
 import { focusEditorPane } from "@/lib/editor/pane-focus";
 import { getFindFocusPane } from "@/lib/editor/find-target";
@@ -10,10 +10,8 @@ import { focusedEmptyFolderId } from "@/lib/vault/empty-folder-target";
 import { requestOpenVaultBase, setBasesOpen } from "@/lib/vault/bases-session";
 import { setSwitcherOpen } from "@/lib/search/switcher-session";
 import { isCanvasPath } from "@/lib/vault/canvas";
-import { switcherHits } from "@/lib/search/switcher-order";
 import { requestWriteFocus } from "@/lib/editor/write-intent";
 import {
-  FileText,
   FolderOpen,
   FolderPlus,
   Network,
@@ -36,11 +34,7 @@ import {
   PanelRight,
   Settings,
   Save,
-  Hash,
-  Unlink,
   ExternalLink,
-  History,
-  Bookmark,
   RotateCcw,
   Focus,
   CircleHelp,
@@ -50,128 +44,39 @@ import {
   Paperclip,
   Palette,
 } from "lucide-react";
-import { getDesktopRoot, useVaultStore } from "@/lib/vault/store";
-import { statDesktopFolder } from "@/lib/vault/tauri-adapter";
-import { deskNodeId } from "@/lib/vault/desk-node-id";
+import { useVaultStore } from "@/lib/vault/store";
 import { THEME_CHOICES, usePrefsStore } from "@/lib/prefs/preferences";
 import { useCssSnippetStore } from "@/lib/appearance/snippets";
-import {
-  searchWithBackend as searchVault,
-  searchWithBackendAsync,
-  describeSearchEngine,
-} from "@/lib/search/search-backend";
-import {
-  hasOrQuery,
-  hasSearchOps,
-  isTagOnlyQuery,
-  parseSearchOps,
-  planPagedDesktopSearch,
-  searchDesktopOps,
-  searchUsesLoadedBodies,
-  searchWithOps,
-  unsupportedSearchHint,
-} from "@/lib/search/query-ops";
-import { fuseSearchHits } from "@/lib/search/rank-fusion";
-import { buildAskAnswer, retrieveForAsk } from "@/lib/search/ask-notes";
-import { getBacklinks } from "@/lib/vault/backlinks";
-import {
-  BROWSER_SHELL_DB,
-  fetchShellBacklinks,
-  fetchShellByPaths,
-  mergeShellRows,
-  fetchShellBroken,
-  fetchShellOrphans,
-  fetchShellPathPage,
-  onShellCatalogWake,
-  fetchShellRecent,
-  fetchShellSearch,
-  fetchShellSuggest,
-  fetchShellTagNotes,
-  fetchShellTags,
-  searchOpenPageTitles,
-} from "@/lib/vault/shell-catalog";
-import { presentLinkContext } from "@/lib/markdown/wikilinks";
-
-import { collectVaultTags, notesForTag } from "@/lib/vault/tags";
-import { getAllBrokenLinks, getOrphanNotes, type VaultBrokenLink } from "@/lib/vault/broken-links";
-import type { TrashEntry } from "@/lib/vault/trash";
-import { cn } from "@/lib/utils";
+import { describeSearchEngine } from "@/lib/search/search-backend";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
-import type { SearchHit } from "@/lib/vault/types";
-import { recentNoteIdsForVault } from "@/lib/vault/visit-history";
 import {
   recentCommandIds,
   trackCommand,
   takePendingCommandQuery,
   setPendingCommandQuery,
 } from "@/lib/vault/session-recents";
-import { getDurableIndex } from "@/lib/vault/durable-index";
 import {
   getOpenProgress,
   subscribeOpenProgress,
 } from "@/lib/vault/native-index";
 import {
   getSearchIndexState,
-  isNoteHeadSearchLive,
   isTitleSearchLive,
-  MEMORY_SEARCH_CAP_NOTE,
   memorySearchIsPartial,
-  searchEmptyStateMessage,
   searchEmptyStatus,
 } from "@/lib/vault/sqlite-fill-progress";
-import { snippetForSearchHit, highlightParts } from "@/lib/search/snippets";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
-
-const GROUP_HEADING =
-  "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.12em] [&_[cmdk-group-heading]]:text-[var(--text-muted)]";
-
-const ITEM_CLASS =
-  "cmdk-item flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[13px] text-[var(--text-secondary)] aria-selected:text-[var(--text-primary)]";
-
-const MATCH_TYPE_LABEL: Record<string, string> = {
-  title: "Title",
-  content: "In note",
-  path: "Path",
-  tag: "Tag",
-};
-
-/** How many note rows the palette asks for. A full page is not the whole vault. */
-const PALETTE_RESULT_LIMIT = 16;
-
-function HighlightedText({
-  text,
-  query,
-  className,
-}: {
-  text: string;
-  query: string;
-  className?: string;
-}) {
-  const parts = useMemo(
-    () => highlightParts(text, query),
-    [text, query],
-  );
-  return (
-    <span className={className}>
-      {parts.map((p, i) =>
-        p.match ? (
-          <mark
-            key={i}
-            className="rounded-[2px] bg-[color-mix(in_srgb,var(--accent)_28%,transparent)] px-0.5 text-[var(--text-primary)]"
-          >
-            {p.text}
-          </mark>
-        ) : (
-          <span key={i}>{p.text}</span>
-        ),
-      )}
-    </span>
-  );
-}
+import { Hint, PaletteResults, type ActionDef } from "@/components/search/palette-results";
+import {
+  matchesQuery,
+  PALETTE_RESULT_LIMIT,
+  revealSearchedFolder,
+  usePaletteSearch,
+} from "@/components/search/palette-search";
 
 const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   daily: <CalendarDays size={15} />,
@@ -180,19 +85,6 @@ const TEMPLATE_ICONS: Partial<Record<NoteTemplateId, ReactNode>> = {
   project: <FolderKanban size={15} />,
 };
 
-const ASK_STARTERS = [
-  { q: "ask: how do agents share this vault", label: "How do agents share this vault?" },
-  { q: "ask: what is a wikilink", label: "What is a wikilink?" },
-  { q: "ask: where are daily notes", label: "Where are daily notes?" },
-];
-
-const ASK_OPS = [
-  { fill: "ask: path:Systems ", label: "path:Systems" },
-  { fill: "ask: folder:Research ", label: "folder:Research" },
-  { fill: "ask: #agents ", label: "#agents" },
-  { fill: "ask: -welcome ", label: "−welcome" },
-];
-
 /** Open command palette, optionally with a prefilled query. */
 export function openCommandPalette(query?: string) {
   setSwitcherOpen(false);
@@ -200,64 +92,11 @@ export function openCommandPalette(query?: string) {
   useVaultStore.getState().setCommandOpen(true);
 }
 
-function matchesQuery(label: string, keywords: string[], q: string): boolean {
-  if (!q) return true;
-  const lower = q.toLowerCase();
-  const hay = `${label} ${keywords.join(" ")}`.toLowerCase();
-  if (hay.includes(lower)) return true;
-  const parts = lower.split(/\s+/).filter(Boolean);
-  if (parts.length > 1) return parts.every((p) => hay.includes(p));
-  return false;
-}
-
 function wrapRun(id: string, run: () => void): () => void {
   return () => {
     trackCommand(id);
     run();
   };
-}
-
-/** Top notes by visit MRU, then mtime. */
-function topNotesByVisitMtime(
-  nodes: Record<string, import("@/lib/vault/types").VaultNode>,
-  limit: number,
-  vaultId?: string | null,
-): SearchHit[] {
-  const durable = getDurableIndex();
-  const visits = recentNoteIdsForVault(vaultId, nodes, limit);
-  const seen = new Set<string>();
-  const out: SearchHit[] = [];
-  const snip = (n: import("@/lib/vault/types").VaultNode) =>
-    snippetForSearchHit({
-      path: n.path,
-      content: n.content,
-      durableBody:
-        n.content === undefined
-          ? durable?.getNoteMeta?.(n.id)?.bodySnippet
-          : undefined,
-      matchType: "title",
-    });
-  for (const id of visits) {
-    const n = nodes[id];
-    if (!n || n.kind !== "note") continue;
-    seen.add(id);
-    out.push({
-      noteId: n.id,
-      path: n.path,
-      title: noteTitle(n),
-      snippet: snip(n),
-      score: 1,
-      matchType: "title",
-    });
-    if (out.length >= limit) return out;
-  }
-  // Recents-only on large vaults — never sort 45k notes for an empty query.
-  return out;
-}
-
-/** A folder picked in search lands in the list once it is known whether it is empty. */
-function revealSearchedFolder(id: string): void {
-  revealFolderInList(id, { settle: useVaultStore.getState().settleFolderForEnter(id) });
 }
 
 /** cmdk runs onSelect from this event and from a real click. */
@@ -345,9 +184,7 @@ function CommandPaletteOpen() {
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const savedSearches = usePrefsStore((s) => s.savedSearches);
   const [query, setQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [recentTick, setRecentTick] = useState(0);
-  const [trashItems, setTrashItems] = useState<TrashEntry[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -375,738 +212,57 @@ function CommandPaletteOpen() {
       };
     } else {
       setQuery("");
-      setDebouncedSearch("");
     }
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const rawQ = query.trim();
-    if (!rawQ || rawQ.startsWith(">")) {
-      setDebouncedSearch("");
-      return;
-    }
-    const t = window.setTimeout(() => setDebouncedSearch(query), 90);
-    return () => window.clearTimeout(t);
-  }, [open, query]);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    void listTrash().then((rows) => {
-      if (!cancelled) setTrashItems(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, listTrash, trashTick]);
-
-  const raw = query.trim();
-  const isCommandMode = raw.startsWith(">");
-  const q = isCommandMode ? raw.slice(1).trim() : raw;
-  const pathFolderOps = useMemo(
-    () =>
-      isCommandMode
-        ? parseSearchOps("")
-        : parseSearchOps(raw),
-    [isCommandMode, raw],
-  );
-  const searchText = isCommandMode ? "" : pathFolderOps.rest;
-  const qLower = q.toLowerCase();
-  const isTagBrowse =
-    searchText.startsWith("#") ||
-    (!hasSearchOps(pathFolderOps) &&
-      q.startsWith("#"));
-  const tagPartial = isTagBrowse
-    ? (searchText.startsWith("#") ? searchText.slice(1) : q.slice(1)).toLowerCase()
-    : "";
-  const exactTagQuery = /^#([\w/-]+)$/i.exec(searchText || raw);
-  const wantsOrphans =
-    qLower === "is:orphan" ||
-    qLower === "is:orphans" ||
-    qLower === "orphan" ||
-    qLower === "orphans";
-  const wantsBroken =
-    qLower === "is:broken" ||
-    qLower === "broken" ||
-    qLower === "broken links";
-  const wantsDeleted =
-    qLower === "is:deleted" ||
-    qLower === "is:trash" ||
-    qLower === "trash" ||
-    qLower === "deleted" ||
-    qLower === "restore";
-  const hasPathFolderOp = hasSearchOps(pathFolderOps);
-  const hasOr = hasOrQuery(pathFolderOps);
-  const useOpsSearch = hasPathFolderOp || hasOr;
-  const unsupportedHint = isCommandMode ? null : unsupportedSearchHint(pathFolderOps);
-  const scopeHint = isCommandMode
-    ? null
-    : planPagedDesktopSearch({
-        shellCatalog: Boolean(shellCatalog && shellDbPath),
-        sqlite: Boolean(getDurableIndex()?.searchOpsAsync),
-        ops: pathFolderOps,
-      }).hint;
-  const showAllActions = Boolean(raw) || isCommandMode;
-  const actionQuery = isCommandMode
-    ? q
-    : searchText || (hasPathFolderOp ? "" : q);
-  const isEmptyQuery = !raw && !isCommandMode;
-  const isAskMode = !isCommandMode && /^(ask:|\?)\s+/i.test(raw);
-
-  const syncHits = useMemo(() => {
-    if (shellCatalog && shellDbPath && !hasOr && !searchUsesLoadedBodies(pathFolderOps)) {
-      if (isEmptyQuery) return topNotesByVisitMtime(nodes, 10, vaultId);
-      if ((exactTagQuery || isTagBrowse) && !hasPathFolderOp) return [];
-      const needle = debouncedSearch.trim() || searchText || raw;
-      if (
-        needle &&
-        !isCommandMode &&
-        !wantsOrphans &&
-        !wantsBroken &&
-        !isAskMode &&
-        !hasPathFolderOp
-      ) {
-        return searchOpenPageTitles(nodes, needle, PALETTE_RESULT_LIMIT);
-      }
-      if (wantsOrphans || wantsBroken || hasPathFolderOp) return [];
-    }
-    if (isEmptyQuery) {
-      return topNotesByVisitMtime(nodes, 10, vaultId);
-    }
-    if (isTagBrowse && tagPartial === "" && !hasPathFolderOp) return [];
-    if (exactTagQuery && !hasPathFolderOp) {
-      return notesForTag(nodes, exactTagQuery[1]).map((n) => ({
-        noteId: n.id,
-        path: n.path,
-        title: noteTitle(n),
-        snippet: `#${exactTagQuery[1].toLowerCase()}`,
-        score: 1,
-        matchType: "title" as const,
-      }));
-    }
-    if (wantsOrphans || wantsBroken || isCommandMode) return [];
-
-    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
-    const activeNode = activeNoteId ? nodes[activeNoteId] : null;
-    const neighborIds =
-      activeNode?.kind === "note"
-        ? getBacklinks(activeNode, nodes).map((b) => b.fromId)
-        : [];
-    const signals = {
-      recentIds,
-      activeNoteId,
-      neighborIds,
-      queryText: debouncedSearch.trim() || raw,
-    };
-
-    if (isAskMode) {
-      return retrieveForAsk(nodes, debouncedSearch.trim() || raw, signals, 8);
-    }
-
-    if (useOpsSearch) {
-      return fuseSearchHits(
-        searchWithOps(nodes, debouncedSearch.trim() || raw, PALETTE_RESULT_LIMIT),
-        signals,
-      );
-    }
-    const needle = debouncedSearch.trim() || searchText || raw;
-    if (needle) {
-      const idx = getDurableIndex();
-      // Durable async search owns FTS. A second sync intersect at 100k
-      // was enough extra allocation to discard Chrome on the 12th search.
-      if (idx?.ready && idx.searchFtsAsync) return [];
-      return fuseSearchHits(searchVault(nodes, needle, PALETTE_RESULT_LIMIT), signals);
-    }
-    return fuseSearchHits(searchVault(nodes, raw, PALETTE_RESULT_LIMIT), signals);
-  }, [
-    nodes,
-    vaultId,
+  const {
+    trashItems,
     raw,
+    isCommandMode,
+    q,
+    pathFolderOps,
     searchText,
-    debouncedSearch,
-    isEmptyQuery,
+    qLower,
     isTagBrowse,
     tagPartial,
     exactTagQuery,
     wantsOrphans,
     wantsBroken,
-    isCommandMode,
+    wantsDeleted,
     hasPathFolderOp,
     hasOr,
-    useOpsSearch,
-    pathFolderOps.pathFilter,
-    pathFolderOps.folderFilter,
-    pathFolderOps.fileFilter,
-    pathFolderOps.tagFilter,
-    pathFolderOps.lineFilter,
-    pathFolderOps.sectionFilter,
-    pathFolderOps.excludes,
+    unsupportedHint,
+    scopeHint,
+    showAllActions,
+    actionQuery,
+    isEmptyQuery,
     isAskMode,
-    activeNoteId,
-    shellCatalog,
-    shellDbPath,
-  ]);
-
-  const [asyncHits, setAsyncHits] = useState<SearchHit[] | null>(null);
-  const [noteSearchPending, setNoteSearchPending] = useState(false);
-  const [noteSearchFailed, setNoteSearchFailed] = useState(false);
-  useEffect(() => {
-    setAsyncHits(null);
-    setNoteSearchPending(false);
-    setNoteSearchFailed(false);
-    const searchPlan = planPagedDesktopSearch({
-      shellCatalog: Boolean(shellCatalog && shellDbPath),
-      sqlite: Boolean(getDurableIndex()?.searchOpsAsync),
-      ops: pathFolderOps,
-    });
-    if (
-      searchPlan.engine === "sqlite-ops" &&
-      shellDbPath &&
-      shellDbPath !== BROWSER_SHELL_DB
-    ) {
-      let cancelled = false;
-      setNoteSearchPending(true);
-      void searchDesktopOps(raw, PALETTE_RESULT_LIMIT)
-        .then((rows) => {
-          if (cancelled) return;
-          setNoteSearchPending(false);
-          if (!rows) {
-            setNoteSearchFailed(true);
-            setAsyncHits([]);
-            return;
-          }
-          setNoteSearchFailed(false);
-          setAsyncHits(rows);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setNoteSearchPending(false);
-          setNoteSearchFailed(true);
-          setAsyncHits([]);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-    if (searchPlan.engine === "window") {
-      setAsyncHits([]);
-      return;
-    }
-    if (shellCatalog && shellDbPath && !hasOr && !searchUsesLoadedBodies(pathFolderOps)) {
-      let cancelled = false;
-      const db = shellDbPath;
-      const asHit = (id: string, path: string, title: string, snippet: string): SearchHit => ({
-        noteId: id,
-        path,
-        title,
-        snippet,
-        score: 1,
-        matchType: "title",
-      });
-      if (isEmptyQuery) {
-        void fetchShellRecent(db, 10).then((rows) => {
-          if (cancelled || !rows) return;
-          const visits = topNotesByVisitMtime(useVaultStore.getState().nodes, 10, vaultId);
-          const seen = new Set(visits.map((hit) => hit.noteId));
-          const extra: SearchHit[] = [];
-          for (const row of rows) {
-            if (seen.has(row.id) || visits.length + extra.length >= 10) continue;
-            extra.push(asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), row.path));
-          }
-          setAsyncHits([...visits, ...extra]);
-        });
-        return () => {
-          cancelled = true;
-        };
-      }
-      if (isTagOnlyQuery(pathFolderOps) || (exactTagQuery && !hasPathFolderOp)) {
-        const tag = pathFolderOps.tagFilter || (exactTagQuery ? exactTagQuery[1] : "");
-        if (tag) {
-          void fetchShellTagNotes(db, tag).then((rows) => {
-            if (cancelled || !rows) return;
-            setAsyncHits(rows.map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), `#${tag}`)));
-          });
-          return () => {
-            cancelled = true;
-          };
-        }
-      }
-      if (hasPathFolderOp && db !== BROWSER_SHELL_DB) {
-        const pathNeedle = pathFolderOps.pathFilter ?? "";
-        const folderNeedle = pathFolderOps.folderFilter ?? "";
-        const paint = (rows: Awaited<ReturnType<typeof fetchShellPathPage>>) => {
-          if (cancelled || !rows) return;
-          setAsyncHits(
-            rows
-              .filter((row) => row.kind === "note")
-              .map((row) => asHit(row.id, row.path, row.name.replace(/\.md$/i, ""), row.path)),
-          );
-        };
-        void fetchShellPathPage(db, pathNeedle, folderNeedle, PALETTE_RESULT_LIMIT).then((rows) => {
-          if (cancelled) return;
-          if (!rows) {
-            const stop = onShellCatalogWake(() => {
-              stop();
-              if (cancelled) return;
-              void fetchShellPathPage(db, pathNeedle, folderNeedle, PALETTE_RESULT_LIMIT).then(paint);
-            });
-            return;
-          }
-          paint(rows);
-        });
-        return () => {
-          cancelled = true;
-        };
-      }
-      if (
-        isCommandMode ||
-        isTagBrowse ||
-        wantsOrphans ||
-        wantsBroken ||
-        isAskMode ||
-        hasPathFolderOp
-      ) {
-        return;
-      }
-      const needle = debouncedSearch.trim() || searchText || raw;
-      if (!needle.trim()) return;
-      if (db === BROWSER_SHELL_DB) {
-        setNoteSearchPending(true);
-        void fetchShellSearch(db, needle, PALETTE_RESULT_LIMIT).then((hits) => {
-          if (cancelled) return;
-          setNoteSearchPending(false);
-          if (!hits) {
-            setNoteSearchFailed(true);
-            return;
-          }
-          setNoteSearchFailed(false);
-          setAsyncHits(
-            hits
-              .filter((hit) => hit.kind === "note")
-              .map((hit) => asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path)),
-          );
-        });
-        return () => {
-          cancelled = true;
-          setNoteSearchPending(false);
-        };
-      }
-      const idx = getDurableIndex();
-      const titleLive = isTitleSearchLive(getSearchIndexState());
-      const mapSuggest = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>): SearchHit[] =>
-        (hits ?? [])
-          .filter((hit) => hit.kind === "note")
-          .map((hit) =>
-            asHit(hit.id, hit.path, hit.title || hit.name.replace(/\.md$/i, ""), hit.path),
-          );
-      // Titles come from the title index already in quick-switcher order
-      // ("Topic 15", "Topic 150"…) and paint as soon as they arrive. The ranked
-      // search runs once typing pauses and only adds what the titles missed; it
-      // never reorders them or holds the first paint.
-      const typed = (searchText || raw).trim();
-      const settled = debouncedSearch.trim() === raw.trim();
-      let catalogHits: SearchHit[] = [];
-      let ftsHits: SearchHit[] = [];
-      let catalogReady = false;
-      const ftsAvailable = Boolean(idx?.ready && idx.searchFtsAsync);
-      const ftsStarted = settled && ftsAvailable;
-      let catalogSettled = false;
-      // Still typing: the ranked search comes with the pause, so no hits yet
-      // is not a miss yet.
-      let ftsSettled = !ftsAvailable;
-      setNoteSearchPending(true);
-      const settleIfDone = () => {
-        if (cancelled) return;
-        if (catalogSettled && (ftsSettled || catalogHits.length > 0)) setNoteSearchPending(false);
-      };
-      const publish = () => {
-        if (cancelled) return;
-        if (!catalogReady && ftsHits.length === 0) return;
-        const recentIds = vaultId
-          ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT)
-          : [];
-        const merged = switcherHits(
-          catalogHits,
-          ftsHits,
-          PALETTE_RESULT_LIMIT,
-          titleLive
-            ? (extra) => fuseSearchHits(extra, { recentIds, activeNoteId, neighborIds: [], queryText: typed })
-            : undefined,
-        );
-        // An empty index reply must not hide titles already on the open page.
-        if (merged.length === 0) return;
-        setNoteSearchFailed(false);
-        setAsyncHits(merged);
-      };
-      const applyCatalog = (hits: Awaited<ReturnType<typeof fetchShellSuggest>>) => {
-        if (cancelled || !hits) return;
-        catalogHits = mapSuggest(hits);
-        catalogReady = true;
-        setNoteSearchFailed(false);
-        publish();
-      };
-      const markCatalogMissed = () => {
-        catalogSettled = true;
-        setNoteSearchFailed(true);
-        settleIfDone();
-      };
-      void fetchShellSuggest(db, typed, PALETTE_RESULT_LIMIT).then((hits) => {
-        if (cancelled) return;
-        if (!hits) {
-          markCatalogMissed();
-          const stop = onShellCatalogWake(() => {
-            stop();
-            if (cancelled) return;
-            catalogSettled = false;
-            setNoteSearchPending(true);
-            void fetchShellSuggest(db, typed, PALETTE_RESULT_LIMIT).then((rows) => {
-              if (cancelled) return;
-              if (!rows) {
-                markCatalogMissed();
-                return;
-              }
-              applyCatalog(rows);
-              catalogSettled = true;
-              settleIfDone();
-            });
-          });
-          return;
-        }
-        applyCatalog(hits);
-        catalogSettled = true;
-        settleIfDone();
-      });
-      if (ftsStarted) {
-        void (async () => {
-          try {
-            const rows = await searchWithBackendAsync(nodes, typed, PALETTE_RESULT_LIMIT);
-            if (cancelled) return;
-            ftsHits = rows;
-            publish();
-          } catch {
-            if (!cancelled && catalogHits.length === 0) setNoteSearchFailed(true);
-          } finally {
-            ftsSettled = true;
-            settleIfDone();
-          }
-        })();
-      }
-      return () => {
-        cancelled = true;
-        setNoteSearchPending(false);
-      };
-    }
-    if (
-      isEmptyQuery ||
-      isCommandMode ||
-      isTagBrowse ||
-      wantsOrphans ||
-      wantsBroken ||
-      isAskMode ||
-      exactTagQuery
-    ) {
-      return;
-    }
-    const needle = useOpsSearch
-      ? debouncedSearch.trim() || raw
-      : debouncedSearch.trim() || searchText || raw;
-    if (!needle.trim()) return;
-    let cancelled = false;
-    const recentIds = vaultId ? recentNoteIdsForVault(vaultId, nodes, PALETTE_RESULT_LIMIT) : [];
-    const activeNode = activeNoteId ? nodes[activeNoteId] : null;
-    const neighborIds =
-      activeNode?.kind === "note"
-        ? getBacklinks(activeNode, nodes).map((b) => b.fromId)
-        : [];
-    const signals = {
-      recentIds,
-      activeNoteId,
-      neighborIds,
-      queryText: needle,
-    };
-    const useAsyncLookup = !useOpsSearch;
-    if (useAsyncLookup) setNoteSearchPending(true);
-    void (useOpsSearch
-      ? Promise.resolve(searchWithOps(nodes, needle, PALETTE_RESULT_LIMIT))
-      : searchWithBackendAsync(nodes, needle, PALETTE_RESULT_LIMIT)
-    ).then((rows) => {
-      if (cancelled) return;
-      if (useAsyncLookup) setNoteSearchPending(false);
-      setNoteSearchFailed(false);
-      setAsyncHits(fuseSearchHits(rows, signals));
-    }).catch(() => {
-      if (cancelled) return;
-      setNoteSearchPending(false);
-      setNoteSearchFailed(true);
-    });
-    return () => {
-      cancelled = true;
-      if (useAsyncLookup) setNoteSearchPending(false);
-    };
-  }, [
+    hits,
+    noteSearchPending,
+    noteSearchFailed,
+    folderHits,
+    pendingFolderEnterRef,
+    runHeldEnter,
+    catalogFolderPending,
+    askAnswer,
+    tags,
+    orphans,
+    brokenLinks,
+    brokenCreateTargets,
+  } = usePaletteSearch({
+    open,
+    query,
     nodes,
     vaultId,
-    raw,
-    searchText,
-    debouncedSearch,
-    isEmptyQuery,
-    isTagBrowse,
-    exactTagQuery,
-    wantsOrphans,
-    wantsBroken,
-    isCommandMode,
-    hasPathFolderOp,
-    hasOr,
-    useOpsSearch,
-    isAskMode,
     activeNoteId,
     shellCatalog,
     shellDbPath,
-    pathFolderOps.pathFilter,
-    pathFolderOps.folderFilter,
-    pathFolderOps.tagFilter,
-    pathFolderOps.lineFilter,
-    pathFolderOps.sectionFilter,
+    shellLiveTick,
     searchIndexState,
-  ]);
-  const hits = asyncHits ?? syncHits;
-  const [catalogFolderTick, setCatalogFolderTick] = useState(0);
-
-  // Folders are not notes, so note search never lists them. Enter on one
-  // shows it in the list with the cursor on it.
-  const folderHits = useMemo(() => {
-    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return [];
-    if (qLower.startsWith("is:")) return [];
-    const out: { id: string; name: string; path: string }[] = [];
-    for (const id in nodes) {
-      const n = nodes[id];
-      if (n?.kind !== "folder") continue;
-      if (!n.name.toLowerCase().includes(qLower)) continue;
-      out.push({ id, name: n.name, path: n.path });
-      if (out.length >= 5) break;
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, hasOr, nodes, shellLiveTick, catalogFolderTick]);
-
-  // Enter pressed while the catalog is still being asked for a folder by this
-  // name waits for the answer: a folder goes to the list; no folder runs what
-  // was selected, as the Enter would have.
-  const pendingFolderEnterRef = useRef<{ q: string; timer: number } | null>(null);
-  const catalogAnsweredRef = useRef<string | null>(null);
-  const runHeldEnter = useCallback(() => {
-    const pending = pendingFolderEnterRef.current;
-    if (!pending) return;
-    pendingFolderEnterRef.current = null;
-    window.clearTimeout(pending.timer);
-    const root = inputRef.current?.closest("[cmdk-root]");
-    const selected = root?.querySelector<HTMLElement>(
-      "[cmdk-item][aria-selected='true'], [cmdk-item][data-selected='true']",
-    );
-    selected?.click();
-    if (!selected) {
-      root?.querySelector<HTMLElement>("[data-testid='search-note-hit']")?.click();
-    }
-  }, []);
-
-  // A paged vault only holds the folders it has shown. When none of them is
-  // named exactly what was typed, ask the catalog for that folder at the vault
-  // root (or that exact path), then the disk, load it, and list it. Nothing
-  // happens when it does not exist.
-  const catalogDb = shellDbPath && shellDbPath !== BROWSER_SHELL_DB ? shellDbPath : null;
-  const folderLookup = Boolean(
-    shellCatalog && (catalogDb || useVaultStore.getState().mode === "desktop"),
-  );
-  useEffect(() => {
-    if (!folderLookup) return;
-    if (!q || isAskMode || isCommandMode || isTagBrowse || hasPathFolderOp || hasOr) return;
-    if (qLower.startsWith("is:")) return;
-    const wanted = q.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-    if (!wanted) return;
-    const wantedLower = wanted.toLowerCase();
-    const live = useVaultStore.getState().nodes;
-    for (const id in live) {
-      const n = live[id];
-      if (n?.kind === "folder" && (n.path.toLowerCase() === wantedLower || n.name.toLowerCase() === wantedLower)) {
-        catalogAnsweredRef.current = q;
-        return;
-      }
-    }
-    let cancelled = false;
-    const vaultAtLookup = useVaultStore.getState().vaultId;
-    const t = window.setTimeout(() => {
-      void (catalogDb ? fetchShellByPaths(catalogDb, [wanted]) : Promise.resolve(null)).then(async (rows) => {
-        if (cancelled) return;
-        let folders = (rows ?? []).filter((r) => r.kind === "folder");
-        // The catalog knows folders through the notes inside them, so an
-        // empty folder is missing there. Ask the disk for that exact path.
-        const root = getDesktopRoot();
-        if (!folders.length && root && useVaultStore.getState().mode === "desktop") {
-          const onDisk = await statDesktopFolder(root, wanted);
-          if (cancelled) return;
-          if (onDisk) folders = [diskFolderRow(wanted, onDisk.mtime, deskNodeId)];
-        }
-        const st = useVaultStore.getState();
-        if (folders.length && st.shellCatalog && st.shellDbPath === shellDbPath && st.vaultId === vaultAtLookup) {
-          const merged = mergeShellRows(st.nodes, st.rootIds, folders);
-          useVaultStore.setState({ nodes: merged.nodes, rootIds: merged.rootIds });
-          // Learn what is inside, so a folder with notes is not taken for empty.
-          for (const f of folders) void useVaultStore.getState().loadShellChildren(f.id);
-          catalogAnsweredRef.current = q;
-          setCatalogFolderTick((n) => n + 1);
-          return;
-        }
-        catalogAnsweredRef.current = q;
-        if (pendingFolderEnterRef.current?.q === q) runHeldEnter();
-      });
-    }, 200);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [q, qLower, isAskMode, isCommandMode, isTagBrowse, hasPathFolderOp, hasOr, folderLookup, catalogDb, shellDbPath, runHeldEnter]);
-
-  const catalogFolderPending = Boolean(
-    folderLookup &&
-      q &&
-      !isAskMode &&
-      !isCommandMode &&
-      !isTagBrowse &&
-      !hasPathFolderOp &&
-      !hasOr &&
-      !qLower.startsWith("is:"),
-  ) && catalogAnsweredRef.current !== q;
-  useEffect(() => {
-    const pending = pendingFolderEnterRef.current;
-    if (!pending) return;
-    if (pending.q !== q) {
-      window.clearTimeout(pending.timer);
-      pendingFolderEnterRef.current = null;
-      return;
-    }
-    const folder = folderForEnter(folderHits, q);
-    if (!folder) return;
-    // A note that matches the words still loses to a folder named exactly.
-    if (hits.length > 0 && !folder.exact) return;
-    window.clearTimeout(pending.timer);
-    pendingFolderEnterRef.current = null;
-    revealSearchedFolder(folder.id);
-  }, [folderHits, hits.length, q]);
-
-  const askAnswer = useMemo(() => {
-    if (!isAskMode) return null;
-    return buildAskAnswer(raw, hits, nodes);
-  }, [isAskMode, raw, hits, nodes]);
-
-  const [shellOrphans, setShellOrphans] = useState<{ id: string; title: string; path: string }[]>([]);
-  const [shellBrokenLinks, setShellBrokenLinks] = useState<VaultBrokenLink[]>([]);
-  useEffect(() => {
-    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB || !wantsOrphans) {
-      setShellOrphans([]);
-      return;
-    }
-    let cancel = false;
-    void fetchShellOrphans(shellDbPath, 24).then((rows) => {
-      if (cancel || !rows) return;
-      setShellOrphans(
-        rows.map((row) => ({
-          id: row.id,
-          title: row.name.replace(/\.md$/i, ""),
-          path: row.path,
-        })),
-      );
-    });
-    return () => {
-      cancel = true;
-    };
-  }, [shellCatalog, shellDbPath, wantsOrphans, shellLiveTick]);
-  useEffect(() => {
-    if (!shellCatalog || !shellDbPath || shellDbPath === BROWSER_SHELL_DB || !wantsBroken) {
-      setShellBrokenLinks([]);
-      return;
-    }
-    let cancel = false;
-    void fetchShellBroken(shellDbPath, 40).then((rows) => {
-      if (cancel || !rows) return;
-      setShellBrokenLinks(
-        rows.map((row) => ({
-          noteId: row.fromId,
-          notePath: row.fromPath,
-          noteTitle: row.fromTitle,
-          target: row.target,
-          context: row.fromTitle,
-        })),
-      );
-    });
-    return () => {
-      cancel = true;
-    };
-  }, [shellCatalog, shellDbPath, wantsBroken, shellLiveTick]);
-
-  const [shellTags, setShellTags] = useState<{ tag: string; count: number }[] | null>(null);
-  useEffect(() => {
-    if (!shellCatalog || !shellDbPath || !isTagBrowse) {
-      setShellTags(null);
-      return;
-    }
-    let cancelled = false;
-    void fetchShellTags(shellDbPath, 48).then((rows) => {
-      if (!cancelled && rows) setShellTags(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [shellCatalog, shellDbPath, isTagBrowse, shellLiveTick]);
-
-  const tags = useMemo(() => {
-    if (!isTagBrowse) return [];
-    const source = shellCatalog
-      ? (shellTags ?? []).map((t) => ({ tag: t.tag, count: t.count, noteIds: [] as string[] }))
-      : collectVaultTags(nodes);
-    return source
-      .filter(
-        (t) =>
-          !tagPartial ||
-          t.tag.startsWith(tagPartial) ||
-          t.tag.includes(tagPartial),
-      )
-      .slice(0, 20);
-  }, [nodes, isTagBrowse, tagPartial, shellCatalog, shellTags]);
-
-  const orphans = useMemo(() => {
-    if (!wantsOrphans) return [];
-    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) return shellOrphans;
-    try {
-      return getOrphanNotes(nodes, 24);
-    } catch {
-      return [];
-    }
-  }, [nodes, wantsOrphans, shellCatalog, shellDbPath, shellOrphans]);
-
-  const brokenLinks = useMemo(() => {
-    if (!wantsBroken) return [];
-    if (shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB) return shellBrokenLinks;
-    try {
-      return getAllBrokenLinks(nodes, 40);
-    } catch {
-      return [];
-    }
-  }, [nodes, wantsBroken, shellCatalog, shellDbPath, shellBrokenLinks]);
-
-  const brokenCreateTargets = useMemo(() => {
-    if (!wantsBroken) return [];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const bl of brokenLinks) {
-      const key = bl.target.trim().toLowerCase();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(bl.target);
-      if (out.length >= 12) break;
-    }
-    return out;
-  }, [wantsBroken, brokenLinks]);
+    inputRef,
+    listTrash,
+    trashTick,
+  });
 
   const createActions = useMemo(
     () =>
@@ -2152,637 +1308,61 @@ function CommandPaletteOpen() {
         ) : null}
 
         <Command.List className="max-h-[min(480px,50dvh)] overflow-y-auto overscroll-contain p-2 pb-[max(8px,env(safe-area-inset-bottom))] sm:max-h-[min(480px,56vh)]">
-          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length === 0 ? null : (
-          <Command.Empty className="px-3 py-8 text-center">
-            <div className="text-[13px] text-[var(--text-muted)]">
-              {Object.keys(nodes).length === 0
-                ? "No notes yet — create one or open a vault"
-                : "No matching results"}
-            </div>
-            {showCreateNote ? (
-              <button
-                type="button"
-                className="mt-3 text-[12.5px] text-[var(--accent)] hover:underline"
-                onClick={() => {
-                  createNote(null, searchText || q || "Untitled");
-                  setCommandOpen(false);
-                }}
-              >
-                Create note: {searchText || q || "Untitled"}
-              </button>
-            ) : null}
-          </Command.Empty>
-          )}
-
-          {askAnswer ? (
-            <Command.Group heading="Ask your notes · local" className={GROUP_HEADING}>
-              <div className="mb-1 rounded-[10px] border border-[var(--border)] bg-white/[0.02] px-3 py-2 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
-                <p>{askAnswer.summary}</p>
-                <p className="mt-1.5 text-[10.5px] text-[var(--text-muted)]">
-                  Extractive citations from this vault's on-device index.
-                </p>
-              </div>
-              {askAnswer.citations.length === 0 ? (
-                <>
-                  <div className="mb-1 flex flex-wrap gap-1 px-1 py-1">
-                    {ASK_OPS.map((op) => (
-                      <button
-                        key={op.label}
-                        type="button"
-                        className="rounded-full border border-[var(--border)] px-2 py-0.5 font-mono text-[10px] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                        onClick={() => setQuery(op.fill)}
-                      >
-                        {op.label}
-                      </button>
-                    ))}
-                  </div>
-                  {ASK_STARTERS.map((s) => (
-                    <Command.Item
-                      key={s.q}
-                      value={s.q}
-                      onSelect={() => setQuery(s.q)}
-                      className={ITEM_CLASS}
-                    >
-                      <CircleHelp size={15} className="shrink-0 text-[var(--accent)]" />
-                      <span>{s.label}</span>
-                    </Command.Item>
-                  ))}
-                </>
-              ) : (
-                askAnswer.citations.map((c) => (
-                  <Command.Item
-                    key={`ask-${c.noteId}-${c.snippet.slice(0, 24)}`}
-                    value={`ask-${c.noteId}-${c.title}`}
-                    onSelect={() => {
-                      setActiveNote(c.noteId, { heading: c.heading });
-                      setCommandOpen(false);
-                    }}
-                    className={cn(ITEM_CLASS, "items-start")}
-                  >
-                    <FileText size={15} className="mt-0.5 shrink-0 text-[var(--accent)]" />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium text-[var(--text-primary)]">
-                        {c.title}
-                        {c.heading ? (
-                          <span className="font-normal text-[var(--text-muted)]">
-                            {" "}
-                            #{c.heading}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="line-clamp-2 text-[11.5px] text-[var(--text-muted)]">
-                        <HighlightedText text={c.snippet} query={askAnswer.question} />
-                      </div>
-                    </div>
-                  </Command.Item>
-                ))
-              )}
-            </Command.Group>
-          ) : null}
-
-          {savedSearches.length > 0 && (isEmptyQuery || /^save/i.test(raw) || raw === "/") ? (
-            <Command.Group heading="Saved searches" className={GROUP_HEADING}>
-              {savedSearches.map((s) => (
-                <Command.Item
-                  key={s.id}
-                  value={`saved-${s.id}-${s.name}-${s.query}`}
-                  onSelect={() => setQuery(s.query)}
-                  className={ITEM_CLASS}
-                >
-                  <Bookmark size={15} className="shrink-0 text-[var(--accent)]" />
-                  <span className="flex-1 truncate">{s.name}</span>
-                  <span className="max-w-[40%] truncate font-mono text-[10px] text-[var(--text-muted)]">
-                    {s.query}
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      usePrefsStore.getState().updatePrefs({
-                        savedSearches: savedSearches.filter((x) => x.id !== s.id),
-                      });
-                    }}
-                    aria-label={`Delete saved search ${s.name}`}
-                  >
-                    <X size={12} />
-                  </button>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {!isCommandMode && searchText && (hasPathFolderOp || hasOr) ? (
-            <Command.Group heading="Search" className={GROUP_HEADING}>
-              <Command.Item
-                value={`save-search-${raw}`}
-                onSelect={() => {
-                  const name = window.prompt("Name this search", raw) || raw;
-                  usePrefsStore.getState().updatePrefs({
-                    savedSearches: [
-                      {
-                        id: `s_${Date.now().toString(36)}`,
-                        name: name.trim() || raw,
-                        query: raw,
-                      },
-                      ...savedSearches.filter((s) => s.query !== raw),
-                    ].slice(0, 24),
-                  });
-                  setToast("Search saved");
-                }}
-                className={ITEM_CLASS}
-              >
-                <Bookmark size={15} className="shrink-0 text-[var(--accent)]" />
-                <span className="flex-1">Save this search</span>
-                <span className="font-mono text-[10px] text-[var(--text-muted)]">{raw}</span>
-              </Command.Item>
-            </Command.Group>
-          ) : null}
-
-          {isEmptyQuery && recentCommands.length > 0 ? (
-            <Command.Group heading="Recent commands" className={GROUP_HEADING}>
-              {recentCommands.map((a) => (
-                <Command.Item
-                  key={`recent-${a.id}`}
-                  value={`recent-${a.id}-${a.label}`}
-                  onSelect={() => runTracked(a)}
-                  className={ITEM_CLASS}
-                >
-                  <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-[var(--accent-dim)] text-[var(--accent)]">
-                    <History size={14} />
-                  </span>
-                  <span className="flex-1">{a.label}</span>
-                  {a.shortcut ? (
-                    <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-                      {a.shortcut}
-                    </kbd>
-                  ) : null}
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {isTagBrowse && tags.length > 0 && !exactTagQuery ? (
-            <Command.Group heading="Tags" className={GROUP_HEADING}>
-              {tags.map((t) => (
-                <Command.Item
-                  key={t.tag}
-                  value={`tag-${t.tag}`}
-                  onSelect={() => {
-                    if (t.noteIds.length === 1) {
-                      setActiveNote(t.noteIds[0]);
-                      setCommandOpen(false);
-                    } else {
-                      setQuery(`#${t.tag}`);
-                    }
-                  }}
-                  className={ITEM_CLASS}
-                >
-                  <Hash size={15} className="shrink-0 text-[var(--accent)]" />
-                  <span className="flex-1 font-medium text-[var(--text-primary)]">
-                    #{t.tag}
-                  </span>
-                  <span className="text-[11px] text-[var(--text-muted)]">
-                    {t.count} note{t.count === 1 ? "" : "s"}
-                  </span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {exactTagQuery && hits.length > 1 ? (
-            <Command.Group
-              heading={`Tagged #${exactTagQuery[1].toLowerCase()}`}
-              className={GROUP_HEADING}
-            >
-              {hits.map((h) => (
-                <Command.Item
-                  key={h.noteId}
-                  value={`tag-note-${h.noteId}-${h.title}`}
-                  onSelect={() => {
-                    setActiveNote(h.noteId);
-                    setCommandOpen(false);
-                  }}
-                  className={cn(ITEM_CLASS, "items-start")}
-                >
-                  <FileText
-                    size={15}
-                    className="mt-0.5 shrink-0 text-[var(--accent)]"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-[var(--text-primary)]">
-                      {h.title}
-                    </div>
-                    <div className="truncate text-[11.5px] text-[var(--text-muted)]">
-                      {h.path}
-                    </div>
-                  </div>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length === 0 ? (
-            <div
-              role="status"
-              aria-live="polite"
-              data-search-status={emptyStatus}
-              data-testid={emptyStatus === "miss" ? "search-miss" : undefined}
-              className="px-3 py-3 text-[13px] leading-snug text-[var(--text-secondary)]"
-            >
-              {memoryCapped ? (
-                <div
-                  className="pb-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--text-muted)]"
-                  data-testid="search-engine-heading"
-                >
-                  {notesHeading}
-                </div>
-              ) : null}
-              <div className="flex items-center gap-2">
-                <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
-                <span>
-                  {searchEmptyStateMessage({
-                    titleSearchLive:
-                      titleSearchLive || searchEngine.id !== "sqlite-fts5-bm25",
-                    headsReady:
-                      isNoteHeadSearchLive(searchIndexState) ||
-                      searchEngine.id !== "sqlite-fts5-bm25",
-                    catalogSearch: Boolean(
-                      shellCatalog && shellDbPath && shellDbPath !== BROWSER_SHELL_DB,
-                    ),
-                    failed: searchIndexState === "error" || noteSearchFailed,
-                    pending: noteSearchPending,
-                    memoryCapped,
-                  })}
-                </span>
-              </div>
-            </div>
-          ) : null}
-
-          {emptyStatus === "miss" && showCreateNote && hits.length === 0 ? (
-            <div
-              className="nexus-miss-actions flex flex-wrap items-center gap-2 px-3 pb-3"
-              data-testid="search-miss-actions"
-            >
-              <button
-                type="button"
-                onClick={createFromQuery}
-              >
-                Create “{(searchText || q).trim().slice(0, 48)}”
-                <kbd className="ml-1.5 rounded border border-[var(--border)] px-1 font-mono text-[10px] opacity-80">Enter</kbd>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  inputRef.current?.focus();
-                }}
-              >
-                Clear search
-              </button>
-            </div>
-          ) : null}
-
-          {memoryPartial &&
-          q &&
-          !isAskMode &&
-          !isCommandMode &&
-          !isTagBrowse &&
-          !(exactTagQuery && hits.length > 1) ? (
-            <div
-              className="px-3 pb-1 pt-2 text-[12px] leading-snug text-[var(--text-muted)]"
-              data-testid="search-memory-cap"
-            >
-              {MEMORY_SEARCH_CAP_NOTE}
-            </div>
-          ) : null}
-
-          {q && !isAskMode && !isCommandMode && !isTagBrowse && !(exactTagQuery && hits.length > 1) && hits.length > 0 ? (
-            <Command.Group
-              heading={notesHeading}
-              className={cn(GROUP_HEADING, tags.length > 0 && "mt-1")}
-            >
-              {hits.map((h) => (
-                <Command.Item
-                  key={h.noteId}
-                  value={`note-${h.noteId}-${h.title}`}
-                  data-testid="search-note-hit"
-                  data-note-id={h.noteId}
-                  onSelect={() => {
-                    setActiveNote(h.noteId);
-                    setCommandOpen(false);
-                  }}
-                  className={cn(ITEM_CLASS, "items-start")}
-                >
-                  <FileText
-                    size={15}
-                    className="mt-0.5 shrink-0 text-[var(--accent)]"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-[var(--text-primary)]">
-                      <HighlightedText text={h.title} query={query} />
-                    </div>
-                    <div className="truncate text-[11px] text-[var(--text-muted)]">
-                      {h.path}
-                    </div>
-                    {h.snippet && h.snippet !== h.path ? (
-                      <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--text-secondary)]">
-                        <HighlightedText text={presentLinkContext(h.snippet)} query={query} />
-                      </div>
-                    ) : null}
-                  </div>
-                  <span className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] tracking-wide text-[var(--text-muted)] bg-[color-mix(in_srgb,var(--text-muted)_12%,transparent)]">
-                    {MATCH_TYPE_LABEL[String(h.matchType)] ??
-                      String(h.matchType)}
-                  </span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {folderHits.length > 0 ? (
-            <Command.Group heading="Folders" className={cn(GROUP_HEADING, "mt-1")}>
-              {folderHits.map((f) => (
-                <Command.Item
-                  key={`folder-${f.id}`}
-                  value={`folder-${f.id}-${f.name}`}
-                  data-testid="search-folder-hit"
-                  data-folder-id={f.id}
-                  onSelect={() => {
-                    setCommandOpen(false);
-                    revealSearchedFolder(f.id);
-                  }}
-                  className={ITEM_CLASS}
-                >
-                  <FolderOpen size={15} className="shrink-0 text-[var(--accent)]" />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-[var(--text-primary)]">
-                      <HighlightedText text={f.name} query={query} />
-                    </div>
-                    <div className="truncate text-[11px] text-[var(--text-muted)]">
-                      {f.path}
-                    </div>
-                  </div>
-                  <span className="ml-auto shrink-0 text-[11px] text-[var(--text-muted)]">
-                    Show in list
-                  </span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {wantsDeleted ? (
-            <Command.Group
-              heading="Recently deleted"
-              className={cn(GROUP_HEADING, "mt-1")}
-            >
-              {trashItems.length === 0 ? (
-                <div
-                  role="status"
-                  data-search-empty="trash"
-                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
-                >
-                  Trash is empty
-                </div>
-              ) : null}
-              {trashItems.map((t) => (
-                <Command.Item
-                  key={t.trashPath}
-                  value={`trash-${t.trashPath}-${t.name}`}
-                  onSelect={() => {
-                    void restoreTrash(t.trashPath);
-                    setCommandOpen(false);
-                  }}
-                  className={ITEM_CLASS}
-                >
-                  <RotateCcw size={15} className="shrink-0 text-[var(--accent)]" />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-[var(--text-primary)]">
-                      Restore {t.name.replace(/\.md$/i, "")}
-                    </div>
-                    <div className="truncate text-[11px] text-[var(--text-muted)]">
-                      {t.originalPath}
-                    </div>
-                  </div>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {wantsOrphans ? (
-            <Command.Group
-              heading="Orphan notes"
-              className={cn(GROUP_HEADING, "mt-1")}
-            >
-              {orphans.length === 0 ? (
-                <div
-                  role="status"
-                  data-search-empty="orphans"
-                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
-                >
-                  No orphan notes
-                </div>
-              ) : null}
-              {orphans.map((o) => (
-                <Command.Item
-                  key={o.id}
-                  value={`orphan-${o.id}-${o.title}`}
-                  onSelect={() => {
-                    setActiveNote(o.id);
-                    setCommandOpen(false);
-                  }}
-                  className={cn(ITEM_CLASS, "items-start")}
-                >
-                  <Unlink
-                    size={15}
-                    className="mt-0.5 shrink-0 text-[var(--text-muted)]"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-[var(--text-primary)]">
-                      {o.title}
-                    </div>
-                    <div className="truncate text-[11.5px] text-[var(--text-muted)]">
-                      {o.path}
-                    </div>
-                  </div>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {wantsBroken ? (
-            <Command.Group
-              heading="Broken links"
-              className={cn(GROUP_HEADING, "mt-1")}
-            >
-              {brokenLinks.length === 0 ? (
-                <div
-                  role="status"
-                  data-search-empty="broken"
-                  className="px-3 py-2.5 text-[13px] text-[var(--text-muted)]"
-                >
-                  No broken links in this vault
-                </div>
-              ) : (
-                brokenLinks.map((bl, i) => (
-                  <Command.Item
-                    key={`${bl.noteId}-${bl.target}-${i}`}
-                    value={`broken-${bl.noteId}-${bl.target}`}
-                    onSelect={() => {
-                      setActiveNote(bl.noteId);
-                      setCommandOpen(false);
-                    }}
-                    className={cn(ITEM_CLASS, "items-start")}
-                  >
-                    <Unlink
-                      size={15}
-                      className="mt-0.5 shrink-0 text-[var(--warning)]"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium text-[var(--text-primary)]">
-                        [[{bl.target}]]
-                      </div>
-                      <div className="truncate text-[11.5px] text-[var(--text-muted)]">
-                        in {bl.noteTitle} · {bl.notePath}
-                      </div>
-                    </div>
-                  </Command.Item>
-                ))
-              )}
-            </Command.Group>
-          ) : null}
-
-          {wantsBroken && brokenCreateTargets.length > 0 ? (
-            <Command.Group
-              heading="Create missing"
-              className={cn(GROUP_HEADING, "mt-1")}
-            >
-              {brokenCreateTargets.map((target) => (
-                <Command.Item
-                  key={`create-broken-${target}`}
-                  value={`create-broken-${target}`}
-                  onSelect={() => {
-                    createNote(null, target);
-                    setToast(`Created “${target}”`);
-                    setCommandOpen(false);
-                  }}
-                  className={ITEM_CLASS}
-                >
-                  <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-[var(--accent-dim)] text-[var(--accent)]">
-                    <FilePlus size={15} />
-                  </span>
-                  <span className="flex-1">
-                    Create:{" "}
-                    <span className="font-medium text-[var(--text-primary)]">
-                      {target}
-                    </span>
-                  </span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          ) : null}
-
-          {!showAllActions ? (
-            <>
-              {emptyTopActions.length > 0 ? (
-                <ActionGroup
-                  heading="Commands"
-                  actions={emptyTopActions}
-                  onRun={(a) => {
-                    trackCommand(a.id);
-                    setRecentTick((t) => t + 1);
-                    a.run();
-                  }}
-                />
-              ) : null}
-            </>
-          ) : (
-            <>
-              {createActions.length > 0 || (showCreateNote && emptyStatus !== "miss") ? (
-                <Command.Group
-                  heading="Create"
-                  className={cn(GROUP_HEADING, "mt-1")}
-                >
-                  {showCreateNote && emptyStatus !== "miss" ? (
-                    <Command.Item
-                      value={`create-note-${searchText || q}`}
-                      data-testid="search-create-note"
-                      onSelect={() => {
-                        createNote(null, searchText || q || "Untitled");
-                        setCommandOpen(false);
-                      }}
-                      className={ITEM_CLASS}
-                    >
-                      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-[var(--accent-dim)] text-[var(--accent)]">
-                        <FilePlus size={15} />
-                      </span>
-                      <span className="flex-1">
-                        Create note:{" "}
-                        <span className="font-medium text-[var(--text-primary)]">
-                          {searchText || q}
-                        </span>
-                      </span>
-                    </Command.Item>
-                  ) : null}
-                  {createActions.map((a) => (
-                    <Command.Item
-                      key={a.id}
-                      value={`Create-${a.id}-${a.label}`}
-                      onSelect={() => {
-                        trackCommand(a.id);
-                        setRecentTick((t) => t + 1);
-                        a.run();
-                      }}
-                      className={ITEM_CLASS}
-                    >
-                      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-[var(--accent-dim)] text-[var(--accent)]">
-                        {a.icon}
-                      </span>
-                      <span className="flex-1">{a.label}</span>
-                      {a.shortcut ? (
-                        <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-                          {a.shortcut}
-                        </kbd>
-                      ) : null}
-                    </Command.Item>
-                  ))}
-                </Command.Group>
-              ) : null}
-              {navigateActions.length > 0 ? (
-                <ActionGroup
-                  heading="Navigate"
-                  actions={navigateActions}
-                  onRun={(a) => {
-                    trackCommand(a.id);
-                    setRecentTick((t) => t + 1);
-                    a.run();
-                  }}
-                />
-              ) : null}
-              {noteOps.length > 0 ? (
-                <ActionGroup
-                  heading="Note"
-                  actions={noteOps}
-                  onRun={(a) => {
-                    trackCommand(a.id);
-                    setRecentTick((t) => t + 1);
-                    a.run();
-                  }}
-                />
-              ) : null}
-              {vaultActions.length > 0 ? (
-                <ActionGroup
-                  heading="Vault"
-                  actions={vaultActions}
-                  onRun={(a) => {
-                    trackCommand(a.id);
-                    setRecentTick((t) => t + 1);
-                    a.run();
-                  }}
-                />
-              ) : null}
-            </>
-          )}
+          <PaletteResults
+            q={q}
+            isAskMode={isAskMode}
+            isCommandMode={isCommandMode}
+            isTagBrowse={isTagBrowse}
+            exactTagQuery={exactTagQuery}
+            hits={hits}
+            nodes={nodes}
+            showCreateNote={showCreateNote}
+            searchText={searchText}
+            createFromQuery={createFromQuery}
+            createNote={createNote}
+            setCommandOpen={setCommandOpen}
+            askAnswer={askAnswer}
+            setQuery={setQuery}
+            setActiveNote={setActiveNote}
+            savedSearches={savedSearches}
+            isEmptyQuery={isEmptyQuery}
+            raw={raw}
+            hasPathFolderOp={hasPathFolderOp}
+            hasOr={hasOr}
+            setToast={setToast}
+            recentCommands={recentCommands}
+            runTracked={runTracked}
+            tags={tags}
+            emptyStatus={emptyStatus}
+            memoryCapped={memoryCapped}
+            notesHeading={notesHeading}
+            titleSearchLive={titleSearchLive}
+            searchEngine={searchEngine}
+            searchIndexState={searchIndexState}
+            shellCatalog={shellCatalog}
+            shellDbPath={shellDbPath}
+            noteSearchFailed={noteSearchFailed}
+            noteSearchPending={noteSearchPending}
+            inputRef={inputRef}
+            memoryPartial={memoryPartial}
+            query={query}
+            folderHits={folderHits}
+            wantsDeleted={wantsDeleted}
+            trashItems={trashItems}
+            restoreTrash={restoreTrash}
+            wantsOrphans={wantsOrphans}
+            orphans={orphans}
+            wantsBroken={wantsBroken}
+            brokenLinks={brokenLinks}
+            brokenCreateTargets={brokenCreateTargets}
+            showAllActions={showAllActions}
+            emptyTopActions={emptyTopActions}
+            setRecentTick={setRecentTick}
+            createActions={createActions}
+            navigateActions={navigateActions}
+            noteOps={noteOps}
+            vaultActions={vaultActions}
+          />
         </Command.List>
 
         <div className="flex items-center gap-3.5 border-t border-[var(--border)] px-3.5 py-2 text-[10.5px] text-[var(--text-muted)]">
@@ -2811,54 +1391,3 @@ function CommandPaletteOpen() {
   );
 }
 
-type ActionDef = {
-  id: string;
-  label: string;
-  icon: ReactNode;
-  shortcut?: string;
-  run: () => void;
-};
-
-function ActionGroup({
-  heading,
-  actions,
-  onRun,
-}: {
-  heading: string;
-  actions: ActionDef[];
-  onRun?: (a: ActionDef) => void;
-}) {
-  return (
-    <Command.Group heading={heading} className={cn(GROUP_HEADING, "mt-1")}>
-      {actions.map((a) => (
-        <Command.Item
-          key={a.id}
-          value={`${heading}-${a.id}-${a.label}`}
-          onSelect={() => (onRun ? onRun(a) : a.run())}
-          className={ITEM_CLASS}
-        >
-          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-[var(--accent-dim)] text-[var(--accent)]">
-            {a.icon}
-          </span>
-          <span className="flex-1">{a.label}</span>
-          {a.shortcut ? (
-            <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-              {a.shortcut}
-            </kbd>
-          ) : null}
-        </Command.Item>
-      ))}
-    </Command.Group>
-  );
-}
-
-function Hint({ keys, label }: { keys: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <kbd className="rounded border border-[var(--border)] bg-white/[0.03] px-1 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-        {keys}
-      </kbd>
-      <span>{label}</span>
-    </span>
-  );
-}

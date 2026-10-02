@@ -277,10 +277,13 @@ const shellSrc = readFileSync(new URL("../src/components/layout/AppShell.tsx", i
 const earlyHold = shellSrc.indexOf("data-early-ready");
 const startingAt = shellSrc.indexOf("Starting");
 assert.ok(earlyHold > 0 && startingAt > earlyHold);
-const paletteSrc = readFileSync(
-  new URL("../src/components/search/CommandPalette.tsx", import.meta.url),
-  "utf8",
-);
+const paletteSrc = [
+  "../src/components/search/CommandPalette.tsx",
+  "../src/components/search/palette-search.ts",
+  "../src/components/search/palette-results.tsx",
+]
+  .map((rel) => readFileSync(new URL(rel, import.meta.url), "utf8"))
+  .join("\n");
 // Enter on a finished miss makes the note, and Shift+Enter always does, as in
 // Obsidian's quick switcher. A folder, a note hit, or a held catalog Enter comes first.
 {
@@ -1772,7 +1775,9 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(idxSrc3.includes("start_links_pass(app, db_path, vault_root);"), true);
   assert.equal((idxSrc3.match(/stop_links_pass\(&db_path\);/g) ?? []).length >= 3, true, "a fill, close, and wipe stop the pass");
   assert.equal(idxSrc3.includes("pub fn vault_shell_link_coverage("), true);
-  const fillSrc = readFileSync(new URL("../src-tauri/src/index_fill.rs", import.meta.url), "utf8");
+  const fillSrc = ["mod.rs", "links.rs", "walk.rs", "fts.rs"]
+    .map((name) => readFileSync(new URL(`../src-tauri/src/index_fill/${name}`, import.meta.url), "utf8"))
+    .join("\n");
   assert.equal(fillSrc.includes("pub const LINKS_PASS_BATCH: usize = 400;"), true);
   assert.equal(fillSrc.includes("std::thread::sleep(Duration::from_millis(4));"), true);
   const libSrc2 = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
@@ -2009,7 +2014,9 @@ assert.equal(coachSrc.includes("|| settingsOpen || deleteAsking ||"), true);
   assert.equal(idx.includes("if paths.is_empty() || fill_is_inflight(&db_path) {"), true);
   const lib = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
   assert.equal(lib.includes("            vault_shell_admit,\n"), true);
-  const fillRs = readFileSync(new URL("../src-tauri/src/index_fill.rs", import.meta.url), "utf8");
+  const fillRs = ["mod.rs", "links.rs", "walk.rs", "fts.rs"]
+    .map((name) => readFileSync(new URL(`../src-tauri/src/index_fill/${name}`, import.meta.url), "utf8"))
+    .join("\n");
   assert.equal(fillRs.includes("let trust_removals = !disk_notes.is_empty() || gone_notes.is_empty();"), true);
   assert.equal(fillRs.includes("if root.join(path).exists() {\n                continue;"), true, "a path written back meanwhile is kept");
   const store4 = readFileSync(new URL("../src/lib/vault/store.ts", import.meta.url), "utf8");

@@ -42,6 +42,17 @@ await build({
           if (!resolved) throw new Error(`unresolved ${args.path}`);
           return { path: resolved };
         });
+        api.onResolve({ filter: /\.sql\?raw$/ }, (args) => {
+          const spec = args.path.replace(/\?raw$/, "");
+          return {
+            path: path.isAbsolute(spec) ? spec : path.resolve(args.resolveDir, spec),
+            namespace: "sql-raw",
+          };
+        });
+        api.onLoad({ filter: /.*/, namespace: "sql-raw" }, (args) => ({
+          contents: `export default ${JSON.stringify(readFileSync(args.path, "utf8"))};`,
+          loader: "js",
+        }));
         api.onResolve({ filter: /^(three|3d-force-graph)$/ }, (args) => ({
           path: args.path,
           namespace: "stub",
@@ -213,7 +224,13 @@ function ids(query) {
   assert.doesNotMatch(SEARCH_OPERATOR_HELP, /not supported yet/);
   const settings = readFileSync(path.join(root, "src/components/settings/SettingsPanel.tsx"), "utf8");
   const shortcuts = readFileSync(path.join(root, "src/components/chrome/ShortcutsSheet.tsx"), "utf8");
-  const palette = readFileSync(path.join(root, "src/components/search/CommandPalette.tsx"), "utf8");
+  const palette = [
+    "src/components/search/CommandPalette.tsx",
+    "src/components/search/palette-search.ts",
+    "src/components/search/palette-results.tsx",
+  ]
+    .map((rel) => readFileSync(path.join(root, rel), "utf8"))
+    .join("\n");
   assert.match(settings, /SEARCH_OPERATOR_HELP/);
   assert.match(shortcuts, /SEARCH_OPERATOR_HELP/);
   assert.match(shortcuts, /data-testid="search-operator-help"/);
@@ -266,7 +283,13 @@ function ids(query) {
   assert.equal(sqliteLine.engine, "default");
   assert.notEqual(sqliteLine.engine, "sqlite-ops");
   assert.equal(sqliteLine.hint, LINE_SECTION_WINDOW_HINT);
-  const palette = readFileSync(path.join(root, "src/components/search/CommandPalette.tsx"), "utf8");
+  const palette = [
+    "src/components/search/CommandPalette.tsx",
+    "src/components/search/palette-search.ts",
+    "src/components/search/palette-results.tsx",
+  ]
+    .map((rel) => readFileSync(path.join(root, rel), "utf8"))
+    .join("\n");
   assert.match(palette, /planPagedDesktopSearch/);
   assert.match(palette, /searchDesktopOps/);
   assert.match(palette, /search-scope-hint/);
