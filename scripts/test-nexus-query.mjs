@@ -184,6 +184,9 @@ assert.equal(parseNexusQuery("").kind, "help");
 assert.match(runNexusQuery("LIST", nodes).error, /path:/);
 assert.match(runNexusQuery("SORT path:Research", nodes).error, /Not Dataview/);
 assert.equal(NEXUS_QUERY_DQL.includes("FLATTEN file.outlinks"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("FLATTEN file.inlinks"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("No join of two queries"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("WHERE does not compare a link list"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("No joins"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("WHERE field"), true);
 
@@ -213,6 +216,8 @@ assert.ok(demoList.rows.some((r) => r.path === "Journal/First Light.md"));
 assert.match(noteList.content, /SORT mtime/);
 assert.match(noteList.content, /WHERE status = "draft"/);
 assert.match(noteList.content, /FLATTEN file\.outlinks/);
+assert.match(noteList.content, /FLATTEN file\.inlinks/);
+assert.match(noteList.content, /TABLE file\.inlinks/);
 assert.doesNotMatch(noteList.content, /no joins/);
 assert.match(noteList.content, /A TABLE formula is one/);
 assert.doesNotMatch(noteList.content, /no formulas/);
@@ -239,6 +244,7 @@ assert.match(view, /setActiveNote/);
 const lib = readFileSync("src/lib/vault/nexus-query.ts", "utf8");
 assert.match(lib, /Not Dataview/);
 assert.match(lib, /FLATTEN file\.outlinks/);
+assert.match(lib, /FLATTEN file\.inlinks/);
 assert.doesNotMatch(lib, /no joins/);
 assert.match(lib, /A TABLE formula is one/);
 assert.doesNotMatch(lib, /no formulas/);
@@ -399,16 +405,57 @@ const hiddenLinks = {
 const hiddenJoin = runNexusQuery("TABLE file.outlinks FROM path:Research", hiddenLinks);
 assert.deepEqual(hiddenJoin.rows.map((r) => r.id), ["b"]);
 assert.match(hiddenJoin.fieldNote, /1 note is not loaded, so its links were left out/);
-assert.match(runNexusQuery("LIST FROM path:Research FLATTEN file.inlinks", linked).error, /not Dataview/);
+const inbound = runNexusQuery("TABLE file.inlinks FROM path:Research", linked);
+assert.equal(inbound.error, null);
+assert.deepEqual(
+  inbound.rows.map((r) => [r.title, r.id, r.link, r.fields[0].value, r.fields[0].name]),
+  [
+    ["Alpha", "a", "Beta", "Beta", "file.inlinks"],
+    ["Beta", "b", "Alpha", "Alpha", "file.inlinks"],
+  ],
+);
+const inboundList = runNexusQuery("LIST FROM path:Research FLATTEN file.inlinks", linked);
+assert.equal(inboundList.error, null);
+assert.doesNotMatch(inboundList.error ?? "", /not Dataview/);
+assert.deepEqual(inboundList.rows.map((r) => [r.id, r.link]), [
+  ["a", "Beta"],
+  ["b", "Alpha"],
+]);
+const outside = {
+  ...linked,
+  other: { ...note("other", "Projects/Other.md", "Points at [[Alpha]].\n"), parentId: null },
+};
+const fromOutside = runNexusQuery("LIST FROM path:Research FLATTEN file.inlinks", outside);
+assert.deepEqual(fromOutside.rows.map((r) => [r.id, r.link]), [
+  ["a", "Beta"],
+  ["a", "Other"],
+  ["b", "Alpha"],
+]);
+const quietIn = runNexusQuery('LIST FROM path:Research WHERE file.name = "Quiet" FLATTEN file.inlinks', linked);
+assert.equal(quietIn.rows.length, 0);
+assert.match(quietIn.scanNote, /No incoming links/);
+const hiddenIn = runNexusQuery("TABLE file.inlinks FROM path:Research", hiddenLinks);
+assert.match(hiddenIn.fieldNote, /not loaded, so its links were left out/);
 assert.match(runNexusQuery("LIST FROM path:Research FLATTEN tags", linked).error, /FLATTEN file\.outlinks/);
 assert.match(runNexusQuery("TABLE file.outlinks FLATTEN file.outlinks FROM path:Research", linked).error, /Only one FLATTEN/);
+assert.match(runNexusQuery("LIST FROM path:Research FLATTEN file.outlinks FLATTEN file.inlinks", linked).error, /Only one FLATTEN/);
+assert.match(runNexusQuery("TABLE file.outlinks, file.inlinks FROM path:Research", linked).error, /Only one FLATTEN/);
+assert.match(runNexusQuery("TABLE file.inlinks FLATTEN file.outlinks FROM path:Research", linked).error, /Only one FLATTEN/);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE file.outlinks = "Beta"', linked).error, /WHERE does not compare/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE file.inlinks = "Alpha"', linked).error, /WHERE does not compare/);
+assert.match(runNexusQuery('LIST FROM path:Research WHERE contains(file.inlinks, "Alpha")', linked).error, /WHERE does not compare/);
 const demoJoin = runNexusQuery('TABLE file.outlinks FROM path:Research WHERE contains(file.name, "Graph")', demo.nodes);
 assert.equal(demoJoin.error, null);
 assert.ok(demoJoin.rows.length >= 2);
 assert.ok(demoJoin.rows.every((r) => r.title === "Graph View" && r.id));
 assert.ok(demoJoin.rows.some((r) => r.link === "Welcome"));
 assert.ok(demoJoin.rows.some((r) => r.link === "Linking Notes"));
+const demoIn = runNexusQuery('TABLE file.inlinks FROM path:Research WHERE contains(file.name, "Graph")', demo.nodes);
+assert.equal(demoIn.error, null);
+assert.ok(demoIn.rows.length >= 2);
+assert.ok(demoIn.rows.every((r) => r.title === "Graph View" && r.id));
+assert.ok(demoIn.rows.some((r) => r.link === "Welcome"));
+assert.ok(!demoIn.rows.some((r) => r.link === "Graph View"));
 assert.match(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /WHERE filters a tag or a field/);
 assert.doesNotMatch(runNexusQuery('LIST FROM path:Research WHERE date(today)', shop).error, /not Dataview/);
 assert.match(runNexusQuery('LIST FROM path:Research WHERE file.mtime = "soon"', shop).error, /compares a date/);

@@ -163,7 +163,7 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks. A TABLE formula is one + - * /.
+A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE does not compare a link list. A TABLE formula is one + - * /.
 
 \`\`\`nexus-query
 LIST FROM #writing OR #graph
@@ -183,6 +183,14 @@ TABLE file.name + " note" FROM path:Research WHERE contains(file.name, "Graph")
 
 \`\`\`nexus-query
 TABLE file.outlinks FROM path:Research WHERE contains(file.name, "Graph")
+\`\`\`
+
+\`\`\`nexus-query
+TABLE file.inlinks FROM path:Research WHERE contains(file.name, "Graph")
+\`\`\`
+
+\`\`\`nexus-query
+LIST FROM path:Research WHERE contains(file.name, "Graph") FLATTEN file.inlinks
 \`\`\`
 
 \`\`\`nexus-query
