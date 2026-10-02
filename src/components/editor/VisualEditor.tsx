@@ -53,6 +53,8 @@ import {
   htmlDocToMarkdown,
 } from "@/lib/markdown/serialize";
 import { splitFrontmatter } from "@/lib/editor/frontmatter";
+import { applyCheckboxFlips } from "@/lib/tasks/edit";
+import { localToday } from "@/lib/tasks/dates";
 import { useVaultStore } from "@/lib/vault/store";
 import {
   dailyNotePath,
@@ -560,7 +562,9 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       baselineMd.current = md;
       lastWrittenRef.current = md;
       userEdited.current = false;
-      updateNoteContent(id, md);
+      // A ticked box also gets its ✅ date and, when it repeats, the next copy;
+      // the editor then shows that text as an outside change.
+      updateNoteContent(id, applyCheckboxFlips(prev, md, localToday()) ?? md);
     },
     [updateNoteContent],
   );
