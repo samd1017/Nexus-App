@@ -2,7 +2,10 @@
  * Template rendering. Plain text substitution only — nothing is evaluated.
  *
  *   {{title}}  {{date}}  {{time}}  {{yesterday}}
+ *   {{date:dddd, MMMM D}}      any date or time in its own format
+ *   {{time:h:mm A}}
  *   {{date+7}} {{date-1}}      days from the template's date
+ *   {{date+7:YYYY-MM-DD}}      both
  *   {{prompt:Attendees}}       asked once when the template is used
  *   {{carryover}}              open tasks from yesterday's daily note
  *
@@ -10,6 +13,9 @@
  */
 
 import { splitFrontmatter } from "../editor/frontmatter";
+
+export const DEFAULT_DATE_FORMAT = "YYYY-MM-DD";
+export const DEFAULT_TIME_FORMAT = "HH:mm";
 
 export function formatDateISO(d: Date = new Date()): string {
   const y = d.getFullYear();
@@ -31,16 +37,121 @@ export function shiftDate(d: Date, delta: number): Date {
   return next;
 }
 
+function addDays(d: Date, delta: number): Date {
+  const next = new Date(d.getTime());
+  next.setDate(next.getDate() + delta);
+  return next;
+}
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * The moment.js format tokens everyday templates use, with English names.
+ * Text in [brackets] is kept as written; other characters pass through.
+ */
+const FORMAT_TOKEN =
+  /\[([^\]]*)\]|YYYY|YY|Q|MMMM|MMM|MM|M|DDDD|DDD|Do|DD|D|dddd|ddd|dd|d|E|e|GGGG|GG|WW|W|gggg|gg|ww|w|HH|H|hh|h|kk|k|mm|m|ss|s|SSS|A|a|X|x|ZZ|Z/g;
+
+function pad(n: number, width = 2): string {
+  return String(Math.abs(n)).padStart(width, "0");
+}
+
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+}
+
+function dayOfYear(d: Date): number {
+  return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(d.getFullYear(), 0, 1)) / 864e5) + 1;
+}
+
+/**
+ * Week of year and its year. ISO weeks run Monday to Sunday and belong to the
+ * year of their Thursday. US weeks run Sunday to Saturday; week 1 holds Jan 1.
+ */
+function weekOf(d: Date, iso: boolean): { week: number; year: number } {
+  const anchor = iso ? addDays(d, 3 - ((d.getDay() + 6) % 7)) : addDays(d, 6 - d.getDay());
+  return { week: Math.floor((dayOfYear(anchor) - 1) / 7) + 1, year: anchor.getFullYear() };
+}
+
+function offset(d: Date, sep: string): string {
+  const mins = -d.getTimezoneOffset();
+  return `${mins < 0 ? "-" : "+"}${pad(Math.trunc(mins / 60))}${sep}${pad(mins % 60)}`;
+}
+
+/** `d` written in a moment.js-style format such as `dddd, MMMM Do YYYY`. */
+export function formatDate(d: Date, format: string): string {
+  return format.replace(FORMAT_TOKEN, (tok, literal: string | undefined) => {
+    if (literal !== undefined) return literal;
+    const hours = d.getHours();
+    switch (tok) {
+      case "YYYY": return String(d.getFullYear());
+      case "YY": return pad(d.getFullYear() % 100);
+      case "Q": return String(Math.floor(d.getMonth() / 3) + 1);
+      case "MMMM": return MONTHS[d.getMonth()];
+      case "MMM": return MONTHS[d.getMonth()].slice(0, 3);
+      case "MM": return pad(d.getMonth() + 1);
+      case "M": return String(d.getMonth() + 1);
+      case "DDDD": return pad(dayOfYear(d), 3);
+      case "DDD": return String(dayOfYear(d));
+      case "Do": return ordinal(d.getDate());
+      case "DD": return pad(d.getDate());
+      case "D": return String(d.getDate());
+      case "dddd": return WEEKDAYS[d.getDay()];
+      case "ddd": return WEEKDAYS[d.getDay()].slice(0, 3);
+      case "dd": return WEEKDAYS[d.getDay()].slice(0, 2);
+      case "d":
+      case "e": return String(d.getDay());
+      case "E": return String(d.getDay() || 7);
+      case "GGGG": return String(weekOf(d, true).year);
+      case "GG": return pad(weekOf(d, true).year % 100);
+      case "WW": return pad(weekOf(d, true).week);
+      case "W": return String(weekOf(d, true).week);
+      case "gggg": return String(weekOf(d, false).year);
+      case "gg": return pad(weekOf(d, false).year % 100);
+      case "ww": return pad(weekOf(d, false).week);
+      case "w": return String(weekOf(d, false).week);
+      case "HH": return pad(hours);
+      case "H": return String(hours);
+      case "hh": return pad(hours % 12 || 12);
+      case "h": return String(hours % 12 || 12);
+      case "kk": return pad(hours || 24);
+      case "k": return String(hours || 24);
+      case "mm": return pad(d.getMinutes());
+      case "m": return String(d.getMinutes());
+      case "ss": return pad(d.getSeconds());
+      case "s": return String(d.getSeconds());
+      case "SSS": return pad(d.getMilliseconds(), 3);
+      case "A": return hours < 12 ? "AM" : "PM";
+      case "a": return hours < 12 ? "am" : "pm";
+      case "X": return String(Math.floor(d.getTime() / 1000));
+      case "x": return String(d.getTime());
+      case "ZZ": return offset(d, "");
+      case "Z": return offset(d, ":");
+    }
+    return tok;
+  });
+}
+
 export type TemplateValues = {
   title: string;
   date: Date;
   prompts?: Readonly<Record<string, string>>;
   carryover?: readonly string[];
+  /** Format for a bare {{date}}, {{yesterday}}, or {{date+N}}. */
+  dateFormat?: string;
+  /** Format for a bare {{time}}. */
+  timeFormat?: string;
 };
 
 const TOKEN = /\{\{\s*([^{}\n]+?)\s*\}\}/g;
 const PROMPT = /^prompt\s*:\s*(.+)$/i;
-const DATE_MATH = /^date\s*([+-])\s*(\d{1,5})$/i;
+const MOMENT = /^(date|time|yesterday)\s*(?:([+-])\s*(\d{1,5}))?\s*(?::\s*(.*))?$/i;
 const CARRYOVER = /\{\{\s*carryover\s*\}\}/i;
 const CARRYOVER_LINE = /^[ \t]*\{\{\s*carryover\s*\}\}[ \t]*(?:\r?\n|$)/gim;
 
@@ -63,24 +174,24 @@ export function renderTemplate(source: string, values: TemplateValues): string {
   const items = values.carryover ?? [];
   // A line holding only {{carryover}} disappears when there is nothing to carry.
   const text = items.length ? source : source.replace(CARRYOVER_LINE, "");
+  const dateFormat = values.dateFormat?.trim() || DEFAULT_DATE_FORMAT;
+  const timeFormat = values.timeFormat?.trim() || DEFAULT_TIME_FORMAT;
   return text.replace(TOKEN, (whole, inner: string) => {
     const key = inner.trim();
     switch (key.toLowerCase()) {
       case "title":
         return values.title;
-      case "date":
-        return formatDateISO(values.date);
-      case "time":
-        return formatTime(values.date);
-      case "yesterday":
-        return formatDateISO(shiftDate(values.date, -1));
       case "carryover":
         return items.join("\n");
     }
-    const math = DATE_MATH.exec(key);
-    if (math) {
-      const days = Number(math[2]) * (math[1] === "-" ? -1 : 1);
-      return formatDateISO(shiftDate(values.date, days));
+    const moment = MOMENT.exec(key);
+    if (moment) {
+      const [, word, sign, amount, format] = moment;
+      const kind = word.toLowerCase();
+      if (sign && kind !== "date") return whole;
+      const days = kind === "yesterday" ? -1 : sign ? Number(amount) * (sign === "-" ? -1 : 1) : 0;
+      const fallback = kind === "time" ? timeFormat : dateFormat;
+      return formatDate(addDays(values.date, days), format?.trim() || fallback);
     }
     const prompt = PROMPT.exec(key);
     if (prompt) return values.prompts?.[prompt[1].trim()] ?? "";
