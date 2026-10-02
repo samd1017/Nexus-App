@@ -1,17 +1,21 @@
 import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { List } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { getFindFocusPane } from "@/lib/editor/find-target";
 import type { VaultNode } from "@/lib/vault/types";
 import { loadTagExtras } from "@/lib/vault/nexus-query-tags";
+import { scheduleFillSafeHydrate, shouldSkipBackgroundBodyHydrate } from "@/lib/vault/fill-interaction";
 import {
   NEXUS_QUERY_CAP,
   NEXUS_QUERY_HELP,
+  frontmatterHydrateIds,
   queryColumnLabel,
   runNexusQuery,
 } from "@/lib/vault/nexus-query";
+
+const BODY_BATCH = 32;
 
 export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
   const query = String(node.attrs.query || "");
@@ -19,10 +23,49 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
   const shellDb = useVaultStore((s) => s.shellDbPath);
   const mode = useVaultStore((s) => s.mode);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
+  const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
+  const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(query);
   const [tagExtras, setTagExtras] = useState<(VaultNode[] | null)[] | null>(null);
   const [tagsLoading, setTagsLoading] = useState(false);
+  const [hydrating, setHydrating] = useState(false);
+  const triedBodyIds = useRef(new Set<string>());
+  const queryKey = useRef(query);
+  if (queryKey.current !== query) {
+    queryKey.current = query;
+    triedBodyIds.current = new Set();
+  }
+
+  const missingBodyIds = useMemo(() => frontmatterHydrateIds(query, nodes), [query, nodes]);
+
+  useEffect(() => {
+    const pending = missingBodyIds.filter((id) => !triedBodyIds.current.has(id)).slice(0, BODY_BATCH);
+    if (!pending.length) {
+      setHydrating(false);
+      return;
+    }
+    let cancel = false;
+    let stop = () => {};
+    const run = () => {
+      if (cancel) return;
+      if (shouldSkipBackgroundBodyHydrate({ fillBusy: useVaultStore.getState().indexFillBusy })) {
+        stop = scheduleFillSafeHydrate(run);
+        return;
+      }
+      for (const id of pending) triedBodyIds.current.add(id);
+      setHydrating(true);
+      void Promise.all(pending.map((id) => ensureNoteBody(id))).finally(() => {
+        if (!cancel) setHydrating(false);
+      });
+    };
+    if (shouldSkipBackgroundBodyHydrate({ fillBusy: indexFillBusy })) stop = scheduleFillSafeHydrate(run);
+    else run();
+    return () => {
+      cancel = true;
+      stop();
+    };
+  }, [missingBodyIds, indexFillBusy, ensureNoteBody]);
 
   useEffect(() => {
     let cancel = false;
@@ -101,6 +144,11 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
         {model.fieldNote ? (
           <p className="nexus-query-empty" data-testid="nexus-query-field-note">
             {model.fieldNote}
+          </p>
+        ) : null}
+        {hydrating ? (
+          <p className="nexus-query-empty" data-testid="nexus-query-hydrate">
+            Reading notes…
           </p>
         ) : null}
         {!model.help && !model.error && model.rows.length === 0 ? (

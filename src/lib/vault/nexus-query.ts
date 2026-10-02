@@ -1184,6 +1184,95 @@ function collectInFolder(
   return { notes, truncated: false, budgetHit, unloaded };
 }
 
+function readsFrontmatter(name: string): boolean {
+  const key = columnKey(name);
+  if (key === "tags" || key === "mtime" || key === "file.ctime" || key === "file.size") return false;
+  if (key === "file.name" || key === "file.path" || key === "file.folder") return false;
+  if (linkListField(name) || key.startsWith("file.")) return false;
+  return true;
+}
+
+/** GROUP BY, WHERE, TABLE, or SORT on a frontmatter field. File meta stays sync. */
+export function queryNeedsFrontmatter(source: string): boolean {
+  const parsed = parseNexusQuery(source);
+  if (parsed.kind !== "ok") return false;
+  if (parsed.groupBy && readsFrontmatter(parsed.groupBy)) return true;
+  if (parsed.where && readsFrontmatter(parsed.where.field)) return true;
+  if (
+    parsed.sort &&
+    parsed.sort.key !== "title" &&
+    parsed.sort.key !== "mtime" &&
+    parsed.sort.key !== "size" &&
+    parsed.sort.key !== "ctime" &&
+    readsFrontmatter(parsed.sort.key)
+  ) {
+    return true;
+  }
+  for (const column of parsed.columns) {
+    if (column.kind === "field" && readsFrontmatter(column.name)) return true;
+    if (column.kind === "formula") {
+      if (column.left.kind === "field" && readsFrontmatter(column.left.name)) return true;
+      if (column.right.kind === "field" && readsFrontmatter(column.right.name)) return true;
+    }
+  }
+  return false;
+}
+
+/** How many meta-only notes one query may pull from disk. A folder, not the vault. */
+export const NEXUS_QUERY_BODY_CAP = 400;
+
+/**
+ * Notes under this query's FROM path (or tag) whose body is still missing.
+ * Empty when the query only needs titles or file meta.
+ */
+export function frontmatterHydrateIds(
+  source: string,
+  nodes: Record<string, VaultNode>,
+  limit = NEXUS_QUERY_BODY_CAP,
+): string[] {
+  if (!queryNeedsFrontmatter(source)) return [];
+  const parsed = parseNexusQuery(source);
+  if (parsed.kind !== "ok") return [];
+  const ids: string[] = [];
+  const push = (node: VaultNode) => {
+    if (ids.length >= limit) return;
+    if (node.kind !== "note" || node.content !== undefined) return;
+    ids.push(node.id);
+  };
+  if (parsed.path) {
+    const folderId = resolveFolder(nodes, parsed.path);
+    if (!folderId) return ids;
+    const idx = ensureVaultIndex(nodes);
+    const stack = [...idx.getChildIds(folderId)];
+    let visits = 0;
+    while (stack.length && ids.length < limit) {
+      const id = stack.pop();
+      if (!id) break;
+      visits += 1;
+      if (visits > VISIT_BUDGET) break;
+      const node = nodes[id];
+      if (!node) continue;
+      if (node.kind === "folder") {
+        const kids = idx.getChildIds(node.id);
+        for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+        continue;
+      }
+      if (!pathHasPrefix(node.path, parsed.path)) continue;
+      if (parsed.tags.length && !hasTags(node, parsed.tags, parsed.tagMode)) continue;
+      push(node);
+    }
+    return ids;
+  }
+  if (parsed.tags.length) {
+    const notes = joinTaggedNotes(
+      parsed.tags.map((tag) => notesForTagJoined(nodes, tag)),
+      parsed.tagMode,
+    );
+    for (const note of notes) push(note);
+  }
+  return ids;
+}
+
 export function runNexusQuery(
   source: string,
   nodes: Record<string, VaultNode>,

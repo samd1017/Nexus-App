@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { runNexusQuery, parseNexusQuery, NEXUS_QUERY_CAP, NEXUS_QUERY_DQL } = await import(
+const { runNexusQuery, parseNexusQuery, NEXUS_QUERY_CAP, NEXUS_QUERY_DQL, queryNeedsFrontmatter, frontmatterHydrateIds } = await import(
   "../src/lib/vault/nexus-query.ts"
 );
 const { promoteNexusQueryBlocks } = await import("../src/lib/editor/special-blocks.ts");
@@ -261,6 +261,9 @@ assert.match(view, /loadTagExtras/);
 assert.match(view, /data-open-note/);
 assert.match(view, /model\.footer/);
 assert.match(view, /setActiveNote/);
+assert.match(view, /ensureNoteBody/);
+assert.match(view, /frontmatterHydrateIds/);
+assert.match(view, /shouldSkipBackgroundBodyHydrate/);
 const lib = readFileSync("src/lib/vault/nexus-query.ts", "utf8");
 assert.match(lib, /Not Dataview/);
 assert.match(lib, /FLATTEN file\.outlinks/);
@@ -684,5 +687,53 @@ assert.equal(demoWhere.error, null);
 assert.equal(demoWhere.rows.length, 1);
 assert.equal(demoWhere.rows[0].path, "Research/Callouts.md");
 assert.equal(demoWhere.rows[0].fields[0].value, "draft");
+
+assert.equal(queryNeedsFrontmatter("TABLE status FROM path:Research GROUP BY status"), true);
+assert.equal(queryNeedsFrontmatter('TABLE status FROM path:Research WHERE status = "draft"'), true);
+assert.equal(queryNeedsFrontmatter("LIST FROM path:Research SORT title"), false);
+assert.equal(queryNeedsFrontmatter("TABLE file.size, file.ctime FROM path:Research"), false);
+assert.equal(queryNeedsFrontmatter("LIST FROM path:Research SORT file.folder"), false);
+assert.equal(queryNeedsFrontmatter("LIST FROM path:Research GROUP BY file.folder"), false);
+const metaOnly = {
+  r: folder("r", "Research"),
+  crave: {
+    id: "crave",
+    path: "Research/CRAVE Draft Status.md",
+    name: "CRAVE Draft Status.md",
+    kind: "note",
+    parentId: "r",
+    mtime: 1,
+    content: "---\nstatus: draft\n---\n# CRAVE\n",
+  },
+  nograph: { id: "nograph", path: "Research/No Graph Tag.md", name: "No Graph Tag.md", kind: "note", parentId: "r", mtime: 2 },
+  probe: { id: "probe", path: "Research/Writing Probe.md", name: "Writing Probe.md", kind: "note", parentId: "r", mtime: 3 },
+  overview: { id: "overview", path: "Research/Graph Overview.md", name: "Graph Overview.md", kind: "note", parentId: "r", mtime: 4 },
+  elsewhere: { id: "elsewhere", path: "Journal/Other.md", name: "Other.md", kind: "note", parentId: null, mtime: 5 },
+};
+resetVaultIndex();
+assert.deepEqual(frontmatterHydrateIds("TABLE status FROM path:Research GROUP BY status", metaOnly).sort(), ["nograph", "overview", "probe"]);
+assert.deepEqual(frontmatterHydrateIds("LIST FROM path:Research SORT title", metaOnly), []);
+const thin = runNexusQuery("TABLE status FROM path:Research GROUP BY status", metaOnly);
+assert.deepEqual(thin.rows.filter((r) => r.group === "draft").map((r) => r.title), ["CRAVE Draft Status"]);
+assert.equal(thin.rows.some((r) => r.title === "Graph Overview" && r.group === "live"), false);
+const disk = {
+  ...metaOnly,
+  nograph: { ...metaOnly.nograph, content: "---\nstatus: draft\n---\n# No Graph\n" },
+  probe: { ...metaOnly.probe, content: "---\nstatus: draft\n---\n# Probe\n" },
+  overview: { ...metaOnly.overview, content: "---\nstatus: live\n---\n# Overview\n" },
+};
+resetVaultIndex();
+const full = runNexusQuery("TABLE status FROM path:Research GROUP BY status", disk);
+assert.deepEqual(
+  full.rows.filter((r) => r.group === "draft").map((r) => r.title),
+  ["CRAVE Draft Status", "No Graph Tag", "Writing Probe"],
+);
+assert.deepEqual(
+  full.rows.filter((r) => r.group === "live").map((r) => r.title),
+  ["Graph Overview"],
+);
+const drafted = runNexusQuery('LIST FROM path:Research WHERE status = "draft"', disk);
+assert.deepEqual(drafted.rows.map((r) => r.title), ["CRAVE Draft Status", "No Graph Tag", "Writing Probe"]);
+assert.deepEqual(frontmatterHydrateIds("TABLE status FROM path:Research GROUP BY status", disk), []);
 
 console.log("nexus-query: PASS");
