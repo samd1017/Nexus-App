@@ -1,5 +1,5 @@
 //! On-disk DurableIndex (SQLite FTS5). Disposable cache — markdown remains canonical.
-//! Schema mirrors TS durable index contract (v3 contentful FTS for reliable MATCH).
+//! Schema is `schema/durable-index.sql` (v3 contentful FTS), shared with TypeScript.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -15,80 +15,8 @@ use crate::index_fill::{
     DEFAULT_DEEP_HEAD, DEFAULT_SHORT_HEAD, TITLE_READY_FLUSH,
 };
 
-pub const SCHEMA_VERSION: i32 = 3;
-
-const DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS meta_kv (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS note_meta (
-  id TEXT PRIMARY KEY,
-  path TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('folder','note')),
-  parent_id TEXT,
-  mtime INTEGER NOT NULL,
-  size INTEGER,
-  content_hash TEXT,
-  title TEXT,
-  deleted INTEGER NOT NULL DEFAULT 0,
-  fill_depth INTEGER
-);
-CREATE INDEX IF NOT EXISTS note_meta_parent ON note_meta(parent_id);
-CREATE INDEX IF NOT EXISTS note_meta_mtime ON note_meta(mtime DESC);
-
-CREATE TABLE IF NOT EXISTS link_edge (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_id TEXT NOT NULL,
-  target_raw TEXT NOT NULL,
-  target_norm TEXT NOT NULL,
-  target_id TEXT,
-  UNIQUE (source_id, target_norm)
-);
-CREATE INDEX IF NOT EXISTS link_fwd ON link_edge(source_id);
-CREATE INDEX IF NOT EXISTS link_rev ON link_edge(target_norm);
-
-CREATE TABLE IF NOT EXISTS tag_map (
-  tag TEXT NOT NULL,
-  note_id TEXT NOT NULL,
-  PRIMARY KEY (tag, note_id)
-);
-CREATE INDEX IF NOT EXISTS tag_by_note ON tag_map(note_id);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
-  note_id UNINDEXED,
-  title,
-  path,
-  body,
-  tokenize = 'unicode61 remove_diacritics 2'
-);
--- note_id is UNINDEXED in FTS5, so DELETE WHERE note_id scans the whole
--- index. This side table makes replace/delete a rowid lookup.
-CREATE TABLE IF NOT EXISTS note_fts_row (
-  note_id TEXT PRIMARY KEY,
-  fts_rowid INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS vault_registry (
-  vault_id TEXT PRIMARY KEY,
-  display_name TEXT NOT NULL,
-  root_rel TEXT NOT NULL,
-  created_ms INTEGER NOT NULL,
-  opened_ms INTEGER NOT NULL,
-  note_count INTEGER NOT NULL DEFAULT 0,
-  index_path TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS capture_queue (
-  id TEXT PRIMARY KEY,
-  vault_id TEXT NOT NULL,
-  path_hint TEXT,
-  body TEXT NOT NULL,
-  created_ms INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending'
-);
-"#;
+pub use crate::schema::SCHEMA_VERSION;
+use crate::schema::DDL;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -224,10 +152,17 @@ fn open_conn_with(db_path: &str, shell: bool) -> Result<Connection, String> {
     Ok(conn)
 }
 
+fn migration_failure(conn: &Connection, cause: impl std::fmt::Display) -> String {
+    match conn.execute_batch("ROLLBACK") {
+        Ok(()) => format!("schema migrate: {cause}"),
+        Err(rollback) => format!("schema migrate: {cause} (rollback: {rollback})"),
+    }
+}
+
 fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) -> Result<(), String> {
     conn.execute_batch(DDL)
         .map_err(|e| format!("schema ddl: {e}"))?;
-    crate::index_fill::ensure_note_fts_row(conn);
+    crate::index_fill::ensure_note_fts_row(conn)?;
 
     let ver: i32 = conn
         .query_row(
@@ -240,16 +175,24 @@ fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) ->
         .unwrap_or(0);
 
     if ver > 0 && ver < SCHEMA_VERSION {
-        let _ = conn.execute_batch(
-            "DELETE FROM link_edge;
-             DELETE FROM tag_map;
-             DELETE FROM note_meta;
-             DROP TABLE IF EXISTS note_fts;
-             DROP TABLE IF EXISTS note_fts_row;",
-        );
-        crate::shell_catalog::clear_catalog_counts(conn);
-        conn.execute_batch(DDL)
+        conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(|e| format!("schema migrate: {e}"))?;
+        let migrated = conn
+            .execute_batch(
+                "DELETE FROM link_edge;
+                 DELETE FROM tag_map;
+                 DELETE FROM note_meta;
+                 DROP TABLE IF EXISTS note_fts;
+                 DROP TABLE IF EXISTS note_fts_row;",
+            )
+            .and_then(|_| conn.execute_batch(DDL));
+        if let Err(e) = migrated {
+            return Err(migration_failure(conn, e));
+        }
+        if let Err(e) = conn.execute_batch("COMMIT") {
+            return Err(migration_failure(conn, e));
+        }
+        crate::shell_catalog::clear_catalog_counts(conn);
     }
 
     conn.execute(
@@ -275,8 +218,11 @@ fn ensure_schema(conn: &Connection, vault_id: &str, vault_root: Option<&str>) ->
     Ok(())
 }
 
-fn fts_escape_query(q: &str) -> String {
-    q.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+/// FTS5 MATCH text, or `None` when the query has no indexable token.
+/// Callers must not run `MATCH` with an empty string — FTS5 treats that as an error.
+fn fts_escape_query(q: &str) -> Option<String> {
+    let parts: Vec<String> = q
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
         .filter(|t| t.len() >= 2)
         .map(|t| {
             let cleaned: String = t
@@ -285,8 +231,13 @@ fn fts_escape_query(q: &str) -> String {
                 .collect();
             format!("\"{cleaned}\"*")
         })
-        .collect::<Vec<_>>()
-        .join(" ")
+        .filter(|part| part != "\"\"*")
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
 }
 
 fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
@@ -366,7 +317,7 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
         // An opened note is the index for that file. Mark it deep so the
         // next fill does not spend its window re-reading the same text.
         if !body.is_empty() {
-            crate::index_fill::ensure_fill_depth_column(conn);
+            crate::index_fill::ensure_fill_depth_column(conn)?;
             conn.execute(
                 "UPDATE note_meta SET fill_depth = ?1
                  WHERE id = ?2 AND COALESCE(fill_depth, 0) < ?1",
@@ -415,8 +366,11 @@ fn upsert_note_tx(conn: &Connection, note: &NoteMetaDto) -> Result<(), String> {
 
 fn remove_note_tx(conn: &Connection, id: &str) -> Result<(), String> {
     crate::index_fill::delete_note_fts(conn, id)?;
-    conn.execute("DELETE FROM link_edge WHERE source_id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM link_edge WHERE source_id = ?1 OR target_id = ?1",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM tag_map WHERE note_id = ?1", params![id])
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM note_meta WHERE id = ?1", params![id])
@@ -430,7 +384,9 @@ fn wipe_tx(conn: &Connection) -> Result<(), String> {
          DELETE FROM tag_map;
          DELETE FROM note_meta;
          DELETE FROM note_fts;
-         DELETE FROM note_fts_row;",
+         DELETE FROM note_fts_row;
+         DELETE FROM vault_registry;
+         DELETE FROM capture_queue;",
     )
     .map_err(|e| e.to_string())?;
     crate::shell_catalog::clear_catalog_counts(conn);
@@ -498,6 +454,11 @@ fn search_tx(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchHit
         return Ok(out);
     }
 
+    // "!!!" / "??" produce no token. Returning here avoids MATCH '' which FTS5 rejects.
+    if !q.chars().any(|c| c.is_alphanumeric()) {
+        return Ok(Vec::new());
+    }
+
     let fts_q = fts_escape_query(q);
     // Titles already committed in note_meta (first page, a folder opened
     // before the walker, a discover batch) must match even when FTS has
@@ -524,10 +485,10 @@ fn search_tx(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchHit
             });
         }
     }
-    if fts_q.is_empty() {
+    let Some(fts_q) = fts_q else {
         out.truncate(limit.max(0) as usize);
         return Ok(out);
-    }
+    };
 
     // Ranking every match of a common word at 500k notes takes seconds. The
     // title hits above are already the answer then; the rank stops at its budget.
@@ -1079,7 +1040,7 @@ pub fn vault_index_list(
         .get(&db_path)
         .ok_or_else(|| "index not open".to_string())?;
     let lim = limit.unwrap_or(500_000).max(1);
-    crate::index_fill::ensure_fill_depth_column(conn);
+    crate::index_fill::ensure_fill_depth_column(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, m.size,
@@ -2086,4 +2047,179 @@ pub fn vault_shell_mentions(
     with_shell_conn(&state, &db_path, |conn| {
         crate::shell_catalog::query_mention_heads(conn, &phrase, limit.unwrap_or(24))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::{params, Connection};
+
+    fn open_index() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(DDL).unwrap();
+        conn
+    }
+
+    fn count(conn: &Connection, table: &str) -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    fn insert_note(conn: &Connection, id: &str, path: &str) {
+        conn.execute(
+            "INSERT INTO note_meta(id, path, name, kind, mtime, title, deleted)
+             VALUES (?1,?2,?2,'note',1,?1,0)",
+            params![id, path],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn shared_schema_includes_fill_depth_and_fts_row_map() {
+        assert!(DDL.contains("fill_depth INTEGER"));
+        assert!(DDL.contains("CREATE TABLE IF NOT EXISTS note_fts_row"));
+        assert!(DDL.contains("CREATE TABLE IF NOT EXISTS vault_registry"));
+        assert!(DDL.contains("CREATE TABLE IF NOT EXISTS capture_queue"));
+        assert_eq!(SCHEMA_VERSION, 3);
+    }
+
+    #[test]
+    fn failed_schema_migration_rolls_back_and_keeps_old_version() {
+        let conn = open_index();
+        conn.execute(
+            "INSERT INTO meta_kv(key, value) VALUES ('schema_version', '1')",
+            [],
+        )
+        .unwrap();
+        insert_note(&conn, "keep", "keep.md");
+        conn.execute(
+            "INSERT INTO link_edge(source_id, target_raw, target_norm, target_id)
+             VALUES ('keep','Other','other',NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER block_note_delete BEFORE DELETE ON note_meta
+             BEGIN
+               SELECT RAISE(ABORT, 'migration blocked');
+             END;",
+        )
+        .unwrap();
+
+        let err = ensure_schema(&conn, "vault", Some("/vault")).unwrap_err();
+        assert!(err.contains("schema migrate"), "{err}");
+        let ver: String = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key='schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ver, "1");
+        assert_eq!(count(&conn, "note_meta"), 1);
+        assert_eq!(count(&conn, "link_edge"), 1);
+        let root: Result<String, _> = conn.query_row(
+            "SELECT value FROM meta_kv WHERE key='vault_root'",
+            [],
+            |r| r.get(0),
+        );
+        assert!(root.is_err());
+    }
+
+    #[test]
+    fn schema_migration_from_v1_rebuilds_and_bumps_version() {
+        let conn = open_index();
+        conn.execute(
+            "INSERT INTO meta_kv(key, value) VALUES ('schema_version', '1')",
+            [],
+        )
+        .unwrap();
+        insert_note(&conn, "old", "old.md");
+        ensure_schema(&conn, "vault", Some("/vault")).unwrap();
+        let ver: String = conn
+            .query_row(
+                "SELECT value FROM meta_kv WHERE key='schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ver, "3");
+        assert_eq!(count(&conn, "note_meta"), 0);
+        let fts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='note_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts, 1);
+    }
+
+    #[test]
+    fn punctuation_only_search_does_not_query_fts() {
+        let conn = open_index();
+        insert_note(&conn, "!!!", "!!!.md");
+        conn.execute_batch("DROP TABLE note_fts;").unwrap();
+        let bangs = search_tx(&conn, "!!!", 10).expect("punctuation must not query fts");
+        assert!(bangs.is_empty());
+        let questions = search_tx(&conn, "??", 10).expect("punctuation must not query fts");
+        assert!(questions.is_empty());
+        assert!(fts_escape_query("!!!").is_none());
+        assert!(fts_escape_query("??").is_none());
+        assert_eq!(fts_escape_query("hello").as_deref(), Some("\"hello\"*"));
+    }
+
+    #[test]
+    fn remove_note_deletes_reverse_edges() {
+        let conn = open_index();
+        insert_note(&conn, "gone", "gone.md");
+        insert_note(&conn, "keep", "keep.md");
+        insert_note(&conn, "other", "other.md");
+        conn.execute_batch(
+            "INSERT INTO link_edge(source_id, target_raw, target_norm, target_id) VALUES
+               ('gone','Keep','keep','keep'),
+               ('keep','Gone','gone','gone'),
+               ('other','Keep','keep','keep');",
+        )
+        .unwrap();
+        remove_note_tx(&conn, "gone").unwrap();
+        let left: Vec<(String, Option<String>)> = {
+            let mut stmt = conn
+                .prepare("SELECT source_id, target_id FROM link_edge ORDER BY source_id")
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        assert_eq!(left, vec![("other".into(), Some("keep".into()))]);
+    }
+
+    #[test]
+    fn wipe_clears_registry_and_capture_queue() {
+        let conn = open_index();
+        insert_note(&conn, "n", "n.md");
+        conn.execute(
+            "INSERT INTO vault_registry(vault_id, display_name, root_rel, created_ms, opened_ms, note_count, index_path)
+             VALUES ('v','Vault','root',1,1,1,'indexes/v.sqlite')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO capture_queue(id, vault_id, path_hint, body, created_ms, status)
+             VALUES ('c','v','n.md','body',1,'pending')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO meta_kv(key, value) VALUES ('schema_version','3')",
+            [],
+        )
+        .unwrap();
+        wipe_tx(&conn).unwrap();
+        assert_eq!(count(&conn, "note_meta"), 0);
+        assert_eq!(count(&conn, "vault_registry"), 0);
+        assert_eq!(count(&conn, "capture_queue"), 0);
+        assert_eq!(count(&conn, "meta_kv"), 1);
+    }
 }

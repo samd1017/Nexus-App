@@ -471,7 +471,7 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShellRow> {
 
 /// `note_meta.ctime` is added by fill. A catalog opened before that column
 /// existed still has to answer the page query.
-fn ensure_shell_meta(conn: &Connection) {
+fn ensure_shell_meta(conn: &Connection) -> Result<(), String> {
     let has = conn
         .query_row(
             "SELECT 1 FROM pragma_table_info('note_meta') WHERE name='ctime' LIMIT 1",
@@ -480,8 +480,9 @@ fn ensure_shell_meta(conn: &Connection) {
         )
         .is_ok();
     if !has {
-        crate::index_fill::ensure_fill_depth_column(conn);
+        crate::index_fill::ensure_fill_depth_column(conn)?;
     }
+    Ok(())
 }
 
 const PAGE_SQL_ROOT: &str = "
@@ -532,7 +533,7 @@ pub fn query_children(
     limit: i64,
     offset: i64,
 ) -> Result<ShellPage, String> {
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let parent_path = normalize_rel(parent_path);
     let limit = limit.clamp(1, 2_000);
     let offset = offset.max(0);
@@ -587,7 +588,7 @@ pub fn query_level(
 }
 
 fn row_by_path(conn: &Connection, path: &str) -> Result<Option<ShellRow>, String> {
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime,
@@ -609,7 +610,7 @@ fn row_by_path(conn: &Connection, path: &str) -> Result<Option<ShellRow>, String
 }
 
 pub fn query_note(conn: &Connection, id: &str) -> Result<Option<ShellRow>, String> {
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime,
@@ -629,7 +630,7 @@ pub fn query_note(conn: &Connection, id: &str) -> Result<Option<ShellRow>, Strin
 }
 
 fn query_all_bounded(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime,
@@ -750,7 +751,7 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<ShellRow>) -> Result<(), S
     if batch.is_empty() {
         return Ok(());
     }
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     {
         let mut stmt = tx
@@ -1813,7 +1814,7 @@ pub fn query_tag_notes(conn: &Connection, tag: &str, limit: i64) -> Result<Vec<S
             Some(out)
         })
     };
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     if let Some(rows) = collect(
         "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0, m.size, m.ctime
          FROM note_meta m
@@ -2061,7 +2062,7 @@ fn query_recent_hits(conn: &Connection, limit: i64) -> Result<Vec<ShellSuggestHi
 
 /// Resolve a handful of pinned paths. Missing paths are omitted.
 pub fn query_by_paths(conn: &Connection, paths: &[String]) -> Result<Vec<ShellRow>, String> {
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime, 0, size, ctime
@@ -2240,7 +2241,7 @@ pub fn query_path_page(
     if path_q.is_empty() && folder_q.is_empty() {
         return Ok(Vec::new());
     }
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime, 0, size, ctime
@@ -2271,7 +2272,7 @@ pub fn query_path_page(
 /// Notes with no stored link in or out. A page, not the vault.
 pub fn query_orphans(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
     let limit = limit.clamp(1, 24);
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, 0, m.size, m.ctime
@@ -2548,7 +2549,7 @@ pub fn query_mention_heads(
 
 pub fn query_recent(conn: &Connection, limit: i64) -> Result<Vec<ShellRow>, String> {
     let limit = limit.clamp(1, SHELL_RECENT_LIMIT);
-    ensure_shell_meta(conn);
+    ensure_shell_meta(conn)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, path, name, kind, parent_id, mtime, 0, size, ctime

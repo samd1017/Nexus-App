@@ -1,4 +1,5 @@
 mod durable_index;
+mod schema;
 mod task_scan;
 mod fill_join;
 mod index_fill;

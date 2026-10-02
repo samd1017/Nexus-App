@@ -684,9 +684,37 @@ pub fn inferred_fill_depth(fill_depth: Option<i64>) -> i64 {
     fill_depth.unwrap_or(FILL_DEPTH_DEEP)
 }
 
-pub fn ensure_fill_depth_column(conn: &Connection) {
-    let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN fill_depth INTEGER", []);
-    let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN ctime INTEGER", []);
+fn note_meta_has_column(conn: &Connection, column: &str) -> Result<bool, String> {
+    match conn.query_row(
+        "SELECT 1 FROM pragma_table_info('note_meta') WHERE name=?1 LIMIT 1",
+        params![column],
+        |_| Ok(1i64),
+    ) {
+        Ok(_) => Ok(true),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(e) => Err(format!("schema migrate: {e}")),
+    }
+}
+
+fn add_note_meta_column(conn: &Connection, column: &str, decl: &str) -> Result<(), String> {
+    if !matches!(column, "fill_depth" | "ctime" | "walk_gen") {
+        return Err(format!("schema migrate: unknown column {column}"));
+    }
+    if note_meta_has_column(conn, column)? {
+        return Ok(());
+    }
+    conn.execute(
+        &format!("ALTER TABLE note_meta ADD COLUMN {column} {decl}"),
+        [],
+    )
+    .map_err(|e| format!("schema migrate: add note_meta.{column}: {e}"))?;
+    Ok(())
+}
+
+pub fn ensure_fill_depth_column(conn: &Connection) -> Result<(), String> {
+    add_note_meta_column(conn, "fill_depth", "INTEGER")?;
+    add_note_meta_column(conn, "ctime", "INTEGER")?;
+    Ok(())
 }
 
 fn load_existing_notes(conn: &Connection) -> HashMap<String, ExistingNote> {
@@ -748,12 +776,12 @@ fn note_dir_entry_before_ready() {
 #[cfg(not(test))]
 fn note_dir_entry_before_ready() {}
 
-fn ensure_walk_gen_column(conn: &Connection) {
-    let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN walk_gen INTEGER", []);
+fn ensure_walk_gen_column(conn: &Connection) -> Result<(), String> {
+    add_note_meta_column(conn, "walk_gen", "INTEGER")
 }
 
-fn next_walk_gen(conn: &Connection) -> i64 {
-    ensure_walk_gen_column(conn);
+fn next_walk_gen(conn: &Connection) -> Result<i64, String> {
+    ensure_walk_gen_column(conn)?;
     let cur: i64 = conn
         .query_row(
             "SELECT CAST(value AS INTEGER) FROM meta_kv WHERE key='fill_walk_gen'",
@@ -767,7 +795,7 @@ fn next_walk_gen(conn: &Connection) -> i64 {
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         params![next.to_string()],
     );
-    next
+    Ok(next)
 }
 
 fn cache_prior(
@@ -2012,13 +2040,18 @@ fn parent_id_for(rel: &str) -> Option<String> {
 
 /// `note_fts.note_id` is UNINDEXED. Deletes go through this rowid map so a
 /// 100k fill does not scan the FTS table once per note.
-pub fn ensure_note_fts_row(conn: &Connection) {
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS note_fts_row (
-            note_id TEXT PRIMARY KEY,
-            fts_rowid INTEGER NOT NULL
-         );",
-    );
+pub fn ensure_note_fts_row(conn: &Connection) -> Result<(), String> {
+    let present = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='note_fts_row'",
+            [],
+            |_| Ok(1i64),
+        )
+        .is_ok();
+    if !present {
+        conn.execute_batch(crate::schema::DDL)
+            .map_err(|e| format!("schema migrate: {e}"))?;
+    }
     let mapped: Option<String> = conn
         .query_row(
             "SELECT value FROM meta_kv WHERE key = 'fts_row_mapped'",
@@ -2027,7 +2060,7 @@ pub fn ensure_note_fts_row(conn: &Connection) {
         )
         .ok();
     if mapped.as_deref() == Some("1") {
-        return;
+        return Ok(());
     }
     // One existence check, not a count of every title. Later writes keep
     // the side table in step, so Ready does not scan the index again.
@@ -2039,13 +2072,14 @@ pub fn ensure_note_fts_row(conn: &Connection) {
         .unwrap_or(0);
     if fts_any == 1 && side_any == 0 {
         // Copying every row waits until after Ready.
-        return;
+        return Ok(());
     }
     let _ = conn.execute(
         "INSERT INTO meta_kv(key, value) VALUES ('fts_row_mapped', '1')
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [],
     );
+    Ok(())
 }
 
 fn fts_row_map_done(conn: &Connection) -> bool {
@@ -2137,7 +2171,7 @@ pub fn replace_note_fts(
     path: &str,
     body: &str,
 ) -> Result<(), String> {
-    ensure_note_fts_row(conn);
+    ensure_note_fts_row(conn)?;
     if let Ok(rowid) = conn.query_row(
         "SELECT fts_rowid FROM note_fts_row WHERE note_id=?1",
         params![id],
@@ -2935,8 +2969,8 @@ pub fn fill_from_disk_with_opts<'a>(
     mut is_cancelled: impl FnMut() -> bool + 'a,
     mut on_progress: impl FnMut(&IndexFillProgress),
 ) -> Result<IndexFillResult, String> {
-    ensure_fill_depth_column(conn);
-    ensure_note_fts_row(conn);
+    ensure_fill_depth_column(conn)?;
+    ensure_note_fts_row(conn)?;
     if opts.force_rebuild {
         clear_title_search_live(conn);
     }
@@ -3116,7 +3150,11 @@ pub fn fill_from_disk_with_opts<'a>(
         usize::MAX
     };
     let ready_at = if deep { TITLE_READY_FLUSH } else { usize::MAX };
-    let walk_gen = if deep { Some(next_walk_gen(conn)) } else { None };
+    let walk_gen = if deep {
+        Some(next_walk_gen(conn)?)
+    } else {
+        None
+    };
     let mut prior: HashMap<String, ExistingNote> = HashMap::new();
     let pre_snapshot = if deep {
         None
@@ -3930,6 +3968,40 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         conn.execute_batch(TEST_DDL).unwrap();
         let _ = conn.busy_timeout(Duration::from_millis(2_000));
         conn
+    }
+
+    #[test]
+    fn column_migration_failure_surfaces() {
+        let conn = Connection::open_in_memory().unwrap();
+        let err = ensure_fill_depth_column(&conn).unwrap_err();
+        assert!(err.contains("schema migrate"), "{err}");
+        let err = ensure_walk_gen_column(&conn).unwrap_err();
+        assert!(err.contains("schema migrate"), "{err}");
+    }
+
+    #[test]
+    fn column_migration_is_idempotent_when_present() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE note_meta (
+               id TEXT PRIMARY KEY,
+               fill_depth INTEGER,
+               ctime INTEGER,
+               walk_gen INTEGER
+             );",
+        )
+        .unwrap();
+        ensure_fill_depth_column(&conn).unwrap();
+        ensure_walk_gen_column(&conn).unwrap();
+        ensure_fill_depth_column(&conn).unwrap();
+    }
+
+    #[test]
+    fn note_fts_row_migration_failure_surfaces() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "query_only", 1i64).unwrap();
+        let err = ensure_note_fts_row(&conn).unwrap_err();
+        assert!(err.contains("schema migrate"), "{err}");
     }
 
     fn live_note_count(conn: &Connection) -> i64 {
@@ -5854,7 +5926,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "secretbodytoken cluster retrieval\n",
         );
         let mut conn = open_test_conn(&db);
-        ensure_fill_depth_column(&conn);
+        ensure_fill_depth_column(&conn).unwrap();
         let complete = crate::shell_catalog::seed_first_page(&mut conn, &vault, None).unwrap();
         assert!(!complete);
         let mut early_total: Option<i64> = None;
@@ -5912,7 +5984,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             "secretbodytoken cluster retrieval\n",
         );
         let mut conn = open_test_conn(&db);
-        ensure_fill_depth_column(&conn);
+        ensure_fill_depth_column(&conn).unwrap();
         let t0 = Instant::now();
         let page_rows = crate::shell_catalog::seed_first_page(&mut conn, &vault, Some("zz-late/Hub.md"))
             .expect("seed");
