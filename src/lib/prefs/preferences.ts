@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { accentInk, onAccentHex } from "@/lib/appearance/accent-chrome";
 import { applyScaleSafeDefaults } from "@/lib/vault/scale-flags";
 import {
   listShortcutRows,
@@ -293,6 +294,16 @@ export function applyPrefsToDom(prefs: NexusPrefs): void {
   } catch {
     /* ignore */
   }
+
+  // Selection bars, focus rings, and active icons. Light/paper darken the
+  // accent until it clears pale surfaces; dark islands keep the bright ink.
+  const ink = accentInk(hex, resolvedTheme);
+  const inkOnDark = accentInk(hex, "dark");
+  root.style.setProperty("--accent-ink", ink);
+  root.style.setProperty("--accent-ink-on-dark", inkOnDark);
+  root.style.setProperty("--focus-ring", ink);
+  root.style.setProperty("--focus-ring-on-dark", inkOnDark);
+  root.style.setProperty("--on-accent", onAccentHex(hex));
 
   // Keep Tailwind theme token in sync where used
   root.style.setProperty("--color-accent", hex.toLowerCase());

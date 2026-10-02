@@ -329,7 +329,7 @@ const TreeRow = memo(function TreeRow({
         renaming && "is-renaming",
         isDragging && "opacity-40",
         isDropHover &&
-          "ring-1 ring-[var(--accent)] bg-[rgba(0,200,255,0.1)]",
+          "ring-1 ring-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]",
       )}
       style={
         {
@@ -1618,7 +1618,7 @@ export const FileTree = memo(function FileTree() {
           </span>
           <button
             type="button"
-            className="mr-1 flex shrink-0 items-center justify-center rounded-md text-[var(--accent)] hover:bg-[rgba(0,200,255,0.12)]"
+            className="mr-1 flex shrink-0 items-center justify-center rounded-md text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]"
             style={{ height: 26, width: 26 }}
             aria-label="New note in this folder"
             title="New note in this folder"
@@ -1684,7 +1684,7 @@ export const FileTree = memo(function FileTree() {
       className={cn(
         "nexus-focus-host titlebar-no-drag relative h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-3",
         rootDropActive &&
-          "rounded-lg ring-1 ring-inset ring-[rgba(0,200,255,0.35)]",
+          "rounded-lg ring-1 ring-inset ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]",
       )}
       role="tree"
       aria-label="Vault notes and folders"
@@ -1720,7 +1720,7 @@ export const FileTree = memo(function FileTree() {
           status="vault"
           className={cn(
             "mx-2 my-4",
-            treeHasFocus && "ring-2 ring-[rgba(0,200,255,0.85)]",
+            treeHasFocus && "ring-2 ring-[color-mix(in_srgb,var(--accent)_85%,transparent)]",
           )}
           title="Nothing in this vault yet"
           description="Enter starts a note."
@@ -1798,7 +1798,7 @@ export const FileTree = memo(function FileTree() {
       ) : null}
 
       {dragId ? (
-        <div className="pointer-events-none sticky bottom-1 mt-3 rounded-md border border-dashed border-[rgba(0,200,255,0.28)] bg-[rgba(0,200,255,0.05)] px-2 py-1.5 text-center text-[10.5px] text-[var(--text-muted)]">
+        <div className="pointer-events-none sticky bottom-1 mt-3 rounded-md border border-dashed border-[color-mix(in_srgb,var(--accent)_28%,transparent)] bg-[color-mix(in_srgb,var(--accent)_5%,transparent)] px-2 py-1.5 text-center text-[10.5px] text-[var(--text-muted)]">
           Drop onto a folder to move it inside. Drop on empty space to leave it at the top.
         </div>
       ) : null}
@@ -1806,7 +1806,7 @@ export const FileTree = memo(function FileTree() {
       {ghostLabel ? (
         <div
           ref={ghostElRef}
-          className="pointer-events-none fixed z-[100] rounded-lg border border-[rgba(0,200,255,0.4)] bg-[rgba(15,15,18,0.95)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.55)]"
+          className="pointer-events-none fixed z-[100] rounded-lg border border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[rgba(15,15,18,0.95)] px-2.5 py-1 text-[12px] font-medium text-[var(--text-primary)] shadow-[0_12px_40px_rgba(0,0,0,0.55)]"
           style={{
             left: (pendingGhostPos.current?.x ?? 0) + 12,
             top: (pendingGhostPos.current?.y ?? 0) + 12,

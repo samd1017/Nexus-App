@@ -132,11 +132,11 @@ export function VaultSwitcher() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex w-full items-center gap-2 rounded-[12px] border border-[var(--border)] bg-white/[0.03] px-3 py-2.5 text-left transition-[border-color,background,transform] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] hover:border-[rgba(0,200,255,0.25)] hover:bg-white/[0.05]",
-          open && "border-[rgba(0,200,255,0.3)] accent-glow",
+          "flex w-full items-center gap-2 rounded-[12px] border border-[var(--border)] bg-white/[0.03] px-3 py-2.5 text-left transition-[border-color,background,transform] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] hover:border-[color-mix(in_srgb,var(--accent)_25%,transparent)] hover:bg-white/[0.05]",
+          open && "border-[color-mix(in_srgb,var(--accent)_30%,transparent)] accent-glow",
         )}
       >
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[rgba(0,200,255,0.12)] text-[var(--accent)]">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]">
           <HardDrive size={16} />
         </div>
         <div className="min-w-0 flex-1">
@@ -173,7 +173,7 @@ export function VaultSwitcher() {
                     disabled={openLocked}
                     className={cn(
                       "flex w-full items-start gap-2 rounded-[10px] px-2.5 py-2 text-left hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-40",
-                      active && "bg-[rgba(0,200,255,0.08)]",
+                      active && "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
                     )}
                     onClick={() => openRecent(r.id, r.mode)}
                   >

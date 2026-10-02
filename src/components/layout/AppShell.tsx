@@ -120,7 +120,7 @@ function OpenProgressBanner() {
         "flex shrink-0 flex-col border-b px-3",
         isError
           ? "border-[rgba(255,69,58,0.3)] bg-[rgba(255,69,58,0.08)] py-1.5 text-[12px] text-[var(--danger)]"
-          : "border-[var(--border)] bg-[rgba(0,200,255,0.06)] py-1.5 text-[12px] text-[var(--text-secondary)]",
+          : "border-[var(--border)] bg-[color-mix(in_srgb,var(--accent)_6%,transparent)] py-1.5 text-[12px] text-[var(--text-secondary)]",
       )}
       data-open-progress={progress.phase}
       role={valueNow != null ? "progressbar" : "status"}
@@ -538,7 +538,7 @@ export function AppShell() {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--bg-deepest)]">
         <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[rgba(0,200,255,0.25)] bg-[rgba(0,200,255,0.08)] shadow-[0_0_28px_rgba(0,200,255,0.15)]">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[color-mix(in_srgb,var(--accent)_25%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] shadow-[0_0_28px_color-mix(in_srgb,var(--accent)_15%,transparent)]">
             <NexusMark size={28} className="text-[var(--text-primary)]" />
           </div>
           <p className="text-[14px] text-[var(--text-secondary)]">

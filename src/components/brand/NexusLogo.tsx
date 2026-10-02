@@ -43,7 +43,7 @@ export function NexusMark({
       role={decorative ? "presentation" : "img"}
       aria-hidden={decorative ? true : undefined}
       aria-label={decorative ? undefined : title}
-      style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.45)) drop-shadow(0 0 10px rgba(0,200,255,0.18))" }}
+      style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.45)) drop-shadow(0 0 10px var(--accent-glow))" }}
     >
       {decorative ? null : <title>{title}</title>}
       <defs>
@@ -73,12 +73,12 @@ export function NexusMark({
         <linearGradient id={`${uid}-rim`} x1="2" y1="2" x2="28" y2="28" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#6a7484" />
           <stop offset="50%" stopColor="#2a303a" />
-          <stop offset="100%" stopColor="#00c8ff" stopOpacity="0.55" />
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.55" />
         </linearGradient>
         <radialGradient id={`${uid}-node`} cx="50%" cy="40%" r="60%">
-          <stop offset="0%" stopColor="#9aeeff" />
-          <stop offset="45%" stopColor="#00c8ff" />
-          <stop offset="100%" stopColor="#007a9e" />
+          <stop offset="0%" stopColor="color-mix(in srgb, var(--accent) 35%, white)" />
+          <stop offset="45%" stopColor="var(--accent)" />
+          <stop offset="100%" stopColor="color-mix(in srgb, var(--accent) 55%, black)" />
         </radialGradient>
         <filter id={`${uid}-glow`} x="-40%" y="-40%" width="180%" height="180%">
           <feGaussianBlur stdDeviation="1.1" result="b" />
@@ -133,14 +133,14 @@ export function NexusMark({
 
       {/* 3D cyan nexus node at cross */}
       <g filter={`url(#${uid}-glow)`}>
-        <ellipse cx="16.3" cy="16.7" rx="2.6" ry="1.1" fill="#00c8ff" opacity="0.28" />
+        <ellipse cx="16.3" cy="16.7" rx="2.6" ry="1.1" fill="var(--accent)" opacity="0.28" />
         <circle cx="16" cy="15.7" r="2.35" fill={`url(#${uid}-node)`} />
         <circle cx="15.35" cy="15.05" r="0.85" fill="#e8fbff" opacity="0.75" />
         <circle
           cx="16"
           cy="15.7"
           r="3.55"
-          stroke="#00c8ff"
+          stroke="var(--accent)"
           strokeOpacity="0.45"
           strokeWidth="0.85"
           fill="none"

@@ -119,9 +119,9 @@ export function FirstRunCoach() {
       role="region"
       aria-label="Quick tour"
     >
-      <div className="pointer-events-auto first-run-coach glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] border border-[rgba(0,200,255,0.22)] shadow-[0_20px_60px_rgba(0,0,0,0.55),0_0_40px_rgba(0,200,255,0.08)]">
+      <div className="pointer-events-auto first-run-coach glass-elevated w-full max-w-xl overflow-hidden rounded-[16px] border border-[color-mix(in_srgb,var(--accent)_22%,transparent)] shadow-[0_20px_60px_rgba(0,0,0,0.55),0_0_40px_color-mix(in_srgb,var(--accent)_8%,transparent)]">
         <div className="flex items-start gap-3 border-b border-[var(--border)] px-4 py-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[rgba(0,200,255,0.12)] text-[var(--accent)]">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]">
             <Sparkles size={16} />
           </div>
           <div className="min-w-0 flex-1">

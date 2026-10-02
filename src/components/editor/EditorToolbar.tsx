@@ -193,7 +193,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       className={cn(
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors",
         active
-          ? "bg-[rgba(0,200,255,0.12)] text-[var(--accent)]"
+          ? "bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]"
           : "text-[var(--text-secondary)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
       )}
     >
@@ -555,7 +555,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                 className={cn(
                   "inline-flex h-8 min-w-8 shrink-0 items-center justify-center gap-1 rounded-md border px-2 text-[12px] transition-colors sm:h-7 sm:min-w-7",
                   currentBullet === b.id
-                    ? "border-[rgba(0,200,255,0.45)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)]"
+                    ? "border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]"
                     : "border-transparent bg-white/[0.03] text-[var(--text-secondary)] hover:border-[var(--border)] hover:text-[var(--text-primary)]",
                 )}
               >
@@ -569,7 +569,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         ) : null}
 
         {inTable ? (
-          <div className="flex flex-wrap items-center gap-0.5 border-t border-[var(--border)] bg-[rgba(0,200,255,0.04)] px-3 py-1.5">
+          <div className="flex flex-wrap items-center gap-0.5 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--accent)_4%,transparent)] px-3 py-1.5">
             <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">
               Table
             </span>

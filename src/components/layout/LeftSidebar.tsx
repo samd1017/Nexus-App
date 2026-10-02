@@ -303,7 +303,7 @@ export function LeftSidebar() {
           <button
             type="button"
             onClick={() => setCommandOpen(true)}
-            className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-white/[0.03] px-2.5 text-left text-[12.5px] text-[var(--text-muted)] transition-colors hover:border-[rgba(0,200,255,0.25)] hover:text-[var(--text-secondary)]"
+            className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-white/[0.03] px-2.5 text-left text-[12.5px] text-[var(--text-muted)] transition-colors hover:border-[color-mix(in_srgb,var(--accent)_25%,transparent)] hover:text-[var(--text-secondary)]"
             title={`Search (${formatShortcut("K")})`}
             aria-label="Search"
           >
@@ -383,7 +383,7 @@ export function LeftSidebar() {
                   align="start"
                   sideOffset={6}
                   collisionPadding={16}
-                  className="month-cal-popover z-[80] w-[min(280px,calc(100vw-24px))] rounded-[14px] border border-[var(--border)] bg-[rgba(16,16,20,0.98)] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.6),0_0_0_1px_rgba(0,200,255,0.08)] backdrop-blur-xl"
+                  className="month-cal-popover z-[80] w-[min(280px,calc(100vw-24px))] rounded-[14px] border border-[var(--border)] bg-[rgba(16,16,20,0.98)] p-3.5 shadow-[0_20px_56px_rgba(0,0,0,0.6),0_0_0_1px_color-mix(in_srgb,var(--accent)_8%,transparent)] backdrop-blur-xl"
                   onOpenAutoFocus={(e) => e.preventDefault()}
                   onEscapeKeyDown={() => setMonthOpen(false)}
                 >
@@ -450,7 +450,7 @@ export function LeftSidebar() {
                     isActive
                       ? "is-active"
                       : isToday
-                        ? "border-[rgba(0,200,255,0.22)] bg-white/[0.04] text-[var(--text-primary)]"
+                        ? "border-[color-mix(in_srgb,var(--accent)_22%,transparent)] bg-white/[0.04] text-[var(--text-primary)]"
                         : isYesterday
                           ? "border-[var(--border)] bg-white/[0.03] text-[var(--text-secondary)]"
                           : "border-transparent bg-transparent text-[var(--text-muted)] hover:border-[var(--border)] hover:bg-white/[0.04] hover:text-[var(--text-secondary)]",
@@ -464,7 +464,7 @@ export function LeftSidebar() {
                     <span
                       className={cn(
                         "absolute bottom-0.5 h-0.5 w-0.5 rounded-full",
-                        isActive ? "bg-[var(--accent)]" : "bg-[rgba(0,200,255,0.65)]",
+                        isActive ? "bg-[var(--accent)]" : "bg-[color-mix(in_srgb,var(--accent)_65%,transparent)]",
                       )}
                       aria-hidden
                     />

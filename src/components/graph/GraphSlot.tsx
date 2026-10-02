@@ -35,7 +35,7 @@ function SurfaceButton({
       className={cn(
         "rounded-full px-2.5 py-1 text-[11.5px] font-semibold tracking-wide",
         active
-          ? "bg-[var(--accent)] text-black"
+          ? "bg-[var(--accent)] text-[var(--on-accent)]"
           : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]",
       )}
     >

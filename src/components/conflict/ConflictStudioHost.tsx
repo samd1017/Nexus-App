@@ -238,7 +238,7 @@ export function ConflictStudioHost() {
                   className={cn(
                     "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
                     activeItem?.key === it.key
-                      ? "border-[rgba(0,200,255,0.4)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)]"
+                      ? "border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]"
                       : "border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)]",
                   )}
                   onClick={() =>
@@ -269,7 +269,7 @@ export function ConflictStudioHost() {
                     className={cn(
                       "flex-1 rounded-full border px-2 py-1.5 text-[12px] font-medium",
                       mobileSide === side
-                        ? "border-[rgba(0,200,255,0.4)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)]"
+                        ? "border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]"
                         : "border-[var(--border)] text-[var(--text-muted)]",
                     )}
                     onClick={() => setMobileSide(side)}
