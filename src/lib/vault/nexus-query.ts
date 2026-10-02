@@ -1,6 +1,6 @@
 /**
  * Built-in note list for one fenced block.
- * LIST or TABLE, FROM a folder or tag, WHERE comparisons joined by AND or by OR (up to 8, not mixed),
+ * LIST or TABLE, FROM a folder or tag, WHERE comparisons joined by AND and OR (up to 8; AND binds tighter),
  * including date(), > < comparisons, and contains(), TABLE columns from frontmatter,
  * one + - * / formula column, or choice(condition, a, b), tags joined by OR or AND,
  * SORT title|mtime|size|ctime or a field.
@@ -25,13 +25,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. Mixing AND and OR in one WHERE is not supported — use a chain of AND, or a chain of OR. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Mixing AND and OR is not supported. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. Mixing AND and OR in one WHERE is not supported — use a chain of AND, or a chain of OR. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -109,8 +109,8 @@ type Parsed =
       tagMode: TagJoin;
       columns: QueryColumn[];
       where: WhereCmp[];
-      /** One join for the whole WHERE chain. A single comparison is AND. */
-      whereJoin: "and" | "or";
+      /** Join before each comparison after the first. AND groups, then OR of those groups. */
+      whereJoins: ("and" | "or")[];
       sort: QuerySort | null;
       /** One link join. Outgoing and incoming are not combined. */
       flattenLinks: "out" | "in" | null;
@@ -599,7 +599,7 @@ export function parseNexusQuery(source: string): Parsed {
   let sawJoin = false;
   const columns: QueryColumn[] = [];
   const where: WhereCmp[] = [];
-  let whereJoin: "and" | "or" | null = null;
+  const whereJoins: ("and" | "or")[] = [];
   let sort: QuerySort | null = null;
   let flattenLinks: "out" | "in" | null = null;
   let groupBy: string | null = null;
@@ -624,13 +624,10 @@ export function parseNexusQuery(source: string): Parsed {
   };
   const addWhere = (cmp: WhereCmp, join: "and" | "or" | null): string | null => {
     if (where.length && !join) return "Join WHERE comparisons with AND or OR.";
-    if (join && whereJoin && whereJoin !== join) {
-      return "WHERE cannot mix AND and OR. Use a chain of AND, or a chain of OR.";
-    }
     if (where.length >= MAX_WHERE) return `Only ${MAX_WHERE} WHERE comparisons fit in one AND or OR chain.`;
     const shape = whereCmpError(cmp);
     if (shape) return shape;
-    if (join) whereJoin = join;
+    if (join) whereJoins.push(join);
     where.push(cmp);
     return null;
   };
@@ -846,7 +843,7 @@ export function parseNexusQuery(source: string): Parsed {
     tagMode,
     columns,
     where,
-    whereJoin: whereJoin ?? "and",
+    whereJoins,
     sort,
     flattenLinks,
     groupBy,
@@ -1135,32 +1132,32 @@ function whereAll(
   return unloaded ? "unloaded" : "yes";
 }
 
-/** Any comparison may match. A yes wins; otherwise an unloaded field stays unloaded. */
-function whereAny(
+/**
+ * AND binds tighter than OR: `a AND b OR c AND d` is `(a AND b) OR (c AND d)`.
+ * A yes group wins. A miss drops that group. Unloaded stays only when no group matches.
+ */
+function whereChain(
   node: VaultNode,
   where: WhereCmp[],
+  joins: ("and" | "or")[],
   now: number,
   nodes?: Record<string, VaultNode>,
   links?: LinkScan | null,
 ): "yes" | "no" | "unloaded" {
   let unloaded = false;
-  for (const cmp of where) {
-    const match = whereMatch(node, cmp, now, nodes, links);
+  let groupStart = 0;
+  const finish = (end: number): "yes" | "no" | "unloaded" => whereAll(node, where.slice(groupStart, end), now, nodes, links);
+  for (let i = 0; i < joins.length; i++) {
+    if (joins[i] !== "or") continue;
+    const match = finish(i + 1);
     if (match === "yes") return "yes";
     if (match === "unloaded") unloaded = true;
+    groupStart = i + 1;
   }
+  const tail = finish(where.length);
+  if (tail === "yes") return "yes";
+  if (tail === "unloaded") unloaded = true;
   return unloaded ? "unloaded" : "no";
-}
-
-function whereChain(
-  node: VaultNode,
-  where: WhereCmp[],
-  join: "and" | "or",
-  now: number,
-  nodes?: Record<string, VaultNode>,
-  links?: LinkScan | null,
-): "yes" | "no" | "unloaded" {
-  return join === "or" ? whereAny(node, where, now, nodes, links) : whereAll(node, where, now, nodes, links);
 }
 
 function whereLinkNeeds(where: WhereCmp[]): { out: boolean; inn: boolean } {
@@ -1384,7 +1381,7 @@ function collectInFolder(
   tags: string[],
   tagMode: TagJoin,
   where: WhereCmp[],
-  whereJoin: "and" | "or",
+  whereJoins: ("and" | "or")[],
   now: number,
   links: LinkScan | null = null,
 ): { notes: VaultNode[]; truncated: boolean; budgetHit: boolean; unloaded: number } {
@@ -1413,7 +1410,7 @@ function collectInFolder(
     if (!pathHasPrefix(node.path, prefix)) continue;
     if (!hasTags(node, tags, tagMode)) continue;
     if (where.length) {
-      const match = whereChain(node, where, whereJoin, now, nodes, links);
+      const match = whereChain(node, where, whereJoins, now, nodes, links);
       if (match === "unloaded") {
         unloaded += 1;
         continue;
@@ -1646,7 +1643,7 @@ export function runNexusQuery(
         fieldNote: null,
       };
     }
-    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where, parsed.whereJoin, now, linkScan);
+    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where, parsed.whereJoins, now, linkScan);
     notes = collected.notes;
     budgetHit = collected.budgetHit;
     unloaded = collected.unloaded;
@@ -1672,7 +1669,7 @@ export function runNexusQuery(
     if (parsed.where.length) {
       const kept: VaultNode[] = [];
       for (const note of notes) {
-        const match = whereChain(note, parsed.where, parsed.whereJoin, now, nodes, linkScan);
+        const match = whereChain(note, parsed.where, parsed.whereJoins, now, nodes, linkScan);
         if (match === "unloaded") unloaded += 1;
         else if (match === "yes") kept.push(note);
       }
