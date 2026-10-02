@@ -19,9 +19,12 @@ import {
 } from "@/lib/vault/nexus-query";
 import { problemExcerpt } from "@/lib/vault/query-expr";
 import { queryStarters } from "@/lib/vault/query-starters";
+import { vaultIndex } from "@/lib/vault/indexes";
 
 const BODY_BATCH = 32;
 const LIVE_DELAY_MS = 140;
+/** Edits to notes (this one included) re-run the query once typing pauses. */
+const EDIT_SETTLE_MS = 250;
 
 function columnHeaders(model: NexusQueryModel): string[] {
   if (model.columns) return model.columns;
@@ -63,6 +66,14 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
   const caretAt = useRef<number | null>(null);
   const finished = useRef(false);
   const bodyGen = useSyncExternalStore(subscribeBodyGen, getBodyGen, getBodyGen);
+  // Note edits update nodes in place, so the index generation is what changes.
+  const vaultGen = useVaultStore(() => vaultIndex.generation());
+  const [editGen, setEditGen] = useState(vaultGen);
+  useEffect(() => {
+    if (vaultGen === editGen) return;
+    const timer = window.setTimeout(() => setEditGen(vaultGen), EDIT_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [vaultGen, editGen]);
   /** While editing, results follow the text being typed. */
   const query = editing ? liveDraft : saved;
   const triedBodyIds = useRef(new Set<string>());
@@ -152,7 +163,7 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
     const started = performance.now();
     const result = runNexusQuery(query, nodes, tagExtras, Date.now(), hostId);
     return { model: result, ms: performance.now() - started };
-  }, [query, nodes, tagExtras, bodyGen, hostId]);
+  }, [query, nodes, tagExtras, bodyGen, hostId, editGen]);
   const model = timed.model;
 
   const starters = useMemo(() => (query.trim() ? [] : queryStarters(nodes)), [query, nodes]);
