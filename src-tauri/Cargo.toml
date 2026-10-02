@@ -1,6 +1,6 @@
 [package]
 name = "nexus"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 description = "Nexus — Notes for Humans and Agents"
 authors = ["Nexus"]
 edition = "2021"
