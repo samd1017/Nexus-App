@@ -1200,7 +1200,7 @@ export function NoteTable() {
           value={view.query}
           onChange={(e) => patchView({ query: e.target.value })}
           placeholder="Filter title or property…"
-          className="nexus-field h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+          className="nexus-field h-8 min-w-[10rem] flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
           data-testid="bases-filter"
         />
         <input
@@ -1211,7 +1211,7 @@ export function NoteTable() {
           spellCheck={false}
           aria-invalid={built.filterStatus.problem ? true : undefined}
           className={cn(
-            "nexus-field h-8 min-w-0 flex-[1.4] rounded-md border bg-transparent px-2 font-mono text-[12px]",
+            "nexus-field h-8 min-w-[18rem] flex-[1.4] rounded-md border bg-transparent px-2 font-mono text-[12px]",
             built.filterStatus.problem ? "border-[var(--danger)]" : "border-[var(--border)]",
           )}
           data-testid="bases-where"
