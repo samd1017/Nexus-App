@@ -231,8 +231,20 @@ export class VaultStructuralIndex {
     // Fast path: same key set (typical content edit clones map with one changed value)
     if (prevKeys.length === nextKeys.length) {
       const changed: string[] = [];
+      let swappedKeys = false;
       for (const id of nextKeys) {
-        if (nodes[id] !== prev[id]) changed.push(id);
+        if (nodes[id] === prev[id]) continue;
+        if (!(id in prev)) {
+          swappedKeys = true;
+          break;
+        }
+        changed.push(id);
+      }
+      // Same count but a create and a delete landed together: the delta path
+      // cannot insert, so the new note would be missing from its folder.
+      if (swappedKeys) {
+        this.rebuild(nodes);
+        return;
       }
       // Structural create/delete always changes key count; multi-id patches from
       // rename cascades / external snapshots can be large — rebuild past threshold.
