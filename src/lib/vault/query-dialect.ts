@@ -10,7 +10,10 @@
  *   LIMIT 50
  *
  * LIST shows titles (plus one value), TABLE shows columns, CARDS shows a card per
- * note. FROM is optional; without it the whole vault is read.
+ * note, TASK shows checkbox lines you can tick. FROM is optional; without it the
+ * whole vault is read.
+ *
+ *   TASK FROM "Projects" WHERE !done AND due <= date(today) + 7d SORT urgency DESC
  */
 
 import {
@@ -25,7 +28,7 @@ import {
 /** FROM [[]] or [[#]]: the note the query is written in, as in Dataview. */
 export const THIS_NOTE = "\u0000this";
 
-export type DialectView = "list" | "table" | "cards";
+export type DialectView = "list" | "table" | "cards" | "task";
 
 export type DialectColumn = { label: string; text: string; expr: CompiledExpr };
 
@@ -60,7 +63,7 @@ export type DialectParse = { ok: true; query: DialectQuery } | { ok: false; prob
 
 export const MAX_DIALECT_COLUMNS = 8;
 
-const HEAD = /^(\s*)(list|table|cards)(\s+without\s+id)?(?![\w-])/i;
+const HEAD = /^(\s*)(list|table|cards|task|tasks)(\s+without\s+id)?(?![\w-])/i;
 const CLAUSE = /^(from|where|sort|group\s+by|limit|flatten)(?![\w-])/i;
 
 const FILE_LABELS: Record<string, string> = {
@@ -126,6 +129,15 @@ export function dialectLabel(text: string): string {
 function readColumns(source: string, start: number, end: number, view: DialectView): DialectColumn[] | DialectParse {
   const body = source.slice(start, end);
   if (!body.trim()) return [];
+  if (view === "task") {
+    const lead = body.length - body.trimStart().length;
+    return problem(
+      "TASK shows the task lines themselves, so it takes no columns. Filter with WHERE, like TASK WHERE !done AND due <= today().",
+      "TASK",
+      start + lead,
+      end,
+    );
+  }
   const columns: DialectColumn[] = [];
   for (const part of splitTopCommas(body)) {
     const at = start + part.start;
@@ -291,9 +303,9 @@ export function parseDialect(source: string): DialectParse {
   if (!head) {
     const first = /^\s*(\S*)/.exec(source);
     const lead = (first?.[0].length ?? 0) - (first?.[1]?.length ?? 0);
-    return problem("Start with LIST, TABLE, or CARDS.", "LIST", lead, lead + (first?.[1]?.length || 1));
+    return problem("Start with LIST, TABLE, CARDS, or TASK.", "LIST", lead, lead + (first?.[1]?.length || 1));
   }
-  const view = (head[2] ?? "").toLowerCase() as DialectView;
+  const view = (head[2] ?? "").toLowerCase().replace(/^tasks$/, "task") as DialectView;
   const withoutId = Boolean(head[3]);
   const headEnd = head[0].length;
   const found = clauses(source, headEnd);
@@ -371,7 +383,7 @@ export function parseDialect(source: string): DialectParse {
 export function looksLikeDialect(source: string): boolean {
   const code = source.replace(/"[^"]*"|'[^']*'/g, '""');
   return (
-    /^\s*cards\b/i.test(code) ||
+    /^\s*(?:cards|tasks?)\b/i.test(code) ||
     /\bwithout\s+id\b/i.test(code) ||
     /==|&&|\|\||\[\[|\s+as\s+/i.test(code) ||
     /\b(today|now|link|if|file\.has\w*|file\.inFolder|file\.asLink)\s*\(/i.test(code) ||

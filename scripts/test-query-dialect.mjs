@@ -100,7 +100,7 @@ function problemOf(source) {
   assert.match(listTwo.error, /LIST shows one value/);
 
   const head = problemOf("SHOW status");
-  assert.match(head.error, /Start with LIST, TABLE, or CARDS/);
+  assert.match(head.error, /Start with LIST, TABLE, CARDS, or TASK/);
   assert.equal(head.text, "SHOW");
 
   const self = problemOf("LIST WHERE this.status = status");
@@ -420,7 +420,7 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
 
   const view = readFileSync("src/components/editor/NexusQueryView.tsx", "utf8");
   assert.match(view, /getAttribute\("data-note-id"\)/);
-  assert.match(view, /runNexusQuery\(query, nodes, tagExtras, Date\.now\(\), hostId\)/);
+  assert.match(view, /runNexusQuery\(query, nodes, tagExtras, Date\.now\(\), hostId, taskIndex\.tasks\)/);
   const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
   assert.match(preview, /renderNexusQueries\(nexusQueryEls, nodes, activeNoteId\)/);
 }

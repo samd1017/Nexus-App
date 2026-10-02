@@ -1,6 +1,6 @@
 import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
-import { LayoutGrid, List, Table2 } from "lucide-react";
+import { LayoutGrid, List, ListChecks, Table2 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { getBodyGen, subscribeBodyGen } from "@/lib/vault/content";
@@ -20,6 +20,9 @@ import {
 import { problemExcerpt } from "@/lib/vault/query-expr";
 import { queryStarters } from "@/lib/vault/query-starters";
 import { vaultIndex } from "@/lib/vault/indexes";
+import { useTaskIndex } from "@/lib/tasks/task-index";
+import { localToday } from "@/lib/tasks/dates";
+import { TaskRow } from "@/components/tasks/TaskRow";
 
 const BODY_BATCH = 32;
 const LIVE_DELAY_MS = 140;
@@ -33,9 +36,9 @@ function columnHeaders(model: NexusQueryModel): string[] {
 
 function countLine(model: NexusQueryModel, ms: number): string {
   if (model.error || model.help || !model.mode) return "";
-  const total = model.total ?? model.rows.length;
-  const shown = model.rows.length;
-  const noun = total === 1 ? "note" : "notes";
+  const shown = model.tasks ? model.tasks.length : model.rows.length;
+  const total = model.total ?? shown;
+  const noun = model.mode === "task" ? (total === 1 ? "task" : "tasks") : total === 1 ? "note" : "notes";
   const head = shown < total ? `${shown} of ${total} ${noun}` : `${total} ${noun}`;
   return `${head} · ${ms < 1 ? "<1" : Math.round(ms)} ms`;
 }
@@ -76,6 +79,7 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
   }, [vaultGen, editGen]);
   /** While editing, results follow the text being typed. */
   const query = editing ? liveDraft : saved;
+  const taskIndex = useTaskIndex(/^\s*tasks?\b/i.test(query));
   const triedBodyIds = useRef(new Set<string>());
   const queryKey = useRef(query);
   if (queryKey.current !== query) {
@@ -161,9 +165,9 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
 
   const timed = useMemo(() => {
     const started = performance.now();
-    const result = runNexusQuery(query, nodes, tagExtras, Date.now(), hostId);
+    const result = runNexusQuery(query, nodes, tagExtras, Date.now(), hostId, taskIndex.tasks);
     return { model: result, ms: performance.now() - started };
-  }, [query, nodes, tagExtras, bodyGen, hostId, editGen]);
+  }, [query, nodes, tagExtras, bodyGen, hostId, editGen, taskIndex.tasks]);
   const model = timed.model;
 
   const starters = useMemo(() => (query.trim() ? [] : queryStarters(nodes)), [query, nodes]);
@@ -199,7 +203,8 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
   const headers = columnHeaders(model);
   const showTitle = !model.withoutId;
   const showPath = model.showPath ?? true;
-  const ModeIcon = model.mode === "cards" ? LayoutGrid : model.mode === "table" ? Table2 : List;
+  const ModeIcon = model.mode === "cards" ? LayoutGrid : model.mode === "table" ? Table2 : model.mode === "task" ? ListChecks : List;
+  const today = localToday();
   const excerpt = model.problem ? problemExcerpt(query, model.problem) : null;
   const counts = countLine(model, timed.ms);
 
@@ -289,7 +294,7 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
               {!editing ? (
                 <button type="button" className="nexus-query-starter" onClick={() => startEditing()}>
                   <span className="font-medium">Write your own</span>
-                  <span className="text-[10.5px] text-[var(--text-muted)]">LIST, TABLE, or CARDS</span>
+                  <span className="text-[10.5px] text-[var(--text-muted)]">LIST, TABLE, CARDS, or TASK</span>
                 </button>
               ) : null}
             </div>
@@ -334,7 +339,34 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
             Reading notes…
           </p>
         ) : null}
-        {!model.help && !model.error && model.rows.length === 0 ? (
+        {model.mode === "task" && model.tasks ? (
+          model.tasks.length === 0 ? (
+            <p className="nexus-query-empty" data-testid="nexus-query-empty">
+              {taskIndex.state.phase !== "ready"
+                ? `Reading tasks… ${taskIndex.state.scanned.toLocaleString()} notes`
+                : "No tasks match. Loosen WHERE, or check the FROM folder or tag."}
+            </p>
+          ) : (
+            <div className="nexus-query-tasks" data-testid="nexus-query-tasks">
+              {model.tasks.map((row, index) => (
+                <Fragment key={`${row.task.noteId}:${row.task.line}:${row.task.raw}`}>
+                  {row.group != null && row.group !== model.tasks?.[index - 1]?.group ? (
+                    <div className="px-1 pt-2 text-[11px] font-semibold text-[var(--text-muted)]" data-testid="nexus-query-group" data-group={row.group}>
+                      {row.group}
+                    </div>
+                  ) : null}
+                  <TaskRow task={row.task} today={today} />
+                </Fragment>
+              ))}
+              {taskIndex.state.unread > 0 ? (
+                <p className="nexus-query-empty">
+                  {taskIndex.state.unread.toLocaleString()} notes are not read yet; their tasks join as they are. The Tasks panel can read them now.
+                </p>
+              ) : null}
+            </div>
+          )
+        ) : null}
+        {!model.help && !model.error && model.mode !== "task" && model.rows.length === 0 ? (
           <p className="nexus-query-empty" data-testid="nexus-query-empty">
             {tagsLoading
               ? "Reading tags…"
