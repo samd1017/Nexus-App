@@ -646,13 +646,38 @@ function looksClassic(source: string): boolean {
 }
 
 /** The first quoted token a simple-form message names, found in the query. */
+const CLASSIC_CLAUSES = ["FLATTEN", "WHERE", "GROUP BY", "SORT", "LIMIT", "FROM", "TABLE", "LIST"];
+
 function classicProblem(source: string, error: string): QueryProblem | null {
   for (const match of error.matchAll(/“([^”]+)”/g)) {
     const token = match[1] ?? "";
     const at = token ? source.indexOf(token) : -1;
     if (at >= 0) return { message: error, clause: "", start: at, end: at + token.length };
   }
+  const clauseAt = (name: string, from = 0) => {
+    const re = new RegExp(`(?<![\\w.])${name.replace(" ", "\\s+")}(?![\\w-])`, "gi");
+    re.lastIndex = from;
+    return re.exec(source)?.index ?? -1;
+  };
+  for (const clause of CLASSIC_CLAUSES) {
+    if (!new RegExp(`\\b${clause}\\b`).test(error)) continue;
+    const start = clauseAt(clause);
+    if (start < 0) continue;
+    const next = CLASSIC_CLAUSES.map((other) => clauseAt(other, start + clause.length)).filter((at) => at > start);
+    const end = next.length ? Math.min(...next) : source.length;
+    return { message: error, clause, start, end: start + source.slice(start, end).trimEnd().length };
+  }
   return null;
+}
+
+/** Points a missing-folder message at the folder name the query typed. */
+function folderProblem(source: string, folder: string, message: string): QueryProblem {
+  for (const token of [`"${folder}"`, `path:${folder}`, `folder:${folder}`, folder]) {
+    const at = source.toLowerCase().indexOf(token.toLowerCase());
+    if (at >= 0) return { message, clause: "FROM", start: at, end: at + token.length };
+  }
+  const fromAt = source.search(/\bfrom\b/i);
+  return { message, clause: "FROM", start: Math.max(0, fromAt), end: fromAt >= 0 ? source.length : 1 };
 }
 
 /**
@@ -1784,15 +1809,17 @@ export function runNexusQuery(
   if (parsed.path) {
     const folderId = resolveFolder(nodes, parsed.path);
     if (!folderId) {
+      const error = `No folder matches path:${parsed.path}. Use a folder from the file list.`;
       return {
         footer,
         help: null,
-        error: `No folder matches path:${parsed.path}. Use a folder from the file list.`,
+        error,
         mode: parsed.mode,
         rows: [],
         truncated: false,
         scanNote: null,
         fieldNote: null,
+        problem: folderProblem(source, parsed.path, error),
       };
     }
     const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where, parsed.whereJoins, now, linkScan);
@@ -1939,7 +1966,12 @@ export function runNexusQuery(
   } else if (rows.length && frontmatterCols.length) {
     const missing = frontmatterCols.filter((name) => rows.every((row) => row.fields.find((field) => field.name === name)?.value === "—"));
     if (missing.length) {
-      fieldNote = `No loaded note has ${missing.map((name) => `“${name}”`).join(" or ")} in its frontmatter.`;
+      const seen = new Set<string>();
+      for (const item of ordered.slice(0, 300)) {
+        if (typeof item.node.content === "string") for (const key of Object.keys(frontmatterProps(item.node.content))) seen.add(key);
+      }
+      const guess = missing.length === 1 ? didYouMean(columnKey(missing[0]!), seen) : null;
+      fieldNote = `No loaded note has ${missing.map((name) => `“${name}”`).join(" or ")} in its frontmatter.${guess ? ` Did you mean “${guess}”?` : ""}`;
     }
   }
   return {
@@ -2231,12 +2263,11 @@ function runDialect(
   };
   const found = dialectCandidates(query, nodes, tagExtras, ctx, now);
   if (found.error) {
-    const fromAt = source.search(/\bfrom\b/i);
     return {
       ...base,
       mode: null,
       error: found.error,
-      problem: { message: found.error, clause: "FROM", start: Math.max(0, fromAt), end: fromAt >= 0 ? source.length : 1 },
+      problem: folderProblem(source, query.source.folder ?? "", found.error),
     };
   }
   const whereBody = readsNoteBody(query.where.map((expr) => expr.reads));
