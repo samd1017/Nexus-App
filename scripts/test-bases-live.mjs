@@ -517,6 +517,39 @@ const edit = (session, patch) => {
   assert.equal(vault.file, obsidian);
 }
 
+{
+  // Opening another vault .base retargets later saves onto that file. Home is left as it was.
+  const home = fakeVault({ file: richTrip.text });
+  const sync = new LiveBasesSync(home);
+  const opened = await sync.open();
+  const homeTemplate = sync.template();
+  assert.equal(sync.home, home);
+  const other = fakeVault({ file: obsidian });
+  other.name = "Soak-ThreeViews.base";
+  other.path = "Soak-ThreeViews.base";
+  const switching = sync.retarget(other, obsidian);
+  const late = sync.save(edit(opened.session, { query: "home views" }), []);
+  await switching;
+  assert.equal((await late).kind, "stale");
+  assert.equal(home.file, richTrip.text);
+  assert.equal(other.file, obsidian);
+  assert.equal(sync.storage, other);
+  const renamed = edit(ok(obsidian).session, { name: "Renamed soak" });
+  assert.deepEqual(await sync.save(renamed, []), { kind: "saved" });
+  assert.match(other.file, /Renamed soak/);
+  assert.equal(home.file, richTrip.text);
+  other.file = other.file.replace("name: Renamed soak", "name: Outside");
+  const checked = await sync.check();
+  assert.equal(checked.kind, "changed");
+  assert.equal(checked.session.views[0].name, "Outside");
+  await sync.retarget(home, homeTemplate.text);
+  assert.equal(sync.storage, home);
+  assert.deepEqual(await sync.save(opened.session, []), { kind: "unchanged" });
+  assert.match(other.file, /name: Outside/);
+  assert.doesNotMatch(other.file, /All notes/);
+  assert.equal(home.file, richTrip.text);
+}
+
 // Summary formulas live in the file's top-level summaries:, shared by both views.
 {
   // A file the previous build wrote (no summaries:) still reads as Nexus's own: its sync hashes did not move.
@@ -784,6 +817,7 @@ const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
 assert.match(table, /liveBasesSync\(\)/);
 assert.match(table, /live\.sync\.open\(\)/);
 assert.match(table, /live\.sync\.save\(/);
+assert.match(table, /live\.sync\.retarget\(/);
 assert.match(table, /live\.sync\s*\.check\(\)/);
 assert.match(table, /setInterval\(tick, 2000\)/);
 assert.match(table, /addEventListener\("focus", tick\)/);

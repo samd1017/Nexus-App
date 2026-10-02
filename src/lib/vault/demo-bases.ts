@@ -55,3 +55,8 @@ export function demoBaseFile(path: string): DemoBaseFile | null {
   const needle = path.replace(/\\/g, "/");
   return DEMO_VAULT_BASES.find((file) => file.path === needle) ?? null;
 }
+
+/** Saved copy of a vault `.base` in an in-memory vault, separate from the home live file. */
+export function demoBaseStorageKey(vaultId: string, path: string): string {
+  return `nexus-bases-file:${vaultId}:${path.replace(/\\/g, "/").replace(/^\/+/, "")}`;
+}

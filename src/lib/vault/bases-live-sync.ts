@@ -20,6 +20,8 @@ export type LiveRead = { text: string } | { missing: true } | { error: string };
 export type LiveStorage = {
   /** The live file's name in messages, e.g. `Nexus Bases.base`. */
   name: string;
+  /** Vault-relative path writes go to. Home is `Nexus Bases.base`. */
+  path?: string;
   /** Where the live file is, for messages. */
   where: string;
   /** Where views were kept before, for messages. */
@@ -94,7 +96,34 @@ export class LiveBasesSync {
   /** A migration whose notice no open view has shown yet (Bases closed while it ran). */
   private unseen: Extract<LiveOpen, { kind: "migrated" }> | null = null;
 
-  constructor(readonly storage: LiveStorage) {}
+  storage: LiveStorage;
+  /** The file this sync was created with. Opening another `.base` does not replace it. */
+  readonly home: LiveStorage;
+
+  constructor(storage: LiveStorage) {
+    this.storage = storage;
+    this.home = storage;
+  }
+
+  /**
+   * Later reads and writes use `storage`. `text` is that file as just read
+   * (`null` when it does not exist yet). Saves already queued for the previous
+   * file finish first; saves queued after this one see the new file.
+   */
+  retarget(storage: LiveStorage, text: string | null): Promise<void> {
+    return this.run(async () => {
+      this.storage = storage;
+      this.epoch += 1;
+      this.blockedBy = null;
+      this.unseen = null;
+      if (text === null) {
+        this.known = null;
+        this.base = null;
+        return;
+      }
+      this.load(text);
+    });
+  }
 
   private run<T>(task: () => Promise<T>): Promise<T> {
     const next = this.queue.then(task, task);

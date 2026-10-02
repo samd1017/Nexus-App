@@ -1,10 +1,10 @@
 /**
- * `.base` files that already live in the vault. Opening one loads its views
- * through the same reader as Import. Nexus still saves views to the live
- * file (`Nexus Bases.base`, or browser storage), not back into the file opened.
+ * `.base` files that already live in the vault. Opening one makes that file
+ * the live source of truth: later edits write back to it. The home file
+ * (`Nexus Bases.base`, or browser storage) is live only while no other file is.
  */
 
-import { DEMO_VAULT_ID, demoBaseFile } from "@/lib/vault/demo-bases";
+import { DEMO_VAULT_ID, demoBaseFile, demoBaseStorageKey } from "@/lib/vault/demo-bases";
 import { listFsaBaseFiles, readNoteFile } from "@/lib/vault/fs-adapter";
 import { getDesktopRoot, getFsaRoot, useVaultStore } from "@/lib/vault/store";
 import { listDesktopBaseFiles, readDesktopNote } from "@/lib/vault/tauri-adapter";
@@ -44,6 +44,14 @@ export async function readVaultBaseText(path: string): Promise<string> {
   if (desktop) return readDesktopNote(desktop, clean);
   const fsa = desktop ? null : getFsaRoot();
   if (fsa) return readNoteFile(fsa, clean);
+  if (state.vaultId) {
+    try {
+      const saved = localStorage.getItem(demoBaseStorageKey(state.vaultId, clean));
+      if (saved !== null) return saved;
+    } catch {
+      /* the fixture or disk copy is the fallback */
+    }
+  }
   if (state.vaultId === DEMO_VAULT_ID) {
     const demo = demoBaseFile(clean);
     if (demo) return demo.text;
