@@ -1227,7 +1227,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         className="flex h-40 items-center justify-center text-[var(--text-muted)]"
         data-note-id={noteId}
       >
-        <div className="h-5 w-5 animate-pulse rounded-md bg-[rgba(0,200,255,0.2)]" />
+        <div className="h-5 w-5 animate-pulse rounded-md bg-[color-mix(in_srgb,var(--accent)_20%,transparent)]" />
       </div>
     );
   }

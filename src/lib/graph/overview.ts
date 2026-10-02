@@ -1,3 +1,4 @@
+import { hexToRgb, indexedGroupSwatch } from "@/lib/appearance/accent-chrome";
 import { buildWikilinkIndex, resolveWikilink } from "@/lib/graph/build-graph";
 import { extractWikilinkTargets } from "@/lib/markdown/wikilinks";
 import { isCanvasPath } from "@/lib/vault/canvas";
@@ -33,8 +34,11 @@ export function overviewGroupKey(note: OverviewNote, mode: "folder" | "tag"): st
   return note.tags[0] || "(no tag)";
 }
 
-export function overviewGroupColor(key: string, keys: readonly string[]): string {
+export function overviewGroupColor(key: string, keys: readonly string[], accentHex?: string): string {
   const index = Math.max(0, keys.indexOf(key));
+  if (accentHex && hexToRgb(accentHex)) {
+    return indexedGroupSwatch(index, accentHex);
+  }
   return OVERVIEW_GROUP_COLORS[index % OVERVIEW_GROUP_COLORS.length] ?? "#8b7cf6";
 }
 

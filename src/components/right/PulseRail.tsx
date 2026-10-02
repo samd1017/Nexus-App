@@ -62,7 +62,7 @@ const KIND_META: Record<
   hermes: {
     label: "Agent",
     icon: Bot,
-    tone: "text-[var(--accent)] bg-[rgba(0,200,255,0.12)]",
+    tone: "text-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]",
   },
 };
 
@@ -216,7 +216,7 @@ export function PulseRail() {
             className={cn(
               "rounded-full border px-2 py-0.5 text-[10.5px] font-medium transition-colors",
               filter === f.id
-                ? "border-[rgba(0,200,255,0.4)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)]"
+                ? "border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)]"
                 : "border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)]",
             )}
             aria-pressed={filter === f.id}

@@ -70,7 +70,7 @@ export function SlashMenu({
               className={cn(
                 "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left",
                 i === selected
-                  ? "bg-[rgba(0,200,255,0.12)] text-[var(--text-primary)]"
+                  ? "bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)] hover:bg-white/[0.04]",
               )}
               onMouseEnter={() => onHover(i)}

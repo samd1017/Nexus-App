@@ -80,7 +80,7 @@ export function WikilinkSuggestMenu({
               data-idx={0}
               role="option"
               aria-selected
-              className="flex w-full items-center gap-2 rounded-lg bg-[rgba(0,200,255,0.12)] px-2.5 py-2 text-left text-[var(--text-primary)] transition-colors hover:bg-[rgba(0,200,255,0.18)]"
+              className="flex w-full items-center gap-2 rounded-lg bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-2.5 py-2 text-left text-[var(--text-primary)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent)_18%,transparent)]"
               onClick={() => onCreate(createTitle)}
             >
               <FilePlus2 size={14} className="shrink-0 text-[var(--accent)]" />
@@ -109,7 +109,7 @@ export function WikilinkSuggestMenu({
               className={cn(
                 "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
                 i === selected
-                  ? "bg-[rgba(0,200,255,0.12)] text-[var(--text-primary)]"
+                  ? "bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)]",
               )}
               onMouseEnter={() => onHover(i)}

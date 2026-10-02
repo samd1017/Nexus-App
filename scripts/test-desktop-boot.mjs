@@ -604,7 +604,8 @@ const cssSrc = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8
 assert.equal(cssSrc.includes("--focus-ring: #5ad8ff;"), true);
 assert.equal(cssSrc.includes("--focus-ring: #0078a8;"), true);
 assert.equal(cssSrc.includes("outline: var(--focus-ring-width) solid var(--focus-ring);"), true);
-assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), true);
+assert.equal(cssSrc.includes("inset 3px 0 0 var(--accent-ink)"), true);
+assert.equal(cssSrc.includes("inset 3px 0 0 #5ad8ff"), false);
 assert.equal(cssSrc.includes('data-keyboard-focus="row"'), true);
 assert.equal(cssSrc.includes('data-keyboard-focus="control"'), true);
 assert.equal(cssSrc.includes("inset 0 0 0 3px #5ad8ff"), false);
@@ -612,7 +613,8 @@ assert.equal(cssSrc.includes("[data-file-tree]:focus-visible .tree-item.is-focus
 assert.equal(cssSrc.includes('[role="dialog"] button:focus'), false);
 assert.equal(cssSrc.includes("nexus-rebuild-btn"), true);
 assert.equal(cssSrc.includes("nexus-search-field:focus-within"), true);
-assert.equal(cssSrc.includes("caret-color: #5ad8ff"), true);
+assert.equal(cssSrc.includes("caret-color: var(--accent-ink)"), true);
+assert.equal(cssSrc.includes("caret-color: #5ad8ff"), false);
 assert.equal(cssSrc.includes(".nexus-settings-nav:focus"), true);
 assert.equal(storeSrc.includes("Moved to Trash. You can put it back."), true);
 const trashSrc = readFileSync(
@@ -1312,10 +1314,12 @@ assert.equal(editorSrc.includes("<kbd>Arrows</kbd>"), true);
     '[data-theme="light"] [data-testid="vault-first-run"]',
     '[data-theme="light"] [data-testid="vault-first-run-invite"]',
     '[data-theme="light"] [data-testid="note-keys-hint"]',
-    '[data-theme="light"] .tree-item.is-active',
   ]) {
     assert.equal(block.includes(sel), true, `light ink missing ${sel}`);
   }
+  const activeRow = cssSrc.slice(cssSrc.indexOf(".tree-item.is-active {"));
+  assert.equal(activeRow.includes("color: var(--text-primary);"), true);
+  assert.equal(/\.tree-item\.is-active \{[^}]*color:\s*#fff/.test(cssSrc), false);
   assert.equal(block.includes("color: #12141a;"), true);
   // No dialog surface is in that list.
   assert.equal(/nexus-dark-island|data-nexus-confirm|settings-lead/.test(block), false);

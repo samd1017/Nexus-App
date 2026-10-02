@@ -120,4 +120,91 @@ assert.match(palette, /Turn off CSS snippets/);
 assert.match(palette, /label: `Theme: \$\{choice\.label\}`/);
 assert.match(readFileSync("src/components/layout/AppShell.tsx", "utf8"), /useVaultCssSnippets\(\)/);
 
+const chrome = await import("../src/lib/appearance/accent-chrome.ts");
+const darkSurfaces = ["#0F0F12", "#16161A", "#04060A", "#070A14"];
+const lightSurfaces = ["#FFFFFF", "#F7F8FB", "#EEF0F4", "#FBF7EF", "#ECE4D4"];
+for (const preset of ["#00C8FF", "#FF453A", "#30D158", "#7B61FF", "#FF9F0A"]) {
+  for (const bg of darkSurfaces) {
+    const ink = chrome.accentInk(preset, "dark");
+    assert.ok(chrome.contrastHex(ink, bg) >= 3, `${preset} dark ink ${ink} on ${bg}`);
+  }
+  for (const bg of lightSurfaces) {
+    const ink = chrome.accentInk(preset, "light");
+    assert.ok(chrome.contrastHex(ink, bg) >= 3, `${preset} light ink ${ink} on ${bg}`);
+  }
+  assert.ok(chrome.contrastHex(chrome.onAccentHex(preset), preset) >= 3, `label on ${preset}`);
+}
+assert.notEqual(chrome.accentInk("#FF453A", "dark").toLowerCase(), "#5ad8ff");
+assert.notEqual(chrome.accentInk("#30D158", "light").toLowerCase(), "#0078a8");
+assert.notEqual(chrome.accentInk("#7B61FF", "dark").toLowerCase(), "#5ad8ff");
+
+const groupKeys = ["Journal", "Projects", "People", "Archive"];
+for (const key of groupKeys) {
+  assert.notEqual(chrome.groupHue(key, "#FF453A"), chrome.groupHue(key, "#00C8FF"));
+  assert.notEqual(chrome.groupHue(key, "#30D158"), chrome.groupHue(key, "#7B61FF"));
+}
+const roseGroups = groupKeys.map((key) => chrome.groupHue(key, "#FF453A"));
+assert.equal(new Set(roseGroups.map((h) => h.toFixed(4))).size, groupKeys.length);
+
+assert.notEqual(chrome.indexedGroupSwatch(0, "#FF453A"), chrome.indexedGroupSwatch(0, "#00C8FF"));
+assert.notEqual(chrome.indexedGroupSwatch(0, "#30D158"), chrome.indexedGroupSwatch(1, "#30D158"));
+assert.equal(
+  chrome.indexedGroupSwatch(0, "#FF453A").toLowerCase(),
+  chrome.hslToHex(chrome.indexedGroupHue(0, "#FF453A"), 0.62, 0.58).toLowerCase(),
+);
+const overviewSrc = readFileSync("src/lib/graph/overview.ts", "utf8");
+assert.match(overviewSrc, /indexedGroupSwatch\(index, accentHex\)/);
+assert.match(overviewSrc, /OVERVIEW_GROUP_COLORS\[index % OVERVIEW_GROUP_COLORS\.length\]/);
+
+const props = new Map();
+const dataset = {};
+globalThis.document = {
+  documentElement: {
+    style: {
+      setProperty: (k, v) => props.set(k, v),
+      get colorScheme() {
+        return "";
+      },
+      set colorScheme(_v) {},
+    },
+    dataset,
+  },
+  body: { classList: { toggle() {} } },
+  querySelector: () => ({ setAttribute() {} }),
+};
+prefs.applyPrefsToDom({ ...prefs.DEFAULT_PREFS, accentPreset: "rose", theme: "paper" });
+assert.equal(String(props.get("--accent")).toUpperCase(), "#FF453A");
+assert.equal(props.get("--accent-ink"), chrome.accentInk("#FF453A", "light"));
+assert.equal(props.get("--focus-ring"), props.get("--accent-ink"));
+assert.equal(props.get("--focus-ring-on-dark"), chrome.accentInk("#FF453A", "dark"));
+assert.equal(props.get("--on-accent"), chrome.onAccentHex("#FF453A"));
+assert.notEqual(String(props.get("--accent-ink")).toLowerCase(), "#5ad8ff");
+assert.equal(dataset.theme, "light");
+assert.equal(dataset.themeVariant, "paper");
+
+prefs.applyPrefsToDom({ ...prefs.DEFAULT_PREFS, accentPreset: "emerald", theme: "midnight" });
+assert.equal(String(props.get("--accent")).toUpperCase(), "#30D158");
+assert.equal(dataset.theme, "dark");
+assert.equal(dataset.themeVariant, "midnight");
+assert.equal(props.get("--focus-ring"), chrome.accentInk("#30D158", "dark"));
+assert.equal(props.get("--accent-ink-on-dark"), chrome.accentInk("#30D158", "dark"));
+
+const afterTokens = css.slice(css.indexOf('[data-theme="light"] .glass-elevated'));
+assert.doesNotMatch(afterTokens, /rgba\(0,\s*200,\s*255/);
+assert.doesNotMatch(afterTokens, /#5ad8ff/);
+assert.doesNotMatch(afterTokens, /#00c8ff/);
+assert.match(css, /box-shadow: inset 3px 0 0 var\(--accent-ink\)/);
+assert.match(css, /--focus-ring: #5ad8ff;/);
+assert.match(css, /--focus-ring: #0078a8;/);
+assert.match(css, /--accent-ink: #0078a8;/);
+const localGraph = readFileSync("src/components/graph/LocalGraph2D.tsx", "utf8");
+assert.match(localGraph, /fill=\{p\.center \? "var\(--accent\)"/);
+assert.doesNotMatch(localGraph, /#00c8ff/);
+const planets = readFileSync("src/lib/graph/instrument-node.ts", "utf8");
+assert.match(planets, /groupHue/);
+assert.doesNotMatch(planets, /void accent/);
+assert.doesNotMatch(planets, /0x6a7e92/);
+assert.match(readFileSync("src/components/graph/OverviewGraph.tsx", "utf8"), /overviewGroupColor\(key, model\.keys, accentHex\)/);
+assert.match(readFileSync("src/components/graph/OverviewGraph.tsx", "utf8"), /stroke=\{active \? "var\(--accent\)"/);
+
 console.log("appearance: PASS");

@@ -5,6 +5,7 @@
  */
 
 import * as THREE from "three";
+import { groupHue, hashUnit } from "@/lib/appearance/accent-chrome";
 import {
   cachedLabelTexture,
   rememberLabelTexture,
@@ -28,29 +29,42 @@ export type InstrumentNodeInput = {
   noteCount?: number;
 };
 
-/** 0–1 hash. */
-function hashUnit(key: string): number {
-  let h = 2166136261;
-  const text = key || "__root__";
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+function accentHex(accent: THREE.Color): string {
+  return `#${accent.getHexString()}`;
+}
+
+/** Day-side albedo. Active planets sit on the accent; groups rotate around it. */
+function bodyColor(
+  groupKey: string,
+  nodeId: string,
+  folder: boolean,
+  active: boolean,
+  accent: THREE.Color,
+): THREE.Color {
+  const hsl = { h: 0, s: 0, l: 0 };
+  accent.getHSL(hsl);
+  if (active) {
+    return new THREE.Color().setHSL(
+      hsl.h,
+      Math.min(0.78, Math.max(0.46, hsl.s || 0.55)),
+      Math.min(0.7, Math.max(0.52, hsl.l)),
+    );
   }
-  return (Math.abs(h) % 10000) / 10000;
+  const wobble = (hashUnit(nodeId) - 0.5) * 0.05;
+  const hue = (groupHue(groupKey, accentHex(accent)) + wobble + 1) % 1;
+  const light = folder ? 0.62 : 0.56;
+  const sat = folder ? 0.55 : 0.5;
+  return new THREE.Color().setHSL(hue, sat, light);
 }
 
-/**
- * Deep teal through indigo. Mint and warm hues wash out or read as candy.
- */
-function hashHue(key: string): number {
-  return (188 + hashUnit(key) * 68) / 360;
-}
-
-/** Day-side albedo. High enough to read in the desktop window. The limb stays dark. */
-function bodyColor(key: string, folder: boolean, active: boolean): THREE.Color {
-  const light = active ? 0.78 : folder ? 0.74 : 0.68;
-  const sat = active ? 0.52 : folder ? 0.58 : 0.5;
-  return new THREE.Color().setHSL(hashHue(key), sat, light);
+function accentRim(accent: THREE.Color, lightness: number): THREE.Color {
+  const hsl = { h: 0, s: 0, l: 0 };
+  accent.getHSL(hsl);
+  return new THREE.Color().setHSL(
+    hsl.h,
+    Math.min(0.7, Math.max(0.22, hsl.s || 0.45)),
+    lightness,
+  );
 }
 
 const BODY_VERT = `
@@ -67,6 +81,7 @@ void main() {
 /** Facing the camera is a little lighter. The limb of the body stays darker. */
 const BODY_FRAG = `
 uniform vec3 uColor;
+uniform vec3 uRim;
 uniform float uOpacity;
 varying vec3 vNormal;
 varying vec3 vWorld;
@@ -84,12 +99,12 @@ void main() {
   float key = clamp(dot(n, sunDir), 0.0, 1.0);
   float sun = pow(key, 0.9);
   float shade = mix(0.16, 1.0, sun);
-  // Cool edge on the body, quieter under the title so the label stays readable.
+  // Accent rim, quieter under the title so the label stays readable.
   float air = pow(1.0 - facing, 1.7);
   float cap = smoothstep(0.48, 0.92, n.y);
   air *= mix(1.0, 0.4, cap);
   vec3 col = uColor * shade;
-  col += vec3(0.1, 0.22, 0.42) * air;
+  col += uRim * air;
   gl_FragColor = vec4(col, uOpacity);
 }
 `;
@@ -127,11 +142,12 @@ function retainProgram<M extends THREE.Material>(material: M): M {
   return material;
 }
 
-function bodyMaterial(color: THREE.Color, opacity: number): THREE.ShaderMaterial {
+function bodyMaterial(color: THREE.Color, rim: THREE.Color, opacity: number): THREE.ShaderMaterial {
   return retainProgram(
     new THREE.ShaderMaterial({
       uniforms: {
         uColor: { value: color.clone() },
+        uRim: { value: rim.clone() },
         uOpacity: { value: opacity },
       },
       vertexShader: BODY_VERT,
@@ -376,7 +392,6 @@ export function createInstrumentNode(
   colorBy: "folder" | "tag" = "folder",
 ): THREE.Group {
   const group = new THREE.Group();
-  void accent;
   if (!node?.id) return group;
 
   const isGhost = !!node.ghost;
@@ -406,7 +421,7 @@ export function createInstrumentNode(
       : node.folder || "__root__";
   const tint = isGhost
     ? new THREE.Color(0x2a3340)
-    : bodyColor(`${tintKey}:${node.id}`, isFolderNode, isActive || isHover);
+    : bodyColor(tintKey, node.id, isFolderNode, isActive || isHover, accent);
   if (dim) tint.multiplyScalar(1 - dimStrength * 0.45);
 
   const bodyOpacity = dim
@@ -419,7 +434,10 @@ export function createInstrumentNode(
 
   // Unit spheres scaled to size: the shaders normalize normals, so a scaled
   // unit sphere draws the same pixels as a sphere built at this radius.
-  const body = new THREE.Mesh(unitSphere(segs, segs), bodyMaterial(tint, bodyOpacity));
+  const body = new THREE.Mesh(
+    unitSphere(segs, segs),
+    bodyMaterial(tint, accentRim(accent, 0.28), bodyOpacity),
+  );
   body.scale.setScalar(radius);
   body.userData.nexusCore = true;
   body.userData.nexusLod = { radius, topW: segs, topH: segs, current: segs } satisfies PlanetLod;
@@ -427,7 +445,7 @@ export function createInstrumentNode(
   group.add(body);
 
   if (!isGhost) {
-    const haze = new THREE.Color().setRGB(0.42, 0.68, 1.0);
+    const haze = accentRim(accent, 0.7);
     const limbMat = limbMaterial(haze, dim ? 0.28 : isActive ? 1 : 0.95);
     const atmoRadius = radius * 1.34;
     const atmoW = Math.max(20, segs - 2);
@@ -449,7 +467,7 @@ export function createInstrumentNode(
       new THREE.TorusGeometry(radius * 1.2, Math.max(0.02, radius * 0.008), 4, full ? 56 : 40),
       retainProgram(
         new THREE.MeshBasicMaterial({
-          color: new THREE.Color().setHex(0x6a7e92),
+          color: accent.clone(),
           transparent: true,
           opacity: 0.55,
           depthWrite: false,

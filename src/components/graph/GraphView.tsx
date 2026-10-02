@@ -606,13 +606,12 @@ function tintOrbHover(
     };
     const color = mat.uniforms?.uColor?.value ?? mat.color;
     if (!color) return;
-    void accent;
     if (on) {
       if (mat.userData.__w5HoverBase == null) {
         mat.userData.__w5HoverBase = color.clone();
       }
       const base = mat.userData.__w5HoverBase as THREE.Color;
-      color.copy(base).multiplyScalar(1.1);
+      color.copy(base).lerp(accent, 0.62);
     } else {
       const b = mat.userData.__w5HoverBase as THREE.Color | undefined;
       if (!b) return;

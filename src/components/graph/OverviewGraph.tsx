@@ -13,6 +13,7 @@ import {
   selectOverviewNotes,
 } from "@/lib/graph/overview";
 import { exitGraphForViewport } from "@/lib/layout/viewport";
+import { resolveAccentHex, usePrefsStore } from "@/lib/prefs/preferences";
 import { useVaultStore } from "@/lib/vault/store";
 import { cn } from "@/lib/utils";
 
@@ -26,7 +27,9 @@ const DRAG_PX = 5;
 export function OverviewGraph({ className }: Props) {
   const nodes = useVaultStore((s) => s.nodes);
   const vaultKey = useVaultStore((s) => s.vaultId || s.vaultPath || "none");
+  const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
+  const accentHex = usePrefsStore((s) => resolveAccentHex(s));
   const [folder, setFolder] = useState("");
   const [tag, setTag] = useState("");
   const [force, setForce] = useState<OverviewForce>(DEFAULT_OVERVIEW_FORCE);
@@ -195,7 +198,7 @@ export function OverviewGraph({ className }: Props) {
             aria-pressed={colorMode === mode}
             className={cn(
               "rounded-full px-2 py-0.5 text-[11px]",
-              colorMode === mode ? "bg-[var(--accent)] text-black" : "text-[var(--text-secondary)] hover:bg-white/5",
+              colorMode === mode ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--text-secondary)] hover:bg-white/5",
             )}
             onClick={() => {
               setColorMode(mode);
@@ -221,7 +224,7 @@ export function OverviewGraph({ className }: Props) {
             data-group={key}
             aria-pressed={!hidden.includes(key)}
             className={cn("rounded-full px-2 py-0.5 text-[11px]", hidden.includes(key) && "opacity-40")}
-            style={{ boxShadow: `inset 0 0 0 2px ${overviewGroupColor(key, model.keys)}` }}
+            style={{ boxShadow: `inset 0 0 0 2px ${overviewGroupColor(key, model.keys, accentHex)}` }}
             onClick={() =>
               setHidden((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]))
             }
@@ -305,10 +308,18 @@ export function OverviewGraph({ className }: Props) {
           })}
           {model.points.map((p) => {
             const note = model.visible.find((item) => item.id === p.id);
-            const fill = note?.group ? overviewGroupColor(note.group, model.keys) : "#1a2430";
+            const fill = note?.group ? overviewGroupColor(note.group, model.keys, accentHex) : "#1a2430";
+            const active = p.id === activeNoteId;
             return (
             <g key={p.id} transform={`translate(${p.x} ${p.y})`}>
-              <circle r={8} fill={fill} stroke="rgba(210,220,232,0.75)" strokeWidth={1.25} data-color={fill} />
+              <circle
+                r={active ? 10 : 8}
+                fill={fill}
+                stroke={active ? "var(--accent)" : "rgba(210,220,232,0.75)"}
+                strokeWidth={active ? 2.5 : 1.25}
+                data-color={fill}
+                data-active={active ? "true" : "false"}
+              />
               <text y={20} textAnchor="middle" fill="#f2f6fb" fontSize={11} fontFamily="inherit">
                 {p.title.length > 22 ? `${p.title.slice(0, 20)}…` : p.title}
               </text>

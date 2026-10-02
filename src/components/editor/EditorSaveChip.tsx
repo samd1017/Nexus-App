@@ -54,7 +54,7 @@ export function EditorSaveChip() {
   if (saving) {
     return (
       <span
-        className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(0,200,255,0.28)] bg-[rgba(0,200,255,0.08)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent)]"
+        className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--accent)_28%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent)]"
         role="status"
       >
         <Loader2 size={11} className="animate-spin" />

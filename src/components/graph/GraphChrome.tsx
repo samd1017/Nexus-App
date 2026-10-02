@@ -91,7 +91,7 @@ function ModePill({
       className={cn(
         "graph-mode-pill rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition",
         active
-          ? "bg-[var(--accent)] text-black shadow-[0_0_16px_rgba(0,200,255,0.22)]"
+          ? "bg-[var(--accent)] text-[var(--on-accent)] shadow-[0_0_16px_var(--accent-glow)]"
           : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]",
         disabled && "opacity-40",
       )}

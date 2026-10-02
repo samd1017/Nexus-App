@@ -69,7 +69,7 @@ export function Toast() {
             "border-[rgba(255,159,10,0.35)] shadow-[0_0_20px_rgba(255,159,10,0.1)]",
           variant === "neutral" && "border-[var(--border)]",
           trashStatus &&
-            "border-2 border-[#5ad8ff] bg-black px-5 py-3 text-[16px] font-semibold text-white",
+            "border-2 border-[var(--accent-ink-on-dark)] bg-black px-5 py-3 text-[16px] font-semibold text-white",
         )}
       >
         <span>{toast}</span>

@@ -91,8 +91,8 @@ export function LocalGraph2D({ className }: Props) {
           <g key={p.id} transform={`translate(${p.x} ${p.y})`}>
             <circle
               r={p.center ? 16 : 9}
-              fill={p.center ? "#00c8ff" : "#1a2430"}
-              stroke={p.center ? "#9aeeff" : "rgba(210,220,232,0.7)"}
+              fill={p.center ? "var(--accent)" : "#1a2430"}
+              stroke={p.center ? "color-mix(in srgb, var(--accent) 40%, white)" : "rgba(210,220,232,0.7)"}
               strokeWidth={p.center ? 2 : 1.25}
             />
             <text

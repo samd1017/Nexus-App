@@ -184,9 +184,9 @@ export function MonthCalendar({
               className={cn(
                 "month-cal-cell group relative flex flex-col items-center justify-center rounded-lg border text-[11.5px] font-medium tabular-nums transition-colors",
                 isActive
-                  ? "is-active border-[rgba(0,200,255,0.45)] bg-[rgba(0,200,255,0.12)] text-[var(--accent)] shadow-[0_0_0_1px_rgba(0,200,255,0.12)]"
+                  ? "is-active border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--accent)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
                   : isToday
-                    ? "border-[rgba(0,200,255,0.28)] bg-white/[0.04] text-[var(--text-primary)]"
+                    ? "border-[color-mix(in_srgb,var(--accent)_28%,transparent)] bg-white/[0.04] text-[var(--text-primary)]"
                     : "border-transparent bg-transparent text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]",
               )}
             >
@@ -197,7 +197,7 @@ export function MonthCalendar({
                   hasNote
                     ? isActive
                       ? "bg-[var(--accent)] opacity-100"
-                      : "bg-[rgba(0,200,255,0.75)] opacity-90"
+                      : "bg-[color-mix(in_srgb,var(--accent)_75%,transparent)] opacity-90"
                     : "opacity-0",
                 )}
                 aria-hidden
