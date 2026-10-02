@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERVIEW_FORCE, layoutOverviewForces, type OverviewForce } from "@/lib/graph/overview-layout";
 import {
   overviewEdges,
@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils";
 
 type Props = { className?: string };
 type ColorMode = "off" | "folder" | "tag";
+type Pin = { x: number; y: number };
+
+const DRAG_PX = 5;
 
 /** Flat vault map. Folder Map keeps the 3D planets; this does not restyle them. */
 export function OverviewGraph({ className }: Props) {
@@ -22,6 +25,19 @@ export function OverviewGraph({ className }: Props) {
   const [force, setForce] = useState<OverviewForce>(DEFAULT_OVERVIEW_FORCE);
   const [colorMode, setColorMode] = useState<ColorMode>("folder");
   const [hidden, setHidden] = useState<string[]>([]);
+  const [pins, setPins] = useState<Record<string, Pin>>({});
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const dragRef = useRef<{ id: string; pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const openTimer = useRef<number | null>(null);
+
+  const pinMap = useMemo(() => {
+    const map = new Map<string, Pin>();
+    for (const id of Object.keys(pins)) {
+      const pin = pins[id];
+      if (pin) map.set(id, pin);
+    }
+    return map;
+  }, [pins]);
 
   const model = useMemo(() => {
     const selected = selectOverviewNotes(nodes, { folder, tag });
@@ -35,6 +51,7 @@ export function OverviewGraph({ className }: Props) {
       visible.map((note) => ({ id: note.id, title: note.title })),
       overviewEdges(nodes, visible),
       force,
+      pinMap,
     );
     return {
       ...selected,
@@ -43,7 +60,28 @@ export function OverviewGraph({ className }: Props) {
       points,
       edges: overviewEdges(nodes, visible),
     };
-  }, [nodes, folder, tag, force, colorMode, hidden]);
+  }, [nodes, folder, tag, force, colorMode, hidden, pinMap]);
+
+  const clientToSvg = (clientX: number, clientY: number): Pin | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const at = pt.matrixTransform(ctm.inverse());
+    return { x: at.x, y: at.y };
+  };
+
+  const unpin = (id: string) => {
+    setPins((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
 
   const byId = new Map(model.points.map((p) => [p.id, p]));
   const xs = model.points.map((p) => p.x);
@@ -134,6 +172,14 @@ export function OverviewGraph({ className }: Props) {
             {mode === "off" ? "No color" : mode === "folder" ? "Color by folder" : "Color by tag"}
           </button>
         ))}
+        <button
+          type="button"
+          data-testid="graph-overview-clear-pins"
+          className="rounded-full px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:bg-white/5"
+          onClick={() => setPins({})}
+        >
+          Clear pins
+        </button>
         {model.keys.map((key) => (
           <button
             key={key}
@@ -152,12 +198,13 @@ export function OverviewGraph({ className }: Props) {
         ))}
       </div>
       <p className="shrink-0 px-3 pt-1 text-[11px] text-[var(--text-muted)]" data-testid="graph-overview-disclosure">
-        Vault overview. Still missing: drag-to-pin and saved group queries.
+        Vault overview. Drag a note to pin it here. Still missing: saved group queries.
       </p>
       {model.visible.length === 0 ? (
         <p className="px-3 py-6 text-[12px] text-[var(--text-muted)]">No notes match this folder or tag.</p>
       ) : (
         <svg
+          ref={svgRef}
           className="min-h-0 w-full flex-1"
           viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
           role="img"
@@ -195,9 +242,48 @@ export function OverviewGraph({ className }: Props) {
                 data-testid="graph-overview-node"
                 data-note-id={p.id}
                 data-group={note?.group || ""}
+                data-pinned={pins[p.id] ? "true" : "false"}
                 role="button"
                 aria-label={`Open ${p.title}`}
-                onClick={() => openNote(p.id)}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  dragRef.current = {
+                    id: p.id,
+                    pointerId: event.pointerId,
+                    x: event.clientX,
+                    y: event.clientY,
+                    moved: false,
+                  };
+                }}
+                onPointerMove={(event) => {
+                  const drag = dragRef.current;
+                  if (!drag || drag.pointerId !== event.pointerId || drag.id !== p.id) return;
+                  if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < DRAG_PX) return;
+                  drag.moved = true;
+                  const at = clientToSvg(event.clientX, event.clientY);
+                  if (!at) return;
+                  setPins((prev) => ({ ...prev, [p.id]: at }));
+                }}
+                onPointerUp={(event) => {
+                  const drag = dragRef.current;
+                  if (!drag || drag.pointerId !== event.pointerId || drag.id !== p.id) return;
+                  dragRef.current = null;
+                  if (drag.moved) return;
+                  if (pins[p.id]) {
+                    if (openTimer.current != null) window.clearTimeout(openTimer.current);
+                    openTimer.current = window.setTimeout(() => openNote(p.id), 250);
+                    return;
+                  }
+                  openNote(p.id);
+                }}
+                onDoubleClick={(event) => {
+                  if (!pins[p.id]) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (openTimer.current != null) window.clearTimeout(openTimer.current);
+                  unpin(p.id);
+                }}
               >
                 <title>{p.title}</title>
               </circle>

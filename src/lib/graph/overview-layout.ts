@@ -18,15 +18,30 @@ export const DEFAULT_OVERVIEW_FORCE: OverviewForce = {
 /**
  * A short force pass seeded by the overview grid.
  * Same inputs always land in the same places.
+ * Pinned ids stay at their pin coordinates; other nodes still move.
  */
 export function layoutOverviewForces(
   nodes: { id: string; title: string }[],
   edges: { source: string; target: string }[],
   force: OverviewForce,
+  pins?: ReadonlyMap<string, { x: number; y: number }>,
 ): { id: string; title: string; x: number; y: number }[] {
   const start = layoutOverviewGrid(nodes);
-  if (start.length <= 1) return start;
+  const pinAt = (id: string) => pins?.get(id);
+  if (start.length <= 1) {
+    return start.map((node) => {
+      const pin = pinAt(node.id);
+      return pin ? { ...node, x: pin.x, y: pin.y } : node;
+    });
+  }
   const pos = new Map(start.map((point) => [point.id, { x: point.x, y: point.y }]));
+  for (const point of start) {
+    const pin = pinAt(point.id);
+    const at = pos.get(point.id);
+    if (!pin || !at) continue;
+    at.x = pin.x;
+    at.y = pin.y;
+  }
   const ids = start.map((point) => point.id);
   const centerK = Math.max(0, Math.min(100, force.center)) / 100;
   const linkDist = Math.max(24, force.link);
@@ -72,8 +87,15 @@ export function layoutOverviewForces(
     }
     for (const id of ids) {
       const point = pos.get(id);
+      if (!point) continue;
+      const pin = pinAt(id);
+      if (pin) {
+        point.x = pin.x;
+        point.y = pin.y;
+        continue;
+      }
       const delta = disp.get(id);
-      if (!point || !delta) continue;
+      if (!delta) continue;
       delta.x -= point.x * centerK * 0.2;
       delta.y -= point.y * centerK * 0.2;
       point.x += delta.x * 0.85;
