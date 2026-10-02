@@ -134,7 +134,17 @@ export function TasksRail() {
         return;
       }
       store.updateNoteContent(task.noteId, next, { source: true });
-      setTasks((cur) => cur.filter((row) => !(row.noteId === task.noteId && row.line === task.line)));
+      const fresh = tasksInNote({
+        id: task.noteId,
+        path: task.path,
+        title: task.title,
+        body: next,
+      });
+      setTasks((cur) => {
+        const merged = [...cur.filter((row) => row.noteId !== task.noteId), ...fresh];
+        merged.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
+        return merged.slice(0, TASK_CAP);
+      });
     };
     if (node?.kind === "note" && typeof node.content === "string") {
       write(node.content);
@@ -159,7 +169,10 @@ export function TasksRail() {
         <span className="font-mono">🔽</span> is medium. Med keeps those incomplete tasks.
         <span className="font-mono">⏬</span> is low. Low keeps those incomplete tasks.
         <span className="font-mono">🔁</span> plus a rule, such as every day, is a recurrence label.
-        Recurring keeps those incomplete tasks. Completing a row does not schedule the next one.
+        Recurring keeps those incomplete tasks.
+        Completing a recurring row schedules the next due when the rule is every day, every week, every month, or every year, including a count such as every 2 weeks.
+        The date on the line wins over the note due:.
+        A row with no recurrence only marks the line done.
         Dataview queries are not supported.
       </p>
       <div className="flex flex-wrap items-center gap-1">

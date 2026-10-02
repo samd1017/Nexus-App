@@ -2,7 +2,9 @@
  * Incomplete Markdown tasks. A 📅 YYYY-MM-DD on the line is the due date.
  * When the line has no emoji date, the note YAML `due:` (YYYY-MM-DD) applies.
  * The first priority marker on the line is ⏫ 🔼 🔽 ⏬ or ❗.
- * A 🔁 plus following rule text is a recurrence label. Completing a task does not schedule the next one.
+ * A 🔁 plus following rule text is a recurrence label.
+ * Completing a recurring row whose rule is every day, week, month, or year writes the next incomplete line.
+ * A date on that line wins over the note due:. A row with no recurrence only marks the line done.
  * Not supported: Dataview queries.
  */
 
@@ -70,7 +72,7 @@ export function taskIsLow(priority: TaskPriority | null): boolean {
   return priority === "low";
 }
 
-/** Rule after the first 🔁, or null when the marker is missing or has no text. Display and filter only. */
+/** Rule after the first 🔁, or null when the marker is missing or has no text. */
 export function recurrenceOnTaskLine(text: string): string | null {
   const match = RECURRENCE_RE.exec(text);
   if (!match) return null;
@@ -139,14 +141,89 @@ export function tasksInNote(note: {
   return out;
 }
 
-/** Flip one incomplete task to `[x]`. Returns null when that line is not an open task. */
-export function completeTaskLine(markdown: string, line: number): string | null {
+const EVERY_RE = /^every(?:\s+(\d+))?\s+(day|week|month|year)s?$/i;
+
+/** Days or months to add for `every day|week|month|year` and `every N` of those. Other rules are null. */
+function recurrenceShift(rule: string): { days: number; months: number } | null {
+  const match = EVERY_RE.exec(rule.trim());
+  if (!match) return null;
+  const count = match[1] ? Number(match[1]) : 1;
+  if (!Number.isInteger(count) || count < 1 || count > 999) return null;
+  const unit = (match[2] ?? "").toLowerCase();
+  if (unit === "day") return { days: count, months: 0 };
+  if (unit === "week") return { days: count * 7, months: 0 };
+  if (unit === "month") return { days: 0, months: count };
+  return { days: 0, months: count * 12 };
+}
+
+function parseYmd(ymd: string): { y: number; m: number; d: number } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  const y = Number(ymd.slice(0, 4));
+  const m = Number(ymd.slice(5, 7));
+  const d = Number(ymd.slice(8, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  return { y, m, d };
+}
+
+function formatYmd(y: number, m: number, d: number): string {
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function shiftYmd(ymd: string, shift: { days: number; months: number }): string | null {
+  const parts = parseYmd(ymd);
+  if (!parts) return null;
+  if (shift.months) {
+    const total = parts.y * 12 + (parts.m - 1) + shift.months;
+    const y = Math.floor(total / 12);
+    const m = (total % 12) + 1;
+    const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return formatYmd(y, m, Math.min(parts.d, dim));
+  }
+  const dt = new Date(Date.UTC(parts.y, parts.m - 1, parts.d));
+  dt.setUTCDate(dt.getUTCDate() + shift.days);
+  return formatYmd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+}
+
+/**
+ * Next calendar day for a parsed recurrence rule.
+ * Basis is the line date, else the note due, else `today`. Null when the rule is not every day/week/month/year.
+ */
+export function nextRecurrenceDue(rule: string, basis: string): string | null {
+  const shift = recurrenceShift(rule);
+  if (!shift) return null;
+  return shiftYmd(basis, shift);
+}
+
+function spawnNextLine(current: string, nextDue: string): string | null {
+  const match = TASK_RE.exec(current);
+  if (!match) return null;
+  const rest = match[3] ?? "";
+  const dated = DUE_RE.test(rest) ? rest.replace(DUE_RE, `📅 ${nextDue}`) : `${rest} 📅 ${nextDue}`;
+  return `${match[1] ?? ""}${match[2] ?? "-"} [ ] ${dated}`;
+}
+
+/**
+ * Flip one incomplete task to `[x]`.
+ * A recurring row whose rule is every day, week, month, or year also inserts the next incomplete line.
+ * The line date wins over the note `due:`. Returns null when that line is not an open task.
+ */
+export function completeTaskLine(markdown: string, line: number, today = localToday()): string | null {
   if (!Number.isFinite(line) || line < 1) return null;
   const parts = markdown.split(/\r?\n/);
   const index = line - 1;
   const current = parts[index];
   if (current == null || !TASK_RE.test(current)) return null;
   parts[index] = current.replace("[ ]", "[x]");
+  const raw = TASK_RE.exec(current)?.[3] ?? "";
+  const rule = recurrenceOnTaskLine(raw);
+  const shift = rule ? recurrenceShift(rule) : null;
+  if (shift) {
+    const basis = dueOnTaskLine(raw) ?? dueFromFrontmatter(markdown) ?? today;
+    const nextDue = shiftYmd(basis, shift);
+    const spawned = nextDue ? spawnNextLine(current, nextDue) : null;
+    if (spawned) parts.splice(index + 1, 0, spawned);
+  }
   const nl = markdown.includes("\r\n") ? "\r\n" : "\n";
   return parts.join(nl);
 }
