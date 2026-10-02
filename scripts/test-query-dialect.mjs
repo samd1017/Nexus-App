@@ -3,6 +3,7 @@
  * dataview fences, and the save path that keeps query blocks in the file.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 if (!process.env.NEXUS_TSX) {
   const { spawnSync } = await import("node:child_process");
@@ -103,7 +104,8 @@ function problemOf(source) {
   assert.equal(head.text, "SHOW");
 
   const self = problemOf("LIST WHERE this.status = status");
-  assert.match(self.error, /this\./);
+  assert.match(self.error, /this\. means the note this query is written in/);
+  assert.equal(self.text, "this.status");
 
   const excerpt = problemExcerpt('TABLE status\nWHERE contains(status)\nSORT due', {
     message: "x",
@@ -295,7 +297,7 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   const blocks = [...noteList.content.matchAll(/```(nexus-query|dataview)\n([\s\S]*?)\n```/g)].map((m) => m[2]);
   assert.ok(blocks.length >= 8);
   for (const block of blocks) {
-    const model = runNexusQuery(block, demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"));
+    const model = runNexusQuery(block, demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"), noteList.id);
     assert.equal(model.error, null, `${block}: ${model.error}`);
     if (/^(TABLE|CARDS|LIST) .*\n?FROM ("Research"|#)/.test(block)) assert.ok(model.rows.length > 0, `${block} found nothing`);
   }
@@ -371,6 +373,50 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   assert.equal(table.rows[0].props.status, "active");
   assert.equal(table.rows[0].props.owner, "Sam");
   assert.ok(table.keys.includes("owner"), "inline keys show as Bases columns");
+}
+
+// --- this. is the note the query is written in.
+{
+  resetVaultIndex();
+  const vaultThis = {
+    p: folder("p", "P"),
+    hub: note("hub", "P/Hub.md", "---\nowner: Sam\n---\n# Hub\nSee [[Alpha]] and [[Beta]].\nproject:: Apollo\n", { parentId: "p" }),
+    alpha: note("alpha", "P/Alpha.md", "---\nstatus: active\nowner: Sam\n---\n# Alpha\nBack to [[Hub]].\nproject:: Apollo\n", { parentId: "p" }),
+    beta: note("beta", "P/Beta.md", "# Beta\nowner:: Ana\nproject:: Zeus\n", { parentId: "p" }),
+    gamma: note("gamma", "P/Gamma.md", "# Gamma\nowner:: Sam\n[[Alpha]]\n", { parentId: "p" }),
+  };
+  const inHub = (q) => runNexusQuery(q, vaultThis, null, NOW, "hub");
+  assert.equal(parseNexusQuery("LIST FROM path:P WHERE owner = this.owner").kind, "dialect");
+  assert.deepEqual(sortedIds(inHub('LIST FROM "P" WHERE owner = this.owner AND file.name != this.file.name')), ["alpha", "gamma"]);
+  assert.deepEqual(sortedIds(inHub('LIST FROM "P" WHERE project = this.project')), ["alpha", "hub"]);
+  assert.deepEqual(sortedIds(inHub('LIST FROM "P" WHERE contains(this.file.outlinks, file.link)')), ["alpha", "beta"]);
+  assert.deepEqual(sortedIds(inHub('LIST FROM "P" WHERE file.outlinks AND contains(this.file.outlinks, file.link)')), ["alpha"]);
+  assert.deepEqual(sortedIds(inHub('LIST FROM "P" WHERE contains(file.outlinks, this.file.link)')), ["alpha"]);
+  assert.deepEqual(sortedIds(inHub('LIST FROM "P" WHERE contains(file.outlinks, [[]])')), ["alpha"]);
+  assert.deepEqual(sortedIds(inHub("LIST FROM [[]]")), ["alpha"]);
+  assert.deepEqual(sortedIds(inHub("LIST FROM [[#]]")), ["alpha"]);
+  assert.deepEqual(sortedIds(inHub("LIST FROM outgoing([[]])")), ["alpha", "beta"]);
+  const cols = inHub('TABLE this.file.name AS "Here", owner FROM "P" WHERE file.name = "Beta"');
+  assert.deepEqual(cols.rows[0].fields.map((f) => f.value), ["Hub", "Ana"]);
+  assert.deepEqual(ids(runNexusQuery('LIST FROM "P" WHERE owner = this.owner AND file.name != this.file.name', vaultThis, null, NOW, "gamma")).sort(), ["alpha", "hub"]);
+
+  for (const q of ['LIST FROM "P" WHERE owner = this.owner', "LIST FROM [[]]"]) {
+    const outside = runNexusQuery(q, vaultThis, null, NOW, null);
+    assert.match(outside.error, /this\. means the note this query is written in, and there is none here/);
+    assert.equal(q.slice(outside.problem.start, outside.problem.end), q.includes("this") ? "this.owner" : "[[]]");
+  }
+  assert.match(compileQueryFilter("this.").ok ? "" : compileQueryFilter("this.").problem.message, /this\. needs a field/);
+
+  const bases = buildNoteTable(Object.values(vaultThis).filter((n) => n.kind === "note"), "P", [], NOW, 'owner = this.owner');
+  assert.match(bases.filterStatus.problem.message, /a Bases view has none/);
+  assert.equal('owner = this.owner'.slice(bases.filterStatus.problem.start, bases.filterStatus.problem.end), "this.owner");
+  assert.equal(bases.rows.length, 4, "a filter Bases cannot run keeps every note");
+
+  const view = readFileSync("src/components/editor/NexusQueryView.tsx", "utf8");
+  assert.match(view, /getAttribute\("data-note-id"\)/);
+  assert.match(view, /runNexusQuery\(query, nodes, tagExtras, Date\.now\(\), hostId\)/);
+  const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
+  assert.match(preview, /renderNexusQueries\(nexusQueryEls, nodes, activeNoteId\)/);
 }
 
 // --- ```dataview renders natively and saves back as ```dataview; dataviewjs is never run.

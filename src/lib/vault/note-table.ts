@@ -643,7 +643,12 @@ export function buildNoteTable(
 } {
   const prefix = folderPrefix.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
   const filterStatus: NoteTableFilterStatus = { problem: null, failed: 0, firstError: null, pending: 0 };
-  const compiledFilter = filter.trim() ? compileQueryFilter(filter) : null;
+  let compiledFilter = filter.trim() ? compileQueryFilter(filter) : null;
+  if (compiledFilter?.ok && compiledFilter.expr?.reads.self) {
+    const at = /(?<![\w.])this\s*\.[\w.]*|\[\[#?\]\]/.exec(filter);
+    const message = "this. means the note a query block is written in, and a Bases view has none. Name the note instead, like [[Project X]].";
+    compiledFilter = { ok: false, problem: { message, clause: "WHERE", start: at?.index ?? 0, end: at ? at.index + at[0].length : filter.length } };
+  }
   if (compiledFilter && !compiledFilter.ok) filterStatus.problem = compiledFilter.problem;
   const where = compiledFilter?.ok ? compiledFilter.expr : null;
   const whereReadsBody = where ? readsNoteBody([where.reads]) : false;

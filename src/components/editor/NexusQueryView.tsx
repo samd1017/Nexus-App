@@ -37,7 +37,7 @@ function countLine(model: NexusQueryModel, ms: number): string {
   return `${head} · ${ms < 1 ? "<1" : Math.round(ms)} ms`;
 }
 
-export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
+export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps) {
   const saved = String(node.attrs.query || "");
   const fence = String(node.attrs.lang || "nexus-query");
   const nodes = useVaultStore((s) => s.nodes);
@@ -46,6 +46,13 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
   const indexFillBusy = useVaultStore((s) => s.indexFillBusy);
+  const activeNoteId = useVaultStore((s) => s.activeNoteId);
+  let hostId: string | null = activeNoteId;
+  try {
+    hostId = editor.view.dom.getAttribute("data-note-id") || activeNoteId;
+  } catch {
+    /* editor not mounted */
+  }
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(saved);
   const [liveDraft, setLiveDraft] = useState(saved);
@@ -143,9 +150,9 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
 
   const timed = useMemo(() => {
     const started = performance.now();
-    const result = runNexusQuery(query, nodes, tagExtras);
+    const result = runNexusQuery(query, nodes, tagExtras, Date.now(), hostId);
     return { model: result, ms: performance.now() - started };
-  }, [query, nodes, tagExtras, bodyGen]);
+  }, [query, nodes, tagExtras, bodyGen, hostId]);
   const model = timed.model;
 
   const starters = useMemo(() => (query.trim() ? [] : queryStarters(nodes)), [query, nodes]);

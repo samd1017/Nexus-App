@@ -21,9 +21,9 @@ import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { getDurableIndex } from "@/lib/vault/durable-index";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
-import { looksLikeDialect, parseDialect, type DialectQuery } from "@/lib/vault/query-dialect";
+import { THIS_NOTE, looksLikeDialect, parseDialect, type DialectQuery } from "@/lib/vault/query-dialect";
 import { didYouMean, readsNoteBody, runQueryFilter, type CompiledExpr, type QueryProblem } from "@/lib/vault/query-expr";
-import { formulaDisplay, runNoteFormula, type FormulaLink, type FormulaRefs, type FormulaResult, type FormulaRow } from "@/lib/vault/note-formula";
+import { THIS_OUTSIDE_NOTE, formulaDisplay, runNoteFormula, type FormulaLink, type FormulaRefs, type FormulaResult, type FormulaRow } from "@/lib/vault/note-formula";
 import { noteOutlinks, noteTableProperties } from "@/lib/vault/note-table";
 
 export const NEXUS_QUERY_CAP = 100;
@@ -669,6 +669,22 @@ function classicProblem(source: string, error: string): QueryProblem | null {
   return null;
 }
 
+const THIS_REF = /(?<![\w.])this\s*\.|\[\[#?\]\]/;
+
+/** Where the query names the note it is written in: `this.`, `[[]]`, or `[[#]]` outside quotes. */
+function thisRefAt(source: string): { start: number; end: number } | null {
+  const code = source.replace(/"[^"]*"|'[^']*'/g, (quoted) => " ".repeat(quoted.length));
+  const hit = THIS_REF.exec(code);
+  if (!hit) return null;
+  const end = hit[0].startsWith("[") ? hit.index + hit[0].length : (/^this\s*\.[\w.]*/.exec(code.slice(hit.index))?.[0].length ?? 5) + hit.index;
+  return { start: hit.index, end };
+}
+
+/** Only the full form knows the note a query is written in. */
+function readsThisNote(source: string): boolean {
+  return thisRefAt(source) !== null;
+}
+
 /** Points a missing-folder message at the folder name the query typed. */
 function folderProblem(source: string, folder: string, message: string): QueryProblem {
   for (const token of [`"${folder}"`, `path:${folder}`, `folder:${folder}`, folder]) {
@@ -685,11 +701,11 @@ function folderProblem(source: string, folder: string, message: string): QueryPr
  * looks like explains why.
  */
 export function parseNexusQuery(source: string): Parsed {
-  const classic = parseClassic(source);
-  if (classic.kind !== "error") return classic;
+  const classic = readsThisNote(source) ? null : parseClassic(source);
+  if (classic && classic.kind !== "error") return classic;
   const dialect = parseDialect(source || "");
   if (dialect.ok) return { kind: "dialect", query: dialect.query };
-  if (looksClassic(source) && !looksLikeDialect(source)) {
+  if (classic && looksClassic(source) && !looksLikeDialect(source)) {
     return { kind: "error", error: classic.error, problem: classicProblem(source, classic.error) };
   }
   return { kind: "error", error: dialect.problem.message, problem: dialect.problem };
@@ -1758,6 +1774,8 @@ export function runNexusQuery(
    */
   tagExtras?: (VaultNode[] | null)[] | null,
   now = Date.now(),
+  /** The note this query is written in, which `this.` and FROM [[]] read. */
+  hostId: string | null = null,
 ): NexusQueryModel {
   const footer = NEXUS_QUERY_FOOTER;
   const parsed = parseNexusQuery(source);
@@ -1786,7 +1804,7 @@ export function runNexusQuery(
       problem: parsed.problem ?? null,
     };
   }
-  if (parsed.kind === "dialect") return runDialect(source, parsed.query, nodes, tagExtras, now);
+  if (parsed.kind === "dialect") return runDialect(source, parsed.query, nodes, tagExtras, now, hostId);
 
   let fieldNote: string | null = null;
   let notes: VaultNode[] = [];
@@ -2001,7 +2019,7 @@ export function runNexusQuery(
 }
 
 export const NEXUS_DIALECT_FOOTER =
-  'LIST, TABLE, or CARDS · FROM "Folder", #tag, -#tag, or [[Note]] · WHERE, columns, SORT, and GROUP BY take any Bases formula, and Dataview spellings like =, AND, OR, date(today), and dur(7 days) read the same · AS "Label" names a column · LIMIT n · Properties are frontmatter plus inline key:: value fields; frontmatter wins when both set one. Runs inside Nexus; nothing in a note is run as code.';
+  'LIST, TABLE, or CARDS · FROM "Folder", #tag, -#tag, or [[Note]] · WHERE, columns, SORT, and GROUP BY take any Bases formula, and Dataview spellings like =, AND, OR, date(today), and dur(7 days) read the same · AS "Label" names a column · LIMIT n · Properties are frontmatter plus inline key:: value fields; frontmatter wins when both set one · this. is the note the query is written in, like this.file.name or contains(this.file.outlinks, file.link), and FROM [[]] lists notes that link to it. Runs inside Nexus; nothing in a note is run as code.';
 
 /** Rows the full form shows at most. LIMIT asks for fewer. */
 export const NEXUS_DIALECT_CAP = 500;
@@ -2045,9 +2063,12 @@ type DialectContext = {
   nodes: Record<string, VaultNode>;
   linkIndex: () => Map<string, string>;
   backlinks: () => Map<string, FormulaLink[]>;
+  /** The note the query is written in, or null outside a note. */
+  host: VaultNode | null;
+  self: () => FormulaRow | null;
 };
 
-function dialectContext(nodes: Record<string, VaultNode>): DialectContext {
+function dialectContext(nodes: Record<string, VaultNode>, hostId: string | null = null): DialectContext {
   let index: Map<string, string> | null = null;
   let back: Map<string, FormulaLink[]> | null = null;
   const linkIndex = () => (index ??= noteLinkIndex(nodes));
@@ -2071,10 +2092,26 @@ function dialectContext(nodes: Record<string, VaultNode>): DialectContext {
     back = out;
     return out;
   };
-  return { nodes, linkIndex, backlinks };
+  const hostNode = hostId ? nodes[hostId] : undefined;
+  const host = isQueryNote(hostNode) ? hostNode : null;
+  let self: FormulaRow | null | undefined;
+  const ctx: DialectContext = {
+    nodes,
+    linkIndex,
+    backlinks,
+    host,
+    self: () => {
+      if (self !== undefined) return self;
+      self = null;
+      if (host) self = formulaRowOf(host, ctx);
+      return self;
+    },
+  };
+  return ctx;
 }
 
 function nodeForTarget(ctx: DialectContext, target: string): VaultNode | null {
+  if (target === THIS_NOTE) return ctx.host;
   const id = ctx.linkIndex().get(normalizeLinkTarget(target.replace(/\.md$/i, "")));
   const node = id ? ctx.nodes[id] : undefined;
   return isQueryNote(node) ? node : null;
@@ -2112,6 +2149,9 @@ function formulaRowOf(node: VaultNode, ctx: DialectContext): FormulaRow {
     outlinks: () => (outlinks ??= content !== null ? noteOutlinks(content) : []),
     backlinks: () => ctx.backlinks().get(node.id) ?? [],
     tags: () => tagsOf(node),
+    get self() {
+      return ctx.self();
+    },
     fileAt,
     linksAt: (target) => {
       const hit = nodeForTarget(ctx, target);
@@ -2244,8 +2284,9 @@ function runDialect(
   nodes: Record<string, VaultNode>,
   tagExtras: (VaultNode[] | null)[] | null | undefined,
   now: number,
+  hostId: string | null,
 ): NexusQueryModel {
-  const ctx = dialectContext(nodes);
+  const ctx = dialectContext(nodes, hostId);
   const base: NexusQueryModel = {
     footer: NEXUS_DIALECT_FOOTER,
     help: null,
@@ -2263,6 +2304,12 @@ function runDialect(
     cap: NEXUS_DIALECT_CAP,
     dialect: true,
   };
+  const wantsHost =
+    query.source.linksTo === THIS_NOTE || query.source.linkedFrom === THIS_NOTE || dialectExprs(query).some((expr) => expr.reads.self);
+  if (wantsHost && !ctx.host) {
+    const at = thisRefAt(source) ?? { start: 0, end: source.length };
+    return { ...base, mode: null, error: THIS_OUTSIDE_NOTE, problem: { message: THIS_OUTSIDE_NOTE, clause: "", ...at } };
+  }
   const found = dialectCandidates(query, nodes, tagExtras, ctx, now);
   if (found.error) {
     return {

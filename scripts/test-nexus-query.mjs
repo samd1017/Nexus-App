@@ -294,7 +294,7 @@ assert.match(view, /sizeHydrateIds/);
 assert.match(view, /shouldSkipBackgroundBodyHydrate/);
 assert.match(view, /useSyncExternalStore\(subscribeBodyGen, getBodyGen, getBodyGen\)/);
 assert.match(view, /\[query, nodes, bodyGen\]/);
-assert.match(view, /\[query, nodes, tagExtras, bodyGen\]/);
+assert.match(view, /\[query, nodes, tagExtras, bodyGen, hostId\]/);
 const lib = readFileSync("src/lib/vault/nexus-query.ts", "utf8");
 assert.match(lib, /Not Dataview/);
 assert.match(lib, /FLATTEN file\.outlinks/);

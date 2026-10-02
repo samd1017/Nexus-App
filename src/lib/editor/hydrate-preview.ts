@@ -333,12 +333,16 @@ function nexusQueryBody(query: string, model: NexusQueryModel): string {
   return bits.join("");
 }
 
-async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>): Promise<void> {
+async function renderNexusQueries(
+  els: HTMLElement[],
+  nodes: Record<string, VaultNode>,
+  hostId: string | null,
+): Promise<void> {
   for (const el of els) {
     const query = (el.getAttribute("data-query") || "").trim();
     const fence = el.getAttribute("data-lang") || "nexus-query";
     const extras = await loadTagExtras(query);
-    const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras);
+    const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras, Date.now(), hostId);
     const total = model.total ?? model.rows.length;
     const count = model.mode && !model.error ? `${total} ${total === 1 ? "note" : "notes"} · ` : "";
     el.innerHTML = `
@@ -392,7 +396,7 @@ export async function hydratePreviewSpecials(
 
   const embeds = renderEmbeds(embedEls, nodes, activeNoteId, cancelled, findOutside);
   renderQueries(queryEls, nodes);
-  const nexus = renderNexusQueries(nexusQueryEls, nodes);
+  const nexus = renderNexusQueries(nexusQueryEls, nodes, activeNoteId);
   await Promise.all([
     embeds,
     nexus,

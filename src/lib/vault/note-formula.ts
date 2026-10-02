@@ -54,6 +54,8 @@ export type FormulaRow = {
   fileAt?: (target: string) => FileValue | null;
   /** Outgoing links of that note, or null when its body is not loaded. */
   linksAt?: (target: string) => FormulaLink[] | null;
+  /** The note a query block is written in, which `this.` reads. */
+  self?: FormulaRow | null;
 };
 
 type Token =
@@ -71,6 +73,7 @@ type Node =
   | { k: "lit"; v: Value }
   | { k: "prop"; key: string }
   | { k: "file"; key: FileKey }
+  | { k: "this"; a: Node }
   | { k: "ref"; key: string }
   | { k: "local"; name: Local }
   | { k: "list"; items: Node[] }
@@ -84,6 +87,9 @@ export type CompiledFormula = { program: Node | null; error: string | null };
 export type FormulaResult = { value: string; error: string | null; sort: number | null; raw: FormulaValue };
 
 class FormulaError extends Error {}
+
+/** `this.` evaluated where there is no note holding the query. */
+export const THIS_OUTSIDE_NOTE = "this. means the note this query is written in, and there is none here. Name the note instead, like [[Project X]].";
 
 const DAY = 86_400_000;
 const OPS = ["||", "&&", "==", "!=", ">=", "<=", ">", "<", "+", "-", "*", "/", "%", "&", "!", "(", ")", ",", ".", "[", "]"];
@@ -1222,6 +1228,15 @@ class Parser {
       }
       throw new FormulaError(`${SUMMARY_ONLY_VALUES}, not the property “${word}”. Pick the column, then use values, like values.filter(value == "done").length.`);
     }
+    if (lower === "this") {
+      if (!this.isOp(".")) throw new FormulaError("this needs a field after it, like this.file.name or this.status.");
+      this.i += 1;
+      const next = this.peek();
+      if (next?.t !== "id" || next.v.toLowerCase() === "this") {
+        throw new FormulaError("this. needs a field, like this.file.name, this.file.outlinks, or this.status.");
+      }
+      return { k: "this", a: this.primary() };
+    }
     if (word === "file" && this.isOp(".")) {
       this.i += 1;
       const key = this.peek();
@@ -1420,6 +1435,11 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
   switch (node.k) {
     case "lit":
       return node.v;
+    case "this": {
+      const self = row.self;
+      if (!self) throw new FormulaError(THIS_OUTSIDE_NOTE);
+      return evalNode(node.a, self, { ...ctx, row: self });
+    }
     case "prop":
       return readProp(row, node.key);
     case "ref": {
@@ -1613,11 +1633,13 @@ export type FormulaReads = {
   links: boolean;
   backlinks: boolean;
   tags: boolean;
+  /** Reads `this.`, the note the query is written in. */
+  self: boolean;
 };
 
 /** What a compiled formula reads, so a caller loads only the note bodies it needs. */
 export function formulaReads(compiled: CompiledFormula): FormulaReads {
-  const out: FormulaReads = { props: [], refs: [], anyProp: false, links: false, backlinks: false, tags: false };
+  const out: FormulaReads = { props: [], refs: [], anyProp: false, links: false, backlinks: false, tags: false, self: false };
   const walk = (node: Node | undefined): void => {
     if (!node) return;
     switch (node.k) {
@@ -1626,6 +1648,9 @@ export function formulaReads(compiled: CompiledFormula): FormulaReads {
         return;
       case "ref":
         if (!out.refs.includes(node.key)) out.refs.push(node.key);
+        return;
+      case "this":
+        out.self = true;
         return;
       case "file":
         if (node.key === "links") out.links = true;

@@ -79,6 +79,7 @@ const DATE_WORDS: Record<string, string> = {
 
 function translateCode(code: string): string {
   return code
+    .replace(/\[\[#?\]\]/g, "this.file.asLink()")
     .replace(/\[\[([^[\]]+?)\]\]/g, (_m, inner: string) => `link(${JSON.stringify((inner.split("|")[0] ?? "").trim())})`)
     .replace(/\bdate\(\s*(today|now|tomorrow|yesterday)\s*\)/gi, (_m, word: string) => DATE_WORDS[word.toLowerCase()] ?? _m)
     .replace(/\bdate\(\s*(\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?)\s*\)/gi, (_m, day: string) => `date("${day}")`)
@@ -251,13 +252,6 @@ function narrow(part: TextPart, message: string): { start: number; end: number }
 }
 
 function compileOne(text: string): { compiled: CompiledFormula; formula: string; error: string | null } {
-  if (/(?<![\w.])this\s*\./.test(splitQuoted(text).filter((p) => p.code).map((p) => p.text).join(" "))) {
-    return {
-      compiled: { program: null, error: null },
-      formula: text,
-      error: "this. (the note holding the query) is not supported yet. Name the note instead, like [[Project X]].",
-    };
-  }
   const formula = toFormulaSyntax(text);
   const compiled = compileNoteFormula(formula);
   return { compiled, formula, error: compiled.error };

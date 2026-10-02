@@ -22,6 +22,9 @@ import {
   type QueryProblem,
 } from "@/lib/vault/query-expr";
 
+/** FROM [[]] or [[#]]: the note the query is written in, as in Dataview. */
+export const THIS_NOTE = "\u0000this";
+
 export type DialectView = "list" | "table" | "cards";
 
 export type DialectColumn = { label: string; text: string; expr: CompiledExpr };
@@ -34,7 +37,7 @@ export type DialectSource = {
   tagMode: "and" | "or";
   notTags: string[];
   notFolders: string[];
-  /** FROM [[Note]]: notes that link to Note. */
+  /** FROM [[Note]]: notes that link to Note. `THIS_NOTE` for [[]] or [[#]]. */
   linksTo: string | null;
   /** FROM outgoing([[Note]]): notes Note links to. */
   linkedFrom: string | null;
@@ -200,8 +203,8 @@ function readSource(source: string, start: number, end: number): DialectSource |
     const tag = /^#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)$/u.exec(text);
     const quoted = /^"([^"]*)"$/.exec(text) ?? /^'([^']*)'$/.exec(text);
     const keyed = /^(?:path|folder):(?:"([^"]*)"|(.+))$/i.exec(text);
-    const link = /^\[\[([^[\]]+)\]\]$/.exec(text);
-    const outgoing = /^outgoing\(\s*\[\[([^[\]]+)\]\]\s*\)$/i.exec(text);
+    const link = /^\[\[([^[\]]*)\]\]$/.exec(text);
+    const outgoing = /^outgoing\(\s*\[\[([^[\]]*)\]\]\s*\)$/i.exec(text);
     if (tag) {
       const name = (tag[1] ?? "").toLowerCase();
       if (negate) {
@@ -238,7 +241,8 @@ function readSource(source: string, start: number, end: number): DialectSource |
     }
     if (link || outgoing) {
       if (negate) return problem("FROM cannot leave out a link. Use WHERE !file.hasLink(\"Note\").", "FROM", atom.start, atom.end);
-      const target = ((link ?? outgoing)?.[1] ?? "").split("|")[0]?.trim() ?? "";
+      const written = ((link ?? outgoing)?.[1] ?? "").split("|")[0]?.trim() ?? "";
+      const target = written === "" || written === "#" ? THIS_NOTE : written;
       if (out.linksTo || out.linkedFrom) return problem("FROM reads one [[link]]. Add the others in WHERE.", "FROM", atom.start, atom.end);
       if (link) out.linksTo = target;
       else out.linkedFrom = target;
