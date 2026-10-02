@@ -25,13 +25,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. Mixing AND and OR in one WHERE is not supported — use a chain of AND, or a chain of OR. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. Mixing AND and OR in one WHERE is not supported — use a chain of AND, or a chain of OR. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. WHERE file.outlinks = "…" is not supported — use contains. Mixing AND and OR is not supported. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Mixing AND and OR is not supported. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. Mixing AND and OR in one WHERE is not supported — use a chain of AND, or a chain of OR. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. Mixing AND and OR in one WHERE is not supported — use a chain of AND, or a chain of OR. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -432,10 +432,22 @@ const CHOICE_HINT =
 const CHOICE_TABLE =
   'choice() belongs on TABLE, such as TABLE choice(status = "draft", "yes", "no").';
 
-/** Same shape rules WHERE already uses. A link list still needs contains(). */
+/**
+ * Exact-title membership on file.outlinks / file.inlinks.
+ * `=` with a title is the same check as contains(). Other comparisons stay rejected.
+ */
+function linkMembership(cmp: WhereCmp): { join: "out" | "in"; needle: string } | null {
+  const join = linkListField(cmp.field);
+  if (!join) return null;
+  if (cmp.kind === "contains") return { join, needle: cmp.needle };
+  if (cmp.kind === "cmp" && cmp.op === "eq" && cmp.value.kind === "text") return { join, needle: cmp.value.text };
+  return null;
+}
+
+/** Same shape rules WHERE already uses. Link-list `=` is membership; other ops are not. */
 function whereCmpError(cmp: WhereCmp): string | null {
-  if (linkListField(cmp.field) && cmp.kind !== "contains") {
-    return `Use contains(${cmp.field}, "…"). WHERE ${cmp.field} = "…" is not supported.`;
+  if (linkListField(cmp.field) && !linkMembership(cmp)) {
+    return `Use contains(${cmp.field}, "…") or ${cmp.field} = "Title". Other comparisons on a link list are not supported.`;
   }
   if (cmp.kind !== "contains") {
     const key = columnKey(cmp.field);
@@ -1053,17 +1065,16 @@ function whereMatch(
   nodes?: Record<string, VaultNode>,
   links?: LinkScan | null,
 ): "yes" | "no" | "unloaded" {
-  if (where.kind === "contains" && nodes && links) {
-    const join = linkListField(where.field);
-    if (join === "out") {
+  const membership = linkMembership(where);
+  if (membership) {
+    if (!nodes || !links) return "unloaded";
+    if (membership.join === "out") {
       if (typeof node.content !== "string") return "unloaded";
       const labels = outgoingJoinLabels(node, nodes, links.index);
-      return labels.some((label) => label === where.needle) ? "yes" : "no";
+      return labels.some((label) => label === membership.needle) ? "yes" : "no";
     }
-    if (join === "in") {
-      const labels = links.incoming.get(node.id) ?? [];
-      return labels.some((label) => label === where.needle) ? "yes" : "no";
-    }
+    const labels = links.incoming.get(node.id) ?? [];
+    return labels.some((label) => label === membership.needle) ? "yes" : "no";
   }
   if (where.kind === "contains") {
     const actual = fieldActual(node, where.field);
@@ -1156,10 +1167,10 @@ function whereLinkNeeds(where: WhereCmp[]): { out: boolean; inn: boolean } {
   let out = false;
   let inn = false;
   for (const cmp of where) {
-    if (cmp.kind !== "contains") continue;
-    const join = linkListField(cmp.field);
-    if (join === "out") out = true;
-    if (join === "in") inn = true;
+    const membership = linkMembership(cmp);
+    if (!membership) continue;
+    if (membership.join === "out") out = true;
+    if (membership.join === "in") inn = true;
   }
   return { out, inn };
 }
@@ -1608,10 +1619,11 @@ export function runNexusQuery(
   let tagsIncomplete = false;
   const linkNeed = whereLinkNeeds(parsed.where);
   for (const column of parsed.columns) {
-    if (column.kind !== "choice" || column.condition.kind !== "contains") continue;
-    const join = linkListField(column.condition.field);
-    if (join === "out") linkNeed.out = true;
-    if (join === "in") linkNeed.inn = true;
+    if (column.kind !== "choice") continue;
+    const membership = linkMembership(column.condition);
+    if (!membership) continue;
+    if (membership.join === "out") linkNeed.out = true;
+    if (membership.join === "in") linkNeed.inn = true;
   }
   const linkScan =
     parsed.flattenLinks || linkNeed.out || linkNeed.inn
