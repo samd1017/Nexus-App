@@ -1,5 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_OVERVIEW_FORCE, layoutOverviewForces, type OverviewForce } from "@/lib/graph/overview-layout";
+import {
+  deleteOverviewPreset,
+  loadOverviewPresets,
+  saveOverviewPreset,
+  type OverviewPreset,
+} from "@/lib/graph/overview-presets";
 import {
   overviewEdges,
   overviewGroupColor,
@@ -19,6 +25,7 @@ const DRAG_PX = 5;
 /** Flat vault map. Folder Map keeps the 3D planets; this does not restyle them. */
 export function OverviewGraph({ className }: Props) {
   const nodes = useVaultStore((s) => s.nodes);
+  const vaultKey = useVaultStore((s) => s.vaultId || s.vaultPath || "none");
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const [folder, setFolder] = useState("");
   const [tag, setTag] = useState("");
@@ -26,9 +33,15 @@ export function OverviewGraph({ className }: Props) {
   const [colorMode, setColorMode] = useState<ColorMode>("folder");
   const [hidden, setHidden] = useState<string[]>([]);
   const [pins, setPins] = useState<Record<string, Pin>>({});
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState<OverviewPreset[]>([]);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ id: string; pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const openTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    setPresets(loadOverviewPresets(vaultKey));
+  }, [vaultKey]);
 
   const pinMap = useMemo(() => {
     const map = new Map<string, Pin>();
@@ -90,6 +103,26 @@ export function OverviewGraph({ className }: Props) {
   const minY = Math.min(-120, ...(ys.length ? ys : [0])) - 48;
   const maxX = Math.max(160, ...(xs.length ? xs : [0])) + 80;
   const maxY = Math.max(120, ...(ys.length ? ys : [0])) + 48;
+
+  const savePreset = () => {
+    const next = saveOverviewPreset(vaultKey, {
+      name: presetName,
+      folder,
+      tag,
+      colorMode,
+      hidden,
+    });
+    if (!next) return;
+    setPresets(next);
+    setPresetName("");
+  };
+
+  const applyPreset = (preset: OverviewPreset) => {
+    setFolder(preset.folder);
+    setTag(preset.tag);
+    setColorMode(preset.colorMode);
+    setHidden(preset.hidden);
+  };
 
   const openNote = (id: string) => {
     setActiveNote(id);
@@ -197,8 +230,52 @@ export function OverviewGraph({ className }: Props) {
           </button>
         ))}
       </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 pt-1">
+        <input
+          value={presetName}
+          onChange={(e) => setPresetName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") savePreset();
+          }}
+          placeholder="Preset name"
+          className="nexus-field h-7 w-28 rounded-md border border-[var(--border)] bg-transparent px-2 text-[12px]"
+          data-testid="graph-overview-preset-name"
+        />
+        <button
+          type="button"
+          data-testid="graph-overview-save-preset"
+          className="rounded-full px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:bg-white/5"
+          onClick={savePreset}
+        >
+          Save
+        </button>
+        {presets.map((preset) => (
+          <span key={preset.id} className="inline-flex items-center">
+            <button
+              type="button"
+              data-testid="graph-overview-preset"
+              data-preset-id={preset.id}
+              data-preset-name={preset.name}
+              className="rounded-full px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:bg-white/5"
+              onClick={() => applyPreset(preset)}
+            >
+              {preset.name}
+            </button>
+            <button
+              type="button"
+              data-testid="graph-overview-delete-preset"
+              data-preset-id={preset.id}
+              aria-label={`Delete ${preset.name}`}
+              className="px-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              onClick={() => setPresets(deleteOverviewPreset(vaultKey, preset.id))}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
       <p className="shrink-0 px-3 pt-1 text-[11px] text-[var(--text-muted)]" data-testid="graph-overview-disclosure">
-        Vault overview. Drag a note to pin it here. Still missing: saved group queries.
+        Vault overview. Drag a note to pin it here. Save filter presets for this vault.
       </p>
       {model.visible.length === 0 ? (
         <p className="px-3 py-6 text-[12px] text-[var(--text-muted)]">No notes match this folder or tag.</p>

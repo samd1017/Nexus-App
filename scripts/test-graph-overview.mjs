@@ -123,8 +123,15 @@ assert.match(overview, /graph-overview-repulsion/);
 assert.match(overview, /graph-overview-color/);
 assert.match(overview, /graph-overview-group/);
 assert.match(overview, /Drag a note to pin it here/);
-assert.match(overview, /Still missing: saved group queries/);
+assert.match(overview, /Save filter presets for this vault/);
+assert.doesNotMatch(overview, /saved group queries/);
+assert.doesNotMatch(overview, /Still missing/);
 assert.doesNotMatch(overview, /drag-to-pin/);
+assert.match(overview, /graph-overview-save-preset/);
+assert.match(overview, /graph-overview-preset/);
+assert.match(overview, /graph-overview-delete-preset/);
+assert.match(overview, /loadOverviewPresets/);
+assert.doesNotMatch(overview, /saveOverviewPreset\([\s\S]{0,180}pins/);
 assert.match(overview, /graph-overview-clear-pins/);
 assert.match(overview, /data-pinned/);
 assert.doesNotMatch(overview, /Still missing: force sliders and color groups/);
@@ -134,5 +141,60 @@ assert.match(palette, /label: "Graph overview"/);
 assert.match(palette, /graphSurface: "overview"/);
 const hotkey = readFileSync("src/lib/layout/graph-hotkey.ts", "utf8");
 assert.match(hotkey, /return "local"/);
+
+const {
+  OVERVIEW_PRESET_CAP,
+  OVERVIEW_PRESET_STORAGE_KEY,
+  deleteOverviewPreset,
+  loadOverviewPresets,
+  saveOverviewPreset,
+} = await import("../src/lib/graph/overview-presets.ts");
+
+function memoryStorage() {
+  const bag = new Map();
+  return {
+    getItem: (key) => (bag.has(key) ? bag.get(key) : null),
+    setItem: (key, value) => bag.set(key, value),
+  };
+}
+
+const presetStore = memoryStorage();
+assert.equal(saveOverviewPreset("vault-a", { name: "  ", folder: "Research", tag: "", colorMode: "folder", hidden: [] }, presetStore), null);
+assert.deepEqual(loadOverviewPresets("vault-a", presetStore), []);
+const saved = saveOverviewPreset(
+  "vault-a",
+  { name: " Research ", folder: " Research ", tag: "#graph", colorMode: "tag", hidden: ["Journal", "Journal", ""] },
+  presetStore,
+);
+assert.equal(saved.length, 1);
+assert.equal(saved[0].name, "Research");
+assert.equal(saved[0].folder, "Research");
+assert.equal(saved[0].tag, "#graph");
+assert.equal(saved[0].colorMode, "tag");
+assert.deepEqual(saved[0].hidden, ["Journal"]);
+assert.equal("pins" in saved[0], false);
+assert.doesNotMatch(presetStore.getItem(OVERVIEW_PRESET_STORAGE_KEY), /pins/);
+const updated = saveOverviewPreset(
+  "vault-a",
+  { name: "Research", folder: "Projects", tag: "", colorMode: "off", hidden: [] },
+  presetStore,
+);
+assert.equal(updated.length, 1);
+assert.equal(updated[0].id, saved[0].id);
+assert.equal(updated[0].folder, "Projects");
+assert.equal(updated[0].colorMode, "off");
+assert.deepEqual(loadOverviewPresets("vault-b", presetStore), []);
+assert.equal(loadOverviewPresets("vault-a", presetStore)[0].folder, "Projects");
+for (let i = 0; i < OVERVIEW_PRESET_CAP + 2; i++) {
+  saveOverviewPreset("vault-a", { name: `P${i}`, folder: String(i), tag: "", colorMode: "folder", hidden: [] }, presetStore);
+}
+const presetCapped = loadOverviewPresets("vault-a", presetStore);
+assert.equal(presetCapped.length, OVERVIEW_PRESET_CAP);
+assert.equal(presetCapped[0].name, `P${OVERVIEW_PRESET_CAP + 1}`);
+assert.ok(!presetCapped.some((row) => row.name === "Research"));
+const removed = deleteOverviewPreset("vault-a", presetCapped[0].id, presetStore);
+assert.equal(removed.length, OVERVIEW_PRESET_CAP - 1);
+assert.ok(!removed.some((row) => row.id === presetCapped[0].id));
+assert.equal(loadOverviewPresets("vault-b", presetStore).length, 0);
 
 console.log("graph-overview: PASS");
