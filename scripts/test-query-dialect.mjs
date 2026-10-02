@@ -285,6 +285,26 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   assert.ok(starters.some((s) => /^CARDS/.test(s.query)));
 }
 
+// --- Every query the demo Note List shows runs on the demo vault.
+{
+  resetVaultIndex();
+  invalidateVaultTagsCache();
+  const demo = buildDemoVault();
+  const noteList = Object.values(demo.nodes).find((n) => n.path === "Projects/Note List.md");
+  const blocks = [...noteList.content.matchAll(/```(nexus-query|dataview)\n([\s\S]*?)\n```/g)].map((m) => m[2]);
+  assert.ok(blocks.length >= 8);
+  for (const block of blocks) {
+    const model = runNexusQuery(block, demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"));
+    assert.equal(model.error, null, `${block}: ${model.error}`);
+    if (/^(TABLE|CARDS|LIST) .*\n?FROM ("Research"|#)/.test(block)) assert.ok(model.rows.length > 0, `${block} found nothing`);
+  }
+  const days = runNexusQuery(blocks[1], demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"));
+  assert.deepEqual(days.columns, ["due", "Days left"]);
+  assert.equal(days.rows[0].fields[1].value, "17");
+  const dvDays = runNexusQuery('TABLE (date(due) - date(today)).days AS "D" FROM "Research" WHERE due', demo.nodes, null, Date.parse("2026-09-15T12:00:00Z"));
+  assert.match(dvDays.fieldNote, /already gives a number of days, so leave \.days off/);
+}
+
 // --- ```dataview renders natively and saves back as ```dataview; dataviewjs is never run.
 {
   const md = '# Plan\n\n```dataview\nTABLE status FROM "Projects"\nWHERE status != "done"\n```\n\n```nexus-query\nLIST FROM #idea\n```\n\n```dataviewjs\ndv.list([1])\n```\n';

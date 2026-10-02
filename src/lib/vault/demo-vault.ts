@@ -75,7 +75,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
-| Note list | [[Note List]] — \`\`\`nexus-query\`\`\` lists a folder, a tag, or a frontmatter field. Not full Dataview |
+| Queries | [[Note List]] — \`\`\`nexus-query\`\`\` (or \`\`\`dataview\`\`\`) turns frontmatter, tags, folders and links into live tables, lists and cards |
 | Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
 | Backlinks | Right panel → see what points here |
@@ -164,50 +164,63 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`WHERE file.ctime >= date(today) - 30d\` compare them. \`SORT file.size\` or \`SORT file.ctime\`. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field. Missing values sort last. \`WHERE status = "draft" AND contains(file.name, "Call")\` keeps a note only when every comparison matches. \`WHERE status = "draft" OR status = "live"\` keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. A TABLE formula is up to three + - * /, left to right, with no parentheses.
+A \`\`\`nexus-query\`\`\` block is a live view of your notes. It is plain text in this file, so any editor can change it, and it updates as you write. Type / and pick **Note query** to start one, or open an empty block for starters built from this vault. Blocks fenced as \`\`\`dataview\`\`\` render the same way and stay \`\`\`dataview\`\`\` on disk.
+
+Start with LIST, TABLE, or CARDS, then add FROM, WHERE, GROUP BY, SORT and LIMIT. A mistake is pointed out in the clause that caused it; nothing else stops working.
+
+## Everyday recipes
+
+A status board for a folder:
 
 \`\`\`nexus-query
-LIST FROM #writing OR #graph
+TABLE status, due AS "Due"
+FROM "Research"
+GROUP BY status
+SORT due
 \`\`\`
 
-\`\`\`nexus-query
-TABLE status FROM path:Research WHERE status = "draft"
-\`\`\`
+Drafts that are not due yet, with a computed column:
 
 \`\`\`nexus-query
-LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call")
+TABLE due, date(due) - date(today) AS "Days left"
+FROM "Research"
+WHERE status = "draft" AND due > date(today)
 \`\`\`
 
+A tagged collection as cards:
+
 \`\`\`nexus-query
-LIST FROM path:Research WHERE status = "draft" OR status = "live"
+CARDS file.folder AS "Folder", file.mtime AS "Edited"
+FROM #writing OR #graph
 \`\`\`
+
+What changed this week, across the vault:
+
+\`\`\`nexus-query
+LIST file.folder
+WHERE file.mtime >= date(today) - 7d
+SORT file.mtime DESC
+LIMIT 10
+\`\`\`
+
+The same language written as a Dataview block:
+
+\`\`\`dataview
+TABLE status FROM "Research" WHERE status
+\`\`\`
+
+## Reference
+
+\`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column; columns can use parentheses, functions like \`round()\`, \`length()\` and \`if()\`, and \`AS "Label"\` names them. \`WHERE due > date(today)\` compares dates, and \`date(today) - 30d\` moves a date. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`SORT file.ctime\` use them. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field; missing values sort last. AND binds tighter than OR, so status = "draft" AND due > date(today) OR status = "live" means the AND pair or the live status. There is no JavaScript: queries cannot run code.
+
+The short form still works: \`LIST path:Research tag:graph\`, \`TABLE FROM path:Research SORT mtime desc\`.
 
 \`\`\`nexus-query
 TABLE status FROM path:Research GROUP BY status rows
 \`\`\`
 
 \`\`\`nexus-query
-LIST FROM path:Research LIMIT 3
-\`\`\`
-
-\`\`\`nexus-query
-TABLE file.size, file.ctime FROM path:Research
-\`\`\`
-
-\`\`\`nexus-query
-TABLE status, due FROM path:Research SORT due
-\`\`\`
-
-\`\`\`nexus-query
-LIST FROM path:Research WHERE contains(file.name, "Graph")
-\`\`\`
-
-\`\`\`nexus-query
-TABLE file.name + " note" FROM path:Research WHERE contains(file.name, "Graph")
-\`\`\`
-
-\`\`\`nexus-query
-TABLE file.outlinks FROM path:Research WHERE contains(file.name, "Graph")
+LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call")
 \`\`\`
 
 \`\`\`nexus-query
