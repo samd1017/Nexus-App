@@ -42,7 +42,7 @@ async function waitReady(page, notes, timeoutMs) {
   while (Date.now() - t0 < timeoutMs) {
     const p = await probe(page);
     if (p.stress?.notes === notes && !p.stress.connecting) return p;
-    const err = await page.locator("text=/Could not open soak/").count();
+    const err = await page.locator("text=/Could not open large test vault/").count();
     if (err) throw new Error("UI reported soak open failure");
     await page.waitForTimeout(250);
   }

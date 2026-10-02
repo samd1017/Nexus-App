@@ -17,9 +17,9 @@ Nexus is one product from a handful of notes through about 500,000. Same craft. 
 This law binds the release gates:
 
 - **Gate A — reliability.** The graph does not throw, and `[[wikilinks]]` are indexed before large-vault bodies are stripped. AppShell stays the real shell.
-- **Gate B — craft.** Prove the same craft on a demo/small vault and on a large soak vault before calling craft done.
+- **Gate B — craft.** Prove the same craft on a demo/small vault and on a large test vault before calling craft done.
 - **Gate C — scale.** Cold open and progressive keyword search at 100k. Honest retrieval (no fake semantic rank). Desktop is the 500k path. The browser stays capped.
-- **Gate D — soak.** A human pass on both ends of the continuum. Stay draft until that pass.
+- **Gate D — human pass.** A human pass on both ends of the continuum. Stay draft until that pass.
 
 Browser vaults refuse around 25k notes. A 500k vault is a desktop folder.
 

@@ -1000,12 +1000,12 @@ const metaOnly = {
   r: folder("r", "Research"),
   crave: {
     id: "crave",
-    path: "Research/CRAVE Draft Status.md",
-    name: "CRAVE Draft Status.md",
+    path: "Research/Draft Status.md",
+    name: "Draft Status.md",
     kind: "note",
     parentId: "r",
     mtime: 1,
-    content: "---\nstatus: draft\n---\n# CRAVE\n",
+    content: "---\nstatus: draft\n---\n# Draft\n",
   },
   nograph: { id: "nograph", path: "Research/No Graph Tag.md", name: "No Graph Tag.md", kind: "note", parentId: "r", mtime: 2 },
   probe: { id: "probe", path: "Research/Writing Probe.md", name: "Writing Probe.md", kind: "note", parentId: "r", mtime: 3 },
@@ -1020,7 +1020,7 @@ assert.deepEqual(
   ["nograph", "overview", "probe"],
 );
 const thin = runNexusQuery("TABLE status FROM path:Research GROUP BY status", metaOnly);
-assert.deepEqual(thin.rows.filter((r) => r.group === "draft").map((r) => r.title), ["CRAVE Draft Status"]);
+assert.deepEqual(thin.rows.filter((r) => r.group === "draft").map((r) => r.title), ["Draft Status"]);
 assert.equal(thin.rows.some((r) => r.title === "Graph Overview" && r.group === "live"), false);
 const disk = {
   ...metaOnly,
@@ -1032,14 +1032,14 @@ resetVaultIndex();
 const full = runNexusQuery("TABLE status FROM path:Research GROUP BY status", disk);
 assert.deepEqual(
   full.rows.filter((r) => r.group === "draft").map((r) => r.title),
-  ["CRAVE Draft Status", "No Graph Tag", "Writing Probe"],
+  ["Draft Status", "No Graph Tag", "Writing Probe"],
 );
 assert.deepEqual(
   full.rows.filter((r) => r.group === "live").map((r) => r.title),
   ["Graph Overview"],
 );
 const drafted = runNexusQuery('LIST FROM path:Research WHERE status = "draft"', disk);
-assert.deepEqual(drafted.rows.map((r) => r.title), ["CRAVE Draft Status", "No Graph Tag", "Writing Probe"]);
+assert.deepEqual(drafted.rows.map((r) => r.title), ["Draft Status", "No Graph Tag", "Writing Probe"]);
 assert.deepEqual(frontmatterHydrateIds("TABLE status FROM path:Research GROUP BY status", disk), []);
 
 assert.equal(queryNeedsSizeBody("TABLE file.size, file.ctime FROM path:Research"), true);

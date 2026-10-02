@@ -94,7 +94,7 @@ Chrome in the browser is **not** this path. Chrome refuses ≥25k. SCALE READY i
 3. `npm install && npm run tauri:dev`
 4. Confirm the window is the Tauri shell (not `npm run dev` in Chrome).
 
-### Generate soak vaults
+### Generate large test vaults
 
 ```bash
 npm run soak:wave-e-desktop -- --notes 100000

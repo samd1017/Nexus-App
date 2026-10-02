@@ -96,7 +96,7 @@ fn ready_phase_plugin<R: tauri::Runtime>(
         .build()
 }
 
-/// Echo a page clock line onto the process log the soak already tails.
+/// Echo a page clock line onto the process log.
 /// The window stays hidden until the early page has decided, so the first
 /// visible frame is that line rather than a blank webview.
 #[tauri::command]

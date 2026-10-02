@@ -1,5 +1,5 @@
 /**
- * Official soak vault writer — same tokens as generate-synthetic-vault.mjs.
+ * Large test vault writer — same tokens as generate-synthetic-vault.mjs.
  *
  * Probe words (every official vault): `hub`, `cluster`, `retrieval`.
  * Hub titles every 200 notes; every note body contains "Cluster hub".

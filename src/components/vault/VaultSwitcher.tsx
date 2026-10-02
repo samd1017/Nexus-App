@@ -315,7 +315,7 @@ export function VaultSwitcher() {
                     <MenuRow
                       key={n}
                       icon={<HardDrive size={15} />}
-                      label={`Open soak ${n / 1000}k`}
+                      label={`Open large test vault ${n / 1000}k`}
                       disabled={openLocked}
                       onClick={() => {
                         if (openLocked) return;

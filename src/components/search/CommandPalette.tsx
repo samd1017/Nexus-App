@@ -1525,8 +1525,8 @@ function CommandPaletteOpen() {
           },
           ...([10_000, 50_000, 100_000, 200_000] as const).map((n) => ({
             id: `soak-vault-${n}`,
-            label: `Open soak vault (${n.toLocaleString()} notes)`,
-            keywords: ["soak", "scale", "stress", "synthetic", String(n), "large"],
+            label: `Open large test vault (${n.toLocaleString()} notes)`,
+            keywords: ["scale", "stress", "synthetic", String(n), "large"],
             icon: <Database size={15} />,
             shortcut: undefined as string | undefined,
             run: wrapRun(`soak-vault-${n}`, () => {

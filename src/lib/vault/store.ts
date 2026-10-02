@@ -3140,7 +3140,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				phase: "walking",
 				scanned: 0,
 				totalHint: n,
-				message: `Building soak vault (${n.toLocaleString()} notes)…`,
+				message: `Building large test vault (${n.toLocaleString()} notes)…`,
 			});
 			const data = await buildSyntheticVault({
 				noteCount: n,
@@ -3315,7 +3315,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			const msg = err instanceof Error ? err.message : String(err);
 			set({
 				connecting: false,
-				toast: `Could not open soak vault: ${msg}`,
+				toast: `Could not open large test vault: ${msg}`,
 			});
 			setOpenProgress({
 				phase: "error",

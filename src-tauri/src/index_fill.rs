@@ -1709,7 +1709,7 @@ fn head_write_limit(headed: i64) -> usize {
     }
 }
 
-/// Filename tokens users search first on cold open (official soak: `Hub N.md`).
+/// Filename tokens users search first on cold open (`Hub N.md`).
 pub fn is_title_seed_hot_name(name: &str) -> bool {
     name.trim_end_matches(".md")
         .trim_end_matches(".MD")
@@ -4190,7 +4190,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
     }
 
     /// Same titles/paths as `noteTitleForIndex` / `notePathForIndex` in
-    /// `src/lib/vault/synthetic-vault.ts` (official soak / SOAK-MANIFEST).
+    /// `src/lib/vault/synthetic-vault.ts` (synthetic vault manifest).
     fn write_official_shaped(vault: &Path, n: usize) {
         const ROOTS: [&str; 7] = [
             "00-Inbox",
@@ -5894,7 +5894,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
         let _ = fs::remove_dir_all(vault.parent().unwrap());
     }
 
-    /// Local soak probe — not CI. `cargo test -p nexus-fill-test -- --ignored --nocapture`
+    /// Local scale probe — not CI. `cargo test -p nexus-fill-test -- --ignored --nocapture`
     /// with `NEXUS_FILL_PROBE_N` (default 25000).
     #[test]
     #[ignore]
