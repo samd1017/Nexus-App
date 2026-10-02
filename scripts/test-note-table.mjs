@@ -196,7 +196,10 @@ bad("status.frob()", /\.frob\(\) is not a formula function/);
 bad("upper(status, 1)", /upper\(\) takes 1 value/);
 bad("status.upper(1)", /\.upper\(\) takes no values/);
 bad('status = "doing"', /Use == to compare/);
-bad("file.size", /file\. needs name, path, folder, ext, mtime/);
+ok("file.size", "");
+ok("file.ctime", "");
+ok("file.size", "12", { ...task, size: 12 });
+ok("file.ctime", "2026-09-30 12:00", { ...task, ctime: NOW - 86_400_000 });
 bad('date(due) + 7d', /Durations are quoted, like "7d"/);
 bad('"open', /end quote/);
 bad("status status", /where it does not fit/);
@@ -410,7 +413,8 @@ LB("file.hasTag", /file\.hasTag needs \(…\), like file\.hasTag\("…"\)/);
 LB("file.hasTag()", /file\.hasTag\(\) takes 1 or more values/);
 LB('file.inFolder("a", "b")', /file\.inFolder\(\) takes 1 value/);
 LB('hasTag("x")', /hasTag\(\) is a file method\. Write file\.hasTag\(…\)/);
-LB("file.size", /file\. needs name, path, folder, ext, mtime, links, backlinks, tags, or hasLink\(\)/);
+L("file.size", "");
+L("file.ctime", "");
 // Later columns get the typed list, not its text
 {
   const refs = new Map([["picked", { value: ["a", "b"] }]]);
@@ -668,9 +672,9 @@ const linkVault = [
     content: "---\ntags:\n  - planning/q4\n  - Review\nowner: \"[[Ada]]\"\n---\nSee [[Ada]], [[Projects/Spec#Scope|the spec]], [[Ada|again]], ![[diagram.png]], ![[Ada]] and `[[Code]]`.\n#inline tag\n",
     mtime: NOW,
   },
-  { id: "ada", path: "People/Ada.md", name: "Ada.md", content: "Works on [[Hub]] and [[Spec]].\n", mtime: NOW },
+  { id: "ada", path: "People/Ada.md", name: "Ada.md", content: "Works on [[Hub]] and [[Spec]].\n", mtime: NOW, ctime: NOW - 86_400_000, size: 1 },
   { id: "spec", path: "Projects/Spec.md", name: "Spec.md", content: "Back to [[hub]]. Also [[Hub]] and [[Spec]] (self).\n", mtime: NOW },
-  { id: "lazy", path: "Projects/Lazy.md", name: "Lazy.md", content: null, mtime: NOW },
+  { id: "lazy", path: "Projects/Lazy.md", name: "Lazy.md", content: null, mtime: NOW, size: 40 },
 ];
 const linkTable = buildNoteTable(
   linkVault,
@@ -803,6 +807,8 @@ const resolvedFieldsMore = buildNoteTable(
   [
     col("size", 'link("Ada").asFile().size'),
     col("ctime", 'link("Ada").asFile().ctime'),
+    col("lazySize", 'link("Lazy").asFile().size'),
+    col("lazyCtime", 'link("Lazy").asFile().ctime'),
     col("lazyPath", 'link("Lazy").asFile().path'),
     col("selfPath", "file.asLink().asFile().path"),
     col("lower", 'link("Ada").asFile().name.lower()'),
@@ -825,8 +831,20 @@ assert.equal(field("hub", "missingName").error, null);
 assert.equal(field("hub", "lazyName").value, "Lazy");
 assert.equal(field("hub", "lazyPath").value, "Projects/Lazy.md");
 assert.equal(field("hub", "edited").value, "2026-10-01 12:00");
-assert.match(field("hub", "size").error, /asFile\(\) has no size/);
-assert.match(field("hub", "ctime").error, /asFile\(\) has no ctime/);
+assert.equal(field("hub", "size").error, null);
+assert.equal(field("hub", "size").kind, "number");
+assert.equal(
+  field("hub", "size").value,
+  String(new TextEncoder().encode("Works on [[Hub]] and [[Spec]].\n").length),
+);
+assert.notEqual(field("hub", "size").value, "1", "a loaded body is the byte size, not a stale catalog size");
+assert.equal(field("hub", "ctime").error, null);
+assert.equal(field("hub", "ctime").kind, "date");
+assert.equal(field("hub", "ctime").value, "2026-09-30 12:00");
+assert.equal(field("hub", "lazySize").value, "40");
+assert.equal(field("hub", "lazySize").kind, "number");
+assert.equal(field("hub", "lazyCtime").value, "");
+assert.equal(field("hub", "lazyCtime").error, null);
 assert.equal(field("hub", "selfPath").value, "Hub.md");
 assert.equal(field("spec", "selfPath").value, "Projects/Spec.md");
 assert.equal(field("hub", "lower").value, "ada");
@@ -995,8 +1013,9 @@ assert.match(table, /summarize\(rows, column, kind, summaryFormulas\)/);
 assert.match(table, /Some Obsidian functions are missing/);
 assert.doesNotMatch(table, /not a full file/);
 assert.doesNotMatch(table, /\.name, \.path, properties, size, and ctime are not on it/);
-assert.match(table, /asFile\(\)\.name, \.path, and \.properties read that note/);
-assert.match(table, /size and created time are not on it/);
+assert.match(table, /asFile\(\)\.name, \.path, \.properties, \.size, \.ctime, and \.mtime read that note/);
+assert.doesNotMatch(table, /size and created time are not on it/);
+assert.doesNotMatch(readFileSync("src/lib/vault/note-formula.ts", "utf8"), /asFile\(\) has no size|asFile\(\) has no ctime/);
 assert.doesNotMatch(table, /Opening another vault \.base loads its views here/);
 assert.doesNotMatch(table, /Nexus still saves them to/);
 assert.doesNotMatch(table, /Nexus still saves them in browser storage/);

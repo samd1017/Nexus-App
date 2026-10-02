@@ -100,6 +100,8 @@ pub struct NoteMetaDto {
     pub parent_id: Option<String>,
     pub mtime: i64,
     pub size: Option<i64>,
+    #[serde(default)]
+    pub ctime: Option<i64>,
     pub content_hash: Option<String>,
     pub title: Option<String>,
     pub body_snippet: Option<String>,
@@ -1077,11 +1079,13 @@ pub fn vault_index_list(
         .get(&db_path)
         .ok_or_else(|| "index not open".to_string())?;
     let lim = limit.unwrap_or(500_000).max(1);
+    crate::index_fill::ensure_fill_depth_column(conn);
     let mut stmt = conn
         .prepare(
             "SELECT m.id, m.path, m.name, m.kind, m.parent_id, m.mtime, m.size,
                     m.content_hash, m.title,
-                    (SELECT f.body FROM note_fts f WHERE f.note_id = m.id LIMIT 1)
+                    (SELECT f.body FROM note_fts f WHERE f.note_id = m.id LIMIT 1),
+                    m.ctime
              FROM note_meta m
              WHERE m.deleted = 0
              ORDER BY m.path
@@ -1101,6 +1105,7 @@ pub fn vault_index_list(
                 content_hash: r.get(7)?,
                 title: r.get(8)?,
                 body_snippet: r.get::<_, Option<String>>(9)?,
+                ctime: r.get(10)?,
                 tags: None,
                 link_targets: None,
             })

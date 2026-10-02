@@ -56,6 +56,8 @@ export interface DurableNoteMeta {
   parentId: string | null;
   mtime: number;
   size?: number;
+  /** Created time in ms, when the file or the first write recorded one. */
+  ctime?: number;
   contentHash?: string;
   title?: string;
   /** Optional body snippet for FTS (loaded notes only) */
@@ -911,6 +913,8 @@ export function noteMetaFromNode(n: VaultNode): DurableNoteMeta {
     kind: n.kind,
     parentId: n.parentId,
     mtime: n.mtime,
+    size: n.kind === "note" && typeof n.content === "string" ? new TextEncoder().encode(n.content).length : n.size,
+    ctime: n.ctime,
     title: n.kind === "note" ? noteTitle(n) : n.name,
     bodySnippet: body,
     contentHash: body !== undefined ? simpleHash(body) : undefined,

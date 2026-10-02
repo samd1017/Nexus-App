@@ -11,6 +11,10 @@ export interface VaultNode {
   parentId: string | null;
   /** ISO mtime for UI; updated on write/watch */
   mtime: number;
+  /** Byte size from the file, when the catalog has one. A loaded body is measured instead. */
+  size?: number;
+  /** Created time in ms. Set at first write, or from the file's birth time on disk. */
+  ctime?: number;
   /** Only for notes — full markdown body on disk */
   content?: string;
 }

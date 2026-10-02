@@ -45,6 +45,7 @@ import {
   SUMMARY_FORMULA_EXAMPLES,
   compileSummaryFormula,
 } from "@/lib/vault/note-formula";
+import { getDurableIndex } from "@/lib/vault/durable-index";
 import { getDesktopRoot, getFsaRoot, useVaultStore } from "@/lib/vault/store";
 import {
   scheduleFillSafeHydrate,
@@ -83,6 +84,7 @@ type BaseNotice = {
 
 export function NoteTable() {
   const vaultId = useVaultStore((s) => s.vaultId);
+  const vaultMode = useVaultStore((s) => s.mode);
   const nodes = useVaultStore((s) => s.nodes);
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const ensureNoteBody = useVaultStore((s) => s.ensureNoteBody);
@@ -360,14 +362,20 @@ export function NoteTable() {
     () =>
       Object.values(nodes)
         .filter((n) => n.kind === "note")
-        .map((n) => ({
-          id: n.id,
-          path: n.path,
-          name: n.name,
-          content: n.content,
-          mtime: n.mtime,
-        })),
-    [nodes, bodyEpoch],
+        .map((n) => {
+          const meta = getDurableIndex()?.getNoteMeta(n.id);
+          const inMemory = vaultMode === "demo" || vaultMode === "local";
+          return {
+            id: n.id,
+            path: n.path,
+            name: n.name,
+            content: n.content,
+            mtime: n.mtime,
+            size: typeof n.content === "string" ? undefined : (n.size ?? meta?.size),
+            ctime: n.ctime || meta?.ctime || (inMemory ? n.mtime : 0) || undefined,
+          };
+        }),
+    [nodes, bodyEpoch, vaultMode],
   );
 
   useEffect(() => {
@@ -1115,7 +1123,7 @@ export function NoteTable() {
               : live?.onDisk
                 ? `Views live in ${LIVE_BASE_FILE} at the vault root, an Obsidian .base file Nexus saves to and reloads when it changes.`
                 : "Views live in a .base kept in browser storage for this vault."}{" "}
-            Not Obsidian Bases — link.asFile() opens that note, and link.linksTo() checks its links. Some Obsidian functions are missing (Formula help lists what works). asFile().name, .path, and .properties read that note; size and created time are not on it.
+            Not Obsidian Bases — link.asFile() opens that note, and link.linksTo() checks its links. Some Obsidian functions are missing (Formula help lists what works). asFile().name, .path, .properties, .size, .ctime, and .mtime read that note.
           </p>
         </div>
         <div className="flex items-center gap-1">

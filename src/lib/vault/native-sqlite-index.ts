@@ -109,6 +109,7 @@ type NativeNoteDto = {
   parentId?: string | null;
   mtime: number;
   size?: number | null;
+  ctime?: number | null;
   contentHash?: string | null;
   title?: string | null;
   bodySnippet?: string | null;
@@ -125,6 +126,7 @@ function dtoToMeta(d: NativeNoteDto): DurableNoteMeta {
     parentId: d.parentId ?? null,
     mtime: d.mtime,
     size: d.size ?? undefined,
+    ctime: d.ctime ?? undefined,
     contentHash: d.contentHash ?? undefined,
     title: d.title ?? undefined,
     bodySnippet: d.bodySnippet ?? undefined,

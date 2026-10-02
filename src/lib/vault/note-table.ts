@@ -18,7 +18,22 @@ export type NoteTableSource = {
   name: string;
   content?: string | null;
   mtime?: number;
+  /** Catalog byte size, used when the body is not loaded. */
+  size?: number | null;
+  /** Created time in ms. */
+  ctime?: number;
 };
+
+function utf8Size(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** Loaded body wins, so an edit is not hidden behind a stale catalog size. */
+function sourceSize(note: NoteTableSource): number | null {
+  if (typeof note.content === "string") return utf8Size(note.content);
+  if (typeof note.size === "number" && Number.isFinite(note.size) && note.size >= 0) return note.size;
+  return null;
+}
 
 export type NoteLink = { id: string | null; title: string };
 
@@ -694,6 +709,8 @@ export function buildNoteTable(
       path: note.path,
       folder: noteTableFolder(note.path),
       mtime: note.mtime || 0,
+      size: sourceSize(note),
+      ctime: note.ctime || 0,
       props,
     };
     const refs: FormulaRefs = new Map();
@@ -713,6 +730,8 @@ export function buildNoteTable(
         name: hit.title,
         path: stored,
         props,
+        size: source ? sourceSize(source) : null,
+        ctime: source?.ctime || 0,
         mtime: source?.mtime || 0,
       };
     };

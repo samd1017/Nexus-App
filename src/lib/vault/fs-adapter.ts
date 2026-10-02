@@ -241,6 +241,7 @@ export async function scanVault(
         kind: "note",
         parentId,
         mtime: file.lastModified,
+        size: file.size,
         content,
       };
       signatures[path] = `${file.lastModified}:${file.size}`;
@@ -296,6 +297,7 @@ export async function scanVaultMeta(
         kind: "note",
         parentId,
         mtime: file?.lastModified ?? 1,
+        ...(file ? { size: file.size } : {}),
       };
       signatures[path] = file
         ? `${file.lastModified}:${file.size}`

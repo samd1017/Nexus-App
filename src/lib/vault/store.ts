@@ -4343,10 +4343,14 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		if (!opts?.external && prev) recordNoteRevision(id, node.path, prev);
 		// Keep body archive in sync for large-test lazy mounts
 		if (hasBodyArchive() && node.path) setBodyInArchive(node.path, next);
+		const born =
+			node.ctime ??
+			(get().mode === "demo" || get().mode === "local" ? node.mtime : undefined);
 		const nextNode: VaultNode = {
 			...node,
 			content: next,
 			mtime: Date.now(),
+			...(born ? { ctime: born } : {}),
 		};
 		get().nodes[id] = nextNode;
 		patchVaultIndex(get().nodes, [id]);

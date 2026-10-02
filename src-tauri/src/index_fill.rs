@@ -149,6 +149,7 @@ struct DiskNote {
     name: String,
     mtime: i64,
     size: i64,
+    ctime: Option<i64>,
 }
 
 struct FillNote {
@@ -158,6 +159,7 @@ struct FillNote {
     parent_id: Option<String>,
     mtime: i64,
     size: i64,
+    ctime: Option<i64>,
     title: String,
     body: String,
     links: Vec<String>,
@@ -684,6 +686,7 @@ pub fn inferred_fill_depth(fill_depth: Option<i64>) -> i64 {
 
 pub fn ensure_fill_depth_column(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN fill_depth INTEGER", []);
+    let _ = conn.execute("ALTER TABLE note_meta ADD COLUMN ctime INTEGER", []);
 }
 
 fn load_existing_notes(conn: &Connection) -> HashMap<String, ExistingNote> {
@@ -1069,6 +1072,7 @@ fn disk_note_from_lite(lite: LiteEntry) -> DiskNote {
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
+    let ctime = meta.as_ref().and_then(|m| created_ms(m));
     let size = meta.map(|m| m.len() as i64).unwrap_or(0);
     DiskNote {
         abs: lite.abs,
@@ -1076,7 +1080,16 @@ fn disk_note_from_lite(lite: LiteEntry) -> DiskNote {
         name: lite.name,
         mtime,
         size,
+        ctime,
     }
+}
+
+fn created_ms(meta: &std::fs::Metadata) -> Option<i64> {
+    use std::time::SystemTime;
+    meta.created()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
 }
 
 fn flush_unpublished(
@@ -1496,6 +1509,7 @@ fn commit_early_heads(
         let abs = vault_root.join(path);
         let meta = std::fs::metadata(&abs).ok();
         let size = meta.as_ref().map(|m| m.len() as i64).unwrap_or(*size);
+        let ctime = meta.as_ref().and_then(|m| created_ms(m));
         let mtime = meta
             .as_ref()
             .and_then(|m| m.modified().ok())
@@ -1516,6 +1530,7 @@ fn commit_early_heads(
             parent_id: parent_id.clone(),
             mtime,
             size,
+            ctime,
             title: title_from_name_and_head(name, &body),
             links: extract_wikilink_targets(&body),
             tags: extract_tags(&body),
@@ -1744,6 +1759,7 @@ fn meta_fill_note(disk: &DiskNote) -> FillNote {
         parent_id: parent_id_for(&disk.rel),
         mtime: disk.mtime,
         size: disk.size,
+        ctime: disk.ctime,
         title: disk.name.trim_end_matches(".md").to_string(),
         body: String::new(),
         links: Vec::new(),
@@ -1922,6 +1938,7 @@ fn index_note_heads(
                 parent_id: parent_id_for(&disk.rel),
                 mtime: disk.mtime,
                 size: disk.size,
+                ctime: disk.ctime,
                 title: title_from_name_and_head(&disk.name, &body),
                 links: extract_wikilink_targets(&body),
                 tags: extract_tags(&body),
@@ -2189,11 +2206,12 @@ fn write_note_batch(
     {
         let mut meta = conn
             .prepare_cached(
-                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth)
-                 VALUES (?1,?2,?3,'note',?4,?5,?6,NULL,?7,0,?8)
+                "INSERT INTO note_meta(id, path, name, kind, parent_id, mtime, size, content_hash, title, deleted, fill_depth, ctime)
+                 VALUES (?1,?2,?3,'note',?4,?5,?6,NULL,?7,0,?8,?9)
                  ON CONFLICT(id) DO UPDATE SET
                    path=excluded.path, name=excluded.name, parent_id=excluded.parent_id,
                    mtime=excluded.mtime, size=excluded.size,
+                   ctime=COALESCE(excluded.ctime, note_meta.ctime),
                    title=CASE
                      WHEN note_meta.fill_depth IS NOT NULL AND note_meta.fill_depth > excluded.fill_depth
                        THEN note_meta.title
@@ -2251,6 +2269,7 @@ fn write_note_batch(
                     note.size,
                     note.title,
                     note.fill_depth,
+                    note.ctime,
                 ])
                 .is_err()
             {

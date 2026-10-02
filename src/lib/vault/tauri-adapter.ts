@@ -273,6 +273,7 @@ async function walkNotes(
     abs: string,
     mtime: number,
     size: number,
+    ctime: number,
   ) => Promise<void>,
   onDir: (relPath: string, name: string, parentRel: string) => void,
   onProgress?: (scanned: number) => void,
@@ -317,7 +318,12 @@ async function walkNotes(
             ? meta.mtime
             : new Date(meta.mtime).getTime()
           : Date.now();
-        await onFile(rel, name, relDir, abs, mtime, Number(meta.size ?? 0));
+        const birth = meta.birthtime
+          ? typeof meta.birthtime === "number"
+            ? meta.birthtime
+            : new Date(meta.birthtime).getTime()
+          : 0;
+        await onFile(rel, name, relDir, abs, mtime, Number(meta.size ?? 0), Number.isFinite(birth) ? birth : 0);
         count.n += 1;
         if (onProgress && (count.n === 1 || count.n % 250 === 0)) {
           onProgress(count.n);
@@ -340,7 +346,7 @@ export async function scanDesktopVault(root: string): Promise<VaultScan> {
   await walkNotes(
     root,
     "",
-    async (path, name, parentPath, abs, mtime, size) => {
+    async (path, name, parentPath, abs, mtime, size, ctime) => {
       const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
       const id = nodeId(path);
       let content: string | undefined;
@@ -361,6 +367,8 @@ export async function scanDesktopVault(root: string): Promise<VaultScan> {
         kind: "note",
         parentId,
         mtime,
+        size,
+        ...(ctime ? { ctime } : {}),
         content,
       };
       signatures[path] = `${mtime}:${size}`;
@@ -682,7 +690,7 @@ export async function scanDesktopVaultMeta(
   await walkNotes(
     root,
     "",
-    async (path, name, parentPath, _abs, mtime, size) => {
+    async (path, name, parentPath, _abs, mtime, size, ctime) => {
       const parentId = parentPath ? folderIds.get(parentPath) ?? null : null;
       const id = nodeId(path);
       nodes[id] = {
@@ -692,6 +700,8 @@ export async function scanDesktopVaultMeta(
         kind: "note",
         parentId,
         mtime,
+        size,
+        ...(ctime ? { ctime } : {}),
         // content omitted — unloaded
       };
       signatures[path] = `${mtime}:${size}`;

@@ -22,13 +22,15 @@ function note(
   parentId: string | null,
   content: string,
 ): VaultNode {
+  const now = Date.now();
   return {
     id: idFor(path),
     path,
     name,
     kind: "note",
     parentId,
-    mtime: Date.now(),
+    mtime: now,
+    ctime: now,
     content,
   };
 }

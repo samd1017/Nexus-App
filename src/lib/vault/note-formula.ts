@@ -18,7 +18,11 @@ type FileValue = {
   /** Vault path, including `.md`, same as `file.path` on that note. */
   path: string;
   props: Record<string, string>;
-  /** Edited time. Notes do not store size or created time. */
+  /** Byte size, or null when this note has no body and no catalog size. */
+  size: number | null;
+  /** Created time in ms. `0` when this note has no created time. */
+  ctime: number;
+  /** Edited time. */
   mtime: number;
 };
 type PropsValue = { kind: "props"; fields: Record<string, string> };
@@ -36,6 +40,10 @@ export type FormulaRow = {
   path: string;
   folder: string;
   mtime: number;
+  /** Byte size of this note, when known. */
+  size?: number | null;
+  /** Created time in ms. Absent or `0` when unknown. */
+  ctime?: number;
   props: Record<string, string>;
   refs?: FormulaRefs;
   /** Lazy so a table that never reads links or tags does not scan note bodies. */
@@ -55,7 +63,7 @@ type Token =
   | { t: "re"; source: string; flags: string }
   | { t: "op"; v: string };
 
-const FILE_KEYS = ["name", "path", "folder", "ext", "mtime", "links", "backlinks", "tags"] as const;
+const FILE_KEYS = ["name", "path", "folder", "ext", "size", "ctime", "mtime", "links", "backlinks", "tags"] as const;
 type FileKey = (typeof FILE_KEYS)[number];
 type Local = "value" | "index" | "acc" | "values";
 
@@ -1386,16 +1394,16 @@ function readProp(row: FormulaRow, key: string): Value {
   return lookupFields(row.props, key);
 }
 
-/** `.name`, `.path`, `.properties`, and `.mtime` on the file `asFile()` returned. */
+/** `.name`, `.path`, `.properties`, `.size`, `.ctime`, and `.mtime` on the file `asFile()` returned. */
 function readFileField(file: FileValue, key: string): Value {
   const field = key.trim().toLowerCase();
   if (field === "name") return file.name;
   if (field === "path") return file.path;
   if (field === "properties") return { kind: "props", fields: file.props };
+  if (field === "size") return file.size;
+  if (field === "ctime") return file.ctime ? { kind: "date", ms: file.ctime, dateOnly: false } : null;
   if (field === "mtime") return file.mtime ? { kind: "date", ms: file.mtime, dateOnly: false } : null;
-  if (field === "size") throw new FormulaError("asFile() has no size. Nexus does not store how many bytes a note is.");
-  if (field === "ctime") throw new FormulaError("asFile() has no ctime. Nexus keeps when a note was edited, not when it was created.");
-  throw new FormulaError(`A file has no .${key}. It has name, path, properties, and mtime.`);
+  throw new FormulaError(`A file has no .${key}. It has name, path, properties, size, ctime, and mtime.`);
 }
 
 function readMember(v: Value, key: string): Value {
@@ -1419,6 +1427,8 @@ function evalNode(node: Node, row: FormulaRow, ctx: Ctx): Value {
     }
     case "file":
       if (node.key === "mtime") return row.mtime ? { kind: "date", ms: row.mtime, dateOnly: false } : null;
+      if (node.key === "ctime") return row.ctime ? { kind: "date", ms: row.ctime, dateOnly: false } : null;
+      if (node.key === "size") return row.size ?? null;
       if (node.key === "ext") {
         const base = row.path.split("/").pop() ?? "";
         const dot = base.lastIndexOf(".");

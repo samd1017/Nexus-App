@@ -115,6 +115,7 @@ export interface DurableNoteMetaContract {
   parentId: string | null;
   mtime: number;
   size?: number;
+  ctime?: number;
   contentHash?: string;
   title?: string;
   bodySnippet?: string;
