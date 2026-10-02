@@ -197,7 +197,9 @@ assert.equal(NEXUS_QUERY_DQL.includes("file.ctime"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("SORT due"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("SORT file.folder"), true);
 assert.equal(NEXUS_QUERY_DQL.includes('AND contains(file.name, "Graph")'), true);
-assert.equal(NEXUS_QUERY_DQL.includes("WHERE OR between field comparisons is not supported"), true);
+assert.equal(NEXUS_QUERY_DQL.includes('OR status = "live"'), true);
+assert.equal(NEXUS_QUERY_DQL.includes("Mixing AND and OR"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("WHERE OR between field comparisons is not supported"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("No joins"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("WHERE field"), true);
 
@@ -288,7 +290,9 @@ assert.match(noteList.content, /SORT file\.ctime/);
 assert.match(noteList.content, /SORT due/);
 assert.match(noteList.content, /SORT file\.folder/);
 assert.match(noteList.content, /AND contains\(file\.name, "Call"\)/);
-assert.match(noteList.content, /WHERE OR between field comparisons is not supported/);
+assert.match(noteList.content, /OR status = "live"/);
+assert.match(noteList.content, /cannot mix AND and OR|Mixing AND and OR/);
+assert.doesNotMatch(noteList.content, /WHERE OR between field comparisons is not supported/);
 assert.doesNotMatch(lib, /Only one WHERE/);
 assert.doesNotMatch(lib, /no full DQL/);
 assert.match(view, /queryColumnLabel/);
@@ -499,10 +503,25 @@ assert.equal(andMiss.rows.length, 0);
 const andThree = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call") AND price > 10', shop);
 assert.deepEqual(andThree.rows.map((r) => r.id), ["draft"]);
 const fieldOr = runNexusQuery('LIST FROM path:Research WHERE status = "draft" OR status = "live"', shop);
-assert.match(fieldOr.error, /Use AND/);
-assert.match(fieldOr.error, /OR/);
-assert.doesNotMatch(fieldOr.error, /not Dataview/);
-assert.doesNotMatch(fieldOr.error, /Only one WHERE/);
+assert.equal(fieldOr.error, null);
+assert.deepEqual(fieldOr.rows.map((r) => r.id).sort(), ["draft", "live"]);
+const orName = runNexusQuery('LIST FROM path:Research WHERE contains(file.name, "Call") OR contains(file.name, "Graph")', shop);
+assert.deepEqual(orName.rows.map((r) => r.id).sort(), ["draft", "live"]);
+const orMiss = runNexusQuery('LIST FROM path:Research WHERE status = "nope" OR contains(file.name, "Nope")', shop);
+assert.equal(orMiss.error, null);
+assert.equal(orMiss.rows.length, 0);
+const mixed = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call") OR status = "live"', shop);
+assert.match(mixed.error, /cannot mix AND and OR/);
+assert.doesNotMatch(mixed.error, /not Dataview/);
+const mixedBack = runNexusQuery('LIST FROM path:Research WHERE status = "draft" OR status = "live" AND contains(file.name, "Call")', shop);
+assert.match(mixedBack.error, /cannot mix AND and OR/);
+const orUnloaded = runNexusQuery('LIST FROM path:Research WHERE status = "draft" OR status = "gone"', unloaded);
+assert.deepEqual(orUnloaded.rows.map((r) => r.id), ["draft"]);
+assert.match(orUnloaded.fieldNote, /1 note is not loaded/);
+const eightOr = Array.from({ length: 8 }, () => `status = "live"`).join(" OR ");
+assert.deepEqual(runNexusQuery(`LIST FROM path:Research WHERE ${eightOr}`, shop).rows.map((r) => r.id), ["live"]);
+const nineOr = Array.from({ length: 9 }, () => `status = "live"`).join(" OR ");
+assert.match(runNexusQuery(`LIST FROM path:Research WHERE ${nineOr}`, shop).error, /Only 8 WHERE/);
 const sizedShop = {
   ...shop,
   draft: { ...shop.draft, size: 800 },
@@ -513,6 +532,8 @@ const andSize = runNexusQuery('LIST FROM path:Research WHERE file.size > 500 AND
 assert.deepEqual(andSize.rows.map((r) => r.id), ["draft"]);
 const andSizeMiss = runNexusQuery('LIST FROM path:Research WHERE file.size > 500 AND status = "live"', sizedShop);
 assert.equal(andSizeMiss.rows.length, 0);
+const orSize = runNexusQuery('LIST FROM path:Research WHERE file.size < 300 OR status = "draft"', sizedShop);
+assert.deepEqual(orSize.rows.map((r) => r.id).sort(), ["draft", "live"]);
 const andDue = runNexusQuery(
   'LIST FROM path:Research WHERE due > date(today) AND status = "draft"',
   shop,
@@ -520,6 +541,13 @@ const andDue = runNexusQuery(
   Date.UTC(2026, 9, 1, 15, 0),
 );
 assert.deepEqual(andDue.rows.map((r) => r.id), ["draft"]);
+const orDue = runNexusQuery(
+  'LIST FROM path:Research WHERE due < date(today) OR status = "draft"',
+  shop,
+  null,
+  Date.UTC(2026, 9, 1, 15, 0),
+);
+assert.deepEqual(orDue.rows.map((r) => r.id).sort(), ["draft", "live"]);
 const andUnloaded = runNexusQuery('LIST FROM path:Research WHERE status = "draft" AND contains(status, "dra")', unloaded);
 assert.deepEqual(andUnloaded.rows.map((r) => r.id), ["draft"]);
 assert.match(andUnloaded.fieldNote, /1 note is not loaded/);
@@ -656,6 +684,8 @@ const andOutMiss = runNexusQuery('LIST FROM path:Research WHERE status = "live" 
 assert.equal(andOutMiss.rows.length, 0);
 const andIn = runNexusQuery('LIST FROM path:Research WHERE contains(file.inlinks, "Alpha") AND contains(file.name, "Beta")', linked);
 assert.deepEqual(andIn.rows.map((r) => r.id), ["b"]);
+const orLink = runNexusQuery('LIST FROM path:Research WHERE contains(file.outlinks, "Beta") OR file.name = "Quiet"', linked);
+assert.deepEqual(orLink.rows.map((r) => r.id).sort(), ["a", "c"]);
 const outAlpha = runNexusQuery('LIST FROM path:Research WHERE contains(file.outlinks, "Alpha")', linked);
 assert.deepEqual(outAlpha.rows.map((r) => r.id), ["b"]);
 const outMissing = runNexusQuery('LIST FROM path:Research WHERE contains(file.outlinks, "Missing Note")', linked);
@@ -757,6 +787,8 @@ assert.equal(queryNeedsFrontmatter("LIST FROM path:Research GROUP BY file.folder
 assert.equal(queryNeedsFrontmatter('LIST FROM path:Research WHERE file.size > 10 AND status = "draft"'), true);
 assert.equal(queryNeedsSizeBody('LIST FROM path:Research WHERE file.size > 10 AND status = "draft"'), true);
 assert.equal(queryNeedsSizeBody('LIST FROM path:Research WHERE status = "draft" AND contains(file.name, "Call")'), false);
+assert.equal(queryNeedsFrontmatter('LIST FROM path:Research WHERE file.size > 10 OR status = "draft"'), true);
+assert.equal(queryNeedsSizeBody('LIST FROM path:Research WHERE file.size > 10 OR status = "draft"'), true);
 const metaOnly = {
   r: folder("r", "Research"),
   crave: {
