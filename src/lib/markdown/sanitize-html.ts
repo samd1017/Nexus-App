@@ -73,6 +73,7 @@ const ALLOWED_ATTR = new Set([
   "data-tex",
   "data-embed-target",
   "data-query",
+  "data-lang",
   "type",
   "checked",
   "contenteditable",

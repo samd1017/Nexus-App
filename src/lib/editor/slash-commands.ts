@@ -132,22 +132,22 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     id: "note-list",
-    label: "Note list",
-    hint: "```nexus-query · not Dataview",
-    keywords: ["list", "table", "folder", "tag", "nexus-query", "note list"],
+    label: "Note query",
+    hint: "table · list · cards from folders, tags, properties",
+    keywords: ["list", "table", "cards", "board", "folder", "tag", "property", "dataview", "bases", "nexus-query", "note list", "query"],
     run: (ed, range) =>
       runSlash(ed, range, (c) =>
         c.insertContent({
           type: "nexusQueryBlock",
-          attrs: { query: "LIST FROM path:Research" },
+          attrs: { query: "" },
         }),
       ),
   },
   {
     id: "query",
-    label: "Live query",
+    label: "Search results",
     hint: "built-in ```query",
-    keywords: ["query", "search", "dataview", "list", "built-in", "query block"],
+    keywords: ["query", "search", "list", "built-in", "query block"],
     run: (ed, range) =>
       runSlash(ed, range, (c) =>
         c.insertContent({

@@ -36,6 +36,7 @@ import {
   FileText,
   Search,
   Slash,
+  Table2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -451,7 +452,21 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
                       })
                       .run(),
                   <Search size={14} />,
-                  "Live query",
+                  "Search results",
+                )}
+                {moreItem(
+                  editor.isActive("nexusQueryBlock"),
+                  () =>
+                    editor
+                      .chain()
+                      .focus()
+                      .insertContent({
+                        type: "nexusQueryBlock",
+                        attrs: { query: "" },
+                      })
+                      .run(),
+                  <Table2 size={14} />,
+                  "Note query",
                 )}
                 {moreItem(
                   editor.isActive("mathBlock"),

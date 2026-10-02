@@ -17,14 +17,19 @@ function decodeCodeText(raw: string): string {
     .replace(/&amp;/g, "&");
 }
 
-/** ```nexus-query``` → a note list. Not the search ```query``` block. */
+/**
+ * ```nexus-query``` and ```dataview``` → a live note query. The fence name is
+ * kept so the block saves back as written. Not the search ```query``` block,
+ * and never ```dataviewjs```: Nexus does not run code from notes.
+ */
 export function promoteNexusQueryBlocks(html: string): string {
-  if (!html || !/nexus-query/i.test(html)) return html;
+  if (!html || !/nexus-query|dataview/i.test(html)) return html;
   return html.replace(
-    /<pre>\s*<code\b[^>]*class="[^"]*language-nexus-query[^"]*"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
-    (_full, body: string) => {
+    /<pre>\s*<code\b[^>]*class="[^"]*language-(nexus-query|dataview)(?![\w-])[^"]*"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+    (_full, lang: string, body: string) => {
       const src = decodeCodeText(body).replace(/\n$/, "");
-      return `<div data-type="nexus-query" data-query="${escapeAttr(src)}" class="nexus-note-list"></div>`;
+      const fence = lang.toLowerCase() === "dataview" ? ' data-lang="dataview"' : "";
+      return `<div data-type="nexus-query" data-query="${escapeAttr(src)}"${fence} class="nexus-note-list"></div>`;
     },
   );
 }
