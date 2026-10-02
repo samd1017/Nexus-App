@@ -28,7 +28,9 @@ export type HotkeyId =
   | "splitPane"
   | "askNotes"
   | "pinNote"
-  | "insertWikilink";
+  | "insertWikilink"
+  | "insertTemplate"
+  | "newFromTemplate";
 
 export type HotkeyChord = {
   key: string;
@@ -62,6 +64,8 @@ export const HOTKEY_IDS: HotkeyId[] = [
   "askNotes",
   "pinNote",
   "insertWikilink",
+  "insertTemplate",
+  "newFromTemplate",
 ];
 
 // Obsidian's everyday chords where they exist: Ctrl/Cmd+O finds a note,
@@ -90,6 +94,9 @@ export const DEFAULT_HOTKEYS: Record<HotkeyId, HotkeyChord> = {
   askNotes: { key: "/", shift: true },
   pinNote: { key: "p", shift: true },
   insertWikilink: { key: "l", shift: true },
+  // Ctrl/Cmd+T and Ctrl/Cmd+Shift+T belong to the browser.
+  insertTemplate: { key: "t", alt: true },
+  newFromTemplate: { key: "n", alt: true },
 };
 
 /** Second default chords, as in Obsidian. A remap of the action replaces them. */
@@ -122,6 +129,8 @@ export const HOTKEY_LABELS: Record<HotkeyId, string> = {
   askNotes: "Ask your notes",
   pinNote: "Pin / unpin current note",
   insertWikilink: "Insert wikilink ([[)",
+  insertTemplate: "Insert template",
+  newFromTemplate: "New note from template",
 };
 
 const ID_SET = new Set<string>(HOTKEY_IDS);
@@ -197,6 +206,8 @@ export function chordMatches(e: KeyboardEvent, chord: HotkeyChord): boolean {
   if (!mod) return false;
   if (Boolean(chord.shift) !== e.shiftKey) return false;
   if (Boolean(chord.alt) !== e.altKey) return false;
+  // AltGr reports as Ctrl+Alt on Windows. It types letters such as ń; it is not a chord.
+  if (chord.alt && !apple && e.getModifierState?.("AltGraph")) return false;
   return keyMatches(e, chord.key);
 }
 

@@ -13,6 +13,7 @@ import { openFindInNote, closeFindInNote } from "@/components/editor/FindInNoteB
 import { openCommandPalette } from "@/components/search/CommandPalette";
 import { setSwitcherOpen, toggleQuickSwitcher } from "@/lib/search/switcher-session";
 import { requestInsertWikilink } from "@/lib/editor/insert-wikilink";
+import { openTemplatePicker } from "@/lib/vault/template-session";
 import { isAppleModPlatform, isDesktopShell } from "@/lib/platform";
 import { exitGraphForViewport, toggleGraphForViewport } from "@/lib/layout/viewport";
 import { reclaimAfterFocus } from "@/lib/chrome/focus-ring";
@@ -171,6 +172,14 @@ function runHotkey(id: HotkeyId): boolean {
     case "insertWikilink":
       if (!hasVault || overlayOpen || !store.activeNoteId) return false;
       return requestInsertWikilink();
+    case "insertTemplate":
+      if (!hasVault || overlayOpen || !store.activeNoteId) return false;
+      openTemplatePicker("insert");
+      return true;
+    case "newFromTemplate":
+      if (!hasVault || overlayOpen) return false;
+      openTemplatePicker("new", { parentId: focusedEmptyFolderId() });
+      return true;
     default:
       return false;
   }

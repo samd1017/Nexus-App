@@ -71,6 +71,8 @@ import {
 } from "@/lib/vault/sqlite-fill-progress";
 import { toggleFocusMode } from "@/lib/prefs/focus-mode";
 import { formatShortcut, isAppleModPlatform } from "@/lib/platform";
+import { formatChord, resolveChord } from "@/lib/prefs/hotkeys";
+import { openSettingsSection } from "@/lib/prefs/settings-section";
 import { toggleGraphForViewport } from "@/lib/layout/viewport";
 import { Hint, PaletteResults, type ActionDef } from "@/components/search/palette-results";
 import {
@@ -184,6 +186,7 @@ function CommandPaletteOpen() {
   const practiceAgentConflict = useVaultStore((s) => s.practiceAgentConflict);
   const editorMode = useVaultStore((s) => s.settings.editorMode);
   const savedSearches = usePrefsStore((s) => s.savedSearches);
+  const hotkeyOverrides = usePrefsStore((s) => s.hotkeyOverrides);
   const [query, setQuery] = useState("");
   const [recentTick, setRecentTick] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -376,7 +379,7 @@ function CommandPaletteOpen() {
           label: "Insert template…",
           keywords: ["template", "templates", "insert", "templater", "snippet"],
           icon: <LayoutTemplate size={15} />,
-          shortcut: undefined as string | undefined,
+          shortcut: formatChord(resolveChord("insertTemplate", hotkeyOverrides)) as string | undefined,
           run: wrapRun("insert-template", () => {
             setCommandOpen(false);
             openTemplatePicker("insert");
@@ -387,14 +390,25 @@ function CommandPaletteOpen() {
           label: "New note from template…",
           keywords: ["template", "templates", "create", "new", "templater"],
           icon: <LayoutTemplate size={15} />,
-          shortcut: undefined as string | undefined,
+          shortcut: formatChord(resolveChord("newFromTemplate", hotkeyOverrides)) as string | undefined,
           run: wrapRun("new-from-template", () => {
             setCommandOpen(false);
             openTemplatePicker("new");
           }),
         },
+        {
+          id: "template-settings",
+          label: "Template settings",
+          keywords: ["template", "templates", "folder", "date format", "hotkey", "templater"],
+          icon: <Settings size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("template-settings", () => {
+            setCommandOpen(false);
+            openSettingsSection("templates");
+          }),
+        },
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
-    [actionQuery, nodes, createNote, openDailyNote, setCommandOpen, setQuery],
+    [actionQuery, nodes, createNote, openDailyNote, setCommandOpen, setQuery, hotkeyOverrides],
   );
 
   const navigateActions = useMemo(
