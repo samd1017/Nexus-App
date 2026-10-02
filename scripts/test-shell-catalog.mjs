@@ -11,6 +11,7 @@ const r = spawnSync(
   [
     "--yes",
     "tsx",
+    "--input-type=module",
     "-e",
     `
 import assert from "node:assert/strict";
