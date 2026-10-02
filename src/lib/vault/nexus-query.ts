@@ -22,13 +22,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  "Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE does not compare a link list. A TABLE formula is one + - * /.";
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. A TABLE formula is one + - * /.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE does not compare a link list. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -444,7 +444,11 @@ export function parseNexusQuery(source: string): Parsed {
   const addWhere = (cmp: WhereCmp): string | null => {
     if (where) return "Only one WHERE comparison is supported.";
     if (linkListField(cmp.field)) {
-      return "FLATTEN file.outlinks or FLATTEN file.inlinks lists one row per link. WHERE does not compare that list.";
+      if (cmp.kind === "contains") {
+        where = cmp;
+        return null;
+      }
+      return `Use contains(${cmp.field}, "…"). WHERE ${cmp.field} = "…" is not supported.`;
     }
     if (cmp.kind === "contains") {
       where = cmp;
@@ -767,7 +771,37 @@ function ordered(left: number, right: number, op: WhereOp): boolean {
   return left !== right;
 }
 
-function whereMatch(node: VaultNode, where: WhereCmp, now: number): "yes" | "no" | "unloaded" {
+type LinkScan = {
+  index: Map<string, string>;
+  incoming: Map<string, string[]>;
+  incomingUnloaded: number;
+};
+
+/** Indexes for one query. Built only when WHERE or FLATTEN reads links. */
+function scanLinks(nodes: Record<string, VaultNode>, need: { out: boolean; inn: boolean }): LinkScan {
+  const index = need.out ? noteLinkIndex(nodes) : new Map();
+  if (!need.inn) return { index, incoming: new Map(), incomingUnloaded: 0 };
+  const incoming = incomingByTarget(nodes);
+  return { index, incoming: incoming.byId, incomingUnloaded: incoming.unloaded };
+}
+
+function whereMatch(
+  node: VaultNode,
+  where: WhereCmp,
+  now: number,
+  nodes?: Record<string, VaultNode>,
+  links?: LinkScan | null,
+): "yes" | "no" | "unloaded" {
+  const join = where.kind === "contains" ? linkListField(where.field) : null;
+  if (join && nodes && links) {
+    if (join === "out") {
+      if (typeof node.content !== "string") return "unloaded";
+      const labels = outgoingJoinLabels(node, nodes, links.index);
+      return labels.some((label) => label === where.needle) ? "yes" : "no";
+    }
+    const labels = links.incoming.get(node.id) ?? [];
+    return labels.some((label) => label === where.needle) ? "yes" : "no";
+  }
   if (where.kind === "contains") {
     const actual = fieldActual(node, where.field);
     if (actual === null) return "unloaded";
@@ -972,6 +1006,7 @@ function collectInFolder(
   tagMode: TagJoin,
   where: WhereCmp | null,
   now: number,
+  links: LinkScan | null = null,
 ): { notes: VaultNode[]; truncated: boolean; budgetHit: boolean; unloaded: number } {
   const idx = ensureVaultIndex(nodes);
   idx.getIdByPath(nodes, prefix);
@@ -998,7 +1033,7 @@ function collectInFolder(
     if (!pathHasPrefix(node.path, prefix)) continue;
     if (!hasTags(node, tags, tagMode)) continue;
     if (where) {
-      const match = whereMatch(node, where, now);
+      const match = whereMatch(node, where, now, nodes, links);
       if (match === "unloaded") {
         unloaded += 1;
         continue;
@@ -1052,6 +1087,14 @@ export function runNexusQuery(
   let budgetHit = false;
   let unloaded = 0;
   let tagsIncomplete = false;
+  const whereJoin = parsed.where?.kind === "contains" ? linkListField(parsed.where.field) : null;
+  const linkScan =
+    parsed.flattenLinks || whereJoin
+      ? scanLinks(nodes, {
+          out: parsed.flattenLinks === "out" || whereJoin === "out",
+          inn: parsed.flattenLinks === "in" || whereJoin === "in",
+        })
+      : null;
   if (parsed.path) {
     const folderId = resolveFolder(nodes, parsed.path);
     if (!folderId) {
@@ -1066,7 +1109,7 @@ export function runNexusQuery(
         fieldNote: null,
       };
     }
-    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where, now);
+    const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where, now, linkScan);
     notes = collected.notes;
     budgetHit = collected.budgetHit;
     unloaded = collected.unloaded;
@@ -1092,7 +1135,7 @@ export function runNexusQuery(
     if (parsed.where) {
       const kept: VaultNode[] = [];
       for (const note of notes) {
-        const match = whereMatch(note, parsed.where, now);
+        const match = whereMatch(note, parsed.where, now, nodes, linkScan);
         if (match === "unloaded") unloaded += 1;
         else if (match === "yes") kept.push(note);
       }
@@ -1111,24 +1154,23 @@ export function runNexusQuery(
   });
   let linkUnloaded = 0;
   let joined: { node: VaultNode; link: string | null }[];
-  if (parsed.flattenLinks === "out") {
-    const index = noteLinkIndex(nodes);
+  if (parsed.flattenLinks === "out" && linkScan) {
     joined = [];
     for (const node of notes) {
       if (typeof node.content !== "string") {
         linkUnloaded += 1;
         continue;
       }
-      for (const label of outgoingJoinLabels(node, nodes, index)) joined.push({ node, link: label });
+      for (const label of outgoingJoinLabels(node, nodes, linkScan.index)) joined.push({ node, link: label });
     }
-  } else if (parsed.flattenLinks === "in") {
-    const incoming = incomingByTarget(nodes);
-    linkUnloaded = incoming.unloaded;
+  } else if (parsed.flattenLinks === "in" && linkScan) {
+    linkUnloaded = linkScan.incomingUnloaded;
     joined = [];
     for (const node of notes) {
-      for (const label of incoming.byId.get(node.id) ?? []) joined.push({ node, link: label });
+      for (const label of linkScan.incoming.get(node.id) ?? []) joined.push({ node, link: label });
     }
   } else {
+    if (whereJoin === "in" && linkScan) linkUnloaded = linkScan.incomingUnloaded;
     joined = notes.map((node) => ({ node, link: null }));
   }
   const truncated = joined.length > NEXUS_QUERY_CAP;
