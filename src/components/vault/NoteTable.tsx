@@ -126,7 +126,7 @@ export function NoteTable() {
     }));
   };
 
-  const liveName = live?.sync.storage.name ?? LIVE_BASE_FILE;
+  const liveName = () => live?.sync.storage.name ?? LIVE_BASE_FILE;
   const keepMine = (session: BasesSession): BaseUndo => ({ session, label: "Keep my version", kind: "external" });
 
   const onSaved = (attempted: BasesSession) => (result: LiveSave) => {
@@ -136,15 +136,15 @@ export function NoteTable() {
     } else if (result.kind === "blocked") {
       setLiveState("blocked");
     } else if (result.kind === "failed") {
-      console.error(`[nexus] could not write ${liveName}: ${result.message}`);
-      if (!saveFailed.current) useVaultStore.getState().setToast(`Couldn't save views to ${liveName}. Nexus keeps trying.`);
+      console.error(`[nexus] could not write ${liveName()}: ${result.message}`);
+      if (!saveFailed.current) useVaultStore.getState().setToast(`Couldn't save views to ${liveName()}. Nexus keeps trying.`);
       saveFailed.current = true;
       setLiveState("failed");
     } else if (result.kind === "conflict") {
       setLiveState("ok");
       setSession(result.session);
       setBaseNotice({
-        title: `${sentence(liveName)} changed outside Nexus before your last change saved, so Nexus loaded the file.`,
+        title: `${sentence(liveName())} changed outside Nexus before your last change saved, so Nexus loaded the file.`,
         lines: result.notes,
         tone: "ok",
         undo: keepMine(attempted),
@@ -184,7 +184,7 @@ export function NoteTable() {
     } else if (result.kind === "missing") {
       setLiveState("ok");
       setBaseNotice({
-        title: `${sentence(liveName)} was deleted outside Nexus. Nexus writes it again on your next change.`,
+        title: `${sentence(liveName())} was deleted outside Nexus. Nexus writes it again on your next change.`,
         lines: [],
         tone: "ok",
         undo: null,
@@ -199,8 +199,8 @@ export function NoteTable() {
       setSession(result.session);
       setBaseNotice({
         title: result.wasBlocked
-          ? `${sentence(liveName)} can be read again, so Nexus loaded it.`
-          : `${sentence(liveName)} changed outside Nexus, so Nexus loaded it.`,
+          ? `${sentence(liveName())} can be read again, so Nexus loaded it.`
+          : `${sentence(liveName())} changed outside Nexus, so Nexus loaded it.`,
         lines: result.notes,
         tone: "ok",
         undo: keepMine(previous),
@@ -227,7 +227,7 @@ export function NoteTable() {
       setSession(result.session);
       if (result.notes.length) {
         setBaseNotice({
-          title: `${sentence(liveName)} was edited outside Nexus; some of it shows differently here.`,
+          title: `${sentence(liveName())} was edited outside Nexus; some of it shows differently here.`,
           lines: result.notes,
           tone: "ok",
           undo: null,
@@ -862,7 +862,7 @@ export function NoteTable() {
       if (result.kind === "saved") {
         setLiveState("ok");
         setBaseNotice({
-          title: `Replaced ${liveName} with these views.`,
+          title: `Replaced ${liveName()} with these views.`,
           lines: [`The unreadable file was copied to ${live.onDisk ? LIVE_BASE_BACKUP : "browser storage"}.`],
           tone: "ok",
           undo: null,
@@ -1824,7 +1824,7 @@ export function NoteTable() {
           ? " · properties wait until the index is idle"
           : ""}
         {liveState === "failed" ? ` · views not saved yet, Nexus keeps trying` : ""}
-        {liveState === "blocked" ? ` · views not saving until ${liveName} can be read` : ""}
+        {liveState === "blocked" ? ` · views not saving until ${liveName()} can be read` : ""}
         . Typed note links save as [[Title]] in the note.{" "}
         {livePath
           ? `Views save to ${livePath}.`
