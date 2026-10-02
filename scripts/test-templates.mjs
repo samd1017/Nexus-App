@@ -342,4 +342,17 @@ assert.equal(typed, "2026-03-01");
 off();
 assert.equal(requestInsertText("n1", "x"), false);
 
+// The palette finds each command by its own name only
+const { readFileSync } = await import("node:fs");
+const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
+const searchText = (id) => {
+  const m = new RegExp(`id: "${id}",\\s*label: "([^"]+)",\\s*keywords: \\[([^\\]]*)\\]`).exec(palette);
+  assert.ok(m, id);
+  return `${m[1]} ${m[2]}`.toLowerCase();
+};
+assert.doesNotMatch(searchText("insert-date"), /time/, "searching for time never offers the date");
+assert.doesNotMatch(searchText("insert-time"), /date/, "searching for date never offers the time");
+assert.match(searchText("insert-date"), /date/);
+assert.match(searchText("insert-time"), /time/);
+
 console.log("templates contract: OK");

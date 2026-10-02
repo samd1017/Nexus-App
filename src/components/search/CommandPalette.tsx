@@ -400,7 +400,7 @@ function CommandPaletteOpen() {
         {
           id: "insert-date",
           label: "Insert current date",
-          keywords: ["template", "templates", "date", "today", "insert", "timestamp"],
+          keywords: ["template", "templates", "date", "today", "insert"],
           icon: <CalendarDays size={15} />,
           shortcut: formatChord(resolveChord("insertDate", hotkeyOverrides)) as string | undefined,
           run: wrapRun("insert-date", () => {
