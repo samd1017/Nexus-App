@@ -3157,16 +3157,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
             let _ = rconn.busy_timeout(Duration::from_millis(300));
             while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
                 let t0 = Instant::now();
-                let ok = rconn
-                    .query_row(
-                        "SELECT COUNT(*) FROM note_fts WHERE note_fts MATCH 'cluster'",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .is_ok();
+                let res = rconn.query_row(
+                    "SELECT COUNT(*) FROM note_fts WHERE note_fts MATCH 'cluster'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                );
                 let ms = t0.elapsed().as_millis() as u64;
                 worst2.fetch_max(ms, std::sync::atomic::Ordering::Relaxed);
-                if !ok {
+                // The fill's column migrations can surface once as SQLITE_SCHEMA; only lock waits count.
+                let locked = matches!(
+                    res,
+                    Err(rusqlite::Error::SqliteFailure(ref e, _))
+                        if matches!(e.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                );
+                if locked {
                     busy2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 std::thread::sleep(Duration::from_millis(4));
