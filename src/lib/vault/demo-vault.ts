@@ -1,5 +1,6 @@
 import type { VaultNode } from "./types";
 import { pathJoin } from "./types";
+import { addDays, localToday } from "@/lib/tasks/dates";
 
 function idFor(path: string): string {
   return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
@@ -75,6 +76,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
+| Tasks | [[Task Board]] — \`- [ ]\` lines with 📅 dates, ⏫ priorities and 🔁 repeats; right panel → **Tasks** lists them all |
 | Queries | [[Note List]] — \`\`\`nexus-query\`\`\` (or \`\`\`dataview\`\`\`) turns frontmatter, tags, folders and links into live tables, lists and cards |
 | Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
@@ -153,6 +155,68 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
 - [[External Agents]]
 - [[Linking Notes]]
 - [[Settings & Shortcuts]]
+`,
+    ),
+  );
+
+  const today = localToday();
+  const day = (n: number) => addDays(today, n) ?? today;
+  add(
+    note(
+      pathJoin("Projects", "Task Board.md"),
+      "Task Board.md",
+      projects.id,
+      `---
+tags: [work]
+---
+# Task Board
+
+Tasks are ordinary checkbox lines. The emoji after the text are plain text too, the same ones the Obsidian Tasks plugin writes, so this note reads the same in any editor. Open the right panel → **Tasks** to see every task in the vault by day, or tick one below.
+
+## This week
+
+- [ ] Send the launch notes #writing ⏫ 📅 ${day(-1)}
+- [ ] Review the agent conflict flow ⏳ ${day(0)} 🔼
+- [ ] Draft the onboarding checklist #writing 📅 ${day(0)}
+- [/] Profile vault open on 100k notes #perf 🔺 📅 ${day(2)}
+- [ ] Plan the next release 🛫 ${day(3)} 📅 ${day(9)}
+- [ ] Weekly review 🔁 every week on friday 📅 ${day(4)}
+- [ ] Water the plants 🔁 every 3 days when done #home 📅 ${day(1)}
+- [ ] Ship the export dialog 🆔 export 📅 ${day(5)}
+  - [ ] Write the export tests ⛔ export
+- [ ] Learn the dialect [due:: ${day(6)}] [priority:: low]
+- [ ] Try a natural date: fix this one 📅 tomorrow
+- [x] Seed the demo vault ✅ ${day(-2)}
+- [-] Old idea we dropped ❌ ${day(-3)}
+
+## Open tasks across the vault
+
+\`\`\`nexus-query
+TASK WHERE open
+SORT urgency DESC
+LIMIT 8
+\`\`\`
+
+## Grouped by note
+
+\`\`\`nexus-query
+TASK FROM #work OR #writing
+WHERE !done
+GROUP BY status
+\`\`\`
+
+## Cheat sheet
+
+| Write | Means |
+| --- | --- |
+| \`- [ ]\` · \`- [/]\` · \`- [x]\` · \`- [-]\` | to do · in progress · done · cancelled |
+| 📅 · ⏳ · 🛫 + YYYY-MM-DD | due · scheduled · starts |
+| 🔺 ⏫ 🔼 🔽 ⏬ | highest → lowest priority |
+| 🔁 every week | repeats; ticking it writes the next one above |
+| 🆔 a1 and ⛔ a1 | the second task waits on the first |
+| \`[due:: 2026-10-03]\` | the same, in Dataview spelling |
+
+Related: [[Note List]] · [[First Light]]
 `,
     ),
   );
@@ -696,7 +760,7 @@ The graph already ties together [[Local-first Vault]], [[Graph View]], and [[Ext
 - [x] Seed demo notes
 - [x] Wire wikilinks
 - [x] Try Visual ↔ Source
-- [ ] Capture a real research thread
+- [ ] Capture a real research thread 📅 ${day(1)}
   - [ ] File the interview
   - [ ] Link it from [[Heading & Block Links]]
 - [ ] Open my own folder as a vault ^next-step

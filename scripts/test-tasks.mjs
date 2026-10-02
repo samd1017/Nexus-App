@@ -414,6 +414,30 @@ const qtexts = (m) => {
   assert.equal(props.id, "spec");
 }
 
+// ---------------------------------------------------------------- the demo vault's Task Board
+{
+  const { buildDemoVault } = await import("../src/lib/vault/demo-vault.ts");
+  resetVaultIndex?.();
+  invalidateVaultTagsCache?.();
+  const demo = buildDemoVault();
+  const demoTasks = Object.values(demo.nodes)
+    .filter((n) => n.kind === "note" && /\.md$/.test(n.path))
+    .flatMap((n) => tasksInNote({ id: n.id, path: n.path, title: n.name.replace(/\.md$/, ""), body: n.content }));
+  const board = Object.values(demo.nodes).find((n) => n.path === "Projects/Task Board.md");
+  const boardTasks = demoTasks.filter((t) => t.noteId === board.id);
+  assert.ok(boardTasks.length >= 12);
+  assert.equal(boardTasks.filter((t) => t.problems.length).map((t) => t.text).join(), "Try a natural date: fix this one");
+  assert.ok(boardTasks.some((t) => t.recurring && t.recurrence === "every week on friday"));
+  const blocks = [...board.content.matchAll(/```nexus-query\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+  assert.equal(blocks.length, 2);
+  for (const block of blocks) {
+    const model = runNexusQuery(block, demo.nodes, null, Date.now(), board.id, demoTasks);
+    assert.equal(model.error, null, `${block}: ${model.error}`);
+    assert.ok(model.tasks.length > 0, `${block} found nothing`);
+    assert.equal(model.fieldNote, null, model.fieldNote);
+  }
+}
+
 // ---------------------------------------------------------------- wiring
 {
   const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");

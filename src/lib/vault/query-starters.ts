@@ -62,6 +62,11 @@ export function queryStarters(nodes: Record<string, VaultNode> | null | undefine
     hint: "Last 7 days, newest first",
     query: 'TABLE file.folder AS "Folder", file.mtime AS "Edited"\nWHERE file.mtime >= date(today) - 7d\nSORT file.mtime DESC\nLIMIT 20',
   });
+  out.push({
+    label: "Open tasks",
+    hint: "Most urgent first; tick them here",
+    query: "TASK WHERE open\nSORT urgency DESC\nLIMIT 25",
+  });
   if (folder) {
     const key = boardKey(map, folder.ids);
     out.push(
