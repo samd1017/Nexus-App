@@ -163,7 +163,7 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. A TABLE formula is one + - * /.
+A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. \`GROUP BY status\` partitions the list. \`LIMIT 3\` keeps that many rows. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /.
 
 \`\`\`nexus-query
 LIST FROM #writing OR #graph
@@ -171,6 +171,14 @@ LIST FROM #writing OR #graph
 
 \`\`\`nexus-query
 TABLE status FROM path:Research WHERE status = "draft"
+\`\`\`
+
+\`\`\`nexus-query
+TABLE status FROM path:Research GROUP BY status
+\`\`\`
+
+\`\`\`nexus-query
+LIST FROM path:Research LIMIT 3
 \`\`\`
 
 \`\`\`nexus-query

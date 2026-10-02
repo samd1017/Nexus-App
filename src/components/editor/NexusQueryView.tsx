@@ -1,7 +1,7 @@
 import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { List } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useVaultStore } from "@/lib/vault/store";
 import { getFindFocusPane } from "@/lib/editor/find-target";
 import type { VaultNode } from "@/lib/vault/types";
@@ -127,7 +127,15 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
             </thead>
             <tbody>
               {model.rows.map((row, index) => (
-                <tr key={`${row.id}:${row.link ?? ""}:${index}`}>
+                <Fragment key={`${row.id}:${row.link ?? ""}:${index}`}>
+                {row.group != null && row.group !== model.rows[index - 1]?.group ? (
+                  <tr data-testid="nexus-query-group" data-group={row.group}>
+                    <td colSpan={2 + row.fields.length} className="px-1 pt-2 text-[11px] font-semibold text-[var(--text-muted)]">
+                      {row.group}
+                    </td>
+                  </tr>
+                ) : null}
+                <tr>
                   <td colSpan={2 + row.fields.length} className="p-0">
                     <button
                       type="button"
@@ -151,6 +159,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                     </button>
                   </td>
                 </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -158,7 +167,13 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
         {model.mode === "list" && model.rows.length > 0 ? (
           <ul className="space-y-1">
             {model.rows.map((row, index) => (
-              <li key={`${row.id}:${row.link ?? ""}:${index}`}>
+              <Fragment key={`${row.id}:${row.link ?? ""}:${index}`}>
+              {row.group != null && row.group !== model.rows[index - 1]?.group ? (
+                <li className="px-1 pt-2 text-[11px] font-semibold text-[var(--text-muted)]" data-testid="nexus-query-group" data-group={row.group}>
+                  {row.group}
+                </li>
+              ) : null}
+              <li>
                 <button
                   type="button"
                   className="flex w-full flex-col items-start rounded-md px-1 py-1 text-left hover:bg-white/[0.04]"
@@ -171,6 +186,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                   {row.link ? <span className="truncate text-[11px] text-[var(--text-muted)]">{row.link}</span> : null}
                 </button>
               </li>
+              </Fragment>
             ))}
           </ul>
         ) : null}

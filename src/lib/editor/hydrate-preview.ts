@@ -251,19 +251,24 @@ async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, Vaul
       const fields = model.rows[0]?.fields ?? [];
       const head = `<tr><th>Title</th><th>Path</th>${fields.map((field) => `<th>${escapeHtml(queryColumnLabel(field.name))}</th>`).join("")}</tr>`;
       const body = model.rows
-        .map((r) => {
+        .map((r, index) => {
           const cells = r.fields.map((field) => ` <span data-testid="nexus-query-field">${escapeHtml(field.value)}</span>`).join("");
-          return `<tr><td colspan="${2 + r.fields.length}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${cells}</button></td></tr>`;
+          const header = r.group != null && r.group !== model.rows[index - 1]?.group
+            ? `<tr data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}"><td colspan="${2 + r.fields.length}">${escapeHtml(r.group)}</td></tr>`
+            : "";
+          return `${header}<tr><td colspan="${2 + r.fields.length}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${cells}</button></td></tr>`;
         })
         .join("");
       bits.push(`<table>${head}${body}</table>`);
     }
     if (model.mode === "list" && model.rows.length) {
       const items = model.rows
-        .map(
-          (r) =>
-            `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span>${r.link ? `<span>${escapeHtml(r.link)}</span>` : ""}</button></li>`,
-        )
+        .map((r, index) => {
+          const header = r.group != null && r.group !== model.rows[index - 1]?.group
+            ? `<li data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}">${escapeHtml(r.group)}</li>`
+            : "";
+          return `${header}<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span>${r.link ? `<span>${escapeHtml(r.link)}</span>` : ""}</button></li>`;
+        })
         .join("");
       bits.push(`<ul>${items}</ul>`);
     }

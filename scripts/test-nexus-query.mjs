@@ -189,6 +189,9 @@ assert.equal(NEXUS_QUERY_DQL.includes("No join of two queries"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("WHERE does not compare a link list"), false);
 assert.equal(NEXUS_QUERY_DQL.includes('contains(file.outlinks, "Title")'), true);
 assert.equal(NEXUS_QUERY_DQL.includes("use contains"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("GROUP BY status"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("LIMIT 3"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("Nested rows after GROUP BY"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("No joins"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("WHERE field"), true);
 
@@ -201,6 +204,14 @@ const capped = runNexusQuery("LIST path:Box", many);
 assert.equal(capped.rows.length, NEXUS_QUERY_CAP);
 assert.equal(capped.truncated, true);
 assert.equal(capped.error, null);
+const limited = runNexusQuery("LIST path:Box LIMIT 3", many);
+assert.equal(limited.error, null);
+assert.equal(limited.rows.length, 3);
+assert.equal(limited.truncated, false);
+assert.ok(limited.rows.every((r) => r.group == null));
+const overLimit = runNexusQuery(`LIST path:Box LIMIT ${NEXUS_QUERY_CAP + 20}`, many);
+assert.equal(overLimit.rows.length, NEXUS_QUERY_CAP);
+assert.equal(overLimit.truncated, true);
 
 const demo = buildDemoVault();
 const noteList = Object.values(demo.nodes).find((n) => n.path === "Projects/Note List.md");
@@ -256,10 +267,14 @@ assert.doesNotMatch(lib, /no formulas/);
 assert.doesNotMatch(lib, /no date\(\)/);
 assert.doesNotMatch(lib, /no contains\(\)/);
 assert.match(noteList.content, /contains\(file\.name, "Graph"\)/);
+assert.match(noteList.content, /GROUP BY status/);
+assert.match(noteList.content, /LIMIT 3/);
 assert.doesNotMatch(lib, /no full DQL/);
 assert.match(view, /queryColumnLabel/);
 assert.match(view, /data-testid="nexus-query-field"/);
+assert.match(view, /data-testid="nexus-query-group"/);
 const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
+assert.match(preview, /data-testid="nexus-query-group"/);
 assert.match(preview, /renderNexusQueries/);
 assert.match(preview, /data-open-note/);
 assert.match(preview, /queryColumnLabel/);
@@ -278,6 +293,44 @@ const shop = {
   },
   plain: { ...note("plain", "Research/Plain.md", "# Plain\n"), parentId: "r", mtime: 10 },
 };
+const groupedShop = {
+  ...shop,
+  alpha: {
+    ...note("alpha", "Research/Alpha.md", "---\nstatus: live\n---\n# Alpha\n"),
+    parentId: "r",
+    mtime: 5,
+  },
+  zebra: {
+    ...note("zebra", "Research/Zebra.md", "---\nstatus: draft\n---\n# Zebra\n"),
+    parentId: "r",
+    mtime: 6,
+  },
+};
+const grouped = runNexusQuery("TABLE status FROM path:Research GROUP BY status", groupedShop);
+assert.equal(grouped.error, null);
+assert.deepEqual(
+  grouped.rows.map((r) => [r.group, r.title]),
+  [
+    ["draft", "Callouts"],
+    ["draft", "Zebra"],
+    ["live", "Alpha"],
+    ["live", "Graph View"],
+    ["—", "Plain"],
+  ],
+);
+const groupedLimit = runNexusQuery("TABLE status FROM path:Research GROUP BY status LIMIT 2", groupedShop);
+assert.deepEqual(groupedLimit.rows.map((r) => r.title), ["Callouts", "Zebra"]);
+assert.equal(groupedLimit.truncated, false);
+const folderGroup = runNexusQuery("LIST FROM path:Research GROUP BY file.folder LIMIT 2", shop);
+assert.equal(folderGroup.error, null);
+assert.ok(folderGroup.rows.every((r) => r.group === "Research"));
+assert.equal(folderGroup.rows.length, 2);
+assert.match(runNexusQuery("TABLE status FROM path:Research GROUP BY status GROUP BY file.folder", shop).error, /Only one GROUP BY/);
+assert.match(runNexusQuery("LIST FROM path:Research LIMIT 2 LIMIT 3", shop).error, /Only one LIMIT/);
+assert.match(runNexusQuery("LIST FROM path:Research LIMIT 0", shop).error, /LIMIT needs a positive number/);
+assert.match(runNexusQuery("LIST FROM path:Research GROUP BY file.outlinks", shop).error, /link list/);
+assert.match(runNexusQuery("TABLE status FROM path:Research GROUP BY status rows", shop).error, /Nested rows/);
+assert.match(runNexusQuery("TABLE status FROM path:Research GROUP BY status rows", shop).error, /not Dataview/);
 const where = runNexusQuery('TABLE status, due FROM "Research" WHERE status = "draft"', shop);
 assert.equal(where.error, null);
 assert.deepEqual(where.rows.map((r) => r.id), ["draft"]);

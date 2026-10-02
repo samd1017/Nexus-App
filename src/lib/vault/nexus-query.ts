@@ -6,6 +6,8 @@
  * FLATTEN file.outlinks is one row per outgoing link.
  * FLATTEN file.inlinks is one row per incoming link.
  * One of those joins, not both, and not a join of two queries.
+ * GROUP BY partitions that list. LIMIT keeps that many rows, and never more than the cap.
+ * Nested rows after GROUP BY are not supported.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
@@ -22,13 +24,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. A TABLE formula is one + - * /.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. file.mtime >= date(today) - 7d. TABLE status, due, price * 2, or file.name + " note". FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title or SORT mtime, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "…" is not supported — use contains. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title or SORT mtime.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -44,6 +46,8 @@ export type NexusQueryRow = {
   fields: NexusQueryField[];
   /** Set on a FLATTEN file.outlinks or file.inlinks row. The note id still opens the matched note. */
   link: string | null;
+  /** Set when GROUP BY partitions the list. The same value shares one header. */
+  group: string | null;
 };
 
 export type NexusQueryModel = {
@@ -103,6 +107,8 @@ type Parsed =
       sort: QuerySort | null;
       /** One link join. Outgoing and incoming are not combined. */
       flattenLinks: "out" | "in" | null;
+      groupBy: string | null;
+      limit: number | null;
     };
 
 const FILE_META = new Set(["file.name", "file.path", "file.folder", "file.mtime", "file.tags", "file.outlinks", "file.inlinks"]);
@@ -134,8 +140,16 @@ function unsupportedDql(token: string): boolean {
     if (!FILE_META.has(head) || !formulaTail) return true;
   }
   if (/choice\s*\(/i.test(token)) return true;
-  if (/^(GROUP|LIMIT)$/i.test(token)) return true;
   return false;
+}
+
+function groupFieldName(raw: string): string | null {
+  const field = raw.trim().replace(/,+$/, "");
+  if (!field || linkListField(field)) return null;
+  const key = field.toLowerCase();
+  if (key === "file.name" || key === "file.path" || key === "file.folder" || key === "file.mtime" || key === "file.tags") return field;
+  if (/^[A-Za-z_][\w-]*$/.test(field)) return field;
+  return null;
 }
 
 /** `mtime` and `file.mtime` are one column, and the same for tags. */
@@ -423,6 +437,8 @@ export function parseNexusQuery(source: string): Parsed {
   let where: WhereCmp | null = null;
   let sort: QuerySort | null = null;
   let flattenLinks: "out" | "in" | null = null;
+  let groupBy: string | null = null;
+  let limit: number | null = null;
 
   const addColumn = (col: QueryColumn): string | null => {
     if (head !== "TABLE") return "Columns belong on TABLE. LIST shows the title and the path.";
@@ -552,6 +568,32 @@ export function parseNexusQuery(source: string): Parsed {
       flattenLinks = join;
       continue;
     }
+    if (upper === "GROUP") {
+      const by = (tokens[++i] || "").toUpperCase();
+      if (by !== "BY") return { kind: "error", error: "GROUP BY needs a field, such as status or file.folder." };
+      const raw = tokens[++i] || "";
+      if (/^rows(\.|$)/i.test(raw)) {
+        return { kind: "error", error: "Nested rows after GROUP BY are not Dataview. GROUP BY only partitions this list." };
+      }
+      if (linkListField(raw)) {
+        return { kind: "error", error: 'GROUP BY reads a field such as status or file.folder. A link list uses contains() or FLATTEN.' };
+      }
+      const field = groupFieldName(raw);
+      if (!field) return { kind: "error", error: "GROUP BY needs a field, such as status or file.folder." };
+      if (groupBy) return { kind: "error", error: "Only one GROUP BY is supported." };
+      groupBy = field;
+      continue;
+    }
+    if (upper === "LIMIT") {
+      const raw = tokens[++i] || "";
+      if (!/^[1-9]\d*$/.test(raw)) return { kind: "error", error: "LIMIT needs a positive number, such as LIMIT 3." };
+      if (limit != null) return { kind: "error", error: "Only one LIMIT is supported." };
+      limit = Number(raw);
+      continue;
+    }
+    if (/^rows(\.|$)/i.test(token)) {
+      return { kind: "error", error: "Nested rows after GROUP BY are not Dataview. GROUP BY only partitions this list." };
+    }
     if (upper === "SORT") {
       const keyRaw = (tokens[++i] || "").toLowerCase();
       const key = keyRaw === "file.mtime" ? "mtime" : keyRaw === "file.name" || keyRaw === "name" ? "title" : keyRaw;
@@ -634,6 +676,8 @@ export function parseNexusQuery(source: string): Parsed {
     where,
     sort,
     flattenLinks,
+    groupBy,
+    limit,
   };
 }
 
@@ -947,7 +991,13 @@ function outgoingJoinLabels(node: VaultNode, nodes: Record<string, VaultNode>, i
   return labels;
 }
 
-function rowFrom(node: VaultNode, columns: QueryColumn[], link: string | null): NexusQueryRow {
+function groupLabel(node: VaultNode, field: string): string {
+  const actual = fieldActual(node, field);
+  if (actual == null || actual === "") return "—";
+  return actual;
+}
+
+function rowFrom(node: VaultNode, columns: QueryColumn[], link: string | null, group: string | null): NexusQueryRow {
   const fields = columns.map((column) => {
     if (column.kind === "field" && linkListField(column.name)) {
       return { name: column.name, value: link || "—" };
@@ -966,6 +1016,7 @@ function rowFrom(node: VaultNode, columns: QueryColumn[], link: string | null): 
     mtime: mtime ? mtime.value : null,
     fields,
     link,
+    group,
   };
 }
 
@@ -1175,8 +1226,24 @@ export function runNexusQuery(
     if (whereJoin === "in" && linkScan) linkUnloaded = linkScan.incomingUnloaded;
     joined = notes.map((node) => ({ node, link: null }));
   }
-  const truncated = joined.length > NEXUS_QUERY_CAP;
-  const rows = joined.slice(0, NEXUS_QUERY_CAP).map((item) => rowFrom(item.node, parsed.columns, item.link));
+  let ordered = joined;
+  if (parsed.groupBy) {
+    const field = parsed.groupBy;
+    const keyed = joined.map((item) => ({ item, key: groupLabel(item.node, field) }));
+    keyed.sort((a, b) => {
+      const blankA = a.key === "—";
+      const blankB = b.key === "—";
+      if (blankA !== blankB) return blankA ? 1 : -1;
+      return a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: "base" });
+    });
+    ordered = keyed.map((entry) => entry.item);
+  }
+  const asked = parsed.limit ?? NEXUS_QUERY_CAP;
+  const cap = Math.min(asked, NEXUS_QUERY_CAP);
+  const truncated = ordered.length > NEXUS_QUERY_CAP && asked >= NEXUS_QUERY_CAP;
+  const rows = ordered.slice(0, cap).map((item) =>
+    rowFrom(item.node, parsed.columns, item.link, parsed.groupBy ? groupLabel(item.node, parsed.groupBy) : null),
+  );
   if (linkUnloaded) unloaded += linkUnloaded;
   const frontmatterCols = parsed.columns.flatMap((column) => {
     if (column.kind !== "field") return [];
