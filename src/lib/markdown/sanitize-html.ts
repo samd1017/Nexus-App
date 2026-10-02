@@ -1,6 +1,7 @@
 /**
  * Wave A — sanitize HTML before TipTap Visual mode.
- * Strips scripts, event handlers, javascript: URLs, and dangerous tags.
+ * Strips scripts, event handlers, javascript: URLs, dangerous tags,
+ * and every style attribute (no CSS url/data/expression allowlist).
  * Browser path uses DOMParser; SSR/tests fall back to regex strip.
  */
 
@@ -72,7 +73,6 @@ const ALLOWED_ATTR = new Set([
   "data-tex",
   "data-embed-target",
   "data-query",
-  "style",
   "type",
   "checked",
   "contenteditable",
@@ -109,8 +109,123 @@ function isSafeUrl(value: string): boolean {
   return true;
 }
 
+function isHtmlSpace(c: string): boolean {
+  return c === " " || c === "\n" || c === "\r" || c === "\t" || c === "\f";
+}
+
+/** Index of the tag's closing `>`, ignoring `>` inside quoted attributes. */
+function indexOfTagEnd(html: string, from: number): number {
+  let quote = "";
+  for (let i = from; i < html.length; i++) {
+    const c = html[i];
+    if (quote) {
+      if (c === quote) quote = "";
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      continue;
+    }
+    if (c === ">") return i;
+  }
+  return -1;
+}
+
+/** Drop a `style` attribute. Other attributes, including values that mention style, stay. */
+function stripStyleAttrFromTag(tag: string): string {
+  let out = "";
+  let i = 0;
+  if (tag[i] === "<") out += tag[i++];
+  if (tag[i] === "/") out += tag[i++];
+  while (
+    i < tag.length &&
+    tag[i] !== ">" &&
+    tag[i] !== "/" &&
+    !isHtmlSpace(tag[i])
+  ) {
+    out += tag[i++];
+  }
+  while (i < tag.length) {
+    const wsStart = i;
+    while (i < tag.length && isHtmlSpace(tag[i])) i++;
+    if (i >= tag.length || tag[i] === ">") {
+      out += tag.slice(wsStart);
+      break;
+    }
+    // `<div/style=...>` — a solidus before `>` is self-closing; otherwise keep scanning.
+    if (tag[i] === "/") {
+      let j = i + 1;
+      while (j < tag.length && isHtmlSpace(tag[j])) j++;
+      if (j >= tag.length || tag[j] === ">") {
+        out += tag.slice(wsStart);
+        break;
+      }
+      i += 1;
+      continue;
+    }
+    const attrStart = i;
+    while (
+      i < tag.length &&
+      !isHtmlSpace(tag[i]) &&
+      tag[i] !== "=" &&
+      tag[i] !== ">" &&
+      tag[i] !== "/"
+    ) {
+      i++;
+    }
+    const name = tag.slice(attrStart, i);
+    const afterName = i;
+    while (i < tag.length && isHtmlSpace(tag[i])) i++;
+    if (tag[i] === "=") {
+      i++;
+      while (i < tag.length && isHtmlSpace(tag[i])) i++;
+      if (tag[i] === '"' || tag[i] === "'") {
+        const q = tag[i++];
+        while (i < tag.length && tag[i] !== q) i++;
+        if (i < tag.length) i++;
+      } else {
+        while (i < tag.length && !isHtmlSpace(tag[i]) && tag[i] !== ">") i++;
+      }
+    } else {
+      i = afterName;
+    }
+    if (name.toLowerCase() === "style") continue;
+    out += tag.slice(wsStart, i);
+  }
+  return out;
+}
+
+function stripStyleAttributes(html: string): string {
+  let out = "";
+  let i = 0;
+  while (i < html.length) {
+    if (html[i] !== "<") {
+      out += html[i++];
+      continue;
+    }
+    if (html.startsWith("<!--", i)) {
+      const end = html.indexOf("-->", i + 4);
+      if (end < 0) {
+        out += html.slice(i);
+        break;
+      }
+      out += html.slice(i, end + 3);
+      i = end + 3;
+      continue;
+    }
+    const tagEnd = indexOfTagEnd(html, i + 1);
+    if (tagEnd < 0) {
+      out += html.slice(i);
+      break;
+    }
+    out += stripStyleAttrFromTag(html.slice(i, tagEnd + 1));
+    i = tagEnd + 1;
+  }
+  return out;
+}
+
 function stripDangerousRegex(html: string): string {
-  return html
+  return stripStyleAttributes(html)
     .replace(/<script\b[\s\S]*?<\/script>/gi, "")
     .replace(/<style\b[\s\S]*?<\/style>/gi, "")
     .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, "")
@@ -123,7 +238,12 @@ function stripDangerousRegex(html: string): string {
 function sanitizeElementAttrs(el: Element): void {
   for (const attr of Array.from(el.attributes)) {
     const name = attr.name.toLowerCase();
-    if (name.startsWith("on") || name === "srcdoc" || name === "formaction") {
+    if (
+      name.startsWith("on") ||
+      name === "srcdoc" ||
+      name === "formaction" ||
+      name === "style"
+    ) {
       el.removeAttribute(attr.name);
       continue;
     }
@@ -136,14 +256,6 @@ function sanitizeElementAttrs(el: Element): void {
       !isSafeUrl(attr.value)
     ) {
       el.removeAttribute(attr.name);
-      continue;
-    }
-    if (name === "style") {
-      const safe = attr.value
-        .replace(/expression\s*\(/gi, "")
-        .replace(/url\s*\(\s*['"]?\s*javascript:/gi, "url(")
-        .replace(/behavior\s*:/gi, "");
-      el.setAttribute("style", safe);
     }
   }
 }
