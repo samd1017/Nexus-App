@@ -239,15 +239,6 @@ export function resolveNoteLink(
   return { id: hit?.id ?? null, title };
 }
 
-function flowItem(item: string): string {
-  const raw = item.trim();
-  const text =
-    raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
-      ? raw.slice(1, -1)
-      : raw;
-  return /[,[\]"']|^\s|\s$/.test(text) ? JSON.stringify(text) : text;
-}
-
 /**
  * One string per top-level key. A block list (`key:` then `- item` lines)
  * reads as the flow list `[a, b]`, so formulas see the same list either way.
@@ -257,22 +248,8 @@ export function noteTableProperties(content: string | null | undefined): Record<
   const { yaml } = splitFrontmatter(content);
   if (!yaml) return {};
   const props: Record<string, string> = {};
-  const lines = yaml.split(/\r?\n/);
-  const fields = parseFrontmatterFields(yaml);
-  for (const field of fields) {
-    let value = field.value.replace(/^['"]|['"]$/g, "").trim();
-    if (!value) {
-      const at = lines.findIndex((line) => new RegExp(`^${field.key}\\s*:\\s*$`).test(line));
-      const items: string[] = [];
-      for (let i = at + 1; at >= 0 && i < lines.length; i += 1) {
-        const line = lines[i] ?? "";
-        if (!line.trim()) continue;
-        const item = /^\s+-\s*(.*)$/.exec(line);
-        if (!item) break;
-        if (item[1]?.trim()) items.push(flowItem(item[1]));
-      }
-      if (items.length) value = `[${items.join(", ")}]`;
-    }
+  for (const field of parseFrontmatterFields(yaml)) {
+    const value = field.value.replace(/^['"]|['"]$/g, "").trim();
     if (!value) continue;
     props[field.key] = value;
   }

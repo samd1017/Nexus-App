@@ -34,6 +34,8 @@ const {
   isBlankNote,
   mergeTemplateProperties,
 } = await import("../src/lib/vault/template-engine.ts");
+const { applyFrontmatter, parseFrontmatterFields, splitFrontmatter } = await import("../src/lib/editor/frontmatter.ts");
+const { extractTagsFromMarkdown } = await import("../src/lib/vault/tags.ts");
 const { buildDailyNoteContent, buildTemplateContent, extractCarryForwardItems } = await import(
   "../src/lib/vault/templates.ts"
 );
@@ -155,7 +157,7 @@ assert.match(daily, /## From yesterday\n\n- \[ \] Ship templates\n- \[ \] Call A
 // empty ones fill, and any other value the note has stays
 const props = (note, tpl) => mergeTemplateProperties(`---\n${note}\n---\n\nBody`, tpl).markdown;
 const merged = mergeTemplateProperties("---\ntags: work\n---\n\nBody", "tags: meeting\ntype: meeting\naliases:\n  - sync");
-assert.equal(merged.markdown, "---\ntags:\n  - work\n  - meeting\ntype: meeting\naliases:\n  - sync\n---\n\nBody");
+assert.equal(merged.markdown, "---\ntags: [work, meeting]\ntype: meeting\naliases:\n  - sync\n---\n\nBody");
 assert.equal(merged.markdown.slice(merged.newBodyStart), "\nBody");
 const unchanged = mergeTemplateProperties("---\nstatus: done\n---\nBody", "status: draft");
 assert.equal(unchanged.markdown, "---\nstatus: done\n---\nBody", "a value the note has wins");
@@ -165,8 +167,9 @@ assert.equal(listMerge.markdown, "---\ntags:\n- a\n- b\n---\n\nBody");
 assert.equal(props("tags: [a, b]", "tags: [b, c]"), "---\ntags: [a, b, c]\n---\n\nBody", "flow lists combine");
 assert.equal(props("tags:\n- a", "tags: [A, '#c', c]"), "---\ntags:\n- a\n- '#c'\n---\n\nBody", "tags compare without case or #");
 assert.equal(props("tags:\n  - a\n  - b", "tags:\n  - b\n  - a"), "---\ntags:\n  - a\n  - b\n---\n\nBody");
-assert.equal(props("aliases: Sync", "aliases:\n  - Standup"), "---\naliases:\n  - Sync\n  - Standup\n---\n\nBody");
-assert.equal(props("tags: a, b", "tags: c"), "---\ntags:\n  - a\n  - b\n  - c\n---\n\nBody");
+assert.equal(props("aliases: Sync", "aliases:\n  - Standup"), "---\naliases: [Sync, Standup]\n---\n\nBody");
+assert.equal(props("aliases: Sync", "aliases:\n  - Daily, weekly\n  - '#x'"), "---\naliases: [Sync, \"Daily, weekly\", \"#x\"]\n---\n\nBody", "flow items that need quotes get them");
+assert.equal(props("tags: a, b", "tags: c"), "---\ntags: [a, b, c]\n---\n\nBody");
 assert.equal(props("people:\n  - Ana", "people: [Bo, Ana]"), "---\npeople:\n  - Ana\n  - Bo\n---\n\nBody", "any list on both sides combines");
 assert.equal(props("owner: Ana", "owner: [Bo]"), "---\nowner: Ana\n---\n\nBody", "a single value is not turned into a list");
 assert.equal(props("status:", "status: draft"), "---\nstatus: draft\n---\n\nBody", "an empty property is filled");
@@ -178,7 +181,7 @@ assert.equal(
   "---\n\"due date\": x\n'Owner': z\n---\n\nBody",
   "quoted and plain keys are the same property",
 );
-assert.equal(props("# kept\ntags: a # first", "tags: b"), "---\n# kept\ntags:\n  - a\n  - b\n---\n\nBody");
+assert.equal(props("# kept\ntags: a # first", "tags: b"), "---\n# kept\ntags: [a, b]\n---\n\nBody");
 assert.equal(props("url: https://x.test/a:b", "url: https://y.test"), "---\nurl: https://x.test/a:b\n---\n\nBody");
 assert.equal(props("tags: [a]", "tags: [a]\nstatus:"), "---\ntags: [a]\nstatus:\n---\n\nBody");
 assert.equal(mergeTemplateProperties("Body", "").markdown, "Body");
@@ -202,18 +205,41 @@ assert.equal(
 );
 assert.equal(midIns.markdown.slice(0, midIns.caret).endsWith("SecondX"), true);
 const inYaml = insertTemplateAt("---\ntags: a\n---\nBody", 6, "---\ntags: b\n---\nZ");
-assert.equal(inYaml.markdown, "---\ntags:\n  - a\n  - b\n---\n\nBodyZ", "a caret inside the properties inserts after the note");
+assert.equal(inYaml.markdown, "---\ntags: [a, b]\n---\n\nBodyZ", "a caret inside the properties inserts after the note");
 const onlyProps = insertTemplateAt("# T\n\nText", 5, "---\ntags: x\n---\n");
 assert.equal(onlyProps.markdown, "---\ntags: x\n---\n\n# T\n\nText", "a template of only properties still applies them");
 const crlf = mergeTemplateProperties("---\r\ntags: a\r\n---\r\nBody", "tags: b");
-assert.equal(crlf.markdown, "---\ntags:\n  - a\n  - b\n---\n\nBody", "Windows line endings merge too");
-assert.equal(appendTemplate("---\ntags: a\n---\nNotes", "---\ntags: [b]\n---\nMore"), "---\ntags:\n  - a\n  - b\n---\n\nNotes\n\nMore");
+assert.equal(crlf.markdown, "---\ntags: [a, b]\n---\n\nBody", "Windows line endings merge too");
+assert.equal(appendTemplate("---\ntags: a\n---\nNotes", "---\ntags: [b]\n---\nMore"), "---\ntags: [a, b]\n---\n\nNotes\n\nMore");
 const plain = insertTemplateAt("ab", 1, "X");
 assert.deepEqual(plain, { markdown: "aXb", caret: 2 }, "a one-line template stays inline");
 const block = insertTemplateAt("Intro\n\nNext\n", 5, "## Standup\n- a\n");
 assert.equal(block.markdown, "Intro\n## Standup\n- a\n\n\nNext\n", "a multi-line template starts its own line");
 const atLineStart = insertTemplateAt("Intro\n\nNext\n", 7, "## Standup\n- a\n");
 assert.equal(atLineStart.markdown, "Intro\n\n## Standup\n- a\nNext\n");
+
+// Merged list properties read back as lists in Properties and tags
+const reviewed = insertTemplateAt(
+  "---\ntags:\n  - work\nowner:\n---\n\nNotes",
+  21,
+  "---\ntags:\n  - meeting\n  - '#review'\naliases:\n  - Weekly review\nowner: Kim\n---\nX",
+).markdown;
+assert.deepEqual(parseFrontmatterFields(splitFrontmatter(reviewed).yaml), [
+  { key: "tags", value: '[work, meeting, "#review"]' },
+  { key: "owner", value: "Kim" },
+  { key: "aliases", value: "[Weekly review]" },
+]);
+assert.deepEqual(extractTagsFromMarkdown(reviewed), ["meeting", "review", "work"]);
+assert.deepEqual(extractTagsFromMarkdown("---\ntags:\nstatus: draft\n---\nBody"), [], "an empty tags key reads no tags");
+assert.deepEqual(parseFrontmatterFields("tags:\n- a\n-\n- 'b, c'\nnext: 1"), [
+  { key: "tags", value: '[a, "b, c"]' },
+  { key: "next", value: "1" },
+]);
+assert.equal(
+  applyFrontmatter("---\ntags:\n  - '#x'\n  - y\n---\nBody", parseFrontmatterFields("tags:\n  - '#x'\n  - y")),
+  '---\ntags: ["#x", y]\n---\n\nBody',
+  "editing Properties keeps list items",
+);
 
 // Blank notes take the template whole, keeping their title unless replaced
 assert.equal(isBlankNote("# Untitled\n\n"), true);

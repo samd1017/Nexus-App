@@ -12,7 +12,7 @@
  * Unknown tokens are left as written.
  */
 
-import { splitFrontmatter } from "../editor/frontmatter";
+import { flowItem, splitFrontmatter } from "../editor/frontmatter";
 
 export const DEFAULT_DATE_FORMAT = "YYYY-MM-DD";
 export const DEFAULT_TIME_FORMAT = "HH:mm";
@@ -273,13 +273,12 @@ function mergeListEntry(note: YamlEntry, noteValue: YamlValue, template: YamlVal
   }
   if (!extra.length) return null;
   const head = note.lines[0].slice(0, note.lines[0].search(/:(?:\s|$)/));
-  if (noteValue.kind === "list" && noteValue.flow) return [`${head}: [${[...have, ...extra].join(", ")}]`];
-  if (noteValue.kind === "list") {
+  if (noteValue.kind === "list" && !noteValue.flow) {
     const last = [...note.lines].reverse().find((l) => /^\s*-(\s|$)/.test(l)) ?? "  - ";
     const bullet = /^\s*-\s*/.exec(last)?.[0] ?? "  - ";
     return [...note.lines, ...extra.map((i) => `${bullet}${i}`)];
   }
-  return [`${head}:`, ...[...have, ...extra].map((i) => `  - ${i}`)];
+  return [`${head}: [${[...have, ...extra].map(flowItem).join(", ")}]`];
 }
 
 /**

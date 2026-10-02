@@ -14,7 +14,7 @@ import type { VaultNode } from "./types";
 import { noteTitle } from "./types";
 import { ensureVaultIndex } from "./indexes";
 import { getDurableIndex } from "./durable-index";
-import { splitFrontmatter } from "@/lib/editor/frontmatter";
+import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
 
 const TAG_RE = /(?:^|[\s([{])#([a-zA-Z][\w/-]{0,48})\b/g;
 const FRONTMATTER_TAGS =
@@ -35,9 +35,9 @@ export function extractTagsFromMarkdown(markdown: string): string[] {
       ? peeled.yaml
       : (FRONTMATTER_TAGS.exec(markdown)?.[1] ?? null);
   if (block) {
-    const tagsLine = /^tags:\s*(.+)$/im.exec(block);
-    if (tagsLine) {
-      const raw = tagsLine[1].trim();
+    const field = parseFrontmatterFields(block).find((f) => f.key.toLowerCase() === "tags");
+    if (field?.value) {
+      const raw = field.value.trim();
       if (raw.startsWith("[")) {
         for (const m of raw.matchAll(/["']?([a-zA-Z][\w/-]*)["']?/g)) {
           if (m[1] && m[1].toLowerCase() !== "tags") tags.add(m[1].toLowerCase());
