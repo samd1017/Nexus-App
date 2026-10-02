@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday } = await import(
+const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday, priorityOnTaskLine, taskIsHigh } = await import(
   "../src/lib/tasks/extract.ts"
 );
 
@@ -35,6 +35,7 @@ const body = [
 const tasks = tasksInNote({ id: "n1", path: "Day.md", title: "Day", body });
 assert.equal(tasks.length, 3);
 assert.equal(tasks[0].text, "Buy milk");
+assert.equal(tasks[0].priority, null);
 assert.equal(tasks[0].due, "2026-04-01");
 assert.equal(tasks[0].line, 6);
 assert.equal(tasks[1].text, "Call home");
@@ -115,6 +116,44 @@ assert.equal(pool.filter((task) => taskDueBucket(task.due, today) === "today" &&
 assert.equal(pool.filter((task) => taskDueBucket(task.due, today) != null && task.text === "No due").length, 0);
 assert.equal(inBucket("today").some((task) => task.path.startsWith("Journal")), false);
 
+assert.equal(priorityOnTaskLine("Ship ⏫"), "highest");
+assert.equal(priorityOnTaskLine("Lift 🔼"), "high");
+assert.equal(priorityOnTaskLine("Mid 🔽"), "medium");
+assert.equal(priorityOnTaskLine("Later ⏬"), "low");
+assert.equal(priorityOnTaskLine("Bang ❗"), "high-alt");
+assert.equal(priorityOnTaskLine("plain"), null);
+assert.equal(priorityOnTaskLine("first 🔽 then ⏫"), "medium");
+assert.equal(taskIsHigh("highest"), true);
+assert.equal(taskIsHigh("high-alt"), true);
+assert.equal(taskIsHigh("high"), false);
+assert.equal(taskIsHigh("medium"), false);
+assert.equal(taskIsHigh("low"), false);
+assert.equal(taskIsHigh(null), false);
+
+const ranked = tasksInNote({
+  id: "pri",
+  path: "Research/Ranked.md",
+  title: "Ranked",
+  body: [
+    "- [ ] Ship highest ⏫",
+    "- [ ] Alt high ❗ 📅 2026-10-02",
+    "- [ ] Medium down 🔽",
+    "- [ ] Low down ⏬",
+    "- [ ] Unmarked plain",
+    "- [ ] Elsewhere ⏫",
+  ].join("\n"),
+});
+ranked[5].path = "Journal/Elsewhere.md";
+assert.equal(ranked.find((task) => task.text === "Ship highest").priority, "highest");
+assert.equal(ranked.find((task) => task.text === "Alt high").priority, "high-alt");
+assert.equal(ranked.find((task) => task.text === "Alt high").due, "2026-10-02");
+assert.equal(ranked.find((task) => task.text === "Medium down").priority, "medium");
+assert.equal(ranked.find((task) => task.text === "Low down").priority, "low");
+assert.equal(ranked.find((task) => task.text === "Unmarked plain").priority, null);
+const highHere = ranked.filter((task) => taskIsHigh(task.priority) && taskMatchesPath(task, "Research"));
+assert.deepEqual(highHere.map((task) => task.text), ["Ship highest", "Alt high"]);
+assert.equal(highHere.some((task) => task.text === "Medium down" || task.text === "Low down" || task.text === "Unmarked plain"), false);
+
 const { readFileSync } = await import("node:fs");
 const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");
 assert.match(panel, /TasksRail/);
@@ -129,6 +168,9 @@ const help = readFileSync("src/components/settings/SettingsPanel.tsx", "utf8");
 assert.match(help, /Dataview queries are not supported/);
 assert.match(help, /Recurrence/);
 assert.match(help, /Due today and Overdue/);
+assert.match(help, /High keeps incomplete tasks marked/);
+assert.match(help, /Recurrence and Dataview queries are not supported/);
+assert.doesNotMatch(help, /priorities, and Dataview/);
 assert.doesNotMatch(help, /due: frontmatter/);
 const rail = readFileSync("src/components/right/TasksRail.tsx", "utf8");
 assert.match(rail, /due:/);
@@ -138,6 +180,10 @@ assert.match(rail, /tasks-filter-overdue/);
 assert.match(rail, /Due today/);
 assert.match(rail, /Overdue/);
 assert.match(rail, /taskDueBucket/);
+assert.match(rail, /tasks-filter-high/);
+assert.match(rail, /taskIsHigh/);
+assert.match(rail, /Recurrence and Dataview queries are not supported/);
+assert.doesNotMatch(rail, /priorities, and Dataview/);
 assert.doesNotMatch(rail, /due: frontmatter/);
 assert.match(rail, /setActiveNote\(task\.noteId/);
 assert.match(rail, /completeTaskLine/);

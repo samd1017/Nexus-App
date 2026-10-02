@@ -1,7 +1,8 @@
 /**
  * Incomplete Markdown tasks. A 📅 YYYY-MM-DD on the line is the due date.
  * When the line has no emoji date, the note YAML `due:` (YYYY-MM-DD) applies.
- * Not supported: recurrence, priorities, and Dataview queries.
+ * The first priority marker on the line is ⏫ 🔼 🔽 ⏬ or ❗.
+ * Not supported: recurrence and Dataview queries.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
@@ -14,11 +15,45 @@ export type VaultTask = {
   line: number;
   text: string;
   due: string | null;
+  /** First priority marker on the line. Null when the line has none. */
+  priority: TaskPriority | null;
 };
+
+/** Tasks-plugin markers. High chip uses highest (⏫) and high-alt (❗) only. */
+export type TaskPriority = "highest" | "high" | "medium" | "low" | "high-alt";
 
 const TASK_RE = /^(\s*)([-*])\s+\[ \]\s+(\S.*)$/;
 const DUE_RE = /📅\s*(\d{4}-\d{2}-\d{2})/;
+const PRIORITY_RE = /[⏫🔼🔽⏬❗]/u;
 const PER_NOTE_CAP = 40;
+
+const PRIORITY_OF: Record<string, TaskPriority> = {
+  "⏫": "highest",
+  "🔼": "high",
+  "🔽": "medium",
+  "⏬": "low",
+  "❗": "high-alt",
+};
+
+/** First priority marker on the line, or null. */
+export function priorityOnTaskLine(text: string): TaskPriority | null {
+  const match = PRIORITY_RE.exec(text);
+  return match ? PRIORITY_OF[match[0]] ?? null : null;
+}
+
+export function priorityMarker(priority: TaskPriority | null): string {
+  if (priority === "highest") return "⏫";
+  if (priority === "high") return "🔼";
+  if (priority === "medium") return "🔽";
+  if (priority === "low") return "⏬";
+  if (priority === "high-alt") return "❗";
+  return "";
+}
+
+/** High chip: ⏫ or ❗. 🔼, 🔽, ⏬, and unmarked lines stay out. */
+export function taskIsHigh(priority: TaskPriority | null): boolean {
+  return priority === "highest" || priority === "high-alt";
+}
 
 export function dueOnTaskLine(text: string): string | null {
   const match = DUE_RE.exec(text);
@@ -49,7 +84,7 @@ function normalizeDueValue(value: string): string | null {
 }
 
 export function taskDisplayText(text: string): string {
-  return text.replace(DUE_RE, "").replace(/\s+/g, " ").trim();
+  return text.replace(DUE_RE, "").replace(PRIORITY_RE, "").replace(/\s+/g, " ").trim();
 }
 
 export function tasksInNote(note: {
@@ -73,6 +108,7 @@ export function tasksInNote(note: {
       line: i + 1,
       text: taskDisplayText(raw),
       due: dueOnTaskLine(raw) ?? noteDue,
+      priority: priorityOnTaskLine(raw),
     });
     if (out.length >= PER_NOTE_CAP) break;
   }

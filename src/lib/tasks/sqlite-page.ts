@@ -1,4 +1,4 @@
-import type { VaultTask } from "./extract";
+import { priorityOnTaskLine, type VaultTask } from "./extract";
 
 export type TaskPage = {
   tasks: VaultTask[];
@@ -40,6 +40,7 @@ export async function fetchTaskPage(
         line: task.line,
         text: task.text,
         due: task.due,
+        priority: priorityOnTaskLine(task.text),
       })),
       nextRowid: page.nextRowid,
       scanned: page.scanned,
