@@ -22,6 +22,27 @@ export type QueryProblem = { message: string; clause: string; start: number; end
 
 export type CompiledExpr = { compiled: CompiledFormula; formula: string; reads: FormulaReads };
 
+const EXCERPT_SIDE = 40;
+
+/** The line holding a problem, split around the part to underline. */
+export function problemExcerpt(
+  source: string,
+  problem: QueryProblem,
+): { line: number; before: string; bad: string; after: string } {
+  const start = Math.max(0, Math.min(problem.start, source.length));
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+  const nl = source.indexOf("\n", start);
+  const lineEnd = nl < 0 ? source.length : nl;
+  const end = Math.max(start, Math.min(problem.end, lineEnd));
+  let before = source.slice(lineStart, start);
+  let after = source.slice(end, lineEnd);
+  if (before.length > EXCERPT_SIDE) before = `…${before.slice(-EXCERPT_SIDE)}`;
+  if (after.length > EXCERPT_SIDE) after = `${after.slice(0, EXCERPT_SIDE)}…`;
+  const bad = source.slice(start, end) || (start < lineEnd ? source[start]! : " ");
+  if (end === start && start < lineEnd) after = after.slice(1);
+  return { line: source.slice(0, lineStart).split("\n").length, before, bad, after };
+}
+
 type Piece = { code: boolean; text: string };
 
 /** Code and quoted text, so rewrites never touch what a user quoted. */

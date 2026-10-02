@@ -8,7 +8,14 @@ import { markdownToHtml } from "@/lib/markdown/serialize";
 import { sliceEmbedBody } from "@/lib/markdown/note-slice";
 import { resolveWikilink } from "@/lib/graph/build-graph";
 import { parseSearchOps, searchWithOps, unsupportedSearchHint } from "@/lib/search/query-ops";
-import { NEXUS_QUERY_CAP, queryColumnLabel, runNexusQuery } from "@/lib/vault/nexus-query";
+import {
+  NEXUS_QUERY_CAP,
+  queryColumnLabel,
+  runNexusQuery,
+  type NexusQueryModel,
+  type NexusQueryRow,
+} from "@/lib/vault/nexus-query";
+import { problemExcerpt } from "@/lib/vault/query-expr";
 import { loadTagExtras } from "@/lib/vault/nexus-query-tags";
 import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle, type VaultNode } from "@/lib/vault/types";
@@ -220,90 +227,123 @@ function renderQueries(
   }
 }
 
+function nexusRowButton(id: string, title: string, rest: string): string {
+  return `<button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(id)}"><span>${escapeHtml(title)}</span>${rest}</button>`;
+}
+
+function nexusQueryBody(query: string, model: NexusQueryModel): string {
+  const bits: string[] = [];
+  const muted = (text: string, testid?: string) =>
+    `<p class="nexus-query-empty"${testid ? ` data-testid="${testid}"` : ""}>${escapeHtml(text)}</p>`;
+  if (model.help) bits.push(muted(`${model.help}. ${model.footer}`, "nexus-query-empty"));
+  if (model.error) {
+    const excerpt = model.problem ? problemExcerpt(query, model.problem) : null;
+    const clause = model.problem ? `<span class="nexus-query-clause">${escapeHtml(model.problem.clause)}</span>` : "";
+    const mark = excerpt
+      ? `<span class="nexus-query-excerpt" data-testid="nexus-query-excerpt">${escapeHtml(excerpt.before)}<mark>${escapeHtml(excerpt.bad)}</mark>${escapeHtml(excerpt.after)}</span>`
+      : "";
+    bits.push(`<div class="nexus-query-problem" data-testid="nexus-query-error"><p>${clause}${escapeHtml(model.error)}</p>${mark}</div>`);
+  }
+  if (model.fieldNote) bits.push(muted(model.fieldNote, "nexus-query-field-note"));
+  if (!model.help && !model.error && model.rows.length === 0) {
+    const empty = model.tagsIncomplete
+      ? model.scanNote || "Couldn't read every tag from the index."
+      : "No notes match.";
+    bits.push(muted(empty, "nexus-query-empty"));
+  }
+  const showTitle = !model.withoutId;
+  const showPath = model.showPath ?? true;
+  const labels = model.columns ?? (model.rows[0]?.fields ?? []).map((field) => queryColumnLabel(field.name));
+  const groupOf = (r: NexusQueryRow, index: number) =>
+    r.group != null && r.group !== model.rows[index - 1]?.group ? r.group : null;
+  const nestedList = (r: NexusQueryRow) =>
+    `<ul data-testid="nexus-query-nested">${(r.rows ?? [])
+      .map((child) => `<li>${nexusRowButton(child.id, child.title, ` <span>${escapeHtml(child.path)}</span>`)}</li>`)
+      .join("")}</ul>`;
+  if (model.mode === "table" && model.rows.length) {
+    const head = `<tr>${showTitle ? `<th>${model.dialect ? "File" : "Title"}</th>` : ""}${showPath ? "<th>Path</th>" : ""}${labels
+      .map((label) => `<th>${escapeHtml(label)}</th>`)
+      .join("")}</tr>`;
+    const body = model.rows
+      .map((r, index) => {
+        const span = (showTitle ? 1 : 0) + (showPath ? 1 : 0) + r.fields.length;
+        const group = groupOf(r, index);
+        const header = group != null
+          ? `<tr data-testid="nexus-query-group" data-group="${escapeHtml(group)}"><td colspan="${span}">${escapeHtml(group)}</td></tr>`
+          : "";
+        if (r.rows) return `${header}<tr><td colspan="${span}">${nestedList(r)}</td></tr>`;
+        const cells = r.fields.map((field) => `<td data-testid="nexus-query-field">${escapeHtml(field.value)}</td>`).join("");
+        const title = showTitle ? `<td>${nexusRowButton(r.id, r.title, r.link ? ` <span>→ ${escapeHtml(r.link)}</span>` : "")}</td>` : "";
+        const path = showPath ? `<td>${escapeHtml(r.path)}</td>` : "";
+        const attrs = showTitle ? "" : ` data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"`;
+        return `${header}<tr${attrs}>${title}${path}${cells}</tr>`;
+      })
+      .join("");
+    bits.push(`<table class="nexus-query-table">${head}${body}</table>`);
+  }
+  if (model.mode === "list" && model.rows.length) {
+    const items = model.rows
+      .map((r, index) => {
+        const group = groupOf(r, index);
+        const header = group != null
+          ? `<li data-testid="nexus-query-group" data-group="${escapeHtml(group)}">${escapeHtml(group)}</li>`
+          : "";
+        if (r.rows) return `${header}<li>${nestedList(r)}</li>`;
+        const detail = model.dialect
+          ? r.fields[0] ? ` <span data-testid="nexus-query-field">${escapeHtml(r.fields[0].value)}</span>` : ""
+          : `<span>${escapeHtml(r.path)}</span>`;
+        return `${header}<li>${nexusRowButton(r.id, r.title, `${detail}${r.link ? `<span>${escapeHtml(r.link)}</span>` : ""}`)}</li>`;
+      })
+      .join("");
+    bits.push(`<ul>${items}</ul>`);
+  }
+  if (model.mode === "cards" && model.rows.length) {
+    const cards = model.rows
+      .map((r, index) => {
+        const group = groupOf(r, index);
+        const header = group != null
+          ? `<div class="nexus-query-card-group" data-testid="nexus-query-group" data-group="${escapeHtml(group)}">${escapeHtml(group)}</div>`
+          : "";
+        const fields = r.fields
+          .map(
+            (field, i) =>
+              `<span class="nexus-query-card-field" data-testid="nexus-query-field"><span>${escapeHtml(labels[i] ?? field.name)}</span><span>${escapeHtml(field.value)}</span></span>`,
+          )
+          .join("");
+        const title = showTitle ? `<span class="nexus-query-card-title">${escapeHtml(r.title)}</span>` : "";
+        return `${header}<button type="button" class="nexus-query-card" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}">${title}${fields}</button>`;
+      })
+      .join("");
+    bits.push(`<div class="nexus-query-cards" data-testid="nexus-query-cards">${cards}</div>`);
+  }
+  if (model.truncated) {
+    bits.push(
+      muted(
+        model.dialect
+          ? `Showing the first ${model.cap ?? model.rows.length} of ${model.total ?? model.rows.length}. Add LIMIT or narrow FROM.`
+          : `Stopped at ${NEXUS_QUERY_CAP}.`,
+        "nexus-query-cap",
+      ),
+    );
+  }
+  if (model.scanNote && model.rows.length > 0) bits.push(muted(model.scanNote));
+  bits.push(
+    `<details class="nexus-query-syntax"><summary>How to write a query</summary><p data-testid="nexus-query-footer">${escapeHtml(model.footer)}</p></details>`,
+  );
+  return bits.join("");
+}
+
 async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, VaultNode>): Promise<void> {
   for (const el of els) {
     const query = (el.getAttribute("data-query") || "").trim();
+    const fence = el.getAttribute("data-lang") || "nexus-query";
     const extras = await loadTagExtras(query);
     const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras);
-    const bits: string[] = [];
-    if (model.help) {
-      bits.push(
-        `<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(model.help)}. ${escapeHtml(model.footer)}</p>`,
-      );
-    }
-    if (model.error) {
-      bits.push(
-        `<p class="nexus-query-empty" data-testid="nexus-query-error">${escapeHtml(model.error)}</p>`,
-      );
-    }
-    if (model.fieldNote) {
-      bits.push(
-        `<p class="nexus-query-empty" data-testid="nexus-query-field-note">${escapeHtml(model.fieldNote)}</p>`,
-      );
-    }
-    if (!model.help && !model.error && model.rows.length === 0) {
-      const empty = model.tagsIncomplete
-        ? model.scanNote || "Couldn't read every tag from the index."
-        : "No notes match.";
-      bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(empty)}</p>`);
-    }
-    if (model.mode === "table" && model.rows.length) {
-      const fields = model.rows[0]?.fields ?? [];
-      const head = `<tr><th>Title</th><th>Path</th>${fields.map((field) => `<th>${escapeHtml(queryColumnLabel(field.name))}</th>`).join("")}</tr>`;
-      const body = model.rows
-        .map((r, index) => {
-          const cells = r.fields.map((field) => ` <span data-testid="nexus-query-field">${escapeHtml(field.value)}</span>`).join("");
-          const header = r.group != null && r.group !== model.rows[index - 1]?.group
-            ? `<tr data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}"><td colspan="${2 + r.fields.length}">${escapeHtml(r.group)}</td></tr>`
-            : "";
-          if (r.rows) {
-            const nested = r.rows
-              .map(
-                (child) =>
-                  `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(child.id)}"><span>${escapeHtml(child.title)}</span> <span>${escapeHtml(child.path)}</span></button></li>`,
-              )
-              .join("");
-            return `${header}<tr><td colspan="${2 + r.fields.length}"><ul data-testid="nexus-query-nested">${nested}</ul></td></tr>`;
-          }
-          return `${header}<tr><td colspan="${2 + r.fields.length}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${cells}</button></td></tr>`;
-        })
-        .join("");
-      bits.push(`<table>${head}${body}</table>`);
-    }
-    if (model.mode === "list" && model.rows.length) {
-      const items = model.rows
-        .map((r, index) => {
-          const header = r.group != null && r.group !== model.rows[index - 1]?.group
-            ? `<li data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}">${escapeHtml(r.group)}</li>`
-            : "";
-          if (r.rows) {
-            const nested = r.rows
-              .map(
-                (child) =>
-                  `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(child.id)}"><span>${escapeHtml(child.title)}</span><span>${escapeHtml(child.path)}</span></button></li>`,
-              )
-              .join("");
-            return `${header}<li><ul data-testid="nexus-query-nested">${nested}</ul></li>`;
-          }
-          return `${header}<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span>${r.link ? `<span>${escapeHtml(r.link)}</span>` : ""}</button></li>`;
-        })
-        .join("");
-      bits.push(`<ul>${items}</ul>`);
-    }
-    if (model.truncated) {
-      bits.push(
-        `<p class="nexus-query-empty" data-testid="nexus-query-cap">Stopped at ${NEXUS_QUERY_CAP}.</p>`,
-      );
-    }
-    if (model.scanNote && model.rows.length > 0) {
-      bits.push(`<p class="nexus-query-empty">${escapeHtml(model.scanNote)}</p>`);
-    }
-    bits.push(
-      `<p data-testid="nexus-query-footer">${escapeHtml(model.footer)}</p>`,
-    );
+    const total = model.total ?? model.rows.length;
+    const count = model.mode && !model.error ? `${total} ${total === 1 ? "note" : "notes"} · ` : "";
     el.innerHTML = `
-      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query || "nexus-query")}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">nexus-query</span></div>
-      <div class="nexus-query-body">${bits.join("")}</div>
+      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query.replace(/\s*\n\s*/g, " · ") || fence)}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">${escapeHtml(count + fence)}</span></div>
+      <div class="nexus-query-body">${nexusQueryBody(query, model)}</div>
     `;
   }
 }
