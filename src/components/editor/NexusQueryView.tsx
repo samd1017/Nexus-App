@@ -13,6 +13,7 @@ import {
   frontmatterHydrateIds,
   queryColumnLabel,
   runNexusQuery,
+  sizeHydrateIds,
 } from "@/lib/vault/nexus-query";
 
 const BODY_BATCH = 32;
@@ -37,7 +38,16 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
     triedBodyIds.current = new Set();
   }
 
-  const missingBodyIds = useMemo(() => frontmatterHydrateIds(query, nodes), [query, nodes]);
+  const missingBodyIds = useMemo(() => {
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const id of [...frontmatterHydrateIds(query, nodes), ...sizeHydrateIds(query, nodes)]) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+    return ids;
+  }, [query, nodes]);
 
   useEffect(() => {
     const pending = missingBodyIds.filter((id) => !triedBodyIds.current.has(id)).slice(0, BODY_BATCH);

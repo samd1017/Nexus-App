@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { runNexusQuery, parseNexusQuery, NEXUS_QUERY_CAP, NEXUS_QUERY_DQL, queryNeedsFrontmatter, frontmatterHydrateIds } = await import(
+const { runNexusQuery, parseNexusQuery, NEXUS_QUERY_CAP, NEXUS_QUERY_DQL, queryNeedsFrontmatter, frontmatterHydrateIds, queryNeedsSizeBody, sizeHydrateIds } = await import(
   "../src/lib/vault/nexus-query.ts"
 );
 const { promoteNexusQueryBlocks } = await import("../src/lib/editor/special-blocks.ts");
@@ -263,6 +263,7 @@ assert.match(view, /model\.footer/);
 assert.match(view, /setActiveNote/);
 assert.match(view, /ensureNoteBody/);
 assert.match(view, /frontmatterHydrateIds/);
+assert.match(view, /sizeHydrateIds/);
 assert.match(view, /shouldSkipBackgroundBodyHydrate/);
 const lib = readFileSync("src/lib/vault/nexus-query.ts", "utf8");
 assert.match(lib, /Not Dataview/);
@@ -735,5 +736,37 @@ assert.deepEqual(
 const drafted = runNexusQuery('LIST FROM path:Research WHERE status = "draft"', disk);
 assert.deepEqual(drafted.rows.map((r) => r.title), ["CRAVE Draft Status", "No Graph Tag", "Writing Probe"]);
 assert.deepEqual(frontmatterHydrateIds("TABLE status FROM path:Research GROUP BY status", disk), []);
+
+assert.equal(queryNeedsSizeBody("TABLE file.size, file.ctime FROM path:Research"), true);
+assert.equal(queryNeedsSizeBody("LIST FROM path:Research WHERE file.size > 10"), true);
+assert.equal(queryNeedsSizeBody("LIST FROM path:Research SORT file.size desc"), true);
+assert.equal(queryNeedsSizeBody("LIST FROM path:Research GROUP BY file.size"), true);
+assert.equal(queryNeedsSizeBody("TABLE status FROM path:Research GROUP BY status"), false);
+assert.equal(queryNeedsSizeBody("LIST FROM path:Research SORT title"), false);
+assert.equal(queryNeedsFrontmatter("TABLE file.size FROM path:Research"), false);
+const coldSize = {
+  rs: folder("rs", "SizeResearch"),
+  md: { id: "md", path: "SizeResearch/Callouts.md", name: "Callouts.md", kind: "note", parentId: "rs", mtime: 1, ctime: Date.UTC(2026, 9, 1, 8, 0) },
+  cv: { id: "cv", path: "SizeResearch/Untitled.canvas", name: "Untitled.canvas", kind: "note", parentId: "rs", mtime: 2, size: 33 },
+  loaded: { ...note("loaded", "SizeResearch/Loaded.md", "abcdef"), parentId: "rs", mtime: 3 },
+};
+resetVaultIndex();
+assert.deepEqual(sizeHydrateIds("TABLE file.size, file.ctime FROM path:SizeResearch", coldSize), ["md"]);
+assert.deepEqual(sizeHydrateIds("LIST FROM path:SizeResearch SORT title", coldSize), []);
+const coldTable = runNexusQuery("TABLE file.size, file.ctime FROM path:SizeResearch", coldSize);
+assert.equal(coldTable.rows.find((r) => r.id === "md").fields.map((f) => f.value).join("|"), "—|2026-10-01 08:00");
+assert.equal(coldTable.rows.find((r) => r.id === "cv").fields[0].value, "33");
+assert.equal(coldTable.rows.find((r) => r.id === "loaded").fields[0].value, "6");
+const warmed = { ...coldSize, md: { ...coldSize.md, content: "hello" } };
+resetVaultIndex();
+const warmedSort = runNexusQuery("TABLE file.size FROM path:SizeResearch SORT file.size desc", warmed);
+assert.deepEqual(warmedSort.rows.map((r) => [r.id, r.fields[0].value]), [
+  ["cv", "33"],
+  ["loaded", "6"],
+  ["md", "5"],
+]);
+const warmedWhere = runNexusQuery("LIST FROM path:SizeResearch WHERE file.size > 5", warmed);
+assert.deepEqual(warmedWhere.rows.map((r) => r.id).sort(), ["cv", "loaded"]);
+assert.deepEqual(sizeHydrateIds("TABLE file.size FROM path:SizeResearch", warmed), []);
 
 console.log("nexus-query: PASS");

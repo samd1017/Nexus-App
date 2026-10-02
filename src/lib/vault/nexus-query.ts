@@ -1221,22 +1221,42 @@ export function queryNeedsFrontmatter(source: string): boolean {
 /** How many meta-only notes one query may pull from disk. A folder, not the vault. */
 export const NEXUS_QUERY_BODY_CAP = 400;
 
-/**
- * Notes under this query's FROM path (or tag) whose body is still missing.
- * Empty when the query only needs titles or file meta.
- */
-export function frontmatterHydrateIds(
+function catalogSizeMissing(node: VaultNode): boolean {
+  return typeof node.size !== "number" || !Number.isFinite(node.size) || node.size < 0;
+}
+
+function usesFileSize(name: string): boolean {
+  return columnKey(name) === "file.size";
+}
+
+/** TABLE, WHERE, SORT, or GROUP BY on file.size. Other file meta stays sync. */
+export function queryNeedsSizeBody(source: string): boolean {
+  const parsed = parseNexusQuery(source);
+  if (parsed.kind !== "ok") return false;
+  if (parsed.groupBy && usesFileSize(parsed.groupBy)) return true;
+  if (parsed.where && usesFileSize(parsed.where.field)) return true;
+  if (parsed.sort?.key === "size") return true;
+  for (const column of parsed.columns) {
+    if (column.kind === "field" && usesFileSize(column.name)) return true;
+    if (column.kind === "formula") {
+      if (column.left.kind === "field" && usesFileSize(column.left.name)) return true;
+      if (column.right.kind === "field" && usesFileSize(column.right.name)) return true;
+    }
+  }
+  return false;
+}
+
+function scopeHydrateIds(
   source: string,
   nodes: Record<string, VaultNode>,
-  limit = NEXUS_QUERY_BODY_CAP,
+  want: (node: VaultNode) => boolean,
+  limit: number,
 ): string[] {
-  if (!queryNeedsFrontmatter(source)) return [];
   const parsed = parseNexusQuery(source);
   if (parsed.kind !== "ok") return [];
   const ids: string[] = [];
   const push = (node: VaultNode) => {
-    if (ids.length >= limit) return;
-    if (node.kind !== "note" || node.content !== undefined) return;
+    if (ids.length >= limit || node.kind !== "note" || !want(node)) return;
     ids.push(node.id);
   };
   if (parsed.path) {
@@ -1271,6 +1291,37 @@ export function frontmatterHydrateIds(
     for (const note of notes) push(note);
   }
   return ids;
+}
+
+/**
+ * Notes under this query's FROM path (or tag) whose body is still missing.
+ * Empty when the query only needs titles or file meta.
+ */
+export function frontmatterHydrateIds(
+  source: string,
+  nodes: Record<string, VaultNode>,
+  limit = NEXUS_QUERY_BODY_CAP,
+): string[] {
+  if (!queryNeedsFrontmatter(source)) return [];
+  return scopeHydrateIds(source, nodes, (node) => node.content === undefined, limit);
+}
+
+/**
+ * Meta-only notes with no catalog size, when the query reads file.size.
+ * A stored size (a canvas file) is left alone.
+ */
+export function sizeHydrateIds(
+  source: string,
+  nodes: Record<string, VaultNode>,
+  limit = NEXUS_QUERY_BODY_CAP,
+): string[] {
+  if (!queryNeedsSizeBody(source)) return [];
+  return scopeHydrateIds(
+    source,
+    nodes,
+    (node) => node.content === undefined && catalogSizeMissing(node),
+    limit,
+  );
 }
 
 export function runNexusQuery(
