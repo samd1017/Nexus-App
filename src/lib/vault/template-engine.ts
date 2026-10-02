@@ -158,7 +158,10 @@ export function insertTemplateAt(
     caret >= merged.oldBodyStart
       ? Math.min(md.length, caret - merged.oldBodyStart + merged.newBodyStart)
       : md.length;
-  return { markdown: md.slice(0, at) + body + md.slice(at), caret: at + body.length };
+  // A multi-line template starts its own line; a one-liner stays inline.
+  const midLine = at > merged.newBodyStart && md[at - 1] !== "\n";
+  const text = midLine && body.trimEnd().includes("\n") ? `\n${body}` : body;
+  return { markdown: md.slice(0, at) + text + md.slice(at), caret: at + text.length };
 }
 
 /** Rendered template added after everything already in the note. */

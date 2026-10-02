@@ -117,7 +117,11 @@ const ins = insertTemplateAt(note.replace("|", ""), caret, "---\nstatus: draft\n
 assert.equal(ins.markdown, "---\ntags: work\nstatus: draft\n---\n\n# Plan\n\nBefore- [ ] {{x}}\nAfter");
 assert.equal(ins.markdown.slice(0, ins.caret).endsWith("- [ ] {{x}}\n"), true);
 const plain = insertTemplateAt("ab", 1, "X");
-assert.deepEqual(plain, { markdown: "aXb", caret: 2 });
+assert.deepEqual(plain, { markdown: "aXb", caret: 2 }, "a one-line template stays inline");
+const block = insertTemplateAt("Intro\n\nNext\n", 5, "## Standup\n- a\n");
+assert.equal(block.markdown, "Intro\n## Standup\n- a\n\n\nNext\n", "a multi-line template starts its own line");
+const atLineStart = insertTemplateAt("Intro\n\nNext\n", 7, "## Standup\n- a\n");
+assert.equal(atLineStart.markdown, "Intro\n\n## Standup\n- a\nNext\n");
 
 // Blank notes take the template whole, keeping their title unless replaced
 assert.equal(isBlankNote("# Untitled\n\n"), true);
