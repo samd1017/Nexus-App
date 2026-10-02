@@ -71,7 +71,7 @@ page.on("crash", () => {
 
 let probe;
 try {
-  await page.waitForFunction(() => window.__NEXUS_STRESS__ || window.__NEXUS_SOAK__, {
+  await page.waitForFunction(() => window.__NEXUS_STRESS__ || window.__NEXUS_SCALE__, {
     timeout: 15000,
   });
   probe = await page.evaluate(() => window.__NEXUS_STRESS__?.() ?? {});
@@ -117,7 +117,7 @@ if (notes > 25_000) {
 
 try {
   const result = await page.evaluate(async (opens) => {
-    return window.__NEXUS_SOAK__.heapTrend(opens);
+    return window.__NEXUS_SCALE__.heapTrend(opens);
   }, OPENS);
   const heaps = (result?.trend ?? [])
     .map((row) => row.jsHeapUsedMb)

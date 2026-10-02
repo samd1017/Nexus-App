@@ -46,10 +46,10 @@ const browser = await chromium.launch({
 const page = await browser.newPage();
 const t0 = Date.now();
 await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
-await page.waitForFunction(() => window.__NEXUS_SOAK__, { timeout: 30000 });
+await page.waitForFunction(() => window.__NEXUS_SCALE__, { timeout: 30000 });
 const openT0 = Date.now();
 await page.evaluate(async (files) => {
-  await window.__NEXUS_SOAK__.openMockFsa(files);
+  await window.__NEXUS_SCALE__.openMockFsa(files);
 }, files);
 const openMs = Date.now() - openT0;
 await page.waitForFunction(
@@ -58,11 +58,11 @@ await page.waitForFunction(
 );
 const searchT0 = Date.now();
 const search = await page.evaluate(async () => {
-  const hub = await window.__NEXUS_SOAK__.search("hub", 16);
-  const cluster = await window.__NEXUS_SOAK__.search("cluster", 16);
+  const hub = await window.__NEXUS_SCALE__.search("hub", 16);
+  const cluster = await window.__NEXUS_SCALE__.search("cluster", 16);
   const probe = window.__NEXUS_STRESS__();
-  const n = await window.__NEXUS_SOAK__.openNotes(20);
-  const clusterAfter = await window.__NEXUS_SOAK__.search("cluster", 16);
+  const n = await window.__NEXUS_SCALE__.openNotes(20);
+  const clusterAfter = await window.__NEXUS_SCALE__.search("cluster", 16);
   const after = window.__NEXUS_STRESS__();
   return { hub, cluster, probe, opened: n, clusterAfter, after };
 });

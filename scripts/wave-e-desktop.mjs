@@ -4,9 +4,9 @@
  * A browser-only machine cannot prove SCALE READY. Chrome 100k is refused. Mock-20k
  * is not Wave E. Run this script on the machine that has `npm run tauri:dev`.
  *
- *   npm run soak:wave-e-desktop -- --notes 100000
- *   npm run soak:wave-e-desktop -- --notes 300000
- *   npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault ~/Documents/nexus-soak-100k
+ *   npm run scale:wave-e-desktop -- --notes 100000
+ *   npm run scale:wave-e-desktop -- --notes 300000
+ *   npm run scale:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault ~/Documents/nexus-scale-100k
  *
  * Windows WebView2 CDP:
  *   set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223
@@ -30,7 +30,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { artifactPath } from "./artifact-dir.mjs";
-import { defaultSoakVaultPath } from "./soak-vault-path.mjs";
+import { defaultScaleVaultPath } from "./scale-vault-path.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -40,18 +40,18 @@ function arg(name, fallback = "") {
   return fallback;
 }
 
-const NOTES = Math.max(1000, Number(arg("--notes", process.env.NEXUS_SOAK_NOTES || "100000")) || 100000);
+const NOTES = Math.max(1000, Number(arg("--notes", process.env.NEXUS_SCALE_NOTES || "100000")) || 100000);
 const CDP = arg("--cdp", process.env.NEXUS_TAURI_CDP || "");
 const URL = arg("--url", process.env.NEXUS_TAURI_URL || "");
-const defaultVault = defaultSoakVaultPath(NOTES);
+const defaultVault = defaultScaleVaultPath(NOTES);
 const VAULT = path.resolve(arg("--vault", defaultVault));
 const OUT_DIR = process.env.NEXUS_WAVE_E_OUT || artifactPath("stress");
 mkdirSync(OUT_DIR, { recursive: true });
 
 const steps = {
   generate: [
-    `npm run gen:soak-vault -- --notes ${NOTES} --out ${VAULT}`,
-    "Confirm SOAK-MANIFEST.json notes equals the size you intend.",
+    `npm run gen:scale-vault -- --notes ${NOTES} --out ${VAULT}`,
+    "Confirm SCALE-MANIFEST.json notes equals the size you intend.",
   ],
   build: [
     "Install Rust (rustup) + Node 22+.",
@@ -61,13 +61,13 @@ const steps = {
     "npm run tauri:dev",
   ],
   prove: [
-    "Welcome → Open folder → pick the generated vault (or DevTools: await __NEXUS_SOAK__.runWaveE(absPath))",
+    "Welcome → Open folder → pick the generated vault (or DevTools: await __NEXUS_SCALE__.runWaveE(absPath))",
     "Title bar: On disk / Desktop — never Test · this browser",
     "Cold open: tree/editor in seconds (ready-meta). Do not wait for full 100k 8k-head FTS before browsing.",
     "Banner must show live scanned/total while heads fill. Window Responding=True.",
     "Re-open the same vault: seconds (unchanged skip), banner Ready · SQLite FTS5 BM25.",
     "⌘K / Ctrl+K  retrieval hub  — heading includes SQLite FTS5 BM25 (may say · titles / · heads), not Memory FTS (capped)",
-    "Search cluster (every official soak body has Cluster hub)",
+    "Search cluster (every official scale body has Cluster hub)",
     "Open 20 notes. UI stays responsive. No discard.",
     "Create a note, quit or run reloadDesktop, confirm the file is still on disk.",
     "Then repeat at 300k. Do not claim SCALE READY before 100k desktop proof.",
@@ -75,18 +75,18 @@ const steps = {
   windowsCdp: [
     "set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223",
     "npm run tauri:dev",
-    `npm run soak:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault ${VAULT} --notes ${NOTES}`,
+    `npm run scale:wave-e-desktop -- --cdp http://127.0.0.1:9223 --vault ${VAULT} --notes ${NOTES}`,
   ],
   macosConsole: [
     "In the Tauri window DevTools console:",
-    `await __NEXUS_SOAK__.runWaveE(${JSON.stringify(VAULT)})`,
+    `await __NEXUS_SCALE__.runWaveE(${JSON.stringify(VAULT)})`,
     "Expect searchEngine.id === 'sqlite-fts5-bm25' and pass:true",
     "pass:true is one run. SCALE READY still needs a human-confirmed responsive 100k+ session.",
   ],
 };
 
 function manifestNotes(dir) {
-  const p = path.join(dir, "SOAK-MANIFEST.json");
+  const p = path.join(dir, "SCALE-MANIFEST.json");
   if (!existsSync(p)) return null;
   try {
     const j = JSON.parse(readFileSync(p, "utf8"));
@@ -141,7 +141,7 @@ async function driveTauriCdp(cdpUrl) {
     await browser.close();
     throw new Error("CDP connected but no pages. Is tauri:dev running?");
   }
-  await page.waitForFunction(() => window.__NEXUS_SOAK__, { timeout: 60_000 });
+  await page.waitForFunction(() => window.__NEXUS_SCALE__, { timeout: 60_000 });
   const tauri = await page.evaluate(
     () => !!(window.__TAURI_INTERNALS__ || window.__TAURI__ || window.isTauri),
   );
@@ -152,7 +152,7 @@ async function driveTauriCdp(cdpUrl) {
     );
   }
   const result = await page.evaluate(async (vault) => {
-    return window.__NEXUS_SOAK__.runWaveE(vault);
+    return window.__NEXUS_SCALE__.runWaveE(vault);
   }, VAULT);
   const probe = await page.evaluate(() => window.__NEXUS_STRESS__?.());
   await browser.close();

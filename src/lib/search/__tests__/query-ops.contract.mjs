@@ -87,7 +87,7 @@ const nodes = {
   w: note(
     "w",
     "Welcome",
-    "# Welcome\n\n## Soak tasks\n\nSoak the LIVECOMPAREBODYTOKEN991 line\n\n## Other\n\nnope",
+    "# Welcome\n\n## Review tasks\n\nReview the LIVECOMPAREBODYTOKEN991 line\n\n## Other\n\nnope",
   ),
   ghost: {
     id: "ghost",
@@ -161,16 +161,16 @@ function ids(query) {
   assert.equal(unsupportedSearchHint(line), null);
   assert.equal(searchUsesLoadedBodies(line), true);
   assert.deepEqual(ids("line:12"), []);
-  const section = parseSearchOps('section:"Soak tasks"');
+  const section = parseSearchOps('section:"Review tasks"');
   assert.deepEqual(section.unsupported, []);
-  assert.equal(section.sectionFilter, "Soak tasks");
+  assert.equal(section.sectionFilter, "Review tasks");
   assert.equal(section.rest, "");
   assert.equal(unsupportedSearchHint(section), null);
-  assert.deepEqual(ids('section:"Soak tasks"'), ["w"]);
-  assert.deepEqual(ids('section:"Soak tasks" Soak'), ["w"]);
-  assert.deepEqual(ids('section:"Soak tasks" nope'), []);
+  assert.deepEqual(ids('section:"Review tasks"'), ["w"]);
+  assert.deepEqual(ids('section:"Review tasks" Review'), ["w"]);
+  assert.deepEqual(ids('section:"Review tasks" nope'), []);
   assert.deepEqual(ids('section:"Other" nope'), ["w"]);
-  assert.ok(!ids('section:"Soak tasks"').includes("ghost"));
+  assert.ok(!ids('section:"Review tasks"').includes("ghost"));
   const both = parseSearchOps("section:Intro line:4 alpha");
   assert.deepEqual(both.unsupported, []);
   assert.equal(both.lineFilter, 4);

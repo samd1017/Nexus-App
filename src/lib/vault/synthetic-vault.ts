@@ -1,23 +1,23 @@
 /**
- * Deterministic synthetic vault for scale soak.
+ * Deterministic synthetic vault for scale tests.
  * Used in-browser (openSyntheticVault) and on disk (generate-synthetic-vault.mjs).
  */
 
 import type { VaultNode } from "./types";
 
-export const SYNTHETIC_VAULT_PREFIX = "soak-vault-";
+export const SYNTHETIC_VAULT_PREFIX = "scale-vault-";
 
-export function soakVaultId(noteCount: number): string {
+export function scaleVaultId(noteCount: number): string {
   return `${SYNTHETIC_VAULT_PREFIX}${noteCount}`;
 }
 
-export function parseSoakNoteCount(vaultId: string | null | undefined): number | null {
+export function parseScaleNoteCount(vaultId: string | null | undefined): number | null {
   if (!vaultId?.startsWith(SYNTHETIC_VAULT_PREFIX)) return null;
   const n = Number(vaultId.slice(SYNTHETIC_VAULT_PREFIX.length));
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export function isSyntheticSoakVault(vaultId: string | null | undefined): boolean {
+export function isSyntheticScaleVault(vaultId: string | null | undefined): boolean {
   return Boolean(vaultId && vaultId.startsWith(SYNTHETIC_VAULT_PREFIX));
 }
 
@@ -97,14 +97,14 @@ export function syntheticNoteBody(i: number, noteCount: number): string {
 
 ## Overview
 
-Soak note ${i} of ${noteCount}. This note is about **${topic}** in a local-first vault.
+Scale note ${i} of ${noteCount}. This note is about **${topic}** in a local-first vault.
 
 ## Notes
 
 - Related work lives in [[${next}]] and [[${prev}]].
 - Cluster hub: [[${hub}]].
 - Heading jump: [[${next}#Overview]].
-- Block: ^soak-${i}
+- Block: ^scale-${i}
 
 ## Links
 
@@ -190,7 +190,7 @@ export async function buildSyntheticVault(
   return {
     nodes,
     rootIds,
-    vaultName: `Soak ${noteCount.toLocaleString()}`,
+    vaultName: `Scale test ${noteCount.toLocaleString()}`,
     noteCount,
     folderCount,
   };
@@ -235,7 +235,7 @@ export function buildSyntheticVaultSync(opts: Omit<BuildSyntheticOpts, "yieldEve
   return {
     nodes,
     rootIds,
-    vaultName: `Soak ${noteCount.toLocaleString()}`,
+    vaultName: `Scale test ${noteCount.toLocaleString()}`,
     noteCount,
     folderCount: Object.values(nodes).filter((n) => n.kind === "folder").length,
   };

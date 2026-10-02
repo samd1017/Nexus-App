@@ -4,11 +4,11 @@
  * Probe words: `hub` and `cluster` (every body has "Cluster hub"; Hub titles
  * every 200 notes). `retrieval` is a rotating topic, not every file.
  *
- *   node scripts/generate-synthetic-vault.mjs --notes 10000 --out /tmp/nexus-soak-10k
- *   node scripts/gen-soak-vault.mjs --notes 100000 --out ~/Documents/nexus-soak-100k
+ *   node scripts/generate-synthetic-vault.mjs --notes 10000 --out /tmp/nexus-scale-10k
+ *   node scripts/gen-scale-vault.mjs --notes 100000 --out ~/Documents/nexus-scale-100k
  *
- * Default `--out` (when omitted) is ~/Documents/nexus-soak-{n} so Tauri
- * capabilities can read it. Override with --out or NEXUS_SOAK_VAULT.
+ * Default `--out` (when omitted) is ~/Documents/nexus-scale-{n} so Tauri
+ * capabilities can read it. Override with --out or NEXUS_SCALE_VAULT.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultSoakVaultPath } from "./soak-vault-path.mjs";
+import { defaultScaleVaultPath } from "./scale-vault-path.mjs";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -27,7 +27,7 @@ function parseArgs() {
     if (args[i] === "--notes" && args[i + 1]) notes = Number(args[++i]);
     else if (args[i] === "--out" && args[i + 1]) out = args[++i];
   }
-  if (!out) out = defaultSoakVaultPath(Number.isFinite(notes) ? notes : 10000);
+  if (!out) out = defaultScaleVaultPath(Number.isFinite(notes) ? notes : 10000);
   return { notes: Number.isFinite(notes) ? notes : 10000, out };
 }
 
@@ -54,7 +54,7 @@ const stats = writeSyntheticMarkdownFiles(notes, (rel, body) => {
 });
 const ms = Math.round(performance.now() - t0);
 writeFileSync(
-  join(out, "SOAK-MANIFEST.json"),
+  join(out, "SCALE-MANIFEST.json"),
   JSON.stringify({ notes, ...stats, out, ms, generatedAt: new Date().toISOString() }, null, 2),
 );
 console.log(

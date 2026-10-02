@@ -18,7 +18,7 @@ import { ensureVaultIndex } from "./indexes";
 export const TREE_FLAT_CAP = 16_000;
 
 /**
- * Notes listed under one expanded folder before a remainder row. Real soak
+ * Notes listed under one expanded folder before a remainder row. Real scale
  * folders are well under this (about 700 notes). A larger window is
  * per-folder and only grows when the remainder is opened.
  */

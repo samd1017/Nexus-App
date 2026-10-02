@@ -1,5 +1,5 @@
 /**
- * Desktop FS scope + soak default path contract (no Tauri).
+ * Desktop FS scope + scale default path contract (no Tauri).
  *
  *   npm run test:desktop-fs-scope
  */
@@ -25,16 +25,16 @@ const {
   desktopFsForbiddenMessage,
   isForbiddenFsError,
 } = await import("../src/lib/vault/desktop-fs-scope.ts");
-const { defaultSoakVaultPath, documentsDir } = await import("./soak-vault-path.mjs");
+const { defaultScaleVaultPath, documentsDir } = await import("./scale-vault-path.mjs");
 
 assert.equal(
-  isForbiddenFsError(new Error("forbidden path: C:\\vault\\nexus-soak-100k")),
+  isForbiddenFsError(new Error("forbidden path: C:\\vault\\nexus-scale-100k")),
   true,
 );
 assert.equal(
   isForbiddenFsError(
     new Error(
-      "path not allowed on the configured scope: path: /vault/nexus-soak-100k",
+      "path not allowed on the configured scope: path: /vault/nexus-scale-100k",
     ),
   ),
   true,
@@ -46,35 +46,35 @@ assert.equal(
 assert.equal(isForbiddenFsError(new Error("ENOENT: no such file")), false);
 assert.equal(isForbiddenFsError(new Error("read failed")), false);
 
-const msg = desktopFsForbiddenMessage("C:\\\\vault\\\\nexus-soak-100k");
+const msg = desktopFsForbiddenMessage("C:\\\\vault\\\\nexus-scale-100k");
 assert.match(msg, /desktop FS scope denied/i);
 assert.match(msg, /Open folder|Documents/i);
 const boom = new DesktopFsForbiddenError("/tmp/out-of-scope");
 assert.equal(boom.name, "DesktopFsForbiddenError");
 assert.equal(isForbiddenFsError(boom), true);
 
-const prevVault = process.env.NEXUS_SOAK_VAULT;
-const prevDocs = process.env.NEXUS_SOAK_DOCUMENTS;
-delete process.env.NEXUS_SOAK_VAULT;
-delete process.env.NEXUS_SOAK_DOCUMENTS;
+const prevVault = process.env.NEXUS_SCALE_VAULT;
+const prevDocs = process.env.NEXUS_SCALE_DOCUMENTS;
+delete process.env.NEXUS_SCALE_VAULT;
+delete process.env.NEXUS_SCALE_DOCUMENTS;
 try {
   const docs = documentsDir();
   assert.equal(path.basename(docs), "Documents");
-  const soak = defaultSoakVaultPath(100000);
-  assert.equal(path.basename(soak), "nexus-soak-100k");
+  const scale = defaultScaleVaultPath(100000);
+  assert.equal(path.basename(scale), "nexus-scale-100k");
   assert.ok(
-    soak.startsWith(docs),
-    `soak vault must sit under Documents (got ${soak})`,
+    scale.startsWith(docs),
+    `scale vault must sit under Documents (got ${scale})`,
   );
   assert.ok(
-    !soak.startsWith(path.join(os.homedir(), "nexus-soak")),
-    "must not default to $HOME/nexus-soak-N",
+    !scale.startsWith(path.join(os.homedir(), "nexus-scale")),
+    "must not default to $HOME/nexus-scale-N",
   );
 } finally {
-  if (prevVault == null) delete process.env.NEXUS_SOAK_VAULT;
-  else process.env.NEXUS_SOAK_VAULT = prevVault;
-  if (prevDocs == null) delete process.env.NEXUS_SOAK_DOCUMENTS;
-  else process.env.NEXUS_SOAK_DOCUMENTS = prevDocs;
+  if (prevVault == null) delete process.env.NEXUS_SCALE_VAULT;
+  else process.env.NEXUS_SCALE_VAULT = prevVault;
+  if (prevDocs == null) delete process.env.NEXUS_SCALE_DOCUMENTS;
+  else process.env.NEXUS_SCALE_DOCUMENTS = prevDocs;
 }
 
 console.log("desktop-fs-scope: PASS");

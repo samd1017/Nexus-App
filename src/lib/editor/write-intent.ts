@@ -50,7 +50,7 @@ export function takeJustCreated(id: string | null | undefined): boolean {
   return at !== undefined && Date.now() - at <= CREATED_MS;
 }
 
-/** For the soak probe: which note is waiting for the cursor, and what is held. */
+/** For the scale probe: which note is waiting for the cursor, and what is held. */
 export function writeIntentState(): { path: string | null; heldChars: number } {
   const path = livePath();
   const live = held && Date.now() <= held.until ? held : null;

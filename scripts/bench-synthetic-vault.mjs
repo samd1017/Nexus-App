@@ -92,19 +92,19 @@ for (const n of SIZES) {
 
     const sliced = persist.partializeVaultPersist({
       mode: "local",
-      vaultId: `soak-vault-${n}`,
+      vaultId: `scale-vault-${n}`,
       vaultName: vault.vaultName,
       nodes: vault.nodes,
       settings: {
         workspaceSplit: true,
         lastNotePath: Object.values(vault.nodes).find((x) => x.kind === "note")?.path,
         lastSecondaryNotePath: null,
-        soakNoteCount: n,
+        scaleNoteCount: n,
       },
     });
     row.persistedNodeKeys = Object.keys(sliced.nodes).length;
     row.remountKind = sliced.scaleRemount?.kind ?? null;
-    row.quotaSafe = sliced.persistedNodeKeys === 0 && sliced.remountKind === "soak";
+    row.quotaSafe = sliced.persistedNodeKeys === 0 && sliced.remountKind === "scale";
     row.rssDeltaMb = rssMb() - rss0;
     row.heapMb = heapMb();
     row.ok = true;

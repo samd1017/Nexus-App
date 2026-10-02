@@ -3,7 +3,7 @@
 //! path open) before meta walk, watch, or plugin-fs reads.
 //!
 //! Dialog-picked folders are added to `tauri-plugin-fs` persisted-scope
-//! automatically. Path opens (Wave E / soak / reopen) must call
+//! automatically. Path opens (Wave E / scale / reopen) must call
 //! `vault_register_root` so `readDir` / `readTextFile` get the same grant.
 //! Production capabilities still do not allow all of `$HOME`.
 
@@ -101,7 +101,7 @@ pub fn grant_plugin_fs_scope(app: &AppHandle, root: &str) -> Result<(), String> 
     let norm = normalize_root(root)?;
     if is_entire_home_dir(&norm) || is_entire_home_dir(&raw) {
         return Err(
-            "refusing to grant desktop FS scope for the entire home folder — open a vault subfolder (Documents/nexus-soak-N is the Wave E default)"
+            "refusing to grant desktop FS scope for the entire home folder — open a vault subfolder (Documents/nexus-scale-N is the Wave E default)"
                 .into(),
         );
     }
@@ -248,7 +248,7 @@ mod tests {
         assert!(is_entire_home_dir(Path::new(&home)));
         assert!(!is_entire_home_dir(&PathBuf::from(&home).join("Documents")));
         assert!(!is_entire_home_dir(
-            &PathBuf::from(&home).join("Documents").join("nexus-soak-100k")
+            &PathBuf::from(&home).join("Documents").join("nexus-scale-100k")
         ));
     }
 }

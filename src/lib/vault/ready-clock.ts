@@ -1,5 +1,5 @@
 /**
- * One line the desktop soak can grep: NEXUS_READY_CLOCK.
+ * One line the desktop scale test can grep: NEXUS_READY_CLOCK.
  * Unix milliseconds so it can be subtracted from the window-shown line.
  * phase=window | focus | document-native come from the shell process.
  * phase=document | early | module | shell come from the page.
@@ -18,7 +18,7 @@ export type ReadyClock = {
 
 type ClockWindow = Window & {
   __NEXUS_READY_CLOCK__?: ReadyClock;
-  __NEXUS_SOAK_LAST__?: Record<string, unknown>;
+  __NEXUS_SCALE_LAST__?: Record<string, unknown>;
   __TAURI__?: {
     core?: {
       invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -73,7 +73,7 @@ export function publishReadyClock(
   } catch {
     /* the clock line still went to the console */
   }
-  const last = (w.__NEXUS_SOAK_LAST__ ??= {});
+  const last = (w.__NEXUS_SCALE_LAST__ ??= {});
   last.readyClock = { ...clock, line };
   const invoke = w.__TAURI__?.core?.invoke;
   if (!invoke) return;

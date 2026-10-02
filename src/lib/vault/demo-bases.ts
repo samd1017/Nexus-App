@@ -9,11 +9,11 @@ export const DEMO_VAULT_ID = "demo-vault";
 
 const THREE_VIEWS = `views:
   - type: table
-    name: Soak all
+    name: All notes
   - type: cards
-    name: Soak cards
+    name: Cards
   - type: table
-    name: Soak third
+    name: Research
     filters:
       and:
         - file.inFolder("Research")
@@ -45,9 +45,9 @@ const EXPORT_COPY = `views:
 `;
 
 export const DEMO_VAULT_BASES: DemoBaseFile[] = [
-  { path: "Soak-ThreeViews.base", name: "Soak-ThreeViews.base", text: THREE_VIEWS },
-  { path: "Soak-GroupBy.base", name: "Soak-GroupBy.base", text: GROUP_BY },
-  { path: "Soak-MultiFormula.base", name: "Soak-MultiFormula.base", text: MULTI_FORMULA },
+  { path: "Sample-ThreeViews.base", name: "Sample-ThreeViews.base", text: THREE_VIEWS },
+  { path: "Sample-GroupBy.base", name: "Sample-GroupBy.base", text: GROUP_BY },
+  { path: "Sample-MultiFormula.base", name: "Sample-MultiFormula.base", text: MULTI_FORMULA },
   { path: "Nexus Bases export.base", name: "Nexus Bases export.base", text: EXPORT_COPY },
 ];
 

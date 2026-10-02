@@ -59,14 +59,14 @@ page.on("crash", () => {
 });
 const t0 = Date.now();
 await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
-await page.waitForFunction(() => window.__NEXUS_SOAK__, { timeout: 30000 });
+await page.waitForFunction(() => window.__NEXUS_SCALE__, { timeout: 30000 });
 if (INPAGE) {
   await page.evaluate(async (n) => {
-    await window.__NEXUS_SOAK__.openMockFsaCount(n);
+    await window.__NEXUS_SCALE__.openMockFsaCount(n);
   }, NOTES);
 } else {
   await page.evaluate(async (files) => {
-    await window.__NEXUS_SOAK__.openMockFsa(files);
+    await window.__NEXUS_SCALE__.openMockFsa(files);
   }, files);
 }
 await page.waitForFunction(
@@ -77,7 +77,7 @@ await page.waitForFunction(
 let result;
 try {
   result = await page.evaluate(async (opens) => {
-    return window.__NEXUS_SOAK__.heapTrend(opens);
+    return window.__NEXUS_SCALE__.heapTrend(opens);
   }, OPENS);
 } catch (err) {
   await browser.close();

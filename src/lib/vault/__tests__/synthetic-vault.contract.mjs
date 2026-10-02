@@ -33,10 +33,10 @@ const noteA = Object.values(a.nodes).find((n) => n.kind === "note" && n.path.end
 assert.ok(noteA?.content?.includes("[["));
 assert.ok(noteA?.content?.includes("#scale"));
 assert.ok(noteA?.content?.includes("## Overview"));
-assert.equal(m.soakVaultId(10000), "soak-vault-10000");
-assert.equal(m.parseSoakNoteCount("soak-vault-50000"), 50000);
-assert.equal(m.isSyntheticSoakVault("soak-vault-1"), true);
-assert.equal(m.isSyntheticSoakVault("demo-vault"), false);
+assert.equal(m.scaleVaultId(10000), "scale-vault-10000");
+assert.equal(m.parseScaleNoteCount("scale-vault-50000"), 50000);
+assert.equal(m.isSyntheticScaleVault("scale-vault-1"), true);
+assert.equal(m.isSyntheticScaleVault("demo-vault"), false);
 const hub = Object.values(a.nodes).find((n) => n.kind === "note" && n.name.startsWith("Hub"));
 assert.ok(hub, "hub notes exist");
 assert.equal(m.noteTitleForIndex(0), "Hub 0");

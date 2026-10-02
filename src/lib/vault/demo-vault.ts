@@ -626,7 +626,7 @@ Edit a note in Nexus (leave it dirty) while an agent writes the same path. Nexus
 
 ## Ask
 
-**⌘K** → \`ask: how do agents share this vault\` — extractive answer with citations. No cloud model required.
+**⌘K** → \`ask: how do agents share this vault\` — extractive answer with citations from notes in this folder.
 
 ## Related
 

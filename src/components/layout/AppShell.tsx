@@ -339,15 +339,15 @@ export function AppShell() {
   useEffect(() => {
     const path = import.meta.env.VITE_OPEN_VAULT;
     if (!import.meta.env.DEV || typeof path !== "string" || !path.trim()) return;
-    const soak = (
+    const scale = (
       window as unknown as {
-        __NEXUS_SOAK__?: {
+        __NEXUS_SCALE__?: {
           openDesktop: (abs: string) => Promise<unknown>;
         };
       }
-    ).__NEXUS_SOAK__;
-    if (!soak) return;
-    void soak
+    ).__NEXUS_SCALE__;
+    if (!scale) return;
+    void scale
       .openDesktop(path.trim())
       .then(() => {
         useVaultStore.getState().setGraphMode("fullscreen");

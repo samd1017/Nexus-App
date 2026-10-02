@@ -1,7 +1,7 @@
 /**
- * Playwright UI scale soak. Climbs sizes until a ship-blocker.
+ * Playwright UI scale test. Climbs sizes until a ship-blocker.
  *
- *   node scripts/scale-soak.mjs [baseUrl] [--sizes 10000,50000,100000]
+ *   node scripts/scale-harness.mjs [baseUrl] [--sizes 10000,50000,100000]
  *
  * Blockers: op p95 > 1000ms (common ops), crash, data loss, broken search/Ask,
  * graph hang, failed reload remount.
@@ -32,7 +32,7 @@ function pct(arr, p) {
 async function probe(page) {
   return page.evaluate(() => {
     const fn = window.__NEXUS_STRESS__;
-    const last = window.__NEXUS_SOAK_LAST__;
+    const last = window.__NEXUS_SCALE_LAST__;
     return { stress: typeof fn === "function" ? fn() : null, last: last || null };
   });
 }
@@ -43,7 +43,7 @@ async function waitReady(page, notes, timeoutMs) {
     const p = await probe(page);
     if (p.stress?.notes === notes && !p.stress.connecting) return p;
     const err = await page.locator("text=/Could not open large test vault/").count();
-    if (err) throw new Error("UI reported soak open failure");
+    if (err) throw new Error("UI reported scale open failure");
     await page.waitForTimeout(250);
   }
   throw new Error(`Timeout waiting for ${notes} notes`);
@@ -65,7 +65,7 @@ async function measure(fn, repeats = 8) {
   };
 }
 
-async function soakSize(browser, notes) {
+async function scaleSize(browser, notes) {
   const result = {
     notes,
     ok: false,
@@ -80,7 +80,7 @@ async function soakSize(browser, notes) {
   const openBudget = Math.min(180000, 8000 + notes * 4);
 
   try {
-    await page.goto(new URL(`/?soak=${notes}`, BASE).href, {
+    await page.goto(new URL(`/?scale=${notes}`, BASE).href, {
       waitUntil: "domcontentloaded",
       timeout: openBudget,
     });
@@ -101,14 +101,14 @@ async function soakSize(browser, notes) {
       return { active: s?.activeNoteId };
     });
 
-    const ids = await page.evaluate(() => window.__NEXUS_SOAK__?.noteIds?.(8) || []);
+    const ids = await page.evaluate(() => window.__NEXUS_SCALE__?.noteIds?.(8) || []);
     result.steps.switchNotesCount = ids.length;
     if (ids.length < 2) result.blockers.push("switchNotesCount=0");
     result.steps.switch = await measure(async () => {
       await page.evaluate((noteIds) => {
-        const soak = window.__NEXUS_SOAK__;
+        const scale = window.__NEXUS_SCALE__;
         const next = noteIds[(Math.random() * noteIds.length) | 0];
-        soak?.setActiveNote?.(next);
+        scale?.setActiveNote?.(next);
       }, ids);
       await page.waitForFunction(() => {
         const p = window.__NEXUS_STRESS__?.();
@@ -169,9 +169,9 @@ async function soakSize(browser, notes) {
     result.steps.editorTyped = false;
     if (await editor.count()) {
       await editor.click({ force: true }).catch(() => {});
-      await page.keyboard.type(" soak-edit", { delay: 8 });
+      await page.keyboard.type(" scale-edit", { delay: 8 });
       result.steps.editorTyped = await page.evaluate(() =>
-        /soak-edit/.test(document.querySelector(".ProseMirror, [contenteditable='true']")?.textContent || ""),
+        /scale-edit/.test(document.querySelector(".ProseMirror, [contenteditable='true']")?.textContent || ""),
       );
     }
     result.steps.editMs = Math.round(performance.now() - tEdit);
@@ -179,7 +179,7 @@ async function soakSize(browser, notes) {
 
     const beforeCreate = await probe(page);
     const tNew = performance.now();
-    await page.evaluate(() => window.__NEXUS_SOAK__?.createNote(null, "Soak Created"));
+    await page.evaluate(() => window.__NEXUS_SCALE__?.createNote(null, "Scale Created"));
     await page.waitForFunction((n) => window.__NEXUS_STRESS__?.()?.notes === n + 1, notes);
     result.steps.newNoteMs = Math.round(performance.now() - tNew);
     if (result.steps.newNoteMs > BLOCK_MS) {
@@ -233,8 +233,8 @@ const report = {
 };
 try {
   for (const n of SIZES) {
-    console.log(`SOAK ${n}…`);
-    const row = await soakSize(browser, n);
+    console.log(`SCALE ${n}…`);
+    const row = await scaleSize(browser, n);
     report.rows.push(row);
     console.log(JSON.stringify({ notes: n, ok: row.ok, blockers: row.blockers, steps: row.steps }, null, 2));
     if (!row.ok) break;
@@ -253,7 +253,7 @@ report.verdict =
         ? "green_at_10k_only"
         : "not_green";
 
-writeFileSync(join(OUT_DIR, "scale-soak.json"), JSON.stringify(report, null, 2));
+writeFileSync(join(OUT_DIR, "scale-harness.json"), JSON.stringify(report, null, 2));
 console.log("LARGEST_GREEN", report.largestGreen);
 console.log("VERDICT", report.verdict);
 if (report.rows.some((r) => !r.ok)) process.exitCode = 2;

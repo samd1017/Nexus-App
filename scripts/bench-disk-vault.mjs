@@ -22,7 +22,7 @@ const SIZES = (sizesArg || "100000,300000")
   .map((s) => Number(s.trim()))
   .filter((n) => Number.isFinite(n) && n > 0);
 
-const outRoot = join(tmpdir(), `nexus-disk-soak-${Date.now()}`);
+const outRoot = join(tmpdir(), `nexus-disk-scale-${Date.now()}`);
 mkdirSync(outRoot, { recursive: true });
 
 async function bundle(entry, name) {

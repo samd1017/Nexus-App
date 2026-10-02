@@ -2,7 +2,7 @@
  * Desktop FS scope helpers — no Tauri imports (unit-testable).
  *
  * Dialog-picked folders are added to plugin-fs persisted-scope automatically.
- * Programmatic opens (Wave E / soak / reopen-by-path) must register the same
+ * Programmatic opens (Wave E / scale / reopen-by-path) must register the same
  * way. Capability JSON still does not allow all of $HOME.
  */
 

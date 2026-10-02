@@ -525,8 +525,8 @@ const edit = (session, patch) => {
   const homeTemplate = sync.template();
   assert.equal(sync.home, home);
   const other = fakeVault({ file: obsidian });
-  other.name = "Soak-ThreeViews.base";
-  other.path = "Soak-ThreeViews.base";
+  other.name = "Sample-ThreeViews.base";
+  other.path = "Sample-ThreeViews.base";
   const switching = sync.retarget(other, obsidian);
   const late = sync.save(edit(opened.session, { query: "home views" }), []);
   await switching;
@@ -534,11 +534,11 @@ const edit = (session, patch) => {
   assert.equal(home.file, richTrip.text);
   assert.equal(other.file, obsidian);
   assert.equal(sync.storage, other);
-  const renamed = edit(ok(obsidian).session, { name: "Renamed soak" });
+  const renamed = edit(ok(obsidian).session, { name: "Renamed view" });
   assert.deepEqual(await sync.save(renamed, []), { kind: "saved" });
-  assert.match(other.file, /Renamed soak/);
+  assert.match(other.file, /Renamed view/);
   assert.equal(home.file, richTrip.text);
-  other.file = other.file.replace("name: Renamed soak", "name: Outside");
+  other.file = other.file.replace("name: Renamed view", "name: Outside");
   const checked = await sync.check();
   assert.equal(checked.kind, "changed");
   assert.equal(checked.session.views[0].name, "Outside");

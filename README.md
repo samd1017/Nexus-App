@@ -91,7 +91,7 @@ Everything else (editor, graph, command palette) supports that core loop.
 - Live 3D force-directed knowledge graph
 - Tauri 2 desktop shell (macOS + Windows) + web mode via File System Access API
 - Search: desktop uses disposable SQLite FTS5 BM25 (`searchFtsAsync`); web / FSA uses an in-memory inverted index with an 800-candidate cap (not BM25). Palette heading names the live engine.
-- Grounded **Ask your notes** (`ask:` in ⌘K) with extractive citations — no cloud model
+- Grounded **Ask your notes** (`ask:` in ⌘K) with extractive citations from the on-device index
 - Pulse + Conflict Studio for humans and agents on the same folder
 - Command palette, backlinks, large-test-vault stress tooling
 - Lazy body loading + durable FTS snippets for large in-memory / disk vaults

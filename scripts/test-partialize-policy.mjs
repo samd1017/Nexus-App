@@ -70,16 +70,16 @@ const baseSettings = {
 {
   const out = partializeVaultPersist({
     mode: "local",
-    vaultId: "soak-vault-10000",
-    vaultName: "Soak 10,000",
+    vaultId: "scale-vault-10000",
+    vaultName: "Scale 10,000",
     nodes: makeNodes(100),
-    settings: { ...baseSettings, soakNoteCount: 10000, workspaceSplit: true, lastSecondaryNotePath: "Hub.md" },
+    settings: { ...baseSettings, scaleNoteCount: 10000, workspaceSplit: true, lastSecondaryNotePath: "Hub.md" },
   });
   assert.deepEqual(out.nodes, {});
-  assert.equal(out.scaleRemount.kind, "soak");
+  assert.equal(out.scaleRemount.kind, "scale");
   assert.equal(out.scaleRemount.noteCount, 10000);
   assert.equal(out.scaleRemount.lastSecondaryNotePath, "Hub.md");
-  console.log("OK: soak-vault-* → remount ticket, no nodes");
+  console.log("OK: scale-vault-* → remount ticket, no nodes");
 }
 
 {

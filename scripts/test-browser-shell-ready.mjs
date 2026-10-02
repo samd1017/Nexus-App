@@ -23,14 +23,14 @@ page.on("crash", () => pageErrors.push("tab crashed"));
 
 try {
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.waitForFunction(() => window.__NEXUS_SOAK__?.openPagedFsa, { timeout: 30000 });
+  await page.waitForFunction(() => window.__NEXUS_SCALE__?.openPagedFsa, { timeout: 30000 });
   const opened = await page.evaluate(async (n) => {
-    return window.__NEXUS_SOAK__.openPagedFsa(n);
+    return window.__NEXUS_SCALE__.openPagedFsa(n);
   }, NOTES);
   const bannerCount = await page.locator("[data-open-progress='ready']").count();
   const readyText = await page.getByText("titles and open notes").count();
   const saved = await page.evaluate(async () => {
-    return window.__NEXUS_SOAK__.saveActiveMarker("nexus-page-roundtrip");
+    return window.__NEXUS_SCALE__.saveActiveMarker("nexus-page-roundtrip");
   });
   const report = { opened, bannerCount, readyText, saved, pageErrors };
   console.log(JSON.stringify(report, null, 2));
@@ -68,15 +68,15 @@ try {
   const deepBody = `${"a".repeat(4096)} ${deepToken}\n`;
   const deep = await page.evaluate(
     async ({ notes, name, text, token }) => {
-      await window.__NEXUS_SOAK__.plantPagedNote(name, text);
-      const opened = await window.__NEXUS_SOAK__.openPagedFsa(notes);
-      const before = await window.__NEXUS_SOAK__.search(token, 8);
-      const focused = await window.__NEXUS_SOAK__.openCatalogNote(name);
-      let after = await window.__NEXUS_SOAK__.search(token, 8);
+      await window.__NEXUS_SCALE__.plantPagedNote(name, text);
+      const opened = await window.__NEXUS_SCALE__.openPagedFsa(notes);
+      const before = await window.__NEXUS_SCALE__.search(token, 8);
+      const focused = await window.__NEXUS_SCALE__.openCatalogNote(name);
+      let after = await window.__NEXUS_SCALE__.search(token, 8);
       const deadline = Date.now() + 8000;
       while (Date.now() < deadline && !(after.hits ?? []).some((hit) => hit.path === name)) {
         await new Promise((resolve) => setTimeout(resolve, 80));
-        after = await window.__NEXUS_SOAK__.search(token, 8);
+        after = await window.__NEXUS_SCALE__.search(token, 8);
       }
       const live = window.__NEXUS_STRESS__?.() ?? {};
       return { opened, before, focused, after, liveNotes: live.notes, liveCatalog: live.catalogNoteCount };
@@ -108,7 +108,7 @@ try {
     let bodiesDuringSearch = 0;
     for (const query of queries) {
       const t0 = performance.now();
-      const found = await window.__NEXUS_SOAK__.search(query, 8);
+      const found = await window.__NEXUS_SCALE__.search(query, 8);
       times.push(Math.round(performance.now() - t0));
       hits.push(found.hits?.[0]?.path ?? null);
       bodiesDuringSearch = Math.max(
@@ -123,9 +123,9 @@ try {
     }
     let lastOpen = null;
     for (const path of paths) {
-      lastOpen = await window.__NEXUS_SOAK__.openCatalogNote(path);
+      lastOpen = await window.__NEXUS_SCALE__.openCatalogNote(path);
     }
-    const paged = await window.__NEXUS_SOAK__.pageShellRoot();
+    const paged = await window.__NEXUS_SCALE__.pageShellRoot();
     const probe = window.__NEXUS_STRESS__?.() ?? {};
     return {
       times,

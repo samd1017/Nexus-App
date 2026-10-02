@@ -1524,12 +1524,12 @@ function CommandPaletteOpen() {
             }),
           },
           ...([10_000, 50_000, 100_000, 200_000] as const).map((n) => ({
-            id: `soak-vault-${n}`,
+            id: `scale-vault-${n}`,
             label: `Open large test vault (${n.toLocaleString()} notes)`,
             keywords: ["scale", "stress", "synthetic", String(n), "large"],
             icon: <Database size={15} />,
             shortcut: undefined as string | undefined,
-            run: wrapRun(`soak-vault-${n}`, () => {
+            run: wrapRun(`scale-vault-${n}`, () => {
               void openSyntheticVault(n);
               setCommandOpen(false);
             }),
@@ -2179,7 +2179,7 @@ function CommandPaletteOpen() {
               <div className="mb-1 rounded-[10px] border border-[var(--border)] bg-white/[0.02] px-3 py-2 text-[12.5px] leading-relaxed text-[var(--text-secondary)]">
                 <p>{askAnswer.summary}</p>
                 <p className="mt-1.5 text-[10.5px] text-[var(--text-muted)]">
-                  Extractive citations from this vault — no cloud model.
+                  Extractive citations from this vault's on-device index.
                 </p>
               </div>
               {askAnswer.citations.length === 0 ? (

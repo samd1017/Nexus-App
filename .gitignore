@@ -24,8 +24,8 @@ screenshots/
 /*.png
 /*.webp
 
-# Internal / agent
-docs/SCALE_SOAK_REPORT.md
+# Internal notes
+docs/SCALE_HARNESS_REPORT.md
 AGENTS.md
 AGENTS.project.md
 startup.sh
