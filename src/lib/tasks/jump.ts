@@ -20,7 +20,7 @@ export function jumpToTaskText(text: string, pane: "primary" | "secondary" = "pr
   const lines = ta.value.split("\n");
   let pos = 0;
   for (const line of lines) {
-    if (/^\s*[-*]\s+\[ \]/.test(line) && line.toLowerCase().includes(lower)) {
+    if (/^[\s>]*(?:[-*+]|\d{1,9}[.)])\s+\[[^\]]\]/.test(line) && line.toLowerCase().includes(lower)) {
       ta.focus();
       ta.setSelectionRange(pos, pos + line.length);
       const lineCount = ta.value.slice(0, pos).split("\n").length;

@@ -1,14 +1,15 @@
 /**
- * Incomplete Markdown tasks. A 📅 YYYY-MM-DD on the line is the due date.
- * When the line has no emoji date, the note YAML `due:` (YYYY-MM-DD) applies.
- * The first priority marker on the line is ⏫ 🔼 🔽 ⏬ or ❗.
- * A 🔁 plus following rule text is a recurrence label.
- * Completing a recurring row whose rule is every day, week, month, or year writes the next incomplete line.
- * A date on that line wins over the note due:. A row with no recurrence only marks the line done.
- * Not supported: Dataview queries.
+ * Tasks in one note: every checkbox line outside frontmatter and code fences,
+ * read with the task grammar in syntax.ts. A note `due:` (YYYY-MM-DD) is the
+ * due date of a task whose line has none; a date on the line always wins.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
+import { addDays, daysBetween, isYmd, localToday } from "./dates";
+import { PRIORITY_MARK, isOpen, parseTaskLine, type TaskPriority, type TaskProblem, type TaskStatus } from "./syntax";
+
+export { localToday } from "./dates";
+export type { TaskPriority, TaskStatus } from "./syntax";
 
 export type VaultTask = {
   noteId: string;
@@ -16,74 +17,40 @@ export type VaultTask = {
   title: string;
   /** 1-based line in the note. */
   line: number;
+  /** The whole line as it was read; an edit checks the file still has it. */
+  raw: string;
   text: string;
+  status: TaskStatus;
+  symbol: string;
   due: string | null;
-  /** First priority marker on the line. Null when the line has none. */
-  priority: TaskPriority | null;
-  /** Rule text after the first 🔁. Null when the line has no rule. */
+  /** The due date came from the note's `due:` property, not the line. */
+  dueFromNote: boolean;
+  scheduled: string | null;
+  start: string | null;
+  created: string | null;
+  done: string | null;
+  cancelled: string | null;
+  priority: TaskPriority;
+  /** Rule text after 🔁 or in [repeat::]. */
   recurrence: string | null;
+  /** The rule is one Nexus can schedule. */
+  recurring: boolean;
+  tags: string[];
+  /** Other [key:: value] fields on the line. */
+  fields: Record<string, string>;
+  id: string | null;
+  dependsOn: string[];
+  blockId: string | null;
+  format: "emoji" | "field";
+  /** Indent depth: 0 for a top-level task. */
+  depth: number;
+  /** Line of the nearest task above with less indent, or null. */
+  parentLine: number | null;
+  problems: TaskProblem[];
 };
 
-/** Tasks-plugin markers. High chip uses highest (⏫) and high-alt (❗) only. */
-export type TaskPriority = "highest" | "high" | "medium" | "low" | "high-alt";
-
-const TASK_RE = /^(\s*)([-*])\s+\[ \]\s+(\S.*)$/;
-const DUE_RE = /📅\s*(\d{4}-\d{2}-\d{2})/;
-const PRIORITY_RE = /[⏫🔼🔽⏬❗]/u;
-/** First 🔁 and the rule text up to the next task emoji, or the end of the line. */
-const RECURRENCE_RE = /🔁\s*([^📅⏫🔼🔽⏬❗🔁]*)/u;
-const PER_NOTE_CAP = 40;
-
-const PRIORITY_OF: Record<string, TaskPriority> = {
-  "⏫": "highest",
-  "🔼": "high",
-  "🔽": "medium",
-  "⏬": "low",
-  "❗": "high-alt",
-};
-
-/** First priority marker on the line, or null. */
-export function priorityOnTaskLine(text: string): TaskPriority | null {
-  const match = PRIORITY_RE.exec(text);
-  return match ? PRIORITY_OF[match[0]] ?? null : null;
-}
-
-export function priorityMarker(priority: TaskPriority | null): string {
-  if (priority === "highest") return "⏫";
-  if (priority === "high") return "🔼";
-  if (priority === "medium") return "🔽";
-  if (priority === "low") return "⏬";
-  if (priority === "high-alt") return "❗";
-  return "";
-}
-
-/** High chip: ⏫ or ❗. 🔼, 🔽, ⏬, and unmarked lines stay out. */
-export function taskIsHigh(priority: TaskPriority | null): boolean {
-  return priority === "highest" || priority === "high-alt";
-}
-
-/** Med chip: 🔽 only. */
-export function taskIsMedium(priority: TaskPriority | null): boolean {
-  return priority === "medium";
-}
-
-/** Low chip: ⏬ only. */
-export function taskIsLow(priority: TaskPriority | null): boolean {
-  return priority === "low";
-}
-
-/** Rule after the first 🔁, or null when the marker is missing or has no text. */
-export function recurrenceOnTaskLine(text: string): string | null {
-  const match = RECURRENCE_RE.exec(text);
-  if (!match) return null;
-  const rule = (match[1] ?? "").replace(/\s+/g, " ").trim();
-  return rule || null;
-}
-
-export function dueOnTaskLine(text: string): string | null {
-  const match = DUE_RE.exec(text);
-  return match ? match[1] : null;
-}
+/** A giant checklist note still reads in a few ms; beyond this the rest is left out. */
+export const PER_NOTE_CAP = 2000;
 
 /** `due:` YAML value, or null when it is missing or not a calendar date. */
 export function dueFromFrontmatter(body: string): string | null {
@@ -92,172 +59,179 @@ export function dueFromFrontmatter(body: string): string | null {
   let found: string | null = null;
   for (const field of parseFrontmatterFields(yaml)) {
     if (field.key.toLowerCase() !== "due") continue;
-    found = normalizeDueValue(field.value);
+    let v = field.value.trim();
+    if ((v.startsWith('"') && v.endsWith('"') && v.length >= 2) || (v.startsWith("'") && v.endsWith("'") && v.length >= 2)) {
+      v = v.slice(1, -1).trim();
+    }
+    found = isYmd(v) ? v : null;
   }
   return found;
 }
 
-function normalizeDueValue(value: string): string | null {
-  let v = value.trim();
-  if (
-    (v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
-    (v.startsWith("'") && v.endsWith("'") && v.length >= 2)
-  ) {
-    v = v.slice(1, -1).trim();
+/** Lines that are frontmatter or inside a ``` / ~~~ fence. */
+export function nonTaskLines(lines: string[]): Set<number> {
+  const skip = new Set<number>();
+  let i = 0;
+  if (lines[0]?.replace(/^\uFEFF/, "").trim() === "---") {
+    for (let j = 1; j < lines.length; j += 1) {
+      if (lines[j]?.trim() === "---" || lines[j]?.trim() === "...") {
+        for (let k = 0; k <= j; k += 1) skip.add(k);
+        i = j + 1;
+        break;
+      }
+    }
   }
-  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  let fence: string | null = null;
+  for (; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const open = /^\s*(?:>\s*)*(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      skip.add(i);
+      if (open && (open[1] ?? "").startsWith(fence)) fence = null;
+      continue;
+    }
+    if (open) {
+      fence = (open[1] ?? "").slice(0, 3);
+      skip.add(i);
+    }
+  }
+  return skip;
 }
 
-export function taskDisplayText(text: string): string {
-  return text.replace(DUE_RE, "").replace(PRIORITY_RE, "").replace(RECURRENCE_RE, "").replace(/\s+/g, " ").trim();
+function indentWidth(lead: string): number {
+  const ws = /^[ \t]*(?:>[ \t]*)*/.exec(lead)?.[0] ?? "";
+  let n = 0;
+  for (const ch of ws.replace(/>/g, "")) n += ch === "\t" ? 4 : 1;
+  return n;
 }
 
-export function tasksInNote(note: {
-  id: string;
-  path: string;
-  title: string;
-  body: string;
-}): VaultTask[] {
+export type TaskNote = { id: string; path: string; title: string };
+
+/**
+ * Tasks from checkbox lines already picked out of one note, in line order.
+ * The desktop index sends lines this way; tasksInNote reads a whole body.
+ */
+export function tasksFromLines(
+  note: TaskNote,
+  entries: { line: number; raw: string }[],
+  noteDue: string | null,
+  today: string = localToday(),
+): VaultTask[] {
   const out: VaultTask[] = [];
-  const noteDue = dueFromFrontmatter(note.body);
-  const lines = note.body.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const match = TASK_RE.exec(lines[i]);
-    if (!match) continue;
-    const raw = match[3].trim();
-    if (!raw) continue;
+  const stack: { width: number; line: number }[] = [];
+  for (const { line, raw } of entries) {
+    const parsed = parseTaskLine(raw, today);
+    if (!parsed) continue;
+    const width = indentWidth(parsed.lead);
+    while (stack.length && (stack[stack.length - 1] as { width: number }).width >= width) stack.pop();
+    const parent = stack[stack.length - 1] ?? null;
     out.push({
       noteId: note.id,
       path: note.path,
       title: note.title,
-      line: i + 1,
-      text: taskDisplayText(raw),
-      due: dueOnTaskLine(raw) ?? noteDue,
-      priority: priorityOnTaskLine(raw),
-      recurrence: recurrenceOnTaskLine(raw),
+      line,
+      raw,
+      text: parsed.text,
+      status: parsed.status,
+      symbol: parsed.symbol,
+      due: parsed.due ?? noteDue,
+      dueFromNote: !parsed.due && !!noteDue,
+      scheduled: parsed.scheduled,
+      start: parsed.start,
+      created: parsed.created,
+      done: parsed.done,
+      cancelled: parsed.cancelled,
+      priority: parsed.priority,
+      recurrence: parsed.recurrence,
+      recurring: parsed.rule !== null,
+      tags: parsed.tags,
+      fields: parsed.fields,
+      id: parsed.id,
+      dependsOn: parsed.dependsOn,
+      blockId: parsed.blockId,
+      format: parsed.format,
+      depth: stack.length,
+      parentLine: parent ? parent.line : null,
+      problems: parsed.problems.map((p) => ({ ...p, start: p.start + parsed.bodyStart, end: p.end + parsed.bodyStart })),
     });
+    stack.push({ width, line });
     if (out.length >= PER_NOTE_CAP) break;
   }
   return out;
 }
 
-const EVERY_RE = /^every(?:\s+(\d+))?\s+(day|week|month|year)s?$/i;
+const QUICK_TASK = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[[^\]\n]\][ \t]+\S/m;
 
-/** Days or months to add for `every day|week|month|year` and `every N` of those. Other rules are null. */
-function recurrenceShift(rule: string): { days: number; months: number } | null {
-  const match = EVERY_RE.exec(rule.trim());
-  if (!match) return null;
-  const count = match[1] ? Number(match[1]) : 1;
-  if (!Number.isInteger(count) || count < 1 || count > 999) return null;
-  const unit = (match[2] ?? "").toLowerCase();
-  if (unit === "day") return { days: count, months: 0 };
-  if (unit === "week") return { days: count * 7, months: 0 };
-  if (unit === "month") return { days: 0, months: count };
-  return { days: 0, months: count * 12 };
-}
-
-function parseYmd(ymd: string): { y: number; m: number; d: number } | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
-  const y = Number(ymd.slice(0, 4));
-  const m = Number(ymd.slice(5, 7));
-  const d = Number(ymd.slice(8, 10));
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
-  return { y, m, d };
-}
-
-function formatYmd(y: number, m: number, d: number): string {
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-function shiftYmd(ymd: string, shift: { days: number; months: number }): string | null {
-  const parts = parseYmd(ymd);
-  if (!parts) return null;
-  if (shift.months) {
-    const total = parts.y * 12 + (parts.m - 1) + shift.months;
-    const y = Math.floor(total / 12);
-    const m = (total % 12) + 1;
-    const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    return formatYmd(y, m, Math.min(parts.d, dim));
+export function tasksInNote(note: TaskNote & { body: string }, today: string = localToday()): VaultTask[] {
+  if (!QUICK_TASK.test(note.body)) return [];
+  const lines = note.body.split(/\r?\n/);
+  const skip = nonTaskLines(lines);
+  const entries: { line: number; raw: string }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (skip.has(i)) continue;
+    const raw = lines[i] ?? "";
+    if (raw.includes("[") && QUICK_TASK.test(raw)) entries.push({ line: i + 1, raw });
+    if (entries.length >= PER_NOTE_CAP) break;
   }
-  const dt = new Date(Date.UTC(parts.y, parts.m - 1, parts.d));
-  dt.setUTCDate(dt.getUTCDate() + shift.days);
-  return formatYmd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+  return tasksFromLines(note, entries, dueFromFrontmatter(note.body), today);
 }
 
-/**
- * Next calendar day for a parsed recurrence rule.
- * Basis is the line date, else the note due, else `today`. Null when the rule is not every day/week/month/year.
- */
-export function nextRecurrenceDue(rule: string, basis: string): string | null {
-  const shift = recurrenceShift(rule);
-  if (!shift) return null;
-  return shiftYmd(basis, shift);
+export function taskIsOpen(task: Pick<VaultTask, "status">): boolean {
+  return isOpen(task.status);
 }
 
-function spawnNextLine(current: string, nextDue: string): string | null {
-  const match = TASK_RE.exec(current);
-  if (!match) return null;
-  const rest = match[3] ?? "";
-  const dated = DUE_RE.test(rest) ? rest.replace(DUE_RE, `📅 ${nextDue}`) : `${rest} 📅 ${nextDue}`;
-  return `${match[1] ?? ""}${match[2] ?? "-"} [ ] ${dated}`;
+export function priorityMarker(priority: TaskPriority | null): string {
+  return priority ? PRIORITY_MARK[priority] : "";
 }
 
-/**
- * Flip one incomplete task to `[x]`.
- * A recurring row whose rule is every day, week, month, or year also inserts the next incomplete line.
- * The line date wins over the note `due:`. Returns null when that line is not an open task.
- */
-export function completeTaskLine(markdown: string, line: number, today = localToday()): string | null {
-  if (!Number.isFinite(line) || line < 1) return null;
-  const parts = markdown.split(/\r?\n/);
-  const index = line - 1;
-  const current = parts[index];
-  if (current == null || !TASK_RE.test(current)) return null;
-  parts[index] = current.replace("[ ]", "[x]");
-  const raw = TASK_RE.exec(current)?.[3] ?? "";
-  const rule = recurrenceOnTaskLine(raw);
-  const shift = rule ? recurrenceShift(rule) : null;
-  if (shift) {
-    const basis = dueOnTaskLine(raw) ?? dueFromFrontmatter(markdown) ?? today;
-    const nextDue = shiftYmd(basis, shift);
-    const spawned = nextDue ? spawnNextLine(current, nextDue) : null;
-    if (spawned) parts.splice(index + 1, 0, spawned);
-  }
-  const nl = markdown.includes("\r\n") ? "\r\n" : "\n";
-  return parts.join(nl);
-}
-
-export function taskMatchesPath(task: VaultTask, prefix: string): boolean {
+export function taskMatchesPath(task: Pick<VaultTask, "path">, prefix: string): boolean {
   const want = prefix.trim().replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
   if (!want) return true;
   return task.path.toLowerCase().startsWith(want);
 }
 
-/**
- * Local calendar day as YYYY-MM-DD (the runtime's local zone, not a fixed offset).
- * `now` defaults to the current instant.
- */
-export function localToday(now = new Date()): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-/**
- * Due today when `due` equals `today`. Overdue when `due` is strictly before `today`.
- * Upcoming when `due` is a calendar day strictly after `today`.
- * Null, blank, and non-dates are none of the three. YYYY-MM-DD compares in calendar order.
- */
+/** Due today, overdue (before today), or upcoming (after today). Null when there is no real date. */
 export function taskDueBucket(due: string | null, today: string): "today" | "overdue" | "upcoming" | null {
-  if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
+  if (!isYmd(due) || !isYmd(today)) return null;
   if (due === today) return "today";
   if (due < today) return "overdue";
   return "upcoming";
 }
 
-/** No due chip: missing due, or a value that is not YYYY-MM-DD. */
-export function taskHasNoDue(due: string | null, today: string): boolean {
-  return taskDueBucket(due, today) === null;
+/** The earliest of due, scheduled, and start: the day a task first asks for attention. */
+export function taskHappens(task: Pick<VaultTask, "due" | "scheduled" | "start">): string | null {
+  let best: string | null = null;
+  for (const day of [task.due, task.scheduled, task.start]) {
+    if (isYmd(day) && (!best || day < best)) best = day;
+  }
+  return best;
+}
+
+/** Hidden until its start date: a task that has not started yet. */
+export function taskNotStarted(task: Pick<VaultTask, "start">, today: string): boolean {
+  return isYmd(task.start) && task.start > today;
+}
+
+const PRIORITY_SCORE: Record<TaskPriority, number> = { highest: 9, high: 6, medium: 3.9, none: 1.95, low: 0, lowest: -1.8 };
+
+/**
+ * Obsidian Tasks' urgency score, so a "most urgent first" list orders the same:
+ * due (12 × 0.2–1.0 from 14 days out to 7 days overdue), scheduled today or
+ * earlier (+5), not started yet (−3), and priority.
+ */
+export function taskUrgency(task: Pick<VaultTask, "due" | "scheduled" | "start" | "priority">, today: string): number {
+  let score = PRIORITY_SCORE[task.priority] ?? PRIORITY_SCORE.none;
+  if (isYmd(task.due)) {
+    const overdue = daysBetween(task.due, today) ?? 0;
+    const due = overdue >= 7 ? 1 : overdue >= -14 ? ((overdue + 14) * 0.8) / 21 + 0.2 : 0.2;
+    score += 12 * due;
+  }
+  if (isYmd(task.scheduled) && task.scheduled <= today) score += 5;
+  if (isYmd(task.start) && task.start > today) score -= 3;
+  return Math.round(score * 100) / 100;
+}
+
+/** Today plus `days`, for quick reschedule buttons. */
+export function dayFromToday(today: string, days: number): string {
+  return addDays(today, days) ?? today;
 }
