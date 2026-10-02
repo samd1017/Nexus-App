@@ -792,15 +792,17 @@ function whereMatch(
   nodes?: Record<string, VaultNode>,
   links?: LinkScan | null,
 ): "yes" | "no" | "unloaded" {
-  const join = where.kind === "contains" ? linkListField(where.field) : null;
-  if (join && nodes && links) {
+  if (where.kind === "contains" && nodes && links) {
+    const join = linkListField(where.field);
     if (join === "out") {
       if (typeof node.content !== "string") return "unloaded";
       const labels = outgoingJoinLabels(node, nodes, links.index);
       return labels.some((label) => label === where.needle) ? "yes" : "no";
     }
-    const labels = links.incoming.get(node.id) ?? [];
-    return labels.some((label) => label === where.needle) ? "yes" : "no";
+    if (join === "in") {
+      const labels = links.incoming.get(node.id) ?? [];
+      return labels.some((label) => label === where.needle) ? "yes" : "no";
+    }
   }
   if (where.kind === "contains") {
     const actual = fieldActual(node, where.field);
