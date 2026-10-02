@@ -109,11 +109,20 @@ import {
   dailyFolder,
   dailyNotePath,
   dailyNoteTitle,
+  extractCarryForwardItems,
   formatDateISO,
   getTemplate,
   upgradeSparseDailySkeleton,
   type NoteTemplateId,
 } from "./templates";
+import { renderTemplate } from "./template-engine";
+import {
+  DAILY_TEMPLATE_NAMES,
+  findTemplateNamed,
+  listVaultTemplates,
+  templatesFolderNode,
+  type VaultTemplate,
+} from "./vault-templates";
 import { loadNoteVisits, pushNoteVisit } from "./note-visits";
 import {
   isOnlySerializationNoise,
@@ -460,7 +469,10 @@ export type VaultStore = {
   createFromTemplate: (
     templateId: NoteTemplateId,
     parentId?: string | null,
+    title?: string,
   ) => string | null | Promise<string | null>;
+  /** Notes in the Templates folder, loading it first in a large vault. */
+  loadVaultTemplates: () => Promise<VaultTemplate[]>;
   openDailyNote: (opts?: DailyNoteOpts) => string | null | Promise<string | null>;
   openDailyNoteForDate: (
     date: Date,
@@ -4680,7 +4692,7 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 		}
 		return id;
 	},
-	createFromTemplate: (templateId, parentId = null) => {
+	createFromTemplate: (templateId, parentId = null, titleIn) => {
 		if (templateId === "daily") return get().openDailyNote();
 		const tpl = getTemplate(templateId);
 		const date = new Date();
@@ -4701,12 +4713,22 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 				parent = curParent;
 			}
 		}
-		const title = tpl.defaultTitle;
+		const title = titleIn?.trim() || tpl.defaultTitle;
 		const content = buildTemplateContent(templateId, title, date);
 		return get().createNote(parent, title, {
 			content,
 			raw: true
 		});
+	},
+	loadVaultTemplates: async () => {
+		const folder = templatesFolderNode(get().nodes);
+		const s = get();
+		if (folder && s.shellCatalog && ((s.shellUnloaded[folder.id] ?? 0) > 0 || s.shellLoaded[folder.id] == null)) {
+			try {
+				await get().loadShellChildren(folder.id);
+			} catch {}
+		}
+		return listVaultTemplates(get().nodes);
 	},
 	openDailyNote: (opts) => {
 		return get().openDailyNoteForDate(new Date(), opts);
@@ -4742,7 +4764,20 @@ function createVaultState(set: StoreSet, get: StoreGet): VaultStore {
 			if (yNote) if (yNote.content !== undefined) yesterdayMarkdown = yNote.content;
 			else yesterdayMarkdown = await get().ensureNoteBody(yNote.id);
 		}
-		const content = buildDailyNoteContent(target, yesterdayMarkdown);
+		let content = null;
+		const userDaily = findTemplateNamed(await get().loadVaultTemplates(), DAILY_TEMPLATE_NAMES);
+		if (userDaily) {
+			const node = get().nodes[userDaily.id];
+			const source = node?.content !== undefined ? node.content : await get().ensureNoteBody(userDaily.id);
+			if (typeof source === "string") {
+				content = renderTemplate(source, {
+					title: dailyNoteTitle(target),
+					date: new Date(target.getFullYear(), target.getMonth(), target.getDate(), today.getHours(), today.getMinutes()),
+					carryover: yesterdayMarkdown ? extractCarryForwardItems(yesterdayMarkdown) : []
+				});
+			}
+		}
+		if (content == null) content = buildDailyNoteContent(target, yesterdayMarkdown);
 		const id = get().createNote(journalId, dailyNoteTitle(target), {
 			content,
 			raw: true

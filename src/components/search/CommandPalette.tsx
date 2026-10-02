@@ -43,12 +43,14 @@ import {
   Pin,
   Paperclip,
   Palette,
+  LayoutTemplate,
 } from "lucide-react";
 import { useVaultStore } from "@/lib/vault/store";
 import { THEME_CHOICES, usePrefsStore } from "@/lib/prefs/preferences";
 import { useCssSnippetStore } from "@/lib/appearance/snippets";
 import { describeSearchEngine } from "@/lib/search/search-backend";
 import { NOTE_TEMPLATES } from "@/lib/vault/templates";
+import { newNoteFromStarter, openTemplatePicker } from "@/lib/vault/template-session";
 import type { NoteTemplateId } from "@/lib/vault/templates";
 import { noteTitle } from "@/lib/vault/types";
 import {
@@ -157,7 +159,6 @@ function CommandPaletteOpen() {
   const setActiveNote = useVaultStore((s) => s.setActiveNote);
   const createNote = useVaultStore((s) => s.createNote);
   const openDailyNote = useVaultStore((s) => s.openDailyNote);
-  const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const requestDelete = useVaultStore((s) => s.requestDelete);
   const activeNoteId = useVaultStore((s) => s.activeNoteId);
   const shellCatalog = useVaultStore((s) => s.shellCatalog);
@@ -365,13 +366,35 @@ function CommandPaletteOpen() {
             icon: TEMPLATE_ICONS[t.id] ?? <FilePlus size={15} />,
             shortcut: undefined as string | undefined,
             run: wrapRun(`tpl-${t.id}`, () => {
-              createFromTemplate(t.id);
               setCommandOpen(false);
+              void newNoteFromStarter(t.id);
             }),
           }),
         ),
+        {
+          id: "insert-template",
+          label: "Insert template…",
+          keywords: ["template", "templates", "insert", "templater", "snippet"],
+          icon: <LayoutTemplate size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("insert-template", () => {
+            setCommandOpen(false);
+            openTemplatePicker("insert");
+          }),
+        },
+        {
+          id: "new-from-template",
+          label: "New note from template…",
+          keywords: ["template", "templates", "create", "new", "templater"],
+          icon: <LayoutTemplate size={15} />,
+          shortcut: undefined as string | undefined,
+          run: wrapRun("new-from-template", () => {
+            setCommandOpen(false);
+            openTemplatePicker("new");
+          }),
+        },
       ].filter((a) => matchesQuery(a.label, a.keywords, actionQuery)),
-    [actionQuery, nodes, createNote, openDailyNote, createFromTemplate, setCommandOpen, setQuery],
+    [actionQuery, nodes, createNote, openDailyNote, setCommandOpen, setQuery],
   );
 
   const navigateActions = useMemo(
@@ -843,12 +866,34 @@ function CommandPaletteOpen() {
           icon: TEMPLATE_ICONS[t.id] ?? <FilePlus size={15} />,
           shortcut: undefined as string | undefined,
           run: wrapRun(`tpl-${t.id}`, () => {
-            createFromTemplate(t.id);
             setCommandOpen(false);
             setRecentTick((t) => t + 1);
+            void newNoteFromStarter(t.id);
           }),
         }),
       ),
+      {
+        id: "insert-template",
+        label: "Insert template…",
+        icon: <LayoutTemplate size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("insert-template", () => {
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+          openTemplatePicker("insert");
+        }),
+      },
+      {
+        id: "new-from-template",
+        label: "New note from template…",
+        icon: <LayoutTemplate size={15} />,
+        shortcut: undefined as string | undefined,
+        run: wrapRun("new-from-template", () => {
+          setCommandOpen(false);
+          setRecentTick((t) => t + 1);
+          openTemplatePicker("new");
+        }),
+      },
       {
         id: "toggle-left",
         label: "Toggle left sidebar",
@@ -1036,7 +1081,6 @@ function CommandPaletteOpen() {
   }, [
     createNote,
     openDailyNote,
-    createFromTemplate,
     toggleLeft,
     toggleRight,
     toggleEditorMode,

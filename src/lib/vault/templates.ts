@@ -4,6 +4,9 @@
  */
 
 import { getPrefs } from "@/lib/prefs/preferences";
+import { formatDateISO, renderTemplate } from "./template-engine";
+
+export { formatDateISO, shiftDate } from "./template-engine";
 
 export const DEFAULT_DAILY_FOLDER = "Journal";
 
@@ -45,21 +48,9 @@ export type NoteTemplate = {
   defaultTitle: string;
   /** Optional folder preference under vault root */
   preferredFolder?: string;
-  build: (ctx: TemplateContext) => string;
+  /** Same syntax as vault templates. */
+  source: string;
 };
-
-export type TemplateContext = {
-  title: string;
-  /** Local calendar date */
-  date: Date;
-};
-
-export function formatDateISO(d: Date = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
 
 export function formatDateLong(d: Date = new Date()): string {
   return d.toLocaleDateString(undefined, {
@@ -68,13 +59,6 @@ export function formatDateLong(d: Date = new Date()): string {
     month: "long",
     day: "numeric",
   });
-}
-
-/** Calendar date shifted by `delta` days (local time). */
-export function shiftDate(d: Date, delta: number): Date {
-  const next = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  next.setDate(next.getDate() + delta);
-  return next;
 }
 
 /** Vault-relative path for a daily note */
@@ -209,7 +193,7 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
     label: "Blank note",
     description: "Empty note with a title heading",
     defaultTitle: "Untitled",
-    build: ({ title }) => `# ${title}\n\n`,
+    source: "# {{title}}\n\n",
   },
   {
     id: "daily",
@@ -217,27 +201,23 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
     description: "Today’s dated page in your daily folder",
     defaultTitle: formatDateISO(),
     preferredFolder: DEFAULT_DAILY_FOLDER,
-    build: ({ date }) => {
-      const long = formatDateLong(date);
-      const iso = formatDateISO(date);
-      return [
-        `# ${long}`,
-        "",
-        `*${iso}*`,
-        "",
-        "## Focus",
-        "",
-        "- [ ] ",
-        "",
-        "## Notes",
-        "",
-        "",
-        "## Later",
-        "",
-        "- [ ] ",
-        "",
-      ].join("\n");
-    },
+    source: [
+      "# {{title}}",
+      "",
+      "*{{date}}*",
+      "",
+      "## Focus",
+      "",
+      "- [ ] ",
+      "",
+      "## Notes",
+      "",
+      "",
+      "## Later",
+      "",
+      "- [ ] ",
+      "",
+    ].join("\n"),
   },
   {
     id: "meeting",
@@ -245,30 +225,27 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
     description: "Agenda, notes, actions",
     defaultTitle: "Meeting",
     preferredFolder: "Meetings",
-    build: ({ title, date }) => {
-      const iso = formatDateISO(date);
-      return [
-        `# ${title}`,
-        "",
-        `**Date:** ${iso}`,
-        "",
-        "## Attendees",
-        "",
-        "- ",
-        "",
-        "## Agenda",
-        "",
-        "1. ",
-        "",
-        "## Notes",
-        "",
-        "",
-        "## Action items",
-        "",
-        "- [ ] ",
-        "",
-      ].join("\n");
-    },
+    source: [
+      "# {{title}}",
+      "",
+      "**Date:** {{date}}",
+      "",
+      "## Attendees",
+      "",
+      "- ",
+      "",
+      "## Agenda",
+      "",
+      "1. ",
+      "",
+      "## Notes",
+      "",
+      "",
+      "## Action items",
+      "",
+      "- [ ] ",
+      "",
+    ].join("\n"),
   },
   {
     id: "idea",
@@ -276,25 +253,24 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
     description: "Capture a spark before it fades",
     defaultTitle: "Idea",
     preferredFolder: "Ideas",
-    build: ({ title }) =>
-      [
-        `# ${title}`,
-        "",
-        "## The idea",
-        "",
-        "",
-        "## Why it matters",
-        "",
-        "",
-        "## Next step",
-        "",
-        "- [ ] ",
-        "",
-        "## Related",
-        "",
-        "- [[",
-        "",
-      ].join("\n"),
+    source: [
+      "# {{title}}",
+      "",
+      "## The idea",
+      "",
+      "",
+      "## Why it matters",
+      "",
+      "",
+      "## Next step",
+      "",
+      "- [ ] ",
+      "",
+      "## Related",
+      "",
+      "- [[",
+      "",
+    ].join("\n"),
   },
   {
     id: "project",
@@ -302,27 +278,26 @@ export const NOTE_TEMPLATES: NoteTemplate[] = [
     description: "Goals, status, and open loops",
     defaultTitle: "Project",
     preferredFolder: "Projects",
-    build: ({ title }) =>
-      [
-        `# ${title}`,
-        "",
-        "**Status:** Active",
-        "",
-        "## Goal",
-        "",
-        "",
-        "## Current focus",
-        "",
-        "- ",
-        "",
-        "## Open loops",
-        "",
-        "- [ ] ",
-        "",
-        "## Log",
-        "",
-        "",
-      ].join("\n"),
+    source: [
+      "# {{title}}",
+      "",
+      "**Status:** Active",
+      "",
+      "## Goal",
+      "",
+      "",
+      "## Current focus",
+      "",
+      "- ",
+      "",
+      "## Open loops",
+      "",
+      "- [ ] ",
+      "",
+      "## Log",
+      "",
+      "",
+    ].join("\n"),
   },
 ];
 
@@ -336,7 +311,7 @@ export function buildTemplateContent(
   date: Date = new Date(),
 ): string {
   const t = getTemplate(id);
-  return t.build({ title: title.replace(/\.md$/i, ""), date });
+  return renderTemplate(t.source, { title: title.replace(/\.md$/i, ""), date });
 }
 
 /** First ATX H1 text, if any */

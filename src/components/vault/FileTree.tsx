@@ -15,6 +15,7 @@ import {
   Users,
   Lightbulb,
   FolderKanban,
+  LayoutTemplate,
   Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,7 @@ import { vaultIndex } from "@/lib/vault/indexes";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
 import type { NoteTemplateId } from "@/lib/vault/templates";
+import { newNoteFromStarter, openTemplatePicker } from "@/lib/vault/template-session";
 import { setLastTreeFlatCount } from "@/lib/vault/heap-log";
 import {
   flattenVisibleTree,
@@ -559,7 +561,6 @@ export const FileTree = memo(function FileTree() {
   const structureTick = useTreeStructureTick();
   const createNote = useVaultStore((s) => s.createNote);
   const createCanvas = useVaultStore((s) => s.createCanvas);
-  const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createFolder = useVaultStore((s) => s.createFolder);
   const requestDelete = useVaultStore((s) => s.requestDelete);
   const toggleFolder = useVaultStore((s) => s.toggleFolder);
@@ -1524,7 +1525,7 @@ export const FileTree = memo(function FileTree() {
     requestAnimationFrame(() => setRenamingId(id));
   };
 
-  const createFromTemplateInCtx = (templateId: NoteTemplateId) => {
+  const createFromTemplateInCtx = (templateId: NoteTemplateId | "pick") => {
     const parentId =
       ctx?.kind === "empty"
         ? ctx.parentId
@@ -1536,7 +1537,8 @@ export const FileTree = memo(function FileTree() {
       const expanded = useVaultStore.getState().expandedFolders;
       if (!expanded.includes(parentId)) toggleFolderReveal(parentId);
     }
-    createFromTemplate(templateId, parentId);
+    if (templateId === "pick") openTemplatePicker("new", { parentId });
+    else void newNoteFromStarter(templateId, parentId);
   };
 
   const rootDropActive = dropTarget?.type === "root" && dragId != null;
@@ -1878,6 +1880,11 @@ export const FileTree = memo(function FileTree() {
                     icon={<FolderKanban size={13} />}
                     label="New project"
                     onClick={() => createFromTemplateInCtx("project")}
+                  />
+                  <MenuBtn
+                    icon={<LayoutTemplate size={13} />}
+                    label="New note from template…"
+                    onClick={() => createFromTemplateInCtx("pick")}
                   />
                   <MenuBtn
                     icon={<FolderPlus size={13} />}

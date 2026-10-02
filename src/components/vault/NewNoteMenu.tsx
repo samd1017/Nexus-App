@@ -4,6 +4,7 @@ import {
   FilePlus2,
   FileText,
   LayoutGrid,
+  LayoutTemplate,
   FolderKanban,
   Lightbulb,
   Users,
@@ -14,6 +15,7 @@ import {
   NOTE_TEMPLATES,
   type NoteTemplateId,
 } from "@/lib/vault/templates";
+import { newNoteFromStarter, openTemplatePicker } from "@/lib/vault/template-session";
 
 const ICONS: Record<NoteTemplateId, ReactNode> = {
   blank: <FileText size={14} />,
@@ -39,7 +41,8 @@ type Props = {
 };
 
 /**
- * Template chooser for new notes — Blank / Daily / Meeting / Idea / Project.
+ * Template chooser for new notes — Blank / Daily / Meeting / Idea / Project,
+ * plus the vault's own templates.
  * Dark SpaceX chrome popover; web + desktop parity.
  */
 export function NewNoteMenu({
@@ -55,7 +58,6 @@ export function NewNoteMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const createFromTemplate = useVaultStore((s) => s.createFromTemplate);
   const createNote = useVaultStore((s) => s.createNote);
   const createCanvas = useVaultStore((s) => s.createCanvas);
 
@@ -110,7 +112,7 @@ export function NewNoteMenu({
       createNote(parentId, "Untitled");
       return;
     }
-    createFromTemplate(id, parentId);
+    void newNoteFromStarter(id, parentId);
   };
 
   const triggerClass =
@@ -191,6 +193,28 @@ export function NewNoteMenu({
               </span>
             </button>
           ))}
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="new-from-template"
+            onClick={() => {
+              setOpen(false);
+              openTemplatePicker("new", { parentId });
+            }}
+            className="flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.05]"
+          >
+            <span className="mt-0.5 text-[var(--accent)]">
+              <LayoutTemplate size={14} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[12.5px] font-medium text-[var(--text-primary)]">
+                From template…
+              </span>
+              <span className="block text-[11px] leading-snug text-[var(--text-muted)]">
+                Your notes in the Templates folder
+              </span>
+            </span>
+          </button>
         </div>
       ) : null}
     </div>

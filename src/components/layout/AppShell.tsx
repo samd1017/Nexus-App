@@ -12,6 +12,7 @@ import { Workspace } from "@/components/layout/Workspace";
 import { RightPanel } from "@/components/right/RightPanel";
 import { CommandPalette, openCommandPalette } from "@/components/search/CommandPalette";
 import { QuickSwitcher } from "@/components/search/QuickSwitcher";
+import { TemplatePicker } from "@/components/vault/TemplatePicker";
 import { setSwitcherOpen, toggleQuickSwitcher } from "@/lib/search/switcher-session";
 import { WelcomeScreen } from "@/components/vault/WelcomeScreen";
 import { installKeyboardFocusRings } from "@/lib/chrome/focus-ring";
@@ -564,6 +565,8 @@ export function AppShell() {
         <Toast />
         <CommandPalette />
         <QuickSwitcher />
+      <TemplatePicker />
+        <TemplatePicker />
         <SettingsPanel />
         <DeleteConfirmHost />
         <ConflictStudioHost />
@@ -595,6 +598,7 @@ export function AppShell() {
       <Toast />
       <CommandPalette />
       <QuickSwitcher />
+      <TemplatePicker />
       <SettingsPanel />
       <DeleteConfirmHost />
       <ConflictStudioHost />
