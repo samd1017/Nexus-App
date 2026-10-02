@@ -195,6 +195,28 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                     </td>
                   </tr>
                 ) : null}
+                {row.rows ? (
+                  <tr>
+                    <td colSpan={2 + row.fields.length} className="p-0">
+                      <ul className="space-y-0.5 py-0.5 pl-3" data-testid="nexus-query-nested">
+                        {row.rows.map((child, childIndex) => (
+                          <li key={`${child.id}:${childIndex}`}>
+                            <button
+                              type="button"
+                              className="flex w-full items-baseline gap-2 px-1 py-0.5 text-left hover:bg-white/[0.04]"
+                              data-testid="nexus-query-row"
+                              data-open-note={child.id}
+                              onClick={() => openRow(child.id)}
+                            >
+                              <span className="truncate font-medium">{child.title}</span>
+                              <span className="truncate text-[11px] text-[var(--text-muted)]">{child.path}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </td>
+                  </tr>
+                ) : (
                 <tr>
                   <td colSpan={2 + row.fields.length} className="p-0">
                     <button
@@ -219,6 +241,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                     </button>
                   </td>
                 </tr>
+                )}
                 </Fragment>
               ))}
             </tbody>
@@ -233,6 +256,26 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                   {row.group}
                 </li>
               ) : null}
+              {row.rows ? (
+                <li>
+                  <ul className="space-y-0.5 pl-3" data-testid="nexus-query-nested">
+                    {row.rows.map((child, childIndex) => (
+                      <li key={`${child.id}:${childIndex}`}>
+                        <button
+                          type="button"
+                          className="flex w-full flex-col items-start rounded-md px-1 py-0.5 text-left hover:bg-white/[0.04]"
+                          data-testid="nexus-query-row"
+                          data-open-note={child.id}
+                          onClick={() => openRow(child.id)}
+                        >
+                          <span className="text-[13px] font-medium">{child.title}</span>
+                          <span className="truncate text-[11px] text-[var(--text-muted)]">{child.path}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ) : (
               <li>
                 <button
                   type="button"
@@ -246,6 +289,7 @@ export function NexusQueryView({ node, updateAttributes }: NodeViewProps) {
                   {row.link ? <span className="truncate text-[11px] text-[var(--text-muted)]">{row.link}</span> : null}
                 </button>
               </li>
+              )}
               </Fragment>
             ))}
           </ul>

@@ -193,7 +193,8 @@ assert.equal(NEXUS_QUERY_DQL.includes("same exact-title membership"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("is not supported — use contains"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("GROUP BY status"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("LIMIT 3"), true);
-assert.equal(NEXUS_QUERY_DQL.includes("Nested rows after GROUP BY"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("one level of notes"), true);
+assert.equal(NEXUS_QUERY_DQL.includes("Nested rows after GROUP BY are not supported"), false);
 assert.equal(NEXUS_QUERY_DQL.includes("file.size"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("file.ctime"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("SORT due"), true);
@@ -293,6 +294,8 @@ assert.doesNotMatch(lib, /no date\(\)/);
 assert.doesNotMatch(lib, /no contains\(\)/);
 assert.match(noteList.content, /contains\(file\.name, "Graph"\)/);
 assert.match(noteList.content, /GROUP BY status/);
+assert.match(noteList.content, /one level of notes/);
+assert.doesNotMatch(noteList.content, /Nested rows after GROUP BY are not supported/);
 assert.match(noteList.content, /LIMIT 3/);
 assert.match(noteList.content, /TABLE file\.size, file\.ctime/);
 assert.match(noteList.content, /WHERE file\.size > 10/);
@@ -309,8 +312,10 @@ assert.doesNotMatch(lib, /no full DQL/);
 assert.match(view, /queryColumnLabel/);
 assert.match(view, /data-testid="nexus-query-field"/);
 assert.match(view, /data-testid="nexus-query-group"/);
+assert.match(view, /data-testid="nexus-query-nested"/);
 const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
 assert.match(preview, /data-testid="nexus-query-group"/);
+assert.match(preview, /data-testid="nexus-query-nested"/);
 assert.match(preview, /renderNexusQueries/);
 assert.match(preview, /data-open-note/);
 assert.match(preview, /queryColumnLabel/);
@@ -365,8 +370,37 @@ assert.match(runNexusQuery("TABLE status FROM path:Research GROUP BY status GROU
 assert.match(runNexusQuery("LIST FROM path:Research LIMIT 2 LIMIT 3", shop).error, /Only one LIMIT/);
 assert.match(runNexusQuery("LIST FROM path:Research LIMIT 0", shop).error, /LIMIT needs a positive number/);
 assert.match(runNexusQuery("LIST FROM path:Research GROUP BY file.outlinks", shop).error, /link list/);
-assert.match(runNexusQuery("TABLE status FROM path:Research GROUP BY status rows", shop).error, /Nested rows/);
-assert.match(runNexusQuery("TABLE status FROM path:Research GROUP BY status rows", shop).error, /not Dataview/);
+const nested = runNexusQuery("TABLE status FROM path:Research GROUP BY status rows", groupedShop);
+assert.equal(nested.error, null);
+assert.doesNotMatch(nested.error ?? "", /not Dataview/);
+assert.deepEqual(
+  nested.rows.map((r) => [r.group, (r.rows || []).map((child) => child.title)]),
+  [
+    ["draft", ["Callouts", "Zebra"]],
+    ["live", ["Alpha", "Graph View"]],
+    ["—", ["Plain"]],
+  ],
+);
+const nestedLimit = runNexusQuery("TABLE status FROM path:Research GROUP BY status rows LIMIT 2", groupedShop);
+assert.deepEqual(nestedLimit.rows.map((r) => r.group), ["draft", "live"]);
+assert.equal(nestedLimit.truncated, false);
+assert.equal(grouped.rows[0].rows, null);
+const linkRows = runNexusQuery("TABLE rows.file.link FROM path:Research GROUP BY status", shop);
+assert.equal(linkRows.error, null);
+assert.deepEqual(
+  linkRows.rows.map((r) => [r.group, (r.rows || []).map((child) => child.title)]),
+  [
+    ["draft", ["Callouts"]],
+    ["live", ["Graph View"]],
+    ["—", ["Plain"]],
+  ],
+);
+const rowsAlone = runNexusQuery("TABLE rows FROM path:Research", shop);
+assert.match(rowsAlone.error, /GROUP BY/);
+assert.doesNotMatch(rowsAlone.error, /not Dataview/);
+const rowsDeep = runNexusQuery("TABLE rows.rows FROM path:Research GROUP BY status", shop);
+assert.match(rowsDeep.error, /one level/);
+assert.doesNotMatch(rowsDeep.error, /not Dataview/);
 const where = runNexusQuery('TABLE status, due FROM "Research" WHERE status = "draft"', shop);
 assert.equal(where.error, null);
 assert.deepEqual(where.rows.map((r) => r.id), ["draft"]);
@@ -434,7 +468,8 @@ assert.match(choiceCol.footer, /same exact-title membership/);
 assert.doesNotMatch(choiceCol.footer, /is not supported — use contains/);
 assert.match(choiceCol.footer, /AND binds tighter than OR/);
 assert.doesNotMatch(choiceCol.footer, /cannot mix AND and OR/);
-assert.match(choiceCol.footer, /Nested rows after GROUP BY/);
+assert.match(choiceCol.footer, /one level of notes/);
+assert.doesNotMatch(choiceCol.footer, /Nested rows after GROUP BY are not supported/);
 assert.equal(choiceCol.rows.find((r) => r.id === "draft").fields[0].value, "drafting");
 assert.equal(choiceCol.rows.find((r) => r.id === "draft").fields[1].value, "draft");
 assert.equal(choiceCol.rows.find((r) => r.id === "live").fields[0].value, "other");

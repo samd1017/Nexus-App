@@ -164,7 +164,7 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. \`GROUP BY status\` partitions the list. \`LIMIT 3\` keeps that many rows. Nested rows after GROUP BY are not supported. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`WHERE file.ctime >= date(today) - 30d\` compare them. \`SORT file.size\` or \`SORT file.ctime\`. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field. Missing values sort last. \`WHERE status = "draft" AND contains(file.name, "Call")\` keeps a note only when every comparison matches. \`WHERE status = "draft" OR status = "live"\` keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. A TABLE formula is one + - * /.
+A \`\`\`nexus-query\`\`\` block lists notes. \`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. \`WHERE due > date(today)\` compares dates. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`WHERE file.ctime >= date(today) - 30d\` compare them. \`SORT file.size\` or \`SORT file.ctime\`. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field. Missing values sort last. \`WHERE status = "draft" AND contains(file.name, "Call")\` keeps a note only when every comparison matches. \`WHERE status = "draft" OR status = "live"\` keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. A TABLE formula is one + - * /.
 
 \`\`\`nexus-query
 LIST FROM #writing OR #graph
@@ -183,7 +183,7 @@ LIST FROM path:Research WHERE status = "draft" OR status = "live"
 \`\`\`
 
 \`\`\`nexus-query
-TABLE status FROM path:Research GROUP BY status
+TABLE status FROM path:Research GROUP BY status rows
 \`\`\`
 
 \`\`\`nexus-query

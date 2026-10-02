@@ -256,6 +256,15 @@ async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, Vaul
           const header = r.group != null && r.group !== model.rows[index - 1]?.group
             ? `<tr data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}"><td colspan="${2 + r.fields.length}">${escapeHtml(r.group)}</td></tr>`
             : "";
+          if (r.rows) {
+            const nested = r.rows
+              .map(
+                (child) =>
+                  `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(child.id)}"><span>${escapeHtml(child.title)}</span> <span>${escapeHtml(child.path)}</span></button></li>`,
+              )
+              .join("");
+            return `${header}<tr><td colspan="${2 + r.fields.length}"><ul data-testid="nexus-query-nested">${nested}</ul></td></tr>`;
+          }
           return `${header}<tr><td colspan="${2 + r.fields.length}"><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span> <span>${escapeHtml(r.path)}</span>${cells}</button></td></tr>`;
         })
         .join("");
@@ -267,6 +276,15 @@ async function renderNexusQueries(els: HTMLElement[], nodes: Record<string, Vaul
           const header = r.group != null && r.group !== model.rows[index - 1]?.group
             ? `<li data-testid="nexus-query-group" data-group="${escapeHtml(r.group)}">${escapeHtml(r.group)}</li>`
             : "";
+          if (r.rows) {
+            const nested = r.rows
+              .map(
+                (child) =>
+                  `<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(child.id)}"><span>${escapeHtml(child.title)}</span><span>${escapeHtml(child.path)}</span></button></li>`,
+              )
+              .join("");
+            return `${header}<li><ul data-testid="nexus-query-nested">${nested}</ul></li>`;
+          }
           return `${header}<li><button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><span>${escapeHtml(r.path)}</span>${r.link ? `<span>${escapeHtml(r.link)}</span>` : ""}</button></li>`;
         })
         .join("");

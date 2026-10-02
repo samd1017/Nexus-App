@@ -8,7 +8,7 @@
  * FLATTEN file.inlinks is one row per incoming link.
  * One of those joins, not both, and not a join of two queries.
  * GROUP BY partitions that list. LIMIT keeps that many rows, and never more than the cap.
- * Nested rows after GROUP BY are not supported.
+ * GROUP BY status rows lists one level of notes in each partition.
  */
 
 import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
@@ -25,13 +25,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
 
 export const NEXUS_QUERY_HELP =
-  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. Nested rows after GROUP BY are not supported. A TABLE formula is one + - * /. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
+  'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status rows lists one level of notes in each partition. A TABLE formula is one + - * /. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. LIMIT 3 keeps that many rows, and never more than 100. Nested rows after GROUP BY are not supported. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
+  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is one + - * /, such as price * 2 or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -49,6 +49,8 @@ export type NexusQueryRow = {
   link: string | null;
   /** Set when GROUP BY partitions the list. The same value shares one header. */
   group: string | null;
+  /** Member notes when the query asks for one-level rows after GROUP BY. Null on a flat list. */
+  rows: { id: string; title: string; path: string }[] | null;
 };
 
 export type NexusQueryModel = {
@@ -115,6 +117,8 @@ type Parsed =
       /** One link join. Outgoing and incoming are not combined. */
       flattenLinks: "out" | "in" | null;
       groupBy: string | null;
+      /** One-level member list under each GROUP BY partition. */
+      nestedRows: boolean;
       limit: number | null;
     };
 
@@ -603,6 +607,7 @@ export function parseNexusQuery(source: string): Parsed {
   let sort: QuerySort | null = null;
   let flattenLinks: "out" | "in" | null = null;
   let groupBy: string | null = null;
+  let nestedRows = false;
   let limit: number | null = null;
 
   const addColumn = (col: QueryColumn): string | null => {
@@ -726,7 +731,7 @@ export function parseNexusQuery(source: string): Parsed {
       if (by !== "BY") return { kind: "error", error: "GROUP BY needs a field, such as status or file.folder." };
       const raw = tokens[++i] || "";
       if (/^rows(\.|$)/i.test(raw)) {
-        return { kind: "error", error: "Nested rows after GROUP BY are not Dataview. GROUP BY only partitions this list." };
+        return { kind: "error", error: "GROUP BY needs a field, such as status or file.folder. rows lists the notes in that partition." };
       }
       if (linkListField(raw)) {
         return { kind: "error", error: 'GROUP BY reads a field such as status or file.folder. A link list uses contains() or FLATTEN.' };
@@ -744,8 +749,13 @@ export function parseNexusQuery(source: string): Parsed {
       limit = Number(raw);
       continue;
     }
-    if (/^rows(\.|$)/i.test(token)) {
-      return { kind: "error", error: "Nested rows after GROUP BY are not Dataview. GROUP BY only partitions this list." };
+    const rowsKind = rowsAsk(token);
+    if (rowsKind === "deep") {
+      return { kind: "error", error: "Nested rows are one level. GROUP BY status rows lists the notes in each partition." };
+    }
+    if (rowsKind === "one") {
+      nestedRows = true;
+      continue;
     }
     if (upper === "SORT") {
       const keyRaw = (tokens[++i] || "").toLowerCase();
@@ -810,6 +820,14 @@ export function parseNexusQuery(source: string): Parsed {
     const cols = columnParts(token);
     if (cols && !/^(?:path|folder):/i.test(token)) {
       for (const name of cols) {
+        const kind = rowsAsk(name);
+        if (kind === "deep") {
+          return { kind: "error", error: "Nested rows are one level. GROUP BY status rows lists the notes in each partition." };
+        }
+        if (kind === "one") {
+          nestedRows = true;
+          continue;
+        }
         const err = addColumn({ kind: "field", name });
         if (err) return { kind: "error", error: err };
       }
@@ -822,6 +840,9 @@ export function parseNexusQuery(source: string): Parsed {
       kind: "error",
       error: `Unknown “${token}”. ${NEXUS_QUERY_HELP}`,
     };
+  }
+  if (nestedRows && !groupBy) {
+    return { kind: "error", error: "rows lists the notes in each GROUP BY partition, such as GROUP BY status rows." };
   }
   if (!path && tags.length === 0) {
     return {
@@ -847,6 +868,7 @@ export function parseNexusQuery(source: string): Parsed {
     sort,
     flattenLinks,
     groupBy,
+    nestedRows,
     limit,
   };
 }
@@ -1305,6 +1327,17 @@ function choiceText(
   return atomDisplay(node, match === "yes" ? column.then : column.else);
 }
 
+/** `rows` and `rows.file.link` are one level. Anything deeper stays rejected. */
+function rowsAsk(raw: string): "one" | "deep" | null {
+  const token = raw.replace(/,+$/, "").trim();
+  if (!/^rows(\.|$)/i.test(token)) return null;
+  const key = token.toLowerCase();
+  if (key === "rows" || key === "rows.file" || key === "rows.file.link" || key === "rows.file.name" || key === "rows.file.path") {
+    return "one";
+  }
+  return "deep";
+}
+
 function groupLabel(node: VaultNode, field: string): string {
   const actual = fieldActual(node, field);
   if (actual == null || actual === "") return "—";
@@ -1340,6 +1373,7 @@ function rowFrom(
     fields,
     link,
     group,
+    rows: null,
   };
 }
 
@@ -1731,18 +1765,48 @@ export function runNexusQuery(
   }
   const asked = parsed.limit ?? NEXUS_QUERY_CAP;
   const cap = Math.min(asked, NEXUS_QUERY_CAP);
-  const truncated = ordered.length > NEXUS_QUERY_CAP && asked >= NEXUS_QUERY_CAP;
-  const rows = ordered.slice(0, cap).map((item) =>
-    rowFrom(
-      item.node,
-      parsed.columns,
-      item.link,
-      parsed.groupBy ? groupLabel(item.node, parsed.groupBy) : null,
-      now,
-      nodes,
-      linkScan,
-    ),
-  );
+  let truncated = ordered.length > NEXUS_QUERY_CAP && asked >= NEXUS_QUERY_CAP;
+  let rows: NexusQueryRow[];
+  if (parsed.nestedRows && parsed.groupBy) {
+    const field = parsed.groupBy;
+    const groups: { key: string; items: { node: VaultNode; link: string | null }[] }[] = [];
+    for (const item of ordered) {
+      const key = groupLabel(item.node, field);
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.items.push(item);
+      else groups.push({ key, items: [item] });
+    }
+    if (groups.length > NEXUS_QUERY_CAP && asked >= NEXUS_QUERY_CAP) truncated = true;
+    rows = [];
+    let members = 0;
+    for (const group of groups.slice(0, cap)) {
+      const room = NEXUS_QUERY_CAP - members;
+      if (room <= 0) {
+        truncated = true;
+        break;
+      }
+      const kept = group.items.slice(0, room);
+      if (kept.length < group.items.length) truncated = true;
+      members += kept.length;
+      const head = kept[0];
+      if (!head) continue;
+      const row = rowFrom(head.node, parsed.columns, head.link, group.key, now, nodes, linkScan);
+      row.rows = kept.map((item) => ({ id: item.node.id, title: noteTitle(item.node), path: item.node.path }));
+      rows.push(row);
+    }
+  } else {
+    rows = ordered.slice(0, cap).map((item) =>
+      rowFrom(
+        item.node,
+        parsed.columns,
+        item.link,
+        parsed.groupBy ? groupLabel(item.node, parsed.groupBy) : null,
+        now,
+        nodes,
+        linkScan,
+      ),
+    );
+  }
   if (linkUnloaded) unloaded += linkUnloaded;
   const frontmatterCols = parsed.columns.flatMap((column) => {
     if (column.kind !== "field") return [];
