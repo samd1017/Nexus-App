@@ -16,7 +16,7 @@ if (!process.env.NEXUS_TSX) {
   process.exit(r.status ?? 1);
 }
 
-const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday, priorityOnTaskLine, taskIsHigh, recurrenceOnTaskLine } = await import(
+const { tasksInNote, completeTaskLine, taskMatchesPath, dueOnTaskLine, taskDueBucket, localToday, priorityOnTaskLine, taskIsHigh, taskIsMedium, taskIsLow, recurrenceOnTaskLine } = await import(
   "../src/lib/tasks/extract.ts"
 );
 
@@ -130,6 +130,17 @@ assert.equal(taskIsHigh("high"), false);
 assert.equal(taskIsHigh("medium"), false);
 assert.equal(taskIsHigh("low"), false);
 assert.equal(taskIsHigh(null), false);
+assert.equal(taskIsMedium("medium"), true);
+assert.equal(taskIsMedium("low"), false);
+assert.equal(taskIsMedium("high"), false);
+assert.equal(taskIsMedium("highest"), false);
+assert.equal(taskIsMedium("high-alt"), false);
+assert.equal(taskIsMedium(null), false);
+assert.equal(taskIsLow("low"), true);
+assert.equal(taskIsLow("medium"), false);
+assert.equal(taskIsLow("high"), false);
+assert.equal(taskIsLow("highest"), false);
+assert.equal(taskIsLow(null), false);
 
 const ranked = tasksInNote({
   id: "pri",
@@ -154,6 +165,12 @@ assert.equal(ranked.find((task) => task.text === "Unmarked plain").priority, nul
 const highHere = ranked.filter((task) => taskIsHigh(task.priority) && taskMatchesPath(task, "Research"));
 assert.deepEqual(highHere.map((task) => task.text), ["Ship highest", "Alt high"]);
 assert.equal(highHere.some((task) => task.text === "Medium down" || task.text === "Low down" || task.text === "Unmarked plain"), false);
+const medHere = ranked.filter((task) => taskIsMedium(task.priority) && taskMatchesPath(task, "Research"));
+assert.deepEqual(medHere.map((task) => task.text), ["Medium down"]);
+const lowHere = ranked.filter((task) => taskIsLow(task.priority) && taskMatchesPath(task, "Research"));
+assert.deepEqual(lowHere.map((task) => task.text), ["Low down"]);
+assert.equal(medHere.some((task) => taskIsHigh(task.priority) || taskIsLow(task.priority)), false);
+assert.equal(lowHere.some((task) => taskIsHigh(task.priority) || taskIsMedium(task.priority)), false);
 
 assert.equal(recurrenceOnTaskLine("Water 🔁 every day"), "every day");
 assert.equal(recurrenceOnTaskLine("Water 🔁 every week"), "every week");
@@ -201,6 +218,8 @@ assert.match(help, /Dataview queries are not supported/);
 assert.match(help, /recurrence/i);
 assert.match(help, /Due today and Overdue/);
 assert.match(help, /High keeps incomplete tasks marked/);
+assert.match(help, /Med keeps incomplete tasks marked/);
+assert.match(help, /Low keeps incomplete tasks marked/);
 assert.match(help, /Dataview queries are not supported/);
 assert.match(help, /does not schedule the next one/);
 assert.doesNotMatch(help, /Recurrence and Dataview queries are not supported/);
@@ -216,6 +235,12 @@ assert.match(rail, /Overdue/);
 assert.match(rail, /taskDueBucket/);
 assert.match(rail, /tasks-filter-high/);
 assert.match(rail, /taskIsHigh/);
+assert.match(rail, /tasks-filter-medium/);
+assert.match(rail, /tasks-filter-low/);
+assert.match(rail, /taskIsMedium/);
+assert.match(rail, /taskIsLow/);
+assert.match(rail, /Med keeps those incomplete tasks/);
+assert.match(rail, /Low keeps those incomplete tasks/);
 assert.match(rail, /tasks-filter-recurring/);
 assert.match(rail, /does not schedule the next one/);
 assert.match(rail, /Dataview queries are not supported/);

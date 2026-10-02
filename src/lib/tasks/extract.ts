@@ -60,6 +60,16 @@ export function taskIsHigh(priority: TaskPriority | null): boolean {
   return priority === "highest" || priority === "high-alt";
 }
 
+/** Med chip: 🔽 only. */
+export function taskIsMedium(priority: TaskPriority | null): boolean {
+  return priority === "medium";
+}
+
+/** Low chip: ⏬ only. */
+export function taskIsLow(priority: TaskPriority | null): boolean {
+  return priority === "low";
+}
+
 /** Rule after the first 🔁, or null when the marker is missing or has no text. Display and filter only. */
 export function recurrenceOnTaskLine(text: string): string | null {
   const match = RECURRENCE_RE.exec(text);
