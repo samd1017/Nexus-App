@@ -7,6 +7,8 @@ import {
   sanitizeHotkeyOverrides,
   type HotkeyOverrides,
 } from "@/lib/prefs/hotkeys";
+import { normalizeTemplateFolder, TEMPLATES_FOLDER } from "@/lib/vault/vault-templates";
+import { DEFAULT_DATE_FORMAT, DEFAULT_TIME_FORMAT } from "@/lib/vault/template-engine";
 
 export type AccentPreset =
   | "cyan"
@@ -93,6 +95,12 @@ export interface NexusPrefs {
   launchNoteMode: LaunchNoteMode;
   /** Top-level vault folder for daily notes (single segment, e.g. Journal). */
   dailyFolder: string;
+  /** Vault-relative folder whose notes are templates (e.g. Meta/Templates). */
+  templateFolder: string;
+  /** Format for a bare {{date}} in templates (moment-style, e.g. YYYY-MM-DD). */
+  templateDateFormat: string;
+  /** Format for a bare {{time}} in templates. */
+  templateTimeFormat: string;
   /** Distraction-free: hide side panels */
   focusMode: boolean;
   /** Reduce UI motion (animations / transitions) */
@@ -152,6 +160,9 @@ export const DEFAULT_PREFS: NexusPrefs = {
   openTodayOnLaunch: true,
   launchNoteMode: "today",
   dailyFolder: "Journal",
+  templateFolder: TEMPLATES_FOLDER,
+  templateDateFormat: DEFAULT_DATE_FORMAT,
+  templateTimeFormat: DEFAULT_TIME_FORMAT,
   focusMode: false,
   // Seeded from OS on first load when not yet persisted
   reducedMotion: false,
@@ -339,6 +350,9 @@ function snapshotPrefs(s: NexusPrefs): NexusPrefs {
     openTodayOnLaunch: s.openTodayOnLaunch,
     launchNoteMode: s.launchNoteMode,
     dailyFolder: s.dailyFolder,
+    templateFolder: normalizeTemplateFolder(s.templateFolder),
+    templateDateFormat: formatPrefOf(s.templateDateFormat),
+    templateTimeFormat: formatPrefOf(s.templateTimeFormat),
     focusMode: s.focusMode,
     reducedMotion: s.reducedMotion,
     sidebarRecentOpen: s.sidebarRecentOpen,
@@ -356,6 +370,11 @@ function snapshotPrefs(s: NexusPrefs): NexusPrefs {
           .slice(0, 24)
       : [],
   };
+}
+
+/** Formats are free text; only their length is capped. Empty means the default. */
+function formatPrefOf(value: unknown): string {
+  return typeof value === "string" ? value.slice(0, 64) : "";
 }
 
 function normalizeLaunchNoteMode(
@@ -410,6 +429,15 @@ export const usePrefsStore = create<PrefsStore>()(
               ? cleaned.slice(0, 64)
               : DEFAULT_PREFS.dailyFolder;
         }
+        if (patch.templateFolder != null) {
+          nextPatch.templateFolder = normalizeTemplateFolder(patch.templateFolder);
+        }
+        if (patch.templateDateFormat != null) {
+          nextPatch.templateDateFormat = formatPrefOf(patch.templateDateFormat);
+        }
+        if (patch.templateTimeFormat != null) {
+          nextPatch.templateTimeFormat = formatPrefOf(patch.templateTimeFormat);
+        }
         if (patch.theme === "system") settleSystemTheme();
         set(nextPatch);
         const next = { ...get(), ...nextPatch };
@@ -456,6 +484,15 @@ export const usePrefsStore = create<PrefsStore>()(
           openTodayOnLaunch,
           launchNoteMode,
           dailyFolder,
+          templateFolder: normalizeTemplateFolder(p.templateFolder),
+          templateDateFormat:
+            typeof p.templateDateFormat === "string"
+              ? formatPrefOf(p.templateDateFormat)
+              : DEFAULT_PREFS.templateDateFormat,
+          templateTimeFormat:
+            typeof p.templateTimeFormat === "string"
+              ? formatPrefOf(p.templateTimeFormat)
+              : DEFAULT_PREFS.templateTimeFormat,
           sidebarRecentOpen:
             p.sidebarRecentOpen != null
               ? Boolean(p.sidebarRecentOpen)

@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { FilePlus2, FileText, LayoutTemplate } from "lucide-react";
+import { FilePlus2, FileText, LayoutTemplate, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePrefsStore } from "@/lib/prefs/preferences";
+import { openSettingsSection } from "@/lib/prefs/settings-section";
 import { useVaultStore } from "@/lib/vault/store";
 import { getTemplate } from "@/lib/vault/templates";
 import { templatePrompts } from "@/lib/vault/template-engine";
 import {
   findTemplateNamed,
   listVaultTemplates,
-  TEMPLATES_FOLDER,
+  normalizeTemplateFolder,
   templatesFolderNode,
 } from "@/lib/vault/vault-templates";
 import {
@@ -28,7 +30,7 @@ const SAMPLE_TEMPLATE = [
   "---",
   "# {{title}}",
   "",
-  "**Date:** {{date}} {{time}}",
+  "**Date:** {{date:dddd, MMMM D}} at {{time}}",
   "",
   "**With:** {{prompt:Attendees}}",
   "",
@@ -41,7 +43,8 @@ const SAMPLE_TEMPLATE = [
   "",
 ].join("\n");
 
-const SYNTAX = "{{title}} {{date}} {{time}} {{yesterday}} {{date+7}} {{prompt:Name}} {{carryover}}";
+const SYNTAX =
+  "{{title}} {{date}} {{time}} {{date:YYYY-MM-DD}} {{time:h:mm A}} {{yesterday}} {{date+7}} {{prompt:Name}} {{carryover}}";
 
 type Fill = { choice: TemplateChoice; source: string; prompts: string[] };
 
@@ -55,6 +58,7 @@ function TemplatePickerOpen() {
   const request = templateRequest()!;
   const mode = request.mode;
   const nodes = useVaultStore((s) => s.nodes);
+  const folder = normalizeTemplateFolder(usePrefsStore((s) => s.templateFolder));
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [fill, setFill] = useState<Fill | null>(null);
@@ -75,7 +79,7 @@ function TemplatePickerOpen() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  const templates = useMemo(() => listVaultTemplates(nodes), [nodes]);
+  const templates = useMemo(() => listVaultTemplates(nodes, folder), [nodes, folder]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -145,10 +149,14 @@ function TemplatePickerOpen() {
 
   const createSample = () => {
     const st = useVaultStore.getState();
-    const folderId =
-      templatesFolderNode(st.nodes)?.id ?? st.createFolder(null, TEMPLATES_FOLDER, { expand: true });
+    const folderId = templatesFolderNode(st.nodes, folder)?.id ?? st.ensureFolderPath(folder);
     closeTemplatePicker();
     st.createNote(folderId, "New template", { content: SAMPLE_TEMPLATE, raw: true });
+  };
+
+  const openSettings = () => {
+    closeTemplatePicker();
+    openSettingsSection("templates");
   };
 
   const heading = mode === "insert" ? "Insert template" : "New note from template";
@@ -234,13 +242,25 @@ function TemplatePickerOpen() {
               <div className="border-b border-[var(--border)] px-4 py-3 text-[12px] leading-relaxed text-[var(--text-secondary)]">
                 <p>
                   No templates yet. Any note in the{" "}
-                  <span className="font-medium text-[var(--text-primary)]">{TEMPLATES_FOLDER}</span> folder
-                  shows up here. A template named Daily shapes new daily notes.
+                  <span className="font-medium text-[var(--text-primary)]">{folder}</span> folder
+                  shows up here. A template named Daily shapes new daily notes. Dates and
+                  times take a format after a colon. The folder and default formats are in
+                  Template settings.
                 </p>
                 <p className="mt-1.5 font-mono text-[11px] text-[var(--text-muted)]">{SYNTAX}</p>
-                <button type="button" className="ghost-btn mt-2.5" onClick={createSample}>
-                  <FilePlus2 size={13} /> Create a template
-                </button>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <button type="button" className="ghost-btn" onClick={createSample}>
+                    <FilePlus2 size={13} /> Create a template
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    data-testid="template-picker-settings"
+                    onClick={openSettings}
+                  >
+                    <Settings size={13} /> Template settings
+                  </button>
+                </div>
               </div>
             ) : null}
             <ul className="max-h-80 overflow-y-auto py-1.5">
@@ -253,7 +273,7 @@ function TemplatePickerOpen() {
                     <li key={choice.kind === "vault" ? choice.template.id : choice.id}>
                       {first ? (
                         <p className="px-4 pb-1 pt-1.5 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                          {choice.kind === "vault" ? TEMPLATES_FOLDER : "Built-in"}
+                          {choice.kind === "vault" ? folder : "Built-in"}
                         </p>
                       ) : null}
                       <button

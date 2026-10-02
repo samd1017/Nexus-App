@@ -1,6 +1,7 @@
 /**
- * Vault templates: every Markdown note inside the top-level `Templates`
- * folder (any depth). They are ordinary notes; using one copies its text.
+ * Vault templates: every Markdown note inside the templates folder (any
+ * depth). The folder is a setting; `Templates` until the user picks another.
+ * They are ordinary notes; using one copies its text.
  */
 
 export const TEMPLATES_FOLDER = "Templates";
@@ -12,14 +13,29 @@ export type VaultTemplate = { id: string; path: string; name: string };
 
 type NodeLike = { id: string; kind: string; path: string };
 
-export function isTemplatesFolderPath(path: string): boolean {
-  return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").toLowerCase() === "templates";
+/** A vault-relative folder path such as `Meta/Templates`. Empty falls back to `Templates`. */
+export function normalizeTemplateFolder(raw: string | null | undefined): string {
+  const parts = String(raw ?? "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((p) => p.replace(/[\p{Cc}<>:"|?*]/gu, "").trim())
+    .filter((p) => p && p !== "." && p !== "..");
+  const path = parts.join("/");
+  return path && path.length <= 200 ? path : TEMPLATES_FOLDER;
 }
 
-export function isTemplatePath(path: string): boolean {
+function folderKey(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").toLowerCase();
+}
+
+export function isTemplatesFolderPath(path: string, folder: string = TEMPLATES_FOLDER): boolean {
+  return folderKey(path) === folderKey(normalizeTemplateFolder(folder));
+}
+
+export function isTemplatePath(path: string, folder: string = TEMPLATES_FOLDER): boolean {
+  const prefix = `${folderKey(normalizeTemplateFolder(folder))}/`;
   const p = path.replace(/\\/g, "/").replace(/^\/+/, "");
-  const slash = p.indexOf("/");
-  return slash > 0 && isTemplatesFolderPath(p.slice(0, slash)) && /\.md$/i.test(p);
+  return p.toLowerCase().startsWith(prefix) && p.length > prefix.length && /\.md$/i.test(p);
 }
 
 export function templateName(path: string): string {
@@ -27,10 +43,13 @@ export function templateName(path: string): string {
   return base.replace(/\.md$/i, "");
 }
 
-export function listVaultTemplates(nodes: Record<string, NodeLike>): VaultTemplate[] {
+export function listVaultTemplates(
+  nodes: Record<string, NodeLike>,
+  folder: string = TEMPLATES_FOLDER,
+): VaultTemplate[] {
   const out: VaultTemplate[] = [];
   for (const n of Object.values(nodes)) {
-    if (n.kind !== "note" || !isTemplatePath(n.path)) continue;
+    if (n.kind !== "note" || !isTemplatePath(n.path, folder)) continue;
     out.push({ id: n.id, path: n.path, name: templateName(n.path) });
   }
   return out.sort(
@@ -46,9 +65,12 @@ export function findTemplateNamed(
   return templates.find((t) => wanted.has(t.name.trim().toLowerCase())) ?? null;
 }
 
-export function templatesFolderNode<T extends NodeLike>(nodes: Record<string, T>): T | null {
+export function templatesFolderNode<T extends NodeLike>(
+  nodes: Record<string, T>,
+  folder: string = TEMPLATES_FOLDER,
+): T | null {
   for (const n of Object.values(nodes)) {
-    if (n.kind === "folder" && isTemplatesFolderPath(n.path)) return n;
+    if (n.kind === "folder" && isTemplatesFolderPath(n.path, folder)) return n;
   }
   return null;
 }

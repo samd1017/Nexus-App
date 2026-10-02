@@ -5,8 +5,28 @@
 
 import { getPrefs } from "@/lib/prefs/preferences";
 import { formatDateISO, renderTemplate } from "./template-engine";
+import { normalizeTemplateFolder, TEMPLATES_FOLDER } from "./vault-templates";
 
 export { formatDateISO, shiftDate } from "./template-engine";
+
+/** The templates folder from settings. */
+export function templateFolder(): string {
+  try {
+    return normalizeTemplateFolder(getPrefs().templateFolder);
+  } catch {
+    return TEMPLATES_FOLDER;
+  }
+}
+
+/** Default formats for a bare {{date}} and {{time}}, from settings. */
+export function templateFormats(): { dateFormat?: string; timeFormat?: string } {
+  try {
+    const p = getPrefs();
+    return { dateFormat: p.templateDateFormat, timeFormat: p.templateTimeFormat };
+  } catch {
+    return {};
+  }
+}
 
 export const DEFAULT_DAILY_FOLDER = "Journal";
 
@@ -311,7 +331,7 @@ export function buildTemplateContent(
   date: Date = new Date(),
 ): string {
   const t = getTemplate(id);
-  return renderTemplate(t.source, { title: title.replace(/\.md$/i, ""), date });
+  return renderTemplate(t.source, { title: title.replace(/\.md$/i, ""), date, ...templateFormats() });
 }
 
 /** First ATX H1 text, if any */

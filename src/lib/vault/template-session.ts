@@ -18,6 +18,7 @@ import {
   extractCarryForwardItems,
   getTemplate,
   NOTE_TEMPLATES,
+  templateFormats,
   type NoteTemplateId,
 } from "./templates";
 import { noteTitle } from "./types";
@@ -99,7 +100,7 @@ async function render(
 ): Promise<string> {
   const date = new Date();
   const carryover = usesCarryover(source) ? await yesterdayCarryover(date) : [];
-  return renderTemplate(source, { title, date, prompts, carryover });
+  return renderTemplate(source, { title, date, prompts, carryover, ...templateFormats() });
 }
 
 /** Insert at the caret of the open note. An empty note takes the template whole. */
