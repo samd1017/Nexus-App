@@ -169,6 +169,7 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       `---
 tags: [work]
 ---
+
 # Task Board
 
 Tasks are ordinary checkbox lines. The emoji after the text are plain text too, the same ones the Obsidian Tasks plugin writes, so this note reads the same in any editor. Open the right panel → **Tasks** to see every task in the vault by day, or tick one below.
