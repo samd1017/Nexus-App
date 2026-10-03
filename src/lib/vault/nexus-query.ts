@@ -115,6 +115,9 @@ type WhereCmp =
 /** Field comparisons in one WHERE, joined by AND. */
 const MAX_WHERE = 8;
 
+/** A query with no folder or tag. Both forms use this sentence. */
+const ADD_FROM_SCOPE = 'Add FROM "Folder" or FROM #tag.';
+
 const DAY_MS = 86_400_000;
 
 type FormulaOp = "+" | "-" | "*" | "/";
@@ -1011,7 +1014,7 @@ function parseClassic(source: string): ClassicParsed {
   if (!path && tags.length === 0) {
     return {
       kind: "error",
-      error: "Add FROM path: or FROM #tag so the list stays on one folder or tag.",
+      error: ADD_FROM_SCOPE,
     };
   }
   if (flattenLinks === "out" && !columns.some((col) => col.kind === "field" && linkListField(col.name) === "out")) {
@@ -2393,7 +2396,7 @@ function dialectCandidates(
   } else if (src.linksTo || src.linkedFrom) {
     notes = [];
   } else {
-    out.error = 'Add FROM "Folder" or FROM #tag.';
+    out.error = ADD_FROM_SCOPE;
     return out;
   }
   if (src.linksTo) {

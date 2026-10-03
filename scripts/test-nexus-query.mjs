@@ -185,6 +185,7 @@ assert.equal(parseNexusQuery("").kind, "help");
 const wholeVault = runNexusQuery("LIST", nodes);
 assert.match(wholeVault.error, /Add FROM "Folder" or FROM #tag/);
 assert.deepEqual(wholeVault.rows, []);
+assert.equal(runNexusQuery("TABLE file.name FLATTEN file.outlinks", nodes).error, 'Add FROM "Folder" or FROM #tag.');
 assert.match(runNexusQuery("SORT path:Research", nodes).error, /Start with LIST, TABLE, CARDS, or TASK/);
 assert.equal(NEXUS_QUERY_DQL.includes("FLATTEN file.outlinks"), true);
 assert.equal(NEXUS_QUERY_DQL.includes("FLATTEN file.inlinks"), true);
