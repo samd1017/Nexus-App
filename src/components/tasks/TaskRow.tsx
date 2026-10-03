@@ -158,6 +158,8 @@ function TaskMenu({
           side="bottom"
           align="end"
           sideOffset={4}
+          // Inside a note the editor takes focus back after a right-click; a click outside still closes the menu.
+          onFocusOutside={(e) => e.preventDefault()}
           className="z-[80] flex w-[230px] flex-col rounded-[12px] border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-elevated)] backdrop-blur-xl"
         >
           <div className={label}>Due</div>
