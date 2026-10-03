@@ -582,6 +582,26 @@
     cursor: pointer;
   }
 
+  .note-editor li[data-type="taskItem"][data-status] > label input[type="checkbox"]:not(:checked) {
+    appearance: none;
+    border: 1.5px solid var(--accent);
+    border-radius: 3px;
+  }
+
+  .note-editor li[data-type="taskItem"][data-status="/"] > label input[type="checkbox"]:not(:checked) {
+    background: linear-gradient(to right, var(--accent) 50%, transparent 50%);
+  }
+
+  .note-editor li[data-type="taskItem"][data-status="-"] > label input[type="checkbox"]:not(:checked) {
+    border-color: var(--text-muted);
+    background: linear-gradient(var(--text-muted), var(--text-muted)) center / 60% 1.5px no-repeat;
+  }
+
+  .note-editor li[data-type="taskItem"][data-status="-"] > div > p:first-child {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+
   .note-editor li[data-type="taskItem"] p.is-empty::before {
     content: "Add an item…";
     color: var(--text-muted);

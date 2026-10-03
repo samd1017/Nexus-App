@@ -64,6 +64,7 @@ const ALLOWED_ATTR = new Set([
   "data-alias",
   "data-type",
   "data-checked",
+  "data-status",
   "data-frontmatter",
   "data-vault-src",
   "data-align",

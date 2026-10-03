@@ -140,7 +140,7 @@ export const Wikilink = Mark.create<WikilinkOptions>({
 });
 
 export {
-  markdownToHtml as markdownWithWikilinksToHtml,
+  markdownWithWikilinksToHtml,
   htmlDocToMarkdown,
   htmlToMarkdown,
   markdownToHtml,

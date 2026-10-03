@@ -66,6 +66,16 @@ const turndown: TurndownService = new TurndownService({
   },
 });
 
+/**
+ * Turndown escapes every bracket, which turns `[due:: 2026-10-03]` and `[/]`
+ * into `\[…\]` on each Visual save. A bracket pair that cannot start a link
+ * (not followed by `(`, `[`, or `:`) reads as plain text either way, so it is
+ * written as typed.
+ */
+const escapeText = turndown.escape.bind(turndown);
+turndown.escape = (text: string) =>
+  escapeText(text).replace(/\\\[((?:[^[\]\\\n]|\\[^[\]\n])*)\\\](?![([:])/g, "[$1]");
+
 turndown.addRule("frontmatter", {
   filter: (node) =>
     node.nodeName === "PRE" &&
@@ -206,6 +216,9 @@ turndown.addRule("taskListItem", {
       el.getAttribute("data-checked") === "true" ||
       !!input?.checked ||
       input?.hasAttribute("checked");
+    const status = el.getAttribute("data-status");
+    // A ticked box writes x; unticking an in-progress or other custom box puts its symbol back.
+    const mark = checked ? "x" : status || " ";
     // Preserve nested task lists / paragraphs. Flattening every newline
     // to a space was dropping Obsidian-style subtasks on Visual → disk.
     const raw = content
@@ -218,26 +231,58 @@ turndown.addRule("taskListItem", {
       .slice(1)
       .map((line) => {
         if (!line.trim()) return "";
+        // Nested list lines keep their own indent, so a sub-subtask stays two levels down.
         if (/^\s*[-*+]/.test(line) || /^\s*\d+\./.test(line)) {
-          return `  ${line.replace(/^\s+/, "")}`;
+          return `  ${line.replace(/^\n+/, "")}`;
         }
         return `  ${line.trim()}`;
       })
       .filter(Boolean);
     const body = rest.length ? `${first}\n${rest.join("\n")}` : first;
-    return `- [${checked ? "x" : " "}] ${body}\n`;
+    return `- [${mark}] ${body}\n`;
+  },
+});
+
+/** `1. item` as people type it (turndown's default writes `1.  item`). */
+turndown.addRule("orderedListItem", {
+  filter: (node) => node.nodeName === "LI" && node.parentNode?.nodeName === "OL",
+  replacement: (content, node) => {
+    const el = node as HTMLElement;
+    const list = el.parentElement as HTMLElement;
+    const start = Number(list.getAttribute("start") || 1);
+    const prefix = `${start + Array.prototype.indexOf.call(list.children, el)}. `;
+    const body = content
+      .replace(/^\n+/, "")
+      .replace(/\n+$/, "\n")
+      .replace(/\n(?=[^\n])/g, `\n${" ".repeat(prefix.length)}`);
+    return prefix + body + (el.nextSibling && !/\n$/.test(body) ? "\n" : "");
   },
 });
 
 /** Cell → markdown with basic strong/em when present. */
 function tableCellToMd(cell: Element): string {
   const clone = cell.cloneNode(true) as HTMLElement;
+  const each = (selector: string, fn: (el: Element) => void) => Array.from(clone.querySelectorAll(selector)).forEach(fn);
+  each("code", (el) => {
+    el.replaceWith(`\`${(el.textContent ?? "").replace(/\n+/g, " ")}\``);
+  });
+  each("[data-wikilink]", (el) => {
+    const target = el.getAttribute("data-wikilink") || el.textContent || "";
+    const alias = el.getAttribute("data-alias");
+    el.replaceWith(alias && alias !== target ? `[[${target}|${alias}]]` : `[[${target}]]`);
+  });
+  each("a[href]", (el) => {
+    el.replaceWith(`[${el.textContent ?? ""}](${el.getAttribute("href")})`);
+  });
+  each("mark", (el) => {
+    el.replaceWith(`==${el.textContent ?? ""}==`);
+  });
   // Inline strong/em first so textContent order is preserved after replace
-  clone.querySelectorAll("strong, b").forEach((el) => {
+  each("strong, b", (el) => {
     const t = (el.textContent ?? "").replace(/\n+/g, " ");
     el.replaceWith(`**${t}**`);
   });
-  clone.querySelectorAll("em, i").forEach((el) => {
+  each("em, i", (el) => {
     const t = (el.textContent ?? "").replace(/\n+/g, " ");
     el.replaceWith(`*${t}*`);
   });
@@ -393,8 +438,91 @@ function annotateBulletListsFromMarkdown(md: string, html: string): string {
   return root.innerHTML;
 }
 
-/** Convert GFM checkbox lists from marked into TipTap TaskList HTML */
-function normalizeTaskListsForTipTap(html: string): string {
+/** `[/] `, `[-] `, `[>] `: a task status marked does not draw as a checkbox. */
+const STATUS_PREFIX = /^\s*\[([^\]\s])\][ \t]+/;
+const BLOCK_TAG = /^(P|DIV|H[1-6]|UL|OL|PRE|BLOCKQUOTE|TABLE|HR)$/;
+
+function firstContent(el: Element): ChildNode | null {
+  for (const n of Array.from(el.childNodes)) {
+    if (n.nodeType === 3 && !(n.textContent ?? "").trim()) continue;
+    return n;
+  }
+  return null;
+}
+
+/** Where an item's checkbox and text start: its first paragraph in a loose list, else the item. */
+function itemHead(li: Element): Element {
+  const first = firstContent(li);
+  return first instanceof Element && first.tagName === "P" ? first : li;
+}
+
+function itemBox(li: Element): HTMLInputElement | null {
+  const first = firstContent(itemHead(li));
+  return first instanceof Element && first.tagName === "INPUT" && first.getAttribute("type") === "checkbox"
+    ? (first as HTMLInputElement)
+    : null;
+}
+
+function itemStatus(li: Element): { text: Text; status: string } | null {
+  const first = firstContent(itemHead(li));
+  if (!first || first.nodeType !== 3) return null;
+  const m = STATUS_PREFIX.exec(first.textContent ?? "");
+  return m ? { text: first as Text, status: m[1] as string } : null;
+}
+
+function toTaskItem(li: HTMLElement): void {
+  const doc = li.ownerDocument;
+  const box = itemBox(li);
+  let checked = false;
+  let status: string | null = null;
+  if (box) {
+    checked = box.checked || box.hasAttribute("checked");
+    box.remove();
+  } else {
+    const found = itemStatus(li);
+    if (found) {
+      status = found.status;
+      found.text.textContent = (found.text.textContent ?? "").replace(STATUS_PREFIX, "");
+    }
+  }
+  const head = itemHead(li);
+  if (head !== li) head.replaceWith(...Array.from(head.childNodes));
+  const inline: ChildNode[] = [];
+  const blocks: ChildNode[] = [];
+  for (const n of Array.from(li.childNodes)) {
+    if (!blocks.length && !(n instanceof Element && BLOCK_TAG.test(n.tagName))) inline.push(n);
+    else blocks.push(n);
+  }
+  const body = doc.createElement("div");
+  const para = doc.createElement("p");
+  inline.forEach((n) => para.appendChild(n));
+  const lead = para.firstChild;
+  if (lead?.nodeType === 3) lead.textContent = (lead.textContent ?? "").replace(/^\s+/, "");
+  body.appendChild(para);
+  blocks.forEach((n) => {
+    if (n.nodeType === 3 && !(n.textContent ?? "").trim()) return;
+    body.appendChild(n);
+  });
+  const label = doc.createElement("label");
+  label.setAttribute("contenteditable", "false");
+  const input = doc.createElement("input");
+  input.setAttribute("type", "checkbox");
+  if (checked) input.setAttribute("checked", "");
+  label.append(input, doc.createElement("span"));
+  li.replaceChildren(label, body);
+  li.setAttribute("data-type", "taskItem");
+  li.setAttribute("data-checked", checked ? "true" : "false");
+  if (status) li.setAttribute("data-status", status);
+}
+
+/**
+ * Turn checkbox lists from marked into TipTap task lists, innermost first so a
+ * subtask keeps its box. A list of only tasks (any status) becomes a task list.
+ * In a list that also has plain bullets, or a numbered list, TipTap has no
+ * checkbox to show; for the editor the box stays as `[ ]` text so a save
+ * writes it back unchanged.
+ */
+function normalizeTaskListsForTipTap(html: string, editor: boolean): string {
   if (typeof DOMParser === "undefined") return html;
   const doc = new DOMParser().parseFromString(
     `<div id="nx-root">${html}</div>`,
@@ -403,43 +531,21 @@ function normalizeTaskListsForTipTap(html: string): string {
   const root = doc.getElementById("nx-root");
   if (!root) return html;
 
-  root.querySelectorAll("ul").forEach((ul) => {
-    const items = Array.from(ul.children).filter(
-      (c) => c.tagName === "LI",
-    ) as HTMLElement[];
-    if (!items.length) return;
-    const taskItems = items.filter((li) =>
-      li.querySelector('input[type="checkbox"]'),
-    );
-    if (taskItems.length !== items.length) return;
-
-    ul.setAttribute("data-type", "taskList");
-    items.forEach((li) => {
-      const input = li.querySelector(
-        'input[type="checkbox"]',
-      ) as HTMLInputElement | null;
-      const checked = !!(
-        input?.checked ||
-        input?.hasAttribute("checked") ||
-        li.getAttribute("data-checked") === "true"
-      );
-      // Remaining text/html after removing checkbox
-      const clone = li.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll('input[type="checkbox"]').forEach((n) => n.remove());
-      let inner = clone.innerHTML.trim();
-      // marked often leaves leading space text nodes
-      if (!inner || inner === "<br>" || inner === "<br/>") {
-        inner = "<p></p>";
-      } else if (!inner.startsWith("<")) {
-        inner = `<p>${inner}</p>`;
-      } else if (!/^<(p|div|h[1-6]|ul|ol|pre|blockquote)\b/i.test(inner)) {
-        inner = `<p>${inner}</p>`;
-      }
-      li.setAttribute("data-type", "taskItem");
-      li.setAttribute("data-checked", checked ? "true" : "false");
-      li.innerHTML = `<label contenteditable="false"><input type="checkbox"${checked ? " checked" : ""}><span></span></label><div>${inner}</div>`;
-    });
-  });
+  for (const list of Array.from(root.querySelectorAll("ul, ol")).reverse()) {
+    const items = Array.from(list.children).filter((c) => c.tagName === "LI") as HTMLElement[];
+    if (!items.length) continue;
+    const allTasks = list.tagName === "UL" && items.every((li) => itemBox(li) || itemStatus(li));
+    if (allTasks) {
+      list.setAttribute("data-type", "taskList");
+      items.forEach(toTaskItem);
+      continue;
+    }
+    if (!editor) continue;
+    for (const li of items) {
+      const box = itemBox(li);
+      if (box) box.replaceWith(doc.createTextNode(box.checked || box.hasAttribute("checked") ? "[x]" : "[ ]"));
+    }
+  }
 
   return root.innerHTML;
 }
@@ -448,13 +554,13 @@ function normalizeTaskListsForTipTap(html: string): string {
  * Markdown → HTML TipTap can parse (GFM tables, tasks, wikilink pills).
  * This is the Visual mode entry path — must not leave raw Markdown as text.
  */
-export function markdownToHtml(md: string): string {
+export function markdownToHtml(md: string, opts: { editor?: boolean } = {}): string {
   const raw = (md || "").replace(/\r\n/g, "\n");
   if (!raw.trim()) return "<p></p>";
 
   // Properties live in the properties bar. Leaving them in the doc makes
   // TipTap store them as a code block and the note opens on a config dump.
-  let body = splitFrontmatter(raw).body;
+  const body = splitFrontmatter(raw).body;
 
   // Protect fenced + inline code from wikilink promotion
   const codeHold: string[] = [];
@@ -508,7 +614,7 @@ export function markdownToHtml(md: string): string {
   let html = marked.parse(forMarked, { async: false }) as string;
   // Normalize tasks while marked still has checkbox inputs, then sanitize
   // (sanitize allows input[type=checkbox] + label for TipTap task lists).
-  html = normalizeTaskListsForTipTap(html);
+  html = normalizeTaskListsForTipTap(html, opts.editor === true);
   html = sanitizeNoteHtml(html);
 
   html = html.replace(/%%HL(\d+)%%/g, (_, n) => {
@@ -548,8 +654,10 @@ export function markdownToHtml(md: string): string {
   return html || "<p></p>";
 }
 
-/** Alias used by Visual editor */
-export const markdownWithWikilinksToHtml = markdownToHtml;
+/** Markdown → HTML for the Visual editor, whose save writes it back. */
+export function markdownWithWikilinksToHtml(md: string): string {
+  return markdownToHtml(md, { editor: true });
+}
 
 /**
  * TipTap DOM / HTML → clean Markdown for Source + disk.

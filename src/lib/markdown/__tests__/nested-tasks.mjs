@@ -16,7 +16,7 @@ function taskItemToMd(content, checked) {
     .map((line) => {
       if (!line.trim()) return "";
       if (/^\s*[-*+]/.test(line) || /^\s*\d+\./.test(line)) {
-        return `  ${line.replace(/^\s+/, "")}`;
+        return `  ${line.replace(/^\n+/, "")}`;
       }
       return `  ${line.trim()}`;
     })
@@ -33,6 +33,9 @@ assert.match(parent, /^- \[ \] Capture a real research thread\n/);
 assert.match(parent, /^\s{2}- \[ \] File the interview$/m);
 assert.match(parent, /^\s{2}- \[ \] Link it$/m);
 assert.doesNotMatch(parent.replace(/\n/g, " "), /Capture a real research thread - \[ \] File/);
+
+const deep = taskItemToMd("Ship\n- [ ] Write tests\n  - [x] Unit tests", false);
+assert.equal(deep, "- [ ] Ship\n  - [ ] Write tests\n    - [x] Unit tests\n", "a sub-subtask stays two levels down");
 
 const flat = taskItemToMd("Open my own folder as a vault", true);
 assert.equal(flat, "- [x] Open my own folder as a vault\n");
