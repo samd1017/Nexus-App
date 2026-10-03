@@ -48,7 +48,7 @@ export const DEMO_VAULT_BASES: DemoBaseFile[] = [
   { path: "Sample-ThreeViews.base", name: "Sample-ThreeViews.base", text: THREE_VIEWS },
   { path: "Sample-GroupBy.base", name: "Sample-GroupBy.base", text: GROUP_BY },
   { path: "Sample-MultiFormula.base", name: "Sample-MultiFormula.base", text: MULTI_FORMULA },
-  { path: "Nexus Bases export.base", name: "Nexus Bases export.base", text: EXPORT_COPY },
+  { path: "Note table export.base", name: "Note table export.base", text: EXPORT_COPY },
 ];
 
 export function demoBaseFile(path: string): DemoBaseFile | null {

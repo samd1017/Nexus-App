@@ -947,18 +947,18 @@ assert.equal(legacyLayout.views[0].layout, "table");
 
 const { readFileSync } = await import("node:fs");
 const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
-assert.match(palette, /label: "Bases"/);
+assert.match(palette, /label: "Note table"/);
 assert.match(palette, /note table/);
 assert.match(palette, /setBasesOpen\(true\)/);
 const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
-assert.match(table, /Not Obsidian Bases/);
+assert.match(table, />Note table</);
 assert.match(table, /table and cards/);
 assert.doesNotMatch(table, /no cards view/);
 assert.match(table, /bases-layout-cards/);
 assert.match(table, /data-testid="bases-card"/);
 assert.match(table, /typed note links/);
 assert.doesNotMatch(table, /not an Obsidian \.base file/);
-assert.match(table, /an Obsidian \.base file Nexus saves to and reloads/);
+assert.match(table, /a \.base file Nexus saves to and reloads/);
 assert.match(table, /bases-add-relation/);
 assert.match(table, /bases-relation-filter/);
 assert.match(table, /bases-link-note/);
@@ -1010,7 +1010,7 @@ assert.match(table, /<optgroup label="Summary formulas">/);
 assert.match(table, /SUMMARY_FORMULA_EXAMPLES\.map/);
 assert.match(table, /data-testid="bases-formula-summaries"/);
 assert.match(table, /summarize\(rows, column, kind, summaryFormulas\)/);
-assert.match(table, /Some Obsidian functions are missing/);
+assert.match(table, /Formula help lists every function that works/);
 assert.doesNotMatch(table, /not a full file/);
 assert.doesNotMatch(table, /\.name, \.path, properties, size, and ctime are not on it/);
 assert.match(table, /asFile\(\)\.name, \.path, \.properties, \.size, \.ctime, and \.mtime read that note/);
@@ -1020,7 +1020,7 @@ assert.doesNotMatch(table, /Opening another vault \.base loads its views here/);
 assert.doesNotMatch(table, /Nexus still saves them to/);
 assert.doesNotMatch(table, /Nexus still saves them in browser storage/);
 assert.doesNotMatch(table, /still holds these views/);
-assert.match(table, /Edits save to \$\{clean\}/);
+assert.match(table, /Edits save to \$\{baseFileLabel\(clean\)\}/);
 assert.match(table, /Views live in \$\{livePath\}/);
 assert.match(table, /sync\.retarget\(/);
 assert.match(table, /storageForVaultBase/);
@@ -1059,7 +1059,7 @@ assert.match(workspace, /NoteTable/);
 // .base import / export
 const { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } = await import("../src/lib/vault/bases-file.ts");
 const { parse: parseYaml } = await import("yaml");
-assert.equal(BASE_EXPORT_FILE, "Nexus Bases export.base");
+assert.equal(BASE_EXPORT_FILE, "Note table export.base");
 const exportSession = {
   activeId: "all",
   views: [
@@ -1264,7 +1264,7 @@ assert.deepEqual(
     diskPaths: ["Sample-ThreeViews.base", "Notes/Mine.base"],
     includeDemo: true,
   }).map((file) => file.path),
-  ["Nexus Bases export.base", "Notes/Mine.base", "Sample-GroupBy.base", "Sample-MultiFormula.base", "Sample-ThreeViews.base"],
+  ["Note table export.base", "Notes/Mine.base", "Sample-GroupBy.base", "Sample-MultiFormula.base", "Sample-ThreeViews.base"],
 );
 assert.deepEqual(
   vaultBaseEntries({ nodes: {}, diskPaths: ["Projects/Other.base"], includeDemo: false }).map((file) => file.path),

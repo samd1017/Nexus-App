@@ -505,7 +505,7 @@ function CommandPaletteOpen() {
         },
         {
           id: "open-bases",
-          label: "Bases",
+          label: "Note table",
           keywords: ["bases", "note table", "properties", "frontmatter", "table"],
           icon: <Table2 size={15} />,
           run: wrapRun("open-bases", () => {
@@ -1012,7 +1012,7 @@ function CommandPaletteOpen() {
       },
       {
         id: "open-bases",
-        label: "Bases",
+        label: "Note table",
         icon: <Table2 size={15} />,
         shortcut: undefined as string | undefined,
         run: wrapRun("open-bases", () => {

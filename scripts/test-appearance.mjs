@@ -114,7 +114,7 @@ assert.match(settings, /<CssSnippetsSettings open=\{open\} \/>/);
 const appearance = readFileSync("src/components/settings/AppearanceThemes.tsx", "utf8");
 assert.match(appearance, /data-testid="settings-theme"/);
 assert.match(appearance, /data-testid="settings-snippet-toggle"/);
-assert.match(appearance, /\.obsidian\/snippets/);
+assert.match(appearance, /the snippets folder another Markdown app may already keep/);
 const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
 assert.match(palette, /Turn off CSS snippets/);
 assert.match(palette, /label: `Theme: \$\{choice\.label\}`/);

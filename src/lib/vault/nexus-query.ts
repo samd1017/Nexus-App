@@ -11,7 +11,7 @@
  * GROUP BY status rows lists one level of notes in each partition.
  *
  * Anything the simple form does not read goes to the full form (query-dialect.ts):
- * LIST, TABLE, or CARDS with WHERE, columns, SORT, and GROUP BY written in the Bases
+ * LIST, TABLE, CARDS, or TASK with WHERE, columns, SORT, and GROUP BY written in the Bases
  * formula language, so a query block and a Bases view filter read the same way.
  */
 
@@ -25,6 +25,9 @@ import { THIS_NOTE, looksLikeDialect, parseDialect, type DialectQuery } from "@/
 import { didYouMean, readsNoteBody, runQueryFilter, type CompiledExpr, type QueryProblem } from "@/lib/vault/query-expr";
 import { THIS_OUTSIDE_NOTE, formulaDisplay, runNoteFormula, type FormulaLink, type FormulaRefs, type FormulaResult, type FormulaRow } from "@/lib/vault/note-formula";
 import { noteOutlinks, noteTableProperties } from "@/lib/vault/note-table";
+import { taskHappens, taskUrgency, type VaultTask } from "@/lib/tasks/extract";
+import { localToday } from "@/lib/tasks/dates";
+import { PRIORITY_RANK, isOpen } from "@/lib/tasks/syntax";
 
 export const NEXUS_QUERY_CAP = 100;
 /** Stop walking a huge folder before the UI locks. */
@@ -32,13 +35,13 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Fields come from frontmatter and inline key:: value fields in the note; frontmatter wins when both set one.';
+  'Built-in list. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Fields come from frontmatter and inline key:: value fields in the note; frontmatter wins when both set one.';
 
 export const NEXUS_QUERY_HELP =
   'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status rows lists one level of notes in each partition. A TABLE formula is up to three + - * /, left to right, with no parentheses. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
 
 export const NEXUS_QUERY_DQL =
-  'This block is not Dataview. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, such as price * 2 + 1 or file.name + " · " + status. No parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
+  'This block uses words Nexus does not read. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT, the same way as file.mtime. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, such as price * 2 + 1 or file.name + " · " + status. No parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Use LIST or TABLE, FROM path: or FROM #tag, WHERE contains(status, "draft") or WHERE field = "value", and SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder.';
 
 export type NexusQueryField = { name: string; value: string };
 
@@ -60,12 +63,16 @@ export type NexusQueryRow = {
   rows: { id: string; title: string; path: string }[] | null;
 };
 
+export type NexusTaskRow = { task: VaultTask; group: string | null };
+
 export type NexusQueryModel = {
   footer: string;
   help: string | null;
   error: string | null;
-  mode: "list" | "table" | "cards" | null;
+  mode: "list" | "table" | "cards" | "task" | null;
   rows: NexusQueryRow[];
+  /** TASK: the matching task lines, in order. */
+  tasks?: NexusTaskRow[];
   truncated: boolean;
   /** Shown when the walk stopped before the folder ended. */
   scanNote: string | null;
@@ -720,7 +727,7 @@ function parseClassic(source: string): ClassicParsed {
   if (head !== "LIST" && head !== "TABLE") {
     return {
       kind: "error",
-      error: `Start with LIST or TABLE. Not Dataview. ${NEXUS_QUERY_HELP}`,
+      error: `Start with LIST or TABLE. ${NEXUS_QUERY_HELP}`,
     };
   }
   let path: string | null = null;
@@ -1776,6 +1783,8 @@ export function runNexusQuery(
   now = Date.now(),
   /** The note this query is written in, which `this.` and FROM [[]] read. */
   hostId: string | null = null,
+  /** Every task in the vault, for TASK. */
+  tasks: VaultTask[] | null = null,
 ): NexusQueryModel {
   const footer = NEXUS_QUERY_FOOTER;
   const parsed = parseNexusQuery(source);
@@ -1803,6 +1812,9 @@ export function runNexusQuery(
       fieldNote: null,
       problem: parsed.problem ?? null,
     };
+  }
+  if (parsed.kind === "dialect" && parsed.query.view === "task") {
+    return runTaskDialect(source, parsed.query, nodes, tagExtras, now, hostId, tasks ?? []);
   }
   if (parsed.kind === "dialect") return runDialect(source, parsed.query, nodes, tagExtras, now, hostId);
 
@@ -2019,7 +2031,7 @@ export function runNexusQuery(
 }
 
 export const NEXUS_DIALECT_FOOTER =
-  'LIST, TABLE, or CARDS · FROM "Folder", #tag, -#tag, or [[Note]] · WHERE, columns, SORT, and GROUP BY take any Bases formula, and Dataview spellings like =, AND, OR, date(today), and dur(7 days) read the same · AS "Label" names a column · LIMIT n · Properties are frontmatter plus inline key:: value fields; frontmatter wins when both set one · this. is the note the query is written in, like this.file.name or contains(this.file.outlinks, file.link), and FROM [[]] lists notes that link to it. Runs inside Nexus; nothing in a note is run as code.';
+  'LIST, TABLE, CARDS, or TASK · FROM "Folder", #tag, -#tag, or [[Note]] · WHERE, columns, SORT, and GROUP BY take any formula the note table takes, and spellings like =, AND, OR, date(today), and dur(7 days) work too · AS "Label" names a column · LIMIT n · Properties are frontmatter plus inline key:: value fields; frontmatter wins when both set one · this. is the note the query is written in, like this.file.name or contains(this.file.outlinks, file.link), and FROM [[]] lists notes that link to it. Runs inside Nexus; nothing in a note is run as code.';
 
 /** Rows the full form shows at most. LIMIT asks for fewer. */
 export const NEXUS_DIALECT_CAP = 500;
@@ -2460,5 +2472,334 @@ function runDialect(
     scanNote,
     fieldNote: notes.length ? notes.join(" ") : null,
     tagsIncomplete: found.tagsIncomplete,
+  };
+}
+
+/** Names a TASK query reads on each task, besides the note's own properties and file.*. */
+export const TASK_QUERY_FIELDS = [
+  "text",
+  "status",
+  "symbol",
+  "done",
+  "completed",
+  "checked",
+  "open",
+  "doing",
+  "cancelled",
+  "due",
+  "scheduled",
+  "start",
+  "created",
+  "completion",
+  "doneDate",
+  "cancelledDate",
+  "happens",
+  "overdue",
+  "priority",
+  "urgency",
+  "recurrence",
+  "recurring",
+  "tags",
+  "heading",
+  "line",
+  "depth",
+  "id",
+  "dependsOn",
+  "blocked",
+] as const;
+
+export const NEXUS_TASK_FOOTER =
+  'TASK · FROM "Folder", #tag, or [[Note]]; #tag keeps tasks tagged on the line or in a note tagged as a whole · WHERE !done, due <= date(today) + 7d, priority = "high", contains(tags, "#home"), recurring, or any formula the note table takes · SORT urgency DESC, due, or priority · GROUP BY file.name, due, or status · LIMIT n · Ticking a box here writes the note.';
+
+function flowList(items: string[]): string {
+  return `[${items.map((item) => JSON.stringify(item)).join(", ")}]`;
+}
+
+/** One task as the properties a TASK query reads. Values are text, as frontmatter is. */
+export function taskQueryProps(task: VaultTask, today: string, openIds: ReadonlySet<string> = new Set()): Record<string, string> {
+  const props: Record<string, string> = { ...task.fields };
+  const yes = (b: boolean) => (b ? "true" : "false");
+  const open = isOpen(task.status);
+  props.text = task.text;
+  props.status = task.status;
+  props.symbol = task.symbol;
+  props.done = yes(task.status === "done");
+  props.completed = props.done;
+  props.checked = yes(task.symbol !== " ");
+  props.open = yes(open);
+  props.doing = yes(task.status === "doing");
+  props.cancelled = yes(task.status === "cancelled");
+  props.due = task.due ?? "";
+  props.scheduled = task.scheduled ?? "";
+  props.start = task.start ?? "";
+  props.created = task.created ?? "";
+  props.completion = task.done ?? "";
+  props.doneDate = task.done ?? "";
+  props.cancelledDate = task.cancelled ?? "";
+  props.happens = taskHappens(task) ?? "";
+  props.overdue = yes(open && !!task.due && task.due < today);
+  props.priority = task.priority;
+  props.urgency = String(taskUrgency(task, today));
+  props.recurrence = task.recurrence ?? "";
+  props.recurring = yes(task.recurring);
+  props.tags = flowList(task.tags);
+  props.heading = task.heading ?? "";
+  props.line = String(task.line);
+  props.depth = String(task.depth);
+  props.id = task.id ?? "";
+  props.dependsOn = flowList(task.dependsOn);
+  props.blocked = yes(open && task.dependsOn.some((id) => openIds.has(id)));
+  return props;
+}
+
+const NUMBER_TEXT = /^\s*-?\d+(?:\.\d+)?\s*$/;
+
+function compareTaskResults(a: FormulaResult, b: FormulaResult, dir: number): number {
+  if (a.error === null && b.error === null && NUMBER_TEXT.test(a.value) && NUMBER_TEXT.test(b.value)) {
+    return (Number(a.value) - Number(b.value)) * dir;
+  }
+  return compareResults(a, b, dir);
+}
+
+function defaultTaskOrder(a: { task: VaultTask; urgency: number }, b: { task: VaultTask; urgency: number }): number {
+  const openA = isOpen(a.task.status);
+  const openB = isOpen(b.task.status);
+  if (openA !== openB) return openA ? -1 : 1;
+  return b.urgency - a.urgency || a.task.path.localeCompare(b.task.path) || a.task.line - b.task.line;
+}
+
+const TASK_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[[^\]\n]\][ \t]+\S/;
+
+function hasTagIn(have: string[], want: string): boolean {
+  return have.some((tag) => tag === want || tag.startsWith(`${want}/`));
+}
+
+function runTaskDialect(
+  source: string,
+  query: DialectQuery,
+  nodes: Record<string, VaultNode>,
+  tagExtras: (VaultNode[] | null)[] | null | undefined,
+  now: number,
+  hostId: string | null,
+  tasks: VaultTask[],
+): NexusQueryModel {
+  const ctx = dialectContext(nodes, hostId);
+  const base: NexusQueryModel = {
+    footer: NEXUS_TASK_FOOTER,
+    help: null,
+    error: null,
+    mode: "task",
+    rows: [],
+    tasks: [],
+    truncated: false,
+    scanNote: null,
+    fieldNote: null,
+    problem: null,
+    total: 0,
+    cap: NEXUS_DIALECT_CAP,
+    dialect: true,
+  };
+  const wantsHost =
+    query.source.linksTo === THIS_NOTE || query.source.linkedFrom === THIS_NOTE || dialectExprs(query).some((expr) => expr.reads.self);
+  if (wantsHost && !ctx.host) {
+    const at = thisRefAt(source) ?? { start: 0, end: source.length };
+    return { ...base, mode: null, error: THIS_OUTSIDE_NOTE, problem: { message: THIS_OUTSIDE_NOTE, clause: "", ...at } };
+  }
+  const src = query.source;
+  if (src.folder && !resolveFolder(nodes, src.folder) && !tasks.some((task) => pathHasPrefix(task.path, src.folder as string))) {
+    const error = `No folder matches “${src.folder}”. Use a folder from the file list.`;
+    return { ...base, mode: null, error, problem: folderProblem(source, src.folder, error) };
+  }
+  let linkedIds: Set<string> | null = null;
+  if (src.linksTo || src.linkedFrom) {
+    const linkOnly: DialectQuery = {
+      ...query,
+      source: { ...src, folder: null, tags: [], notTags: [], notFolders: [], vault: false },
+    };
+    const found = dialectCandidates(linkOnly, nodes, tagExtras, ctx, now);
+    if (found.error) return { ...base, mode: null, error: found.error, problem: { message: found.error, clause: "FROM", start: 0, end: source.length } };
+    linkedIds = new Set(found.notes.map((node) => node.id));
+  }
+  // Task dates are calendar days where the user is, so today() is the local day too.
+  const wall = now - new Date(now).getTimezoneOffset() * 60_000;
+  const today = localToday(new Date(now));
+  const openIds = new Set<string>();
+  for (const task of tasks) if (task.id && isOpen(task.status)) openIds.add(task.id);
+  const noteRows = new Map<string, FormulaRow | null>();
+  const noteTags = new Map<string, string[]>();
+  let taskTagsByNote: Map<string, Set<string>> | null = null;
+  /** The note's own tags: frontmatter and text, but not tags that only sit on its task lines. */
+  const noteLevelTags = (noteId: string): string[] => {
+    const node = nodes[noteId];
+    if (node?.kind !== "note") return [];
+    if (typeof node.content === "string") {
+      const body = node.content
+        .split(/\r?\n/)
+        .filter((line) => !TASK_LINE.test(line))
+        .join("\n");
+      return extractTagsFromMarkdown(body).map((tag) => tag.toLowerCase());
+    }
+    if (!taskTagsByNote) {
+      taskTagsByNote = new Map();
+      for (const task of tasks) {
+        const set = taskTagsByNote.get(task.noteId) ?? new Set<string>();
+        for (const tag of task.tags) set.add(tag.replace(/^#/, "").toLowerCase());
+        taskTagsByNote.set(task.noteId, set);
+      }
+    }
+    const onTasks = taskTagsByNote.get(noteId);
+    return tagsOf(node).filter((tag) => !onTasks?.has(tag));
+  };
+  const tagsFor = (task: VaultTask): string[] => {
+    let fromNote = noteTags.get(task.noteId);
+    if (!fromNote) {
+      fromNote = noteLevelTags(task.noteId);
+      noteTags.set(task.noteId, fromNote);
+    }
+    const own = task.tags.map((tag) => tag.replace(/^#/, "").toLowerCase());
+    return own.length ? [...new Set([...own, ...fromNote])] : fromNote;
+  };
+  const rowFor = (task: VaultTask): FormulaRow => {
+    if (!noteRows.has(task.noteId)) {
+      const node = nodes[task.noteId];
+      noteRows.set(task.noteId, isQueryNote(node) ? formulaRowOf(node, ctx) : null);
+    }
+    const note = noteRows.get(task.noteId) ?? null;
+    const props = { ...(note?.props ?? {}), ...taskQueryProps(task, today, openIds) };
+    const tags = tagsFor(task);
+    if (note) {
+      return {
+        name: note.name,
+        path: note.path,
+        folder: note.folder,
+        mtime: note.mtime,
+        size: note.size,
+        ctime: note.ctime,
+        props,
+        refs: new Map(),
+        outlinks: note.outlinks,
+        backlinks: note.backlinks,
+        tags: () => tags,
+        self: note.self,
+        fileAt: note.fileAt,
+        linksAt: note.linksAt,
+      };
+    }
+    return {
+      name: task.title,
+      path: task.path,
+      folder: folderOf(task.path),
+      mtime: 0,
+      props,
+      refs: new Map(),
+      tags: () => tags,
+      self: ctx.self(),
+    };
+  };
+
+  let whereFailed = 0;
+  let firstWhereError: string | null = null;
+  const kept: { task: VaultTask; row: FormulaRow; urgency: number }[] = [];
+  for (const task of tasks) {
+    if (src.folder && !pathHasPrefix(task.path, src.folder)) continue;
+    if (src.notFolders.some((folder) => pathHasPrefix(task.path, folder))) continue;
+    if (linkedIds && !linkedIds.has(task.noteId)) continue;
+    if (src.tags.length || src.notTags.length) {
+      const have = tagsFor(task);
+      if (src.notTags.some((tag) => hasTagIn(have, tag))) continue;
+      if (src.tags.length) {
+        const hit = src.tagMode === "and" ? src.tags.every((tag) => hasTagIn(have, tag)) : src.tags.some((tag) => hasTagIn(have, tag));
+        if (!hit) continue;
+      }
+    }
+    const row = rowFor(task);
+    let pass = true;
+    for (const expr of query.where) {
+      const result = runQueryFilter(expr, row, wall);
+      if (result.error) {
+        whereFailed += 1;
+        firstWhereError ??= result.error;
+      }
+      if (!result.pass) {
+        pass = false;
+        break;
+      }
+    }
+    if (pass) kept.push({ task, row, urgency: taskUrgency(task, today) });
+  }
+
+  if (query.sort.length) {
+    const keyed = kept.map((item) => ({
+      item,
+      keys: query.sort.map((key) =>
+        key.text.toLowerCase() === "priority"
+          ? null
+          : runNoteFormula(key.expr.compiled, item.row, wall),
+      ),
+    }));
+    keyed.sort((a, b) => {
+      for (let i = 0; i < query.sort.length; i += 1) {
+        const dir = query.sort[i]?.dir === "desc" ? -1 : 1;
+        const ka = a.keys[i];
+        const kb = b.keys[i];
+        const delta =
+          ka && kb
+            ? compareTaskResults(ka, kb, dir)
+            : (PRIORITY_RANK[b.item.task.priority] - PRIORITY_RANK[a.item.task.priority]) * dir;
+        if (delta) return delta;
+      }
+      return defaultTaskOrder(a.item, b.item);
+    });
+    kept.splice(0, kept.length, ...keyed.map((entry) => entry.item));
+  } else {
+    kept.sort(defaultTaskOrder);
+  }
+
+  let groups: string[] | null = null;
+  if (query.groupBy) {
+    const expr = query.groupBy.expr;
+    const keyed = kept.map((item) => {
+      const result = runNoteFormula(expr.compiled, item.row, wall);
+      return { item, result, label: result.error || result.value === "" ? "—" : result.value };
+    });
+    const order = new Map<string, FormulaResult>();
+    for (const entry of keyed) if (!order.has(entry.label)) order.set(entry.label, entry.result);
+    const byPriority = query.groupBy.text.toLowerCase() === "priority";
+    const labels = [...order.keys()].sort((a, b) => {
+      if ((a === "—") !== (b === "—")) return a === "—" ? 1 : -1;
+      if (byPriority) {
+        return (PRIORITY_RANK[b as keyof typeof PRIORITY_RANK] ?? 0) - (PRIORITY_RANK[a as keyof typeof PRIORITY_RANK] ?? 0);
+      }
+      return compareTaskResults(order.get(a) as FormulaResult, order.get(b) as FormulaResult, 1);
+    });
+    const rank = new Map(labels.map((label, i) => [label, i]));
+    keyed.sort((a, b) => (rank.get(a.label) ?? 0) - (rank.get(b.label) ?? 0));
+    kept.splice(0, kept.length, ...keyed.map((entry) => entry.item));
+    groups = keyed.map((entry) => entry.label);
+  }
+
+  const total = kept.length;
+  const cap = Math.min(query.limit ?? NEXUS_DIALECT_CAP, NEXUS_DIALECT_CAP);
+  const shown = kept.slice(0, cap).map((item, i) => ({ task: item.task, group: groups ? (groups[i] ?? null) : null }));
+  const notes: string[] = [];
+  if (whereFailed) notes.push(`WHERE could not be checked on ${plural(whereFailed, "task", "tasks")}: ${firstWhereError}`);
+  const known = new Set<string>(TASK_QUERY_FIELDS.map((name) => name.toLowerCase()));
+  for (const task of tasks.slice(0, 5000)) for (const key of Object.keys(task.fields)) known.add(key.toLowerCase());
+  for (const row of noteRows.values()) for (const key of Object.keys(row?.props ?? {})) known.add(key.toLowerCase());
+  const asked = new Set<string>();
+  for (const expr of dialectExprs(query)) for (const key of expr.reads.props) asked.add(key);
+  const missing = [...asked].filter((key) => key && !known.has(key.toLowerCase()));
+  for (const key of missing.slice(0, 2)) {
+    const guess = didYouMean(key, new Set([...TASK_QUERY_FIELDS]));
+    notes.push(
+      `No task has “${key}”.${guess ? ` Did you mean “${guess}”?` : ""} Task fields: ${TASK_QUERY_FIELDS.slice(0, 12).join(", ")}, and more.`,
+    );
+  }
+  return {
+    ...base,
+    tasks: shown,
+    total,
+    truncated: total > cap && (query.limit === null || query.limit > NEXUS_DIALECT_CAP),
+    fieldNote: notes.length ? notes.join(" ") : null,
   };
 }

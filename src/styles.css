@@ -582,6 +582,26 @@
     cursor: pointer;
   }
 
+  .note-editor li[data-type="taskItem"][data-status] > label input[type="checkbox"]:not(:checked) {
+    appearance: none;
+    border: 1.5px solid var(--accent);
+    border-radius: 3px;
+  }
+
+  .note-editor li[data-type="taskItem"][data-status="/"] > label input[type="checkbox"]:not(:checked) {
+    background: linear-gradient(to right, var(--accent) 50%, transparent 50%);
+  }
+
+  .note-editor li[data-type="taskItem"][data-status="-"] > label input[type="checkbox"]:not(:checked) {
+    border-color: var(--text-muted);
+    background: linear-gradient(var(--text-muted), var(--text-muted)) center / 60% 1.5px no-repeat;
+  }
+
+  .note-editor li[data-type="taskItem"][data-status="-"] > div > p:first-child {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+
   .note-editor li[data-type="taskItem"] p.is-empty::before {
     content: "Add an item…";
     color: var(--text-muted);
@@ -2164,6 +2184,40 @@
   text-decoration: underline wavy var(--danger, #e5484d);
   text-underline-offset: 3px;
 }
+.nexus-tasks-block-note {
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.nexus-tasks-block-note .nexus-query-clause {
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+.nexus-query-problem code,
+.nexus-tasks-block-note code {
+  margin-right: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+}
+button.nexus-query-excerpt[data-testid="tasks-block-rewrite"]:hover {
+  color: var(--accent);
+}
+[data-testid="tasks-block-rewrite"] mark {
+  text-decoration: none;
+  color: var(--accent);
+}
+.nexus-tasks-block-explain {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
 .nexus-query-starters {
   display: flex;
   flex-wrap: wrap;
@@ -2193,6 +2247,91 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
   gap: 8px;
+}
+.nexus-preview-task-box {
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.nexus-query-task-group {
+  padding: 8px 4px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.nexus-query-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 10px;
+}
+.nexus-query-task:hover {
+  background: rgb(255 255 255 / 0.04);
+}
+.nexus-query-task-box {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+.nexus-query-task-box:hover {
+  border-color: var(--accent);
+}
+.nexus-query-task[data-status="done"] .nexus-query-task-box {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg-base, #000);
+}
+.nexus-query-task-main {
+  min-width: 0;
+  flex: 1;
+}
+.nexus-query-task-text {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.nexus-query-task-text.is-closed {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+.nexus-query-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.nexus-query-task-due.is-late {
+  border-radius: 4px;
+  padding: 0 4px;
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.nexus-query-task-due.is-today {
+  border-radius: 4px;
+  padding: 0 4px;
+  background: var(--warning-dim);
+  color: var(--warning);
+}
+.nexus-query-task-problem {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--warning);
 }
 .nexus-query-card-group {
   grid-column: 1 / -1;

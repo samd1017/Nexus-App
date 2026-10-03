@@ -51,7 +51,7 @@ async function bundle(entry, outfile) {
           b.onLoad({ filter: /.*/, namespace: "stub" }, (args) => {
             if (args.path === "turndown") {
               return {
-                contents: `export default class TurndownService { turndown(s){ return String(s||''); } addRule(){ return this; } keep(){ return this; } remove(){ return this; } }`,
+                contents: `export default class TurndownService { turndown(s){ return String(s||''); } escape(s){ return s; } addRule(){ return this; } keep(){ return this; } remove(){ return this; } }`,
                 loader: "js",
               };
             }

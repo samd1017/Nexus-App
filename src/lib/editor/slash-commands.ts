@@ -144,6 +144,19 @@ export const SLASH_ITEMS: SlashItem[] = [
       ),
   },
   {
+    id: "task-query",
+    label: "Task list",
+    hint: "open tasks across the vault, tickable here",
+    keywords: ["tasks", "todo", "to-do", "due", "agenda", "checklist", "task query"],
+    run: (ed, range) =>
+      runSlash(ed, range, (c) =>
+        c.insertContent({
+          type: "nexusQueryBlock",
+          attrs: { query: "TASK WHERE open AND due <= date(today) + 7d\nSORT urgency DESC" },
+        }),
+      ),
+  },
+  {
     id: "query",
     label: "Search results",
     hint: "built-in ```query",

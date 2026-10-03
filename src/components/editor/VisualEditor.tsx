@@ -7,7 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { StyledBulletList } from "@/lib/editor/styled-bullet-list";
 import { SafePlaceholder } from "@/lib/editor/safe-placeholder";
 import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
+import { StatusTaskItem } from "@/lib/editor/status-task-item";
 import { VaultImage } from "@/lib/editor/vault-image";
 import { resolveVaultImageUrl } from "@/lib/vault/image-import";
 import { isVaultAttachmentHref } from "@/lib/vault/attachments";
@@ -53,6 +53,8 @@ import {
   htmlDocToMarkdown,
 } from "@/lib/markdown/serialize";
 import { splitFrontmatter } from "@/lib/editor/frontmatter";
+import { applyCheckboxFlips } from "@/lib/tasks/edit";
+import { localToday } from "@/lib/tasks/dates";
 import { useVaultStore } from "@/lib/vault/store";
 import {
   dailyNotePath,
@@ -560,7 +562,9 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
       baselineMd.current = md;
       lastWrittenRef.current = md;
       userEdited.current = false;
-      updateNoteContent(id, md);
+      // A ticked box also gets its ✅ date and, when it repeats, the next copy;
+      // the editor then shows that text as an outside change.
+      updateNoteContent(id, applyCheckboxFlips(prev, md, localToday()) ?? md);
     },
     [updateNoteContent],
   );
@@ -604,7 +608,7 @@ export function VisualEditor({ noteId, content, pane = "primary" }: Props) {
         TaskList.configure({
           HTMLAttributes: { "data-type": "taskList" },
         }),
-        TaskItem.configure({
+        StatusTaskItem.configure({
           nested: true,
           HTMLAttributes: { "data-type": "taskItem" },
         }),

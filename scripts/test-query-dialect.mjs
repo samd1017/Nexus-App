@@ -34,6 +34,13 @@ const { markdownToHtml, htmlToMarkdown, htmlDocToMarkdown } = await import("../s
 const { promoteNexusQueryBlocks } = await import("../src/lib/editor/special-blocks.ts");
 const { marked } = await import("marked");
 const domino = (await import("@mixmark-io/domino")).default;
+const { tasksInNote } = await import("../src/lib/tasks/extract.ts");
+
+function demoTasksOf(nodes) {
+  return Object.values(nodes)
+    .filter((n) => n.kind === "note" && typeof n.content === "string" && /\.md$/i.test(n.path))
+    .flatMap((n) => tasksInNote({ id: n.id, path: n.path, title: n.name.replace(/\.md$/i, ""), body: n.content }));
+}
 
 function note(id, path, content, extra = {}) {
   return { id, path, name: path.split("/").pop(), kind: "note", parentId: null, mtime: 0, content, ...extra };
@@ -100,7 +107,7 @@ function problemOf(source) {
   assert.match(listTwo.error, /LIST shows one value/);
 
   const head = problemOf("SHOW status");
-  assert.match(head.error, /Start with LIST, TABLE, or CARDS/);
+  assert.match(head.error, /Start with LIST, TABLE, CARDS, or TASK/);
   assert.equal(head.text, "SHOW");
 
   const self = problemOf("LIST WHERE this.status = status");
@@ -279,11 +286,13 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   const demo = buildDemoVault();
   const starters = queryStarters(demo.nodes);
   assert.ok(starters.length >= 3);
+  const demoTasks = demoTasksOf(demo.nodes);
   for (const starter of starters) {
-    const model = runNexusQuery(starter.query, demo.nodes, null, Date.now());
+    const model = runNexusQuery(starter.query, demo.nodes, null, Date.now(), null, demoTasks);
     assert.equal(model.error, null, `${starter.label}: ${model.error}`);
-    assert.ok(model.rows.length > 0, `${starter.label} found nothing`);
+    assert.ok((model.tasks ?? model.rows).length > 0, `${starter.label} found nothing`);
   }
+  assert.ok(starters.some((s) => /^TASK/.test(s.query)));
   assert.ok(starters.some((s) => /^TABLE/.test(s.query) && /FROM "/.test(s.query)));
   assert.ok(starters.some((s) => /^CARDS/.test(s.query)));
 }
@@ -414,13 +423,13 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   assert.match(compileQueryFilter("this.").ok ? "" : compileQueryFilter("this.").problem.message, /this\. needs a field/);
 
   const bases = buildNoteTable(Object.values(vaultThis).filter((n) => n.kind === "note"), "P", [], NOW, 'owner = this.owner');
-  assert.match(bases.filterStatus.problem.message, /a Bases view has none/);
+  assert.match(bases.filterStatus.problem.message, /a note table view has none/);
   assert.equal('owner = this.owner'.slice(bases.filterStatus.problem.start, bases.filterStatus.problem.end), "this.owner");
   assert.equal(bases.rows.length, 4, "a filter Bases cannot run keeps every note");
 
   const view = readFileSync("src/components/editor/NexusQueryView.tsx", "utf8");
   assert.match(view, /getAttribute\("data-note-id"\)/);
-  assert.match(view, /runNexusQuery\(query, nodes, tagExtras, Date\.now\(\), hostId\)/);
+  assert.match(view, /runNexusQuery\(query, nodes, tagExtras, Date\.now\(\), hostId, taskIndex\.tasks\)/);
   const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
   assert.match(preview, /renderNexusQueries\(nexusQueryEls, nodes, activeNoteId\)/);
 }

@@ -761,7 +761,7 @@ export function EditorPane({
                   onClick={() => setBasesOpen(true)}
                 >
                   <Table2 size={13} />
-                  <span className="hidden md:inline">Bases</span>
+                  <span className="hidden md:inline">Note table</span>
                 </button>
                 <button
                   type="button"

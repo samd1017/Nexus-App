@@ -21,6 +21,14 @@ import { useVaultStore } from "@/lib/vault/store";
 import { noteTitle, type VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
 import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
+import { friendlyDay, localToday } from "@/lib/tasks/dates";
+import { priorityMarker, tasksFromLines, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
+import { isOpen } from "@/lib/tasks/syntax";
+import { currentTasks, whenTasksReady } from "@/lib/tasks/task-index";
+import { TASKS_BLOCK_FOOTER, blockQuery, planBlocked, type TasksBlockPlan } from "@/lib/tasks/tasks-block";
+
+/** A query block whose first word is TASK lists task lines, not notes. */
+export const TASK_QUERY_HEAD = /^\s*tasks?\b/i;
 
 function escapeHtml(s: string): string {
   return s
@@ -231,7 +239,53 @@ function nexusRowButton(id: string, title: string, rest: string): string {
   return `<button type="button" data-testid="nexus-query-row" data-open-note="${escapeHtml(id)}"><span>${escapeHtml(title)}</span>${rest}</button>`;
 }
 
-function nexusQueryBody(query: string, model: NexusQueryModel): string {
+function taskRowHtml(task: VaultTask, today: string): string {
+  const open = isOpen(task.status);
+  const mark = task.status === "done" ? "✓" : task.status === "cancelled" ? "–" : task.status === "doing" ? "•" : "";
+  const checked = task.status === "done" ? "true" : task.status === "doing" ? "mixed" : "false";
+  const ref = `data-task-note="${escapeHtml(task.noteId)}" data-task-line="${task.line}" data-task-raw="${escapeHtml(task.raw)}" data-task-title="${escapeHtml(task.title)}"`;
+  const meta: string[] = [];
+  if (task.due) {
+    const tone = open && task.due < today ? " is-late" : open && task.due === today ? " is-today" : "";
+    meta.push(`<span class="nexus-query-task-due${tone}" data-testid="task-due">📅 ${escapeHtml(friendlyDay(task.due, today))}</span>`);
+  }
+  if (task.scheduled) meta.push(`<span>⏳ ${escapeHtml(friendlyDay(task.scheduled, today))}</span>`);
+  if (task.start && task.start > today) meta.push(`<span>🛫 ${escapeHtml(friendlyDay(task.start, today))}</span>`);
+  if (task.recurrence) meta.push(`<span data-testid="tasks-recurrence">🔁 ${escapeHtml(task.recurrence)}</span>`);
+  if (task.status === "done" && task.done) meta.push(`<span>✅ ${escapeHtml(friendlyDay(task.done, today))}</span>`);
+  meta.push(`<span class="nexus-query-task-note" title="${escapeHtml(task.path)}">${escapeHtml(task.title)}</span>`);
+  const problems = task.problems
+    .map((problem) => `<span class="nexus-query-task-problem" data-testid="task-problem">⚠ ${escapeHtml(problem.message)}</span>`)
+    .join("");
+  const priority = task.priority !== "none" ? `<span data-testid="tasks-priority">${priorityMarker(task.priority)}</span> ` : "";
+  return `<div class="nexus-query-task" data-testid="task-item" data-status="${task.status}">
+    <button type="button" role="checkbox" aria-checked="${checked}" aria-label="${escapeHtml(`${open ? "Mark done" : "Mark not done"}: ${task.text}`)}" class="nexus-query-task-box" data-testid="tasks-complete" data-task-toggle ${ref}>${mark}</button>
+    <div class="nexus-query-task-main">
+      <button type="button" class="nexus-query-task-text${open ? "" : " is-closed"}" data-testid="tasks-row" title="Open in note" data-task-open="${escapeHtml(task.noteId)}" data-task-text="${escapeHtml(task.text)}">${priority}${escapeHtml(task.text || "(empty task)")}</button>
+      <div class="nexus-query-task-meta">${meta.join("")}</div>${problems}
+    </div>
+  </div>`;
+}
+
+function nexusTaskBody(model: NexusQueryModel, waiting: boolean, none = "No tasks match. Loosen WHERE, or check the FROM folder or tag."): string {
+  const rows = model.tasks ?? [];
+  if (!rows.length) {
+    const text = waiting ? "Reading tasks…" : none;
+    return `<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(text)}</p>`;
+  }
+  const today = localToday();
+  const items = rows
+    .map((row, index) => {
+      const header = row.group != null && row.group !== rows[index - 1]?.group
+        ? `<div class="nexus-query-task-group" data-testid="nexus-query-group" data-group="${escapeHtml(row.group)}">${escapeHtml(row.group)}</div>`
+        : "";
+      return header + taskRowHtml(row.task, today);
+    })
+    .join("");
+  return `<div class="nexus-query-tasks" data-testid="nexus-query-tasks">${items}</div>`;
+}
+
+function nexusQueryBody(query: string, model: NexusQueryModel, waiting = false): string {
   const bits: string[] = [];
   const muted = (text: string, testid?: string) =>
     `<p class="nexus-query-empty"${testid ? ` data-testid="${testid}"` : ""}>${escapeHtml(text)}</p>`;
@@ -245,7 +299,8 @@ function nexusQueryBody(query: string, model: NexusQueryModel): string {
     bits.push(`<div class="nexus-query-problem" data-testid="nexus-query-error"><p>${clause}${escapeHtml(model.error)}</p>${mark}</div>`);
   }
   if (model.fieldNote) bits.push(muted(model.fieldNote, "nexus-query-field-note"));
-  if (!model.help && !model.error && model.rows.length === 0) {
+  if (model.mode === "task" && !model.help && !model.error) bits.push(nexusTaskBody(model, waiting));
+  if (!model.help && !model.error && model.mode !== "task" && model.rows.length === 0) {
     const empty = model.tagsIncomplete
       ? model.scanNote || "Couldn't read every tag from the index."
       : "No notes match.";
@@ -339,17 +394,149 @@ async function renderNexusQueries(
   hostId: string | null,
 ): Promise<void> {
   for (const el of els) {
-    const query = (el.getAttribute("data-query") || "").trim();
+    const written = (el.getAttribute("data-query") || "").trim();
     const fence = el.getAttribute("data-lang") || "nexus-query";
+    const live = useVaultStore.getState().nodes || nodes;
+    const hostPath = hostId ? (live[hostId]?.path ?? null) : null;
+    const { query, plan } = blockQuery(written, fence, localToday(), hostPath ? { path: hostPath } : null);
+    const blocked = planBlocked(plan);
+    const taskQuery = TASK_QUERY_HEAD.test(query);
+    if (taskQuery) el.setAttribute("data-task-query", "");
     const extras = await loadTagExtras(query);
-    const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras, Date.now(), hostId);
-    const total = model.total ?? model.rows.length;
-    const count = model.mode && !model.error ? `${total} ${total === 1 ? "note" : "notes"} · ` : "";
+    const index = taskQuery && !blocked ? await whenTasksReady() : null;
+    const model = runNexusQuery(query, live, extras, Date.now(), hostId, index?.tasks ?? null);
+    const shown = model.tasks ? model.tasks.length : model.rows.length;
+    const total = model.total ?? shown;
+    const noun = model.mode === "task" ? (total === 1 ? "task" : "tasks") : total === 1 ? "note" : "notes";
+    const count = model.mode && !model.error && !blocked ? `${total} ${noun} · ` : "";
+    const head = written.replace(/\s*\n\s*/g, " · ") || (plan ? "Every task" : fence);
+    const body = plan ? tasksBlockBody(plan, model, index?.state.phase === "scanning") : nexusQueryBody(query, model, index?.state.phase === "scanning");
     el.innerHTML = `
-      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query.replace(/\s*\n\s*/g, " · ") || fence)}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">${escapeHtml(count + fence)}</span></div>
-      <div class="nexus-query-body">${nexusQueryBody(query, model)}</div>
+      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(head)}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">${escapeHtml(count + fence)}</span></div>
+      <div class="nexus-query-body">${body}</div>
     `;
   }
+}
+
+function tasksBlockBody(plan: TasksBlockPlan, model: NexusQueryModel, waiting: boolean): string {
+  const bits = plan.problems.map((problem) => {
+    const rewrite = problem.rewrite !== null
+      ? `<span class="nexus-query-excerpt" data-testid="tasks-block-rewrite">Use: <mark>${escapeHtml(problem.rewrite)}</mark></span>`
+      : "";
+    return `<div class="${problem.blocking ? "nexus-query-problem" : "nexus-tasks-block-note"}" data-testid="tasks-block-problem" data-line="${problem.line + 1}"${problem.blocking ? ' role="alert"' : ""}><p><span class="nexus-query-clause">line ${problem.line + 1}</span><code>${escapeHtml(problem.text)}</code> ${escapeHtml(problem.message)}</p>${rewrite}</div>`;
+  });
+  if (!planBlocked(plan)) {
+    if (plan.explain) bits.push(`<pre class="nexus-tasks-block-explain" data-testid="tasks-block-explain">${escapeHtml(plan.query)}</pre>`);
+    if (model.error) bits.push(`<div class="nexus-query-problem" data-testid="nexus-query-error"><p>${escapeHtml(model.error)}</p></div>`);
+    else bits.push(nexusTaskBody(model, waiting, "No tasks match these lines."));
+    if (model.truncated) {
+      bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-cap">Showing the first ${model.cap ?? 0} of ${model.total ?? 0}. Add a limit or a path line.</p>`);
+    }
+  }
+  bits.push(
+    `<details class="nexus-query-syntax"><summary>Lines a tasks block reads</summary><p data-testid="nexus-query-footer">${escapeHtml(TASKS_BLOCK_FOOTER)}</p></details>`,
+  );
+  return bits.join("");
+}
+
+/** Letters and digits only, so rendered text and its Markdown line compare equal. */
+function textKey(text: string): string {
+  return text.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase().slice(0, 16);
+}
+
+function boxText(box: HTMLInputElement): string {
+  const li = box.closest("li");
+  if (!li) return "";
+  const head = li.getAttribute("data-type") === "taskItem" ? li.querySelector(":scope > div > p") : box.parentElement;
+  if (!head) return "";
+  const clone = head.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("ul, ol").forEach((n) => n.remove());
+  return clone.textContent ?? "";
+}
+
+function lineText(task: VaultTask): string {
+  return task.raw
+    .replace(/^[\s>]*(?:[-*+]|\d{1,9}[.)])\s+\[[^\]]\]\s*/, "")
+    .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+}
+
+/**
+ * Let the note's own checkboxes be ticked in Preview. Each box is paired with
+ * the next task line that has the same status and starts with the same words;
+ * a box with no such line stays read-only, so a box never writes a line it
+ * does not show.
+ */
+export function wirePreviewTaskBoxes(root: HTMLElement, body: string, noteId: string | null): void {
+  if (!noteId) return;
+  const boxes = Array.from(
+    root.querySelectorAll<HTMLInputElement>(
+      "li > input[type='checkbox'], li > p:first-child > input[type='checkbox'], li[data-type='taskItem'] > label > input[type='checkbox']",
+    ),
+  ).filter(
+    (box) => !box.closest("[data-type='embed'], [data-type='nexus-query'], [data-type='query']"),
+  );
+  if (!boxes.length) return;
+  const node = useVaultStore.getState().nodes[noteId];
+  const title = node ? noteTitle(node) : "";
+  const tasks = tasksInNote({ id: noteId, path: node?.path ?? "", title, body });
+  let next = 0;
+  for (const box of boxes) {
+    const li = box.closest("li");
+    const checked = box.checked || box.hasAttribute("checked");
+    const symbol = li?.getAttribute("data-status") || (checked ? "x" : " ");
+    const key = textKey(boxText(box));
+    let found = -1;
+    for (let j = next; j < tasks.length; j += 1) {
+      const task = tasks[j] as VaultTask;
+      if (task.symbol.toLowerCase() === symbol.toLowerCase() && textKey(lineText(task)) === key) {
+        found = j;
+        break;
+      }
+    }
+    if (found < 0) continue;
+    next = found + 1;
+    const task = tasks[found] as VaultTask;
+    box.disabled = false;
+    box.setAttribute("data-task-toggle", "");
+    box.setAttribute("data-task-note", noteId);
+    box.setAttribute("data-task-line", String(task.line));
+    box.setAttribute("data-task-raw", task.raw);
+    box.setAttribute("data-task-title", title);
+    box.setAttribute("aria-label", `${isOpen(task.status) ? "Mark done" : "Mark not done"}: ${task.text}`);
+    box.classList.add("nexus-preview-task-box");
+  }
+}
+
+const LINE_BOX = ":scope > input[data-task-toggle], :scope > p:first-child > input[data-task-toggle], :scope > label > input[data-task-toggle]";
+
+/**
+ * The task under a right-click in Preview: a row of a TASK block, or a note
+ * line whose box was paired with its source line. Null anywhere else.
+ */
+export function previewTaskAt(target: Element): VaultTask | null {
+  let box: Element | null = target.closest("[data-task-toggle]");
+  if (!box) box = target.closest(".nexus-query-task")?.querySelector("[data-task-toggle]") ?? null;
+  if (!box) {
+    const li = target.closest("li");
+    if (li && !li.closest("[data-type='nexus-query'], [data-type='embed']")) box = li.querySelector(LINE_BOX);
+  }
+  if (!(box instanceof HTMLElement)) return null;
+  const noteId = box.getAttribute("data-task-note") || "";
+  const line = Number(box.getAttribute("data-task-line"));
+  const raw = box.getAttribute("data-task-raw") || "";
+  if (!noteId || !Number.isFinite(line) || !raw) return null;
+  const known = currentTasks().tasks.find((task) => task.noteId === noteId && task.line === line && task.raw === raw);
+  if (known) return known;
+  const node = useVaultStore.getState().nodes[noteId];
+  const title = box.getAttribute("data-task-title") || (node ? noteTitle(node) : "");
+  return tasksFromLines({ id: noteId, path: node?.path ?? "", title }, [{ line, raw }], null)[0] ?? null;
+}
+
+/** Re-run only the TASK blocks in a preview, after the vault's tasks change. */
+export async function refreshTaskQueries(root: HTMLElement, hostId: string | null): Promise<void> {
+  const els = Array.from(root.querySelectorAll<HTMLElement>("[data-type='nexus-query'][data-task-query]"));
+  if (els.length) await renderNexusQueries(els, useVaultStore.getState().nodes, hostId);
 }
 
 function promoteLeftoverMermaidFences(root: HTMLElement): void {

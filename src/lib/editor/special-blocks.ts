@@ -18,17 +18,18 @@ function decodeCodeText(raw: string): string {
 }
 
 /**
- * ```nexus-query``` and ```dataview``` → a live note query. The fence name is
- * kept so the block saves back as written. Not the search ```query``` block,
- * and never ```dataviewjs```: Nexus does not run code from notes.
+ * ```nexus-query```, ```dataview```, and ```tasks``` → a live query. The fence
+ * name is kept so the block saves back as written. Not the search ```query```
+ * block, and never ```dataviewjs```: Nexus does not run code from notes.
  */
 export function promoteNexusQueryBlocks(html: string): string {
-  if (!html || !/nexus-query|dataview/i.test(html)) return html;
+  if (!html || !/nexus-query|dataview|language-tasks/i.test(html)) return html;
   return html.replace(
-    /<pre>\s*<code\b[^>]*class="[^"]*language-(nexus-query|dataview)(?![\w-])[^"]*"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+    /<pre>\s*<code\b[^>]*class="[^"]*language-(nexus-query|dataview|tasks)(?![\w-])[^"]*"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
     (_full, lang: string, body: string) => {
       const src = decodeCodeText(body).replace(/\n$/, "");
-      const fence = lang.toLowerCase() === "dataview" ? ' data-lang="dataview"' : "";
+      const name = lang.toLowerCase();
+      const fence = name === "nexus-query" ? "" : ` data-lang="${name}"`;
       return `<div data-type="nexus-query" data-query="${escapeAttr(src)}"${fence} class="nexus-note-list"></div>`;
     },
   );

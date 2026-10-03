@@ -1,5 +1,6 @@
 import type { VaultNode } from "./types";
 import { pathJoin } from "./types";
+import { addDays, localToday } from "@/lib/tasks/dates";
 
 function idFor(path: string): string {
   return "n_" + path.replace(/[^a-zA-Z0-9]+/g, "_");
@@ -75,6 +76,7 @@ This demo vault is a tour of everything Nexus does — open notes, follow wikili
 | Source mode | **Ctrl/⌘E** — same note as clean Markdown |
 | Split | Source + live preview side by side |
 | Slash | Type / in Visual to insert headings, mermaid, embeds, queries |
+| Tasks | [[Task Board]] — \`- [ ]\` lines with 📅 dates, ⏫ priorities and 🔁 repeats; right panel → **Tasks** lists them all |
 | Queries | [[Note List]] — \`\`\`nexus-query\`\`\` (or \`\`\`dataview\`\`\`) turns frontmatter, tags, folders and links into live tables, lists and cards |
 | Embeds | ![[Linking Notes#Syntax]] a heading; ![[First Light#^next-step]] a block |
 | Wikilinks | [[Graph View]] · [[Linking Notes#Syntax]] · [[First Light#^next-step]] |
@@ -157,6 +159,80 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
     ),
   );
 
+  const today = localToday();
+  const day = (n: number) => addDays(today, n) ?? today;
+  add(
+    note(
+      pathJoin("Projects", "Task Board.md"),
+      "Task Board.md",
+      projects.id,
+      `---
+tags: [work]
+---
+
+# Task Board
+
+Tasks are ordinary checkbox lines. The emoji after the text are plain text too, so this note reads the same in any editor. Open the right panel → **Tasks** to see every task in the vault by day, or tick one below.
+
+## This week
+
+- [ ] Send the launch notes #writing ⏫ 📅 ${day(-1)}
+- [ ] Review the sync conflict flow ⏳ ${day(0)} 🔼
+- [ ] Draft the onboarding checklist #writing 📅 ${day(0)}
+- [/] Profile vault open on 100k notes #perf 🔺 📅 ${day(2)}
+- [ ] Plan the next release 🛫 ${day(3)} 📅 ${day(9)}
+- [ ] Weekly review 🔁 every week on friday 📅 ${day(4)}
+- [ ] Water the plants 🔁 every 3 days when done #home 📅 ${day(1)}
+- [ ] Ship the export dialog 🆔 export 📅 ${day(5)}
+  - [ ] Write the export tests ⛔ export
+- [ ] Learn the dialect [due:: ${day(6)}] [priority:: low]
+- [ ] Try a natural date: fix this one 📅 tomorrow
+- [x] Seed the demo vault ✅ ${day(-2)}
+- [-] Old idea we dropped ❌ ${day(-3)}
+
+## Open tasks across the vault
+
+\`\`\`nexus-query
+TASK WHERE open
+SORT urgency DESC
+LIMIT 8
+\`\`\`
+
+## Grouped by note
+
+\`\`\`nexus-query
+TASK FROM #work OR #writing
+WHERE !done
+GROUP BY status
+\`\`\`
+
+## Plain-language task blocks
+
+A \`\`\`tasks block takes one rule per line in plain words and lists the tasks that match. Add \`explain\` to see the TASK query it runs.
+
+\`\`\`tasks
+not done
+due before in two weeks
+sort by due
+limit 5
+\`\`\`
+
+## Cheat sheet
+
+| Write | Means |
+| --- | --- |
+| \`- [ ]\` · \`- [/]\` · \`- [x]\` · \`- [-]\` | to do · in progress · done · cancelled |
+| 📅 · ⏳ · 🛫 + YYYY-MM-DD | due · scheduled · starts |
+| 🔺 ⏫ 🔼 🔽 ⏬ | highest → lowest priority |
+| 🔁 every week | repeats; ticking it writes the next one above |
+| 🆔 a1 and ⛔ a1 | the second task waits on the first |
+| \`[due:: 2026-10-03]\` | the same, written as an inline field |
+
+Related: [[Note List]] · [[First Light]]
+`,
+    ),
+  );
+
   add(
     note(
       pathJoin("Projects", "Note List.md"),
@@ -164,7 +240,7 @@ Nexus treats a **folder** as the product. #architecture #local-first No propriet
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block is a live view of your notes. It is plain text in this file, so any editor can change it, and it updates as you write. Type / and pick **Note query** to start one, or open an empty block for starters built from this vault. Blocks fenced as \`\`\`dataview\`\`\` render the same way and stay \`\`\`dataview\`\`\` on disk.
+A \`\`\`nexus-query\`\`\` block is a live view of your notes. It is plain text in this file, so any editor can change it, and it updates as you write. Type / and pick **Note query** to start one, or open an empty block for starters built from this vault.
 
 Start with LIST, TABLE, or CARDS, then add FROM, WHERE, GROUP BY, SORT and LIMIT. A mistake is pointed out in the clause that caused it; nothing else stops working.
 
@@ -229,15 +305,9 @@ Notes that link here:
 LIST FROM [[]]
 \`\`\`
 
-The same language written as a Dataview block:
-
-\`\`\`dataview
-TABLE status FROM "Research" WHERE status
-\`\`\`
-
 ## Reference
 
-\`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column; columns can use parentheses, functions like \`round()\`, \`length()\` and \`if()\`, and \`AS "Label"\` names them. \`WHERE due > date(today)\` compares dates, and \`date(today) - 30d\` moves a date. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`SORT file.ctime\` use them. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field; missing values sort last. AND binds tighter than OR, so status = "draft" AND due > date(today) OR status = "live" means the AND pair or the live status. There is no JavaScript: queries cannot run code.
+\`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column; columns can use parentheses, functions like \`round()\`, \`length()\` and \`if()\`, and \`AS "Label"\` names them. \`WHERE due > date(today)\` compares dates, and \`date(today) - 30d\` moves a date. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`SORT file.ctime\` use them. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field; missing values sort last. AND binds tighter than OR, so status = "draft" AND due > date(today) OR status = "live" means the AND pair or the live status. There is no JavaScript: queries cannot run code.
 
 The short form still works: \`LIST path:Research tag:graph\`, \`TABLE FROM path:Research SORT mtime desc\`.
 
@@ -696,7 +766,7 @@ The graph already ties together [[Local-first Vault]], [[Graph View]], and [[Ext
 - [x] Seed demo notes
 - [x] Wire wikilinks
 - [x] Try Visual ↔ Source
-- [ ] Capture a real research thread
+- [ ] Capture a real research thread 📅 ${day(1)}
   - [ ] File the interview
   - [ ] Link it from [[Heading & Block Links]]
 - [ ] Open my own folder as a vault ^next-step

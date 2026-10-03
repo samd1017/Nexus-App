@@ -1080,7 +1080,7 @@ export function SettingsPanel() {
               />
               <HelpItem
                 title="Tasks"
-                body="Built-in Tasks lists unchecked - [ ] and * [ ] lines. A 📅 YYYY-MM-DD on the line is the due date and wins. Otherwise a note due: YYYY-MM-DD applies to open tasks on that note. Due today and Overdue filter incomplete tasks by that date. Upcoming keeps incomplete tasks whose due date is after today. No due keeps incomplete tasks with no calendar date. Priority markers ⏫ 🔼 🔽 ⏬ ❗ are read from the line. High keeps incomplete tasks marked ⏫ or ❗. Med keeps incomplete tasks marked 🔽. Low keeps incomplete tasks marked ⏬. A 🔁 plus a rule, such as every day, is a recurrence label. Recurring keeps those incomplete tasks. Completing a recurring row schedules the next due when the rule is every day, every week, every month, or every year, including a count such as every 2 weeks. The date on the line wins over the note due:. A row with no recurrence only marks the line done. Dataview queries are not supported. Open a row to jump to that note. The box marks the line done in the file."
+                body="Tasks are - [ ] lines in any note. On the line: 📅 due, ⏳ scheduled, 🛫 start, priority 🔺 ⏫ 🔼 🔽 ⏬, and 🔁 a repeat rule such as every week, every weekday, or every month on the last friday. [due:: 2026-10-03] style fields work too. A note due: property is the due date of its tasks that have none. Right panel → Tasks shows Today, Upcoming, No date, All open, Done, and This note, with search, tag, priority, and folder filters, most urgent first. Ticking a task writes [x] and ✅ with today’s date into the note; a repeating task gets its next copy on the line above. [/] is in progress and [-] is cancelled. A mistake on a line, like 📅 tomorrow, is shown with a fix. Quick add reads plain words like Pay rent fri !high every month and adds the line to today’s daily note. In a query block, TASK lists tasks you can tick: TASK FROM &quot;Projects&quot; WHERE !done AND due &lt;= date(today) + 7d SORT urgency DESC. Nothing in a note is run as code."
               />
               <HelpItem
                 title="Graph"
@@ -1125,7 +1125,7 @@ export function SettingsPanel() {
                   Local-first Markdown notes for humans and agents.
                 </p>
                 <p className="mt-1 text-[12.5px] leading-snug text-[var(--text-secondary)]">
-                  No plugin API in this beta — plain Markdown, built-in query blocks, and a Tasks list.
+                  No plugin API in this beta — plain Markdown, built-in query blocks, and Tasks with dates, repeats, and priorities.
                 </p>
                 <div className="mt-1 text-[12px] text-[var(--text-muted)]">
                   Version {NEXUS_VERSION}
