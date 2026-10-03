@@ -240,7 +240,7 @@ Related: [[Note List]] · [[First Light]]
       projects.id,
       `# Note List
 
-A \`\`\`nexus-query\`\`\` block is a live view of your notes. It is plain text in this file, so any editor can change it, and it updates as you write. Type / and pick **Note query** to start one, or open an empty block for starters built from this vault. Blocks fenced as \`\`\`dataview\`\`\` render the same way and stay \`\`\`dataview\`\`\` on disk.
+A \`\`\`nexus-query\`\`\` block is a live view of your notes. It is plain text in this file, so any editor can change it, and it updates as you write. Type / and pick **Note query** to start one, or open an empty block for starters built from this vault.
 
 Start with LIST, TABLE, or CARDS, then add FROM, WHERE, GROUP BY, SORT and LIMIT. A mistake is pointed out in the clause that caused it; nothing else stops working.
 
@@ -305,15 +305,9 @@ Notes that link here:
 LIST FROM [[]]
 \`\`\`
 
-The same language written as a Dataview block:
-
-\`\`\`dataview
-TABLE status FROM "Research" WHERE status
-\`\`\`
-
 ## Reference
 
-\`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column; columns can use parentheses, functions like \`round()\`, \`length()\` and \`if()\`, and \`AS "Label"\` names them. \`WHERE due > date(today)\` compares dates, and \`date(today) - 30d\` moves a date. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. Not Dataview: a join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`SORT file.ctime\` use them. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field; missing values sort last. AND binds tighter than OR, so status = "draft" AND due > date(today) OR status = "live" means the AND pair or the live status. There is no JavaScript: queries cannot run code.
+\`TABLE status FROM "Research" WHERE status = "draft"\` reads frontmatter. \`WHERE contains(file.name, "Graph")\` matches a substring. \`TABLE file.name + " note"\` builds a column; columns can use parentheses, functions like \`round()\`, \`length()\` and \`if()\`, and \`AS "Label"\` names them. \`WHERE due > date(today)\` compares dates, and \`date(today) - 30d\` moves a date. \`TABLE file.outlinks\` lists one row per outgoing link. \`TABLE file.inlinks\` lists one row per incoming link. A join is FLATTEN file.outlinks or FLATTEN file.inlinks, not two queries. WHERE contains(file.outlinks, "Welcome") or contains(file.inlinks, "Welcome") keeps a note with that link title. WHERE file.outlinks = "Welcome" or file.inlinks = "Welcome" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. \`GROUP BY status\` partitions the list. \`GROUP BY status rows\` lists one level of notes in each partition. \`LIMIT 3\` keeps that many rows. \`TABLE file.size, file.ctime\` shows bytes and created time. \`WHERE file.size > 10\` and \`SORT file.ctime\` use them. \`SORT due\`, \`SORT status\`, or \`SORT file.folder\` orders by that field; missing values sort last. AND binds tighter than OR, so status = "draft" AND due > date(today) OR status = "live" means the AND pair or the live status. There is no JavaScript: queries cannot run code.
 
 The short form still works: \`LIST path:Research tag:graph\`, \`TABLE FROM path:Research SORT mtime desc\`.
 

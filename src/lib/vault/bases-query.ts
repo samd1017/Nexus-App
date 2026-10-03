@@ -57,6 +57,6 @@ export function basesViewToQuery(view: BasesViewConfig, detectedKeys: string[]):
   }
   const sort = columnExpr(view.column);
   if (sort && !(view.column === "name" && view.dir === "asc")) lines.push(`SORT ${sort} ${view.dir === "desc" ? "DESC" : "ASC"}`);
-  if (Object.keys(view.summaries ?? {}).length) notes.push("Summaries stay in Bases.");
+  if (Object.keys(view.summaries ?? {}).length) notes.push("Summaries stay in the note table.");
   return { text: lines.join("\n"), notes };
 }

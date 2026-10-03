@@ -240,7 +240,7 @@ const demo = buildDemoVault();
 const noteList = Object.values(demo.nodes).find((n) => n.path === "Projects/Note List.md");
 assert.ok(noteList && noteList.kind === "note");
 assert.match(noteList.content, /```nexus-query/);
-assert.match(noteList.content, /Not Dataview/);
+assert.match(noteList.content, /one row per incoming link\. A join is FLATTEN/);
 const demoTable = runNexusQuery("TABLE path:Research tag:graph", demo.nodes);
 assert.equal(demoTable.rows.length, 1);
 assert.equal(demoTable.rows[0].path, "Research/Graph View.md");

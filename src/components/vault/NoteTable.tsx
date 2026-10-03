@@ -1132,15 +1132,15 @@ export function NoteTable() {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--bg)]" data-testid="bases-table">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-2">
         <div className="min-w-0">
-          <p className="text-[13px] font-semibold">Bases</p>
+          <p className="text-[13px] font-semibold">Note table</p>
           <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure" data-live-path={livePath ?? ""}>
             Built-in table and cards with views, formula columns with list, regex, and link functions, group-by, summary rows with summary formulas, and typed note links.{" "}
             {livePath
               ? `Views live in ${livePath}. Nexus saves edits to that file and reloads it when it changes.`
               : live?.onDisk
-                ? `Views live in ${LIVE_BASE_FILE} at the vault root, an Obsidian .base file Nexus saves to and reloads when it changes.`
+                ? `Views live in ${LIVE_BASE_FILE} at the vault root, a .base file Nexus saves to and reloads when it changes.`
                 : "Views live in a .base kept in browser storage for this vault."}{" "}
-            Not Obsidian Bases — link.asFile() opens that note, and link.linksTo() checks its links. Some Obsidian functions are missing (Formula help lists what works). asFile().name, .path, .properties, .size, .ctime, and .mtime read that note.
+            link.asFile() opens that note, and link.linksTo() checks its links. Formula help lists every function that works. asFile().name, .path, .properties, .size, .ctime, and .mtime read that note.
           </p>
         </div>
         <div className="flex items-center gap-1">

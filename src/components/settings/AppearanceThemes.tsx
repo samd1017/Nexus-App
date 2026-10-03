@@ -159,9 +159,9 @@ export function CssSnippetsSettings({ open }: { open: boolean }) {
         ) : null}
       </div>
       <p className="mt-1 text-[12px] leading-snug text-[var(--text-muted)]">
-        .css files in <code>.nexus/snippets</code> and Obsidian&apos;s <code>.obsidian/snippets</code>. Obsidian snippets
-        apply through theme variables (--background-primary, --text-normal, --interactive-accent) and
-        body.theme-dark / body.theme-light; rules aimed at Obsidian&apos;s own panes have nothing to match. @import and
+        .css files in <code>.nexus/snippets</code>, and in the snippets folder another Markdown app may already keep in
+        this vault. Snippets apply through theme variables (--background-primary, --text-normal, --interactive-accent)
+        and body.theme-dark / body.theme-light; rules aimed at another app&apos;s own panes have nothing to match. @import and
         http(s) url() are dropped, and a snippet that drops text under {MIN_READABLE_CONTRAST}:1 contrast is turned
         off.
       </p>

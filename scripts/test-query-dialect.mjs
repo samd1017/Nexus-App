@@ -423,7 +423,7 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   assert.match(compileQueryFilter("this.").ok ? "" : compileQueryFilter("this.").problem.message, /this\. needs a field/);
 
   const bases = buildNoteTable(Object.values(vaultThis).filter((n) => n.kind === "note"), "P", [], NOW, 'owner = this.owner');
-  assert.match(bases.filterStatus.problem.message, /a Bases view has none/);
+  assert.match(bases.filterStatus.problem.message, /a note table view has none/);
   assert.equal('owner = this.owner'.slice(bases.filterStatus.problem.start, bases.filterStatus.problem.end), "this.owner");
   assert.equal(bases.rows.length, 4, "a filter Bases cannot run keeps every note");
 
