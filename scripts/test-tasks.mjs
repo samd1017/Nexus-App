@@ -479,6 +479,8 @@ const qtexts = (m) => {
   assert.equal(plan("path regex matches /alpha/i").problems[0].rewrite, "path includes alpha");
   assert.match(plan("filter by function task.urgency > 5").problems[0].message, /does not run code/);
   assert.match(plan("due on someday").problems[0].message, /“someday” is not a day/);
+  assert.equal(plan("due befor in two weeks").problems[0].rewrite, "due before in two weeks");
+  assert.equal(plan("scheduled aftr 2026-10-09").problems[0].rewrite, "scheduled after 2026-10-09");
   const soft = plan("not done\nsort by tag\ngroup by filename\ngroup by priority");
   assert.deepEqual(soft.problems.map((p) => [p.line, p.blocking]), [[1, false], [3, false]], "a sort or group that cannot be read is skipped, not fatal");
   assert.match(soft.query, /GROUP BY file\.name/);

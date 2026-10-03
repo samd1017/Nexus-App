@@ -208,6 +208,14 @@ function readDate(kind: string, rest: string, today: string): Read {
     return { error: "Bad dates are flagged on the task itself, with a fix.", rewrite: null };
   }
   const range = tasksDateRange(when, today);
+  if (!range && !m?.[1]) {
+    const [first = "", ...tail] = when.split(" ");
+    const rest = tail.join(" ");
+    const meant = ["before", "after"].find((word) => first.length >= 4 && editDistance(first, word) <= 2);
+    if (meant && tasksDateRange(rest, today)) {
+      return { error: `“${first}” is not a word Nexus reads here.`, rewrite: `${kind} ${meant} ${rest}` };
+    }
+  }
   if (!range) {
     return {
       error: `“${when}” is not a day Nexus can read.`,
