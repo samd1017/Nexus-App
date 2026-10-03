@@ -279,6 +279,32 @@ function getSnapshot(): TaskIndexSnapshot {
   return snapshot;
 }
 
+/** Listen for list changes outside React. */
+export const subscribeTasks = subscribe;
+
+/** The list as it is right now, for code outside React. */
+export function currentTasks(): TaskIndexSnapshot {
+  return snapshot;
+}
+
+/** Start the list if needed and wait for the first full read, or `ms`, whichever comes first. */
+export function whenTasksReady(ms = 4000): Promise<TaskIndexSnapshot> {
+  start();
+  if (snapshot.state.phase === "ready") return Promise.resolve(snapshot);
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      listeners.delete(check);
+      resolve(snapshot);
+    };
+    const check = () => {
+      if (snapshot.state.phase === "ready") finish();
+    };
+    const timer = setTimeout(finish, ms);
+    listeners.add(check);
+  });
+}
+
 const EMPTY: TaskIndexSnapshot = snapshot;
 
 /** Every task in the vault, live. `enabled: false` reads nothing and starts nothing. */

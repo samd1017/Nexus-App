@@ -438,6 +438,43 @@ const qtexts = (m) => {
   }
 }
 
+// ---------------------------------------------------------------- Preview checkboxes pair with their lines
+{
+  const { markdownToHtml } = await import("../src/lib/markdown/serialize.ts");
+  const { buildDemoVault } = await import("../src/lib/vault/demo-vault.ts");
+  const { checkboxTasks } = await import("../src/lib/tasks/extract.ts");
+  const boxesIn = (html) =>
+    [...html.matchAll(/<li>\s*(?:<p>)?<input([^>]*)type="checkbox">\s*([^<\n]*)/g)].map((m) => ({ checked: /checked/.test(m[1]), text: m[2].trim() }));
+  const tricky = [
+    "---", "due: 2026-10-09", "---", "# Mixed", "- [ ] first 📅 2026-10-03", "- [/] doing is text in preview", "- [x] done ✅ 2026-10-01",
+    "```", "- [ ] code, not a task", "```", "1. [ ] numbered", "   - [ ] nested", "- [-] cancelled", "> - [ ] quoted", "", "- [ ] last ^blk",
+  ].join("\n");
+  const bodies = [tricky, ...Object.values(buildDemoVault().nodes).filter((n) => n.kind === "note" && typeof n.content === "string").map((n) => n.content)];
+  let paired = 0;
+  for (const body of bodies) {
+    const boxes = boxesIn(markdownToHtml(body));
+    const tasks = checkboxTasks(note(body));
+    if (!tasks.length && !boxes.length) continue;
+    assert.equal(boxes.length, tasks.length, `checkbox count lines up in:\n${body.slice(0, 120)}`);
+    boxes.forEach((box, i) => {
+      assert.equal(box.checked, tasks[i].status === "done");
+      assert.ok(tasks[i].raw.includes(box.text.slice(0, 6)), `box ${i} "${box.text}" pairs with "${tasks[i].raw}"`);
+    });
+    paired += boxes.length;
+  }
+  assert.ok(paired > 10, "the demo vault has checkboxes to pair");
+  assert.deepEqual(checkboxTasks(note(tricky)).map((t) => t.line), [5, 7, 11, 12, 14, 16]);
+
+  const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
+  assert.match(preview, /if \(tasks\.length !== boxes\.length\) return;/, "a count mismatch leaves boxes read-only");
+  assert.match(preview, /await whenTasksReady\(\)/);
+  assert.match(preview, /data-task-toggle/);
+  const sourcePreview = readFileSync("src/components/editor/SourcePreview.tsx", "utf8");
+  assert.match(sourcePreview, /editTask\(/);
+  assert.match(sourcePreview, /refreshTaskQueries\(/);
+  assert.match(sourcePreview, /wirePreviewTaskBoxes\(root/);
+}
+
 // ---------------------------------------------------------------- wiring
 {
   const panel = readFileSync("src/components/right/RightPanel.tsx", "utf8");

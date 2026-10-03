@@ -6,8 +6,13 @@ import { useVaultStore } from "@/lib/vault/store";
 import { noteOpenGesture } from "@/lib/vault/note-tabs";
 import { isMacOS } from "@/lib/platform";
 import { usePrefsStore } from "@/lib/prefs/preferences";
-import { hydratePreviewSpecials } from "@/lib/editor/hydrate-preview";
+import { hydratePreviewSpecials, refreshTaskQueries, wirePreviewTaskBoxes } from "@/lib/editor/hydrate-preview";
 import { isVaultAttachmentHref } from "@/lib/vault/attachments";
+import { editTask, openTaskInNote } from "@/lib/tasks/actions";
+import { toggleTask } from "@/lib/tasks/edit";
+import { currentTasks, subscribeTasks } from "@/lib/tasks/task-index";
+
+const TASK_BLOCK = /^[ \t]*(?:```|~~~)[ \t]*(?:nexus-query|dataview)[ \t]*\r?\n\s*tasks?\b/im;
 
 export function SourcePreview({
   content,
@@ -37,6 +42,7 @@ export function SourcePreview({
     let cancelled = false;
     root.innerHTML = html;
     const state = useVaultStore.getState();
+    wirePreviewTaskBoxes(root, content || "", noteId ?? state.activeNoteId);
     const frame = window.requestAnimationFrame(() => {
       if (cancelled || !hostRef.current) return;
       void hydratePreviewSpecials(
@@ -52,9 +58,58 @@ export function SourcePreview({
       cancelled = true;
       window.cancelAnimationFrame(frame);
     };
+    // content only changes together with html
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [html, theme, noteId]);
 
+  const hasTaskBlock = useMemo(() => TASK_BLOCK.test(content || ""), [content]);
+  useEffect(() => {
+    if (!hasTaskBlock) return;
+    let gen = currentTasks().gen;
+    let timer = 0;
+    const stop = subscribeTasks(() => {
+      const next = currentTasks().gen;
+      if (next === gen) return;
+      gen = next;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const root = hostRef.current;
+        if (root) void refreshTaskQueries(root, noteId ?? useVaultStore.getState().activeNoteId);
+      }, 80);
+    });
+    return () => {
+      stop();
+      window.clearTimeout(timer);
+    };
+  }, [hasTaskBlock, noteId]);
+
+  const taskClick = (e: ReactMouseEvent): boolean => {
+    const target = e.target as HTMLElement;
+    const box = target.closest("[data-task-toggle]");
+    if (box instanceof HTMLElement) {
+      e.preventDefault();
+      void editTask(
+        {
+          noteId: box.getAttribute("data-task-note") || "",
+          line: Number(box.getAttribute("data-task-line")),
+          raw: box.getAttribute("data-task-raw") || "",
+          title: box.getAttribute("data-task-title") || "",
+        },
+        toggleTask,
+      );
+      return true;
+    }
+    const text = target.closest("[data-task-open]");
+    if (text instanceof HTMLElement) {
+      e.preventDefault();
+      openTaskInNote({ noteId: text.getAttribute("data-task-open") || "", text: text.getAttribute("data-task-text") || "" });
+      return true;
+    }
+    return false;
+  };
+
   const openPreviewTarget = (e: ReactMouseEvent) => {
+    if (e.type === "click" && taskClick(e)) return;
     const hrefEl = (e.target as HTMLElement).closest("a[href]");
     if (hrefEl instanceof HTMLAnchorElement) {
       const href = hrefEl.getAttribute("href") || "";

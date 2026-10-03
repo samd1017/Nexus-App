@@ -176,6 +176,11 @@ export function tasksInNote(note: TaskNote & { body: string }, today: string = l
   return tasksFromLines(note, entries, dueFromFrontmatter(note.body), today);
 }
 
+/** The tasks Markdown draws as checkboxes (`[ ]` and `[x]`), in line order. */
+export function checkboxTasks(tasks: VaultTask[]): VaultTask[] {
+  return tasks.filter((task) => /^[ xX]$/.test(task.symbol));
+}
+
 export function taskIsOpen(task: Pick<VaultTask, "status">): boolean {
   return isOpen(task.status);
 }
