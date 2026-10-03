@@ -40,6 +40,7 @@ async function bundle(entry, outfile) {
                   export default class TurndownService {
                     constructor() {}
                     turndown(s){ return String(s||''); }
+                    escape(s){ return s; }
                     addRule(){ return this; }
                     keep(){ return this; }
                     remove(){ return this; }
