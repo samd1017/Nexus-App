@@ -204,7 +204,7 @@ function dateProblem(field: TaskDateField, mark: string, value: string, today: s
   const resolved = today ? resolveNaturalDate(value, today) : null;
   if (resolved) {
     return {
-      message: `The ${what} “${value}” is not written as YYYY-MM-DD, so Obsidian and other tools cannot read it.`,
+      message: `The ${what} “${value}” is not written as YYYY-MM-DD, so other Markdown tools cannot read it.`,
       fix: resolved,
       fixLabel: `Write ${resolved}`,
     };

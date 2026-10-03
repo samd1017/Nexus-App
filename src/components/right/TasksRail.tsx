@@ -139,8 +139,8 @@ function SyntaxHelp() {
   return (
     <div className="rounded-[10px] border border-[var(--border)] p-2 text-[11px] text-[var(--text-muted)]" data-testid="tasks-syntax">
       <p className="mb-1 text-[var(--text-secondary)]">
-        Tasks are lines in your notes. Everything below is plain text on the line, the same tokens the Obsidian Tasks plugin
-        writes, so notes move back and forth unchanged.
+        Tasks are lines in your notes. Everything below is plain text on the line, so the note reads the same in any
+        Markdown editor and stays unchanged on disk.
       </p>
       <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
         {SYNTAX_ROWS.map(([code, meaning]) => (

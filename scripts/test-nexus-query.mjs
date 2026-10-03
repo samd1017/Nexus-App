@@ -296,7 +296,7 @@ assert.match(view, /useSyncExternalStore\(subscribeBodyGen, getBodyGen, getBodyG
 assert.match(view, /\[query, nodes, bodyGen\]/);
 assert.match(view, /\[query, nodes, tagExtras, bodyGen, hostId, editGen, taskIndex\.tasks\]/);
 const lib = readFileSync("src/lib/vault/nexus-query.ts", "utf8");
-assert.match(lib, /Not Dataview/);
+assert.match(lib, /Built-in list\. A join is FLATTEN/);
 assert.match(lib, /FLATTEN file\.outlinks/);
 assert.match(lib, /FLATTEN file\.inlinks/);
 assert.doesNotMatch(lib, /no joins/);

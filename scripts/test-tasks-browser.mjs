@@ -271,7 +271,7 @@ try {
   // Reading view: right-click a task line of the note itself, set High priority; that line changes.
   {
     const before = await body(board);
-    const li = page.locator(".nexus-source-preview > ul > li").filter({ hasText: "Review the agent conflict flow" }).first();
+    const li = page.locator(".nexus-source-preview > ul > li").filter({ hasText: "Review the sync conflict flow" }).first();
     await li.scrollIntoViewIfNeeded();
     const box = await li.boundingBox();
     await page.mouse.click(box.x + 80, box.y + 10, { button: "right" });
@@ -279,9 +279,9 @@ try {
     await page.waitForTimeout(1000);
     const diff = changedLines(before, await body(board));
     assert.equal(diff.removed.length, 1);
-    assert.match(diff.removed[0], /Review the agent conflict flow .*🔼/);
+    assert.match(diff.removed[0], /Review the sync conflict flow .*🔼/);
     assert.equal(diff.added.length, 1);
-    assert.match(diff.added[0], /^- \[ \] Review the agent conflict flow .*⏫/);
+    assert.match(diff.added[0], /^- \[ \] Review the sync conflict flow .*⏫/);
     assert.doesNotMatch(diff.added[0], /🔼/);
     // Right-click anywhere else in Reading view keeps the browser menu.
     const heading = await page.locator(".nexus-source-preview h1").first().boundingBox();

@@ -172,12 +172,12 @@ tags: [work]
 
 # Task Board
 
-Tasks are ordinary checkbox lines. The emoji after the text are plain text too, the same ones the Obsidian Tasks plugin writes, so this note reads the same in any editor. Open the right panel → **Tasks** to see every task in the vault by day, or tick one below.
+Tasks are ordinary checkbox lines. The emoji after the text are plain text too, so this note reads the same in any editor. Open the right panel → **Tasks** to see every task in the vault by day, or tick one below.
 
 ## This week
 
 - [ ] Send the launch notes #writing ⏫ 📅 ${day(-1)}
-- [ ] Review the agent conflict flow ⏳ ${day(0)} 🔼
+- [ ] Review the sync conflict flow ⏳ ${day(0)} 🔼
 - [ ] Draft the onboarding checklist #writing 📅 ${day(0)}
 - [/] Profile vault open on 100k notes #perf 🔺 📅 ${day(2)}
 - [ ] Plan the next release 🛫 ${day(3)} 📅 ${day(9)}
@@ -206,9 +206,9 @@ WHERE !done
 GROUP BY status
 \`\`\`
 
-## Blocks from the Tasks plugin
+## Plain-language task blocks
 
-A \`\`\`tasks block written for Obsidian Tasks runs as it is. Add \`explain\` to see the TASK query it reads as.
+A \`\`\`tasks block takes one rule per line in plain words and lists the tasks that match. Add \`explain\` to see the TASK query it runs.
 
 \`\`\`tasks
 not done
@@ -226,7 +226,7 @@ limit 5
 | 🔺 ⏫ 🔼 🔽 ⏬ | highest → lowest priority |
 | 🔁 every week | repeats; ticking it writes the next one above |
 | 🆔 a1 and ⛔ a1 | the second task waits on the first |
-| \`[due:: 2026-10-03]\` | the same, in Dataview spelling |
+| \`[due:: 2026-10-03]\` | the same, written as an inline field |
 
 Related: [[Note List]] · [[First Light]]
 `,

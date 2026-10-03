@@ -33,7 +33,7 @@ export type TasksBlockHost = { path: string } | null;
 type Read = { expr: string } | { error: string; rewrite: string | null };
 
 export const TASKS_BLOCK_FOOTER =
-  "One line per rule, as in the Tasks plugin: not done · done · due, scheduled, starts, or happens before / after / on today, tomorrow, 2026-10-09, or this week · has due date / no due date · priority is high, above medium, or below high · description, path, filename, folder, or heading includes words · tags include #tag · is recurring · exclude sub-items · (A) AND (B), (A) OR (B), NOT (A) · sort by due, priority, or urgency, with reverse · group by filename, folder, heading, priority, or status · limit 20 · explain shows the TASK query it runs. Ticking a box here writes the note.";
+  "One rule per line, and every line must match: not done · done · due, scheduled, starts, or happens before / after / on today, tomorrow, 2026-10-09, or this week · has due date / no due date · priority is high, above medium, or below high · description, path, filename, folder, or heading includes words · tags include #tag · is recurring · exclude sub-items · (A) AND (B), (A) OR (B), NOT (A) · sort by due, priority, or urgency, with reverse · group by filename, folder, heading, priority, or status · limit 20 · explain shows the TASK query it runs. Ticking a box here writes the note.";
 
 const PRIORITIES = Object.keys(PRIORITY_RANK) as TaskPriority[];
 
