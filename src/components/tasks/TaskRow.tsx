@@ -123,8 +123,17 @@ function MenuButton({ children, onClick, testId, active }: { children: ReactNode
   );
 }
 
-function TaskMenu({ task, today }: { task: VaultTask; today: string }) {
-  const [open, setOpen] = useState(false);
+function TaskMenu({
+  task,
+  today,
+  open,
+  setOpen,
+}: {
+  task: VaultTask;
+  today: string;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}) {
   const [picked, setPicked] = useState(task.due ?? "");
   const run = (edit: Parameters<typeof editTask>[1]) => {
     setOpen(false);
@@ -139,7 +148,7 @@ function TaskMenu({ task, today }: { task: VaultTask; today: string }) {
           type="button"
           aria-label={`Task actions: ${task.text}`}
           data-testid="task-menu"
-          className="mt-px shrink-0 rounded-md p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:bg-white/[0.07] hover:text-[var(--text-primary)] focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+          className="mt-px shrink-0 rounded-md p-0.5 text-[var(--text-muted)] opacity-40 transition-opacity hover:bg-white/[0.07] hover:text-[var(--text-primary)] focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
         >
           <MoreHorizontal size={14} />
         </button>
@@ -244,6 +253,7 @@ export function TaskRow({
   indent?: boolean;
 }) {
   const open = isOpen(task.status);
+  const [menuOpen, setMenuOpen] = useState(false);
   const toggle = () => void editTask(task, toggleTask);
   return (
     <div
@@ -251,6 +261,10 @@ export function TaskRow({
       style={indent && task.depth ? { paddingLeft: 6 + task.depth * 16 } : undefined}
       data-testid="task-item"
       data-status={task.status}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenuOpen(true);
+      }}
     >
       <Checkbox task={task} onToggle={toggle} />
       <div className="min-w-0 flex-1">
@@ -289,7 +303,7 @@ export function TaskRow({
           <ProblemLine key={i} task={task} problem={problem} />
         ))}
       </div>
-      <TaskMenu task={task} today={today} />
+      <TaskMenu task={task} today={today} open={menuOpen} setOpen={setMenuOpen} />
     </div>
   );
 }
