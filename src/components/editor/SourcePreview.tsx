@@ -71,9 +71,14 @@ export function SourcePreview({
     }
     const frame = window.requestAnimationFrame(() => {
       if (cancelled || !hostRef.current) return;
-      void hydratePreviewSpecials(hostRef.current, theme, state.nodes, shown, () => cancelled, findEmbedTarget).finally(() => {
-        spacer?.remove();
-      });
+      void hydratePreviewSpecials(
+        hostRef.current,
+        theme,
+        state.nodes,
+        shown,
+        () => cancelled,
+        findEmbedTarget,
+      ).finally(() => spacer?.remove());
     });
     return () => {
       cancelled = true;
