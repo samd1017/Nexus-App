@@ -254,6 +254,20 @@ try {
     });
   }
 
+  // Reading view keeps its place while live blocks fill in again after an edit far down the note.
+  {
+    const scrollTop = () => page.evaluate(() => document.querySelector(".nexus-source-preview").scrollTop);
+    const row = page.locator(".nexus-source-preview [data-type='nexus-query'][data-lang=tasks] [data-testid=task-item]").nth(1);
+    await row.evaluate((el) => el.scrollIntoView({ block: "end" }));
+    const top = await scrollTop();
+    assert.ok(top > 1000, `the block sits far below the fold (${top})`);
+    const box = await row.locator("[data-testid=tasks-row]").boundingBox();
+    await page.mouse.click(box.x + 30, box.y + box.height / 2, { button: "right" });
+    await page.locator("[data-testid=task-menu-at] [data-testid=task-due-week]").click();
+    await page.waitForTimeout(1000);
+    assert.ok(Math.abs((await scrollTop()) - top) <= 2, `Reading view keeps its place (${top} → ${await scrollTop()})`);
+  }
+
   // Reading view: right-click a task line of the note itself, set High priority; that line changes.
   {
     const before = await body(board);

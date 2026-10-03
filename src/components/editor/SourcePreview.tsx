@@ -14,6 +14,14 @@ import { currentTasks, subscribeTasks } from "@/lib/tasks/task-index";
 import type { VaultTask } from "@/lib/tasks/extract";
 import { TaskMenuAt } from "@/components/tasks/TaskRow";
 
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") return node;
+  }
+  return null;
+}
+
 const TASK_BLOCK = /^[ \t]*(?:```|~~~)[ \t]*(?:(?:nexus-query|dataview)[ \t]*\r?\n\s*tasks?\b|tasks[ \t]*$)/im;
 
 export function SourcePreview({
@@ -38,24 +46,34 @@ export function SourcePreview({
   }, [content]);
   const hostRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ task: VaultTask; x: number; y: number } | null>(null);
+  const shownNoteRef = useRef<string | null>(null);
 
   useEffect(() => {
     const root = hostRef.current;
     if (!root) return;
     let cancelled = false;
-    root.innerHTML = html;
     const state = useVaultStore.getState();
-    wirePreviewTaskBoxes(root, content || "", noteId ?? state.activeNoteId);
+    const shown = noteId ?? state.activeNoteId;
+    // Live blocks are empty until they fill in again; holding the old height keeps the reader's place after an edit.
+    const scroller = shownNoteRef.current === shown && root.childElementCount ? scrollParent(root) : null;
+    const top = scroller?.scrollTop ?? 0;
+    const held = scroller ? root.scrollHeight : 0;
+    shownNoteRef.current = shown;
+    root.innerHTML = html;
+    wirePreviewTaskBoxes(root, content || "", shown);
+    let spacer: HTMLDivElement | null = null;
+    if (scroller && held > root.scrollHeight) {
+      spacer = document.createElement("div");
+      spacer.setAttribute("aria-hidden", "true");
+      spacer.style.height = `${held - root.scrollHeight}px`;
+      root.append(spacer);
+      scroller.scrollTop = top;
+    }
     const frame = window.requestAnimationFrame(() => {
       if (cancelled || !hostRef.current) return;
-      void hydratePreviewSpecials(
-        hostRef.current,
-        theme,
-        state.nodes,
-        noteId ?? state.activeNoteId,
-        () => cancelled,
-        findEmbedTarget,
-      );
+      void hydratePreviewSpecials(hostRef.current, theme, state.nodes, shown, () => cancelled, findEmbedTarget).finally(() => {
+        spacer?.remove();
+      });
     });
     return () => {
       cancelled = true;
