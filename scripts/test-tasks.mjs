@@ -414,6 +414,92 @@ const qtexts = (m) => {
   assert.equal(props.id, "spec");
 }
 
+// ---------------------------------------------------------------- ```tasks blocks written for the Tasks plugin
+{
+  const { tasksBlockToQuery, tasksDateRange, applyRewrite, blockQuery } = await import("../src/lib/tasks/tasks-block.ts");
+  const { headingText } = await import("../src/lib/tasks/extract.ts");
+  const { promoteNexusQueryBlocks } = await import("../src/lib/editor/special-blocks.ts");
+  const plan = (src, host = null) => tasksBlockToQuery(src, TODAY, host);
+  const ordered = (src, host = null) => {
+    const p = plan(src, host);
+    assert.deepEqual(p.problems.filter((x) => x.blocking), [], src);
+    return qtexts(run(p.query));
+  };
+  const block = (src, host = null) => ordered(src, host).sort();
+  const journalOpen = ["Due today #home", "Not started yet", "Overdue bill", "Scheduled today"];
+
+  // Status, dates, and ranges.
+  assert.deepEqual(block("done"), ["Dropped", "Finished"]);
+  assert.deepEqual(block("not done\ndue before tomorrow"), ["Due today #home", "Overdue bill"]);
+  assert.deepEqual(block("due today"), ["Due today #home"]);
+  assert.deepEqual(block("due on 2026-10-04"), ["Write spec"]);
+  assert.deepEqual(block("due this week"), ["Due today #home", "Overdue bill", "Write spec"]);
+  assert.deepEqual(block("due after 2026-10-06\nnot done"), ["In flight #deep", "Weekly sync"]);
+  assert.deepEqual(block("scheduled on today"), ["Scheduled today"]);
+  assert.deepEqual(block("has start date\nstarts after today"), ["Not started yet"]);
+  assert.deepEqual(block("happens before tomorrow\nnot done"), journalOpen);
+  assert.deepEqual(block("done on 2026-10-01"), ["Finished"]);
+  assert.deepEqual(block("no due date\nnot done\npath includes alpha"), ["Someday idea"]);
+  // Priority.
+  assert.deepEqual(block("priority is high"), ["Overdue bill"]);
+  assert.deepEqual(block("priority is above medium"), ["Overdue bill", "Write spec"]);
+  assert.deepEqual(block("priority is below none"), ["Scheduled today"]);
+  // Path, file name, heading, description, tags.
+  assert.deepEqual(block("path includes Projects/Beta"), ["Bad date", "Beta task #home"]);
+  assert.deepEqual(block("filename includes Beta.md"), ["Bad date", "Beta task #home"]);
+  assert.deepEqual(block("heading includes fri\nnot done"), journalOpen);
+  assert.deepEqual(block("description includes SPEC"), ["Review spec", "Write spec"]);
+  assert.deepEqual(block("description does not include spec\npath includes alpha"), ["In flight #deep", "Someday idea", "Weekly sync"]);
+  assert.deepEqual(block("tags include #home"), ["Beta task #home", "Due today #home"]);
+  assert.deepEqual(block("is recurring"), ["Weekly sync"]);
+  assert.deepEqual(block("status.type is in_progress"), ["In flight #deep"]);
+  // AND / OR / NOT groups.
+  assert.deepEqual(block("(due today) OR (priority is highest)"), ["Due today #home", "Write spec"]);
+  assert.deepEqual(block("NOT (path includes projects)\nnot done"), journalOpen);
+  assert.deepEqual(block("(not done) AND NOT (path includes projects)"), journalOpen);
+  assert.deepEqual(block('("not done") AND ((due before today) OR (priority is low))'), ["Overdue bill", "Scheduled today"]);
+  // Sort, group, limit, and lines that only change the look.
+  assert.deepEqual(ordered("not done\nsort by due\nlimit 3"), ["Overdue bill", "Due today #home", "Write spec"]);
+  assert.deepEqual(ordered("not done\nsort by priority\nlimit 1"), ["Write spec"]);
+  assert.deepEqual(ordered("not done\nhas due date\nsort by due reverse\nlimit 1"), ["In flight #deep"]);
+  const grouped = run(plan("not done\ngroup by heading\npath includes journal").query);
+  assert.deepEqual([...new Set(grouped.tasks.map((r) => r.group))], ["Fri"]);
+  const quiet = plan("# my comment\nnot done\nhide edit button\nshort mode\nshow tree");
+  assert.deepEqual(quiet.problems, []);
+  assert.equal(quiet.query, "TASK\nWHERE open");
+  assert.equal(plan("not done\nexplain").explain, true);
+  assert.deepEqual(block(""), all.map((t) => t.text).sort(), "an empty block lists every task, as the plugin does");
+  // {{query.file.*}} reads the note the block is in.
+  assert.deepEqual(block("path includes {{query.file.folder}}\nnot done\nno due date", { path: "Projects/Beta.md" }), ["Beta task #home", "Bad date", "Someday idea"].sort());
+  // Lines that cannot be read point at the line and offer a rewrite.
+  const typo = plan("not done\ndew today");
+  assert.deepEqual(typo.problems.map((p) => [p.line, p.blocking, p.rewrite]), [[1, true, "due today"]]);
+  assert.equal(applyRewrite("not done\n  dew today", typo.problems[0]), "not done\n  due today");
+  assert.equal(plan("not done AND due today").problems[0].rewrite, "(not done) AND (due today)");
+  assert.equal(plan("path regex matches /alpha/i").problems[0].rewrite, "path includes alpha");
+  assert.match(plan("filter by function task.urgency > 5").problems[0].message, /does not run code/);
+  assert.match(plan("due on someday").problems[0].message, /“someday” is not a day/);
+  const soft = plan("not done\nsort by tag\ngroup by filename\ngroup by priority");
+  assert.deepEqual(soft.problems.map((p) => [p.line, p.blocking]), [[1, false], [3, false]], "a sort or group that cannot be read is skipped, not fatal");
+  assert.match(soft.query, /GROUP BY file\.name/);
+  // Date words.
+  assert.deepEqual(tasksDateRange("next month", TODAY), ["2026-11-01", "2026-11-30"]);
+  assert.deepEqual(tasksDateRange("last week", TODAY), ["2026-09-21", "2026-09-27"]);
+  assert.deepEqual(tasksDateRange("this quarter", TODAY), ["2026-10-01", "2026-12-31"]);
+  assert.deepEqual(tasksDateRange("in two weeks", TODAY), ["2026-10-16", "2026-10-16"]);
+  assert.deepEqual(tasksDateRange("3 days ago", TODAY), ["2026-09-29", "2026-09-29"]);
+  assert.deepEqual(tasksDateRange("2026-10-09 2026-10-01", TODAY), ["2026-10-01", "2026-10-09"]);
+  // Headings on tasks, other fences untouched, and the fence kept on disk.
+  assert.equal(headingText("## Errands ##"), "Errands");
+  assert.equal(headingText("#tag line"), null);
+  assert.equal(all.find((t) => t.text === "Overdue bill").heading, "Fri");
+  assert.equal(all.find((t) => t.text === "Write spec").heading, null);
+  assert.deepEqual(blockQuery("TASK WHERE open", "nexus-query", TODAY, null), { query: "TASK WHERE open", plan: null });
+  assert.match(promoteNexusQueryBlocks('<pre><code class="language-tasks">not done\n</code></pre>'), /data-type="nexus-query" data-query="not done" data-lang="tasks"/);
+  const { htmlToMarkdown } = await import("../src/lib/markdown/serialize.ts");
+  assert.equal(htmlToMarkdown('<div data-type="nexus-query" data-query="not done&#10;due today" data-lang="tasks"></div>').trim(), "```tasks\nnot done\ndue today\n```");
+}
+
 // ---------------------------------------------------------------- the demo vault's Task Board
 {
   const { buildDemoVault } = await import("../src/lib/vault/demo-vault.ts");
@@ -436,6 +522,12 @@ const qtexts = (m) => {
     assert.ok(model.tasks.length > 0, `${block} found nothing`);
     assert.equal(model.fieldNote, null, model.fieldNote);
   }
+  const { blockQuery } = await import("../src/lib/tasks/tasks-block.ts");
+  const plugin = [...board.content.matchAll(/```tasks\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+  assert.equal(plugin.length, 1);
+  const { query, plan } = blockQuery(plugin[0], "tasks", localToday(), { path: board.path });
+  assert.deepEqual(plan.problems, []);
+  assert.ok(runNexusQuery(query, demo.nodes, null, Date.now(), board.id, demoTasks).tasks.length > 0);
 }
 
 // ---------------------------------------------------------------- a Visual save writes task lines back as typed
@@ -491,6 +583,9 @@ const qtexts = (m) => {
   assert.match(sourcePreview, /editTask\(/);
   assert.match(sourcePreview, /refreshTaskQueries\(/);
   assert.match(sourcePreview, /wirePreviewTaskBoxes\(root/);
+  assert.match(preview, /blockQuery\(written, fence/);
+  assert.match(readFileSync("src/components/editor/NexusQueryView.tsx", "utf8"), /blockQuery\(written, fence/);
+  assert.doesNotMatch(readFileSync("src/lib/tasks/tasks-block.ts", "utf8"), /\beval\(|new Function\(/);
 }
 
 // ---------------------------------------------------------------- wiring

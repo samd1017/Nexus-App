@@ -25,6 +25,7 @@ import { friendlyDay, localToday } from "@/lib/tasks/dates";
 import { priorityMarker, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
 import { isOpen } from "@/lib/tasks/syntax";
 import { whenTasksReady } from "@/lib/tasks/task-index";
+import { TASKS_BLOCK_FOOTER, blockQuery, planBlocked, type TasksBlockPlan } from "@/lib/tasks/tasks-block";
 
 /** A query block whose first word is TASK lists task lines, not notes. */
 export const TASK_QUERY_HEAD = /^\s*tasks?\b/i;
@@ -266,10 +267,10 @@ function taskRowHtml(task: VaultTask, today: string): string {
   </div>`;
 }
 
-function nexusTaskBody(model: NexusQueryModel, waiting: boolean): string {
+function nexusTaskBody(model: NexusQueryModel, waiting: boolean, none = "No tasks match. Loosen WHERE, or check the FROM folder or tag."): string {
   const rows = model.tasks ?? [];
   if (!rows.length) {
-    const text = waiting ? "Reading tasks…" : "No tasks match. Loosen WHERE, or check the FROM folder or tag.";
+    const text = waiting ? "Reading tasks…" : none;
     return `<p class="nexus-query-empty" data-testid="nexus-query-empty">${escapeHtml(text)}</p>`;
   }
   const today = localToday();
@@ -393,22 +394,49 @@ async function renderNexusQueries(
   hostId: string | null,
 ): Promise<void> {
   for (const el of els) {
-    const query = (el.getAttribute("data-query") || "").trim();
+    const written = (el.getAttribute("data-query") || "").trim();
     const fence = el.getAttribute("data-lang") || "nexus-query";
+    const live = useVaultStore.getState().nodes || nodes;
+    const hostPath = hostId ? (live[hostId]?.path ?? null) : null;
+    const { query, plan } = blockQuery(written, fence, localToday(), hostPath ? { path: hostPath } : null);
+    const blocked = planBlocked(plan);
     const taskQuery = TASK_QUERY_HEAD.test(query);
     if (taskQuery) el.setAttribute("data-task-query", "");
     const extras = await loadTagExtras(query);
-    const index = taskQuery ? await whenTasksReady() : null;
-    const model = runNexusQuery(query, useVaultStore.getState().nodes || nodes, extras, Date.now(), hostId, index?.tasks ?? null);
+    const index = taskQuery && !blocked ? await whenTasksReady() : null;
+    const model = runNexusQuery(query, live, extras, Date.now(), hostId, index?.tasks ?? null);
     const shown = model.tasks ? model.tasks.length : model.rows.length;
     const total = model.total ?? shown;
     const noun = model.mode === "task" ? (total === 1 ? "task" : "tasks") : total === 1 ? "note" : "notes";
-    const count = model.mode && !model.error ? `${total} ${noun} · ` : "";
+    const count = model.mode && !model.error && !blocked ? `${total} ${noun} · ` : "";
+    const head = written.replace(/\s*\n\s*/g, " · ") || (plan ? "Every task" : fence);
+    const body = plan ? tasksBlockBody(plan, model, index?.state.phase === "scanning") : nexusQueryBody(query, model, index?.state.phase === "scanning");
     el.innerHTML = `
-      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(query.replace(/\s*\n\s*/g, " · ") || fence)}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">${escapeHtml(count + fence)}</span></div>
-      <div class="nexus-query-body">${nexusQueryBody(query, model, index?.state.phase === "scanning")}</div>
+      <div class="nexus-query-head"><span class="min-w-0 truncate font-mono text-[12px]">${escapeHtml(head)}</span><span class="ml-auto text-[10px] text-[var(--text-muted)]">${escapeHtml(count + fence)}</span></div>
+      <div class="nexus-query-body">${body}</div>
     `;
   }
+}
+
+function tasksBlockBody(plan: TasksBlockPlan, model: NexusQueryModel, waiting: boolean): string {
+  const bits = plan.problems.map((problem) => {
+    const rewrite = problem.rewrite !== null
+      ? `<span class="nexus-query-excerpt" data-testid="tasks-block-rewrite">Use: <mark>${escapeHtml(problem.rewrite)}</mark></span>`
+      : "";
+    return `<div class="${problem.blocking ? "nexus-query-problem" : "nexus-tasks-block-note"}" data-testid="tasks-block-problem" data-line="${problem.line + 1}"${problem.blocking ? ' role="alert"' : ""}><p><span class="nexus-query-clause">line ${problem.line + 1}</span><code>${escapeHtml(problem.text)}</code> ${escapeHtml(problem.message)}</p>${rewrite}</div>`;
+  });
+  if (!planBlocked(plan)) {
+    if (plan.explain) bits.push(`<pre class="nexus-tasks-block-explain" data-testid="tasks-block-explain">${escapeHtml(plan.query)}</pre>`);
+    if (model.error) bits.push(`<div class="nexus-query-problem" data-testid="nexus-query-error"><p>${escapeHtml(model.error)}</p></div>`);
+    else bits.push(nexusTaskBody(model, waiting, "No tasks match these lines."));
+    if (model.truncated) {
+      bits.push(`<p class="nexus-query-empty" data-testid="nexus-query-cap">Showing the first ${model.cap ?? 0} of ${model.total ?? 0}. Add a limit or a path line.</p>`);
+    }
+  }
+  bits.push(
+    `<details class="nexus-query-syntax"><summary>Lines a tasks block reads</summary><p data-testid="nexus-query-footer">${escapeHtml(TASKS_BLOCK_FOOTER)}</p></details>`,
+  );
+  return bits.join("");
 }
 
 /** Letters and digits only, so rendered text and its Markdown line compare equal. */

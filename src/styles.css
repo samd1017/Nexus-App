@@ -2184,6 +2184,40 @@
   text-decoration: underline wavy var(--danger, #e5484d);
   text-underline-offset: 3px;
 }
+.nexus-tasks-block-note {
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.nexus-tasks-block-note .nexus-query-clause {
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+.nexus-query-problem code,
+.nexus-tasks-block-note code {
+  margin-right: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+}
+button.nexus-query-excerpt[data-testid="tasks-block-rewrite"]:hover {
+  color: var(--accent);
+}
+[data-testid="tasks-block-rewrite"] mark {
+  text-decoration: none;
+  color: var(--accent);
+}
+.nexus-tasks-block-explain {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
 .nexus-query-starters {
   display: flex;
   flex-wrap: wrap;

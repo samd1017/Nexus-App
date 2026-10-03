@@ -126,7 +126,8 @@ turndown.addRule("nexusQueryBlock", {
     (node as HTMLElement).getAttribute("data-type") === "nexus-query",
   replacement: (_content, node) => {
     const q = (node as HTMLElement).getAttribute("data-query") || "";
-    const fence = (node as HTMLElement).getAttribute("data-lang") === "dataview" ? "dataview" : "nexus-query";
+    const lang = (node as HTMLElement).getAttribute("data-lang");
+    const fence = lang === "dataview" || lang === "tasks" ? lang : "nexus-query";
     return `\n\`\`\`${fence}\n${q.replace(/\n+$/, "")}\n\`\`\`\n\n`;
   },
 });
@@ -734,7 +735,7 @@ function flattenSpecialEditorBlocks(root: HTMLElement): void {
     const next = doc.createElement("div");
     next.setAttribute("data-type", "nexus-query");
     next.setAttribute("data-query", query);
-    if (fence === "dataview") next.setAttribute("data-lang", fence);
+    if (fence === "dataview" || fence === "tasks") next.setAttribute("data-lang", fence);
     el.replaceWith(next);
   });
   root.querySelectorAll("[data-type='query'], .nexus-query").forEach((el) => {

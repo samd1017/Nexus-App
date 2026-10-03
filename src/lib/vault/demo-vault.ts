@@ -206,6 +206,17 @@ WHERE !done
 GROUP BY status
 \`\`\`
 
+## Blocks from the Tasks plugin
+
+A \`\`\`tasks block written for Obsidian Tasks runs as it is. Add \`explain\` to see the TASK query it reads as.
+
+\`\`\`tasks
+not done
+due before in two weeks
+sort by due
+limit 5
+\`\`\`
+
 ## Cheat sheet
 
 | Write | Means |

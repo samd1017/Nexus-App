@@ -3,10 +3,15 @@ import { ReactNodeViewRenderer } from "@tiptap/react";
 import { NexusQueryView } from "@/components/editor/NexusQueryView";
 
 /** Fence names this block reads and writes back unchanged. */
-export type NexusQueryFence = "nexus-query" | "dataview";
+export type NexusQueryFence = "nexus-query" | "dataview" | "tasks";
 
 export function queryFence(value: unknown): NexusQueryFence {
-  return value === "dataview" ? "dataview" : "nexus-query";
+  return value === "dataview" || value === "tasks" ? value : "nexus-query";
+}
+
+function fenceAttr(value: unknown): Record<string, string> {
+  const fence = queryFence(value);
+  return fence === "nexus-query" ? {} : { "data-lang": fence };
 }
 
 export const NexusQueryBlock = Node.create({
@@ -26,7 +31,7 @@ export const NexusQueryBlock = Node.create({
       lang: {
         default: "nexus-query",
         parseHTML: (el) => queryFence(el.getAttribute("data-lang")),
-        renderHTML: (attrs) => (queryFence(attrs.lang) === "dataview" ? { "data-lang": "dataview" } : {}),
+        renderHTML: (attrs) => fenceAttr(attrs.lang),
       },
     };
   },
@@ -51,7 +56,7 @@ export const NexusQueryBlock = Node.create({
       attrs: ({ node }) => ({
         "data-type": "nexus-query",
         "data-query": String(node.attrs.query ?? ""),
-        ...(queryFence(node.attrs.lang) === "dataview" ? { "data-lang": "dataview" } : {}),
+        ...fenceAttr(node.attrs.lang),
         class: "nexus-note-list",
       }),
     });

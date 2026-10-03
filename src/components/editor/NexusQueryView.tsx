@@ -23,6 +23,7 @@ import { vaultIndex } from "@/lib/vault/indexes";
 import { useTaskIndex } from "@/lib/tasks/task-index";
 import { localToday } from "@/lib/tasks/dates";
 import { TaskRow } from "@/components/tasks/TaskRow";
+import { TASKS_BLOCK_FOOTER, applyRewrite, blockQuery, planBlocked } from "@/lib/tasks/tasks-block";
 
 const BODY_BATCH = 32;
 const LIVE_DELAY_MS = 140;
@@ -78,7 +79,14 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
     return () => window.clearTimeout(timer);
   }, [vaultGen, editGen]);
   /** While editing, results follow the text being typed. */
-  const query = editing ? liveDraft : saved;
+  const written = editing ? liveDraft : saved;
+  const today = localToday();
+  const hostPath = hostId ? (nodes[hostId]?.path ?? null) : null;
+  const { query, plan } = useMemo(
+    () => blockQuery(written, fence, today, hostPath ? { path: hostPath } : null),
+    [written, fence, today, hostPath],
+  );
+  const blocked = planBlocked(plan);
   const taskIndex = useTaskIndex(/^\s*tasks?\b/i.test(query));
   const triedBodyIds = useRef(new Set<string>());
   const queryKey = useRef(query);
@@ -168,9 +176,9 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
     const result = runNexusQuery(query, nodes, tagExtras, Date.now(), hostId, taskIndex.tasks);
     return { model: result, ms: performance.now() - started };
   }, [query, nodes, tagExtras, bodyGen, hostId, editGen, taskIndex.tasks]);
-  const model = timed.model;
+  const model = blocked ? { ...timed.model, tasks: [], total: 0, mode: null } : timed.model;
 
-  const starters = useMemo(() => (query.trim() ? [] : queryStarters(nodes)), [query, nodes]);
+  const starters = useMemo(() => (plan || written.trim() ? [] : queryStarters(nodes)), [plan, written, nodes]);
 
   const openRow = (id: string) => {
     const store = useVaultStore.getState();
@@ -203,9 +211,8 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
   const headers = columnHeaders(model);
   const showTitle = !model.withoutId;
   const showPath = model.showPath ?? true;
-  const ModeIcon = model.mode === "cards" ? LayoutGrid : model.mode === "table" ? Table2 : model.mode === "task" ? ListChecks : List;
-  const today = localToday();
-  const excerpt = model.problem ? problemExcerpt(query, model.problem) : null;
+  const ModeIcon = model.mode === "cards" ? LayoutGrid : model.mode === "table" ? Table2 : model.mode === "task" || plan ? ListChecks : List;
+  const excerpt = model.problem && !plan ? problemExcerpt(query, model.problem) : null;
   const counts = countLine(model, timed.ms);
 
   const groupHeader = (row: NexusQueryRow, index: number) =>
@@ -216,7 +223,7 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
       className="nexus-note-list"
       data-type="nexus-query"
       data-query={saved}
-      data-lang={fence === "dataview" ? fence : undefined}
+      data-lang={fence !== "nexus-query" ? fence : undefined}
       data-testid="nexus-query"
     >
       <div className="nexus-query-head">
@@ -233,7 +240,11 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
             data-testid="nexus-query-edit"
             onClick={() => startEditing()}
           >
-            {saved.trim() ? saved.trim().replace(/\s*\n\s*/g, " · ") : "New query — pick a starter or write your own"}
+            {saved.trim()
+              ? saved.trim().replace(/\s*\n\s*/g, " · ")
+              : plan
+                ? "Every task · add lines like not done or due before tomorrow"
+                : "New query — pick a starter or write your own"}
           </button>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-2 text-[10px] text-[var(--text-muted)]">
@@ -263,7 +274,7 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
               }
             }}
             className="nexus-field w-full resize-none rounded-md border border-[var(--border)] bg-transparent px-2 py-1.5 font-mono text-[12px] leading-[1.5]"
-            placeholder={'TABLE status, due FROM "Projects" WHERE status != "done" SORT due'}
+            placeholder={plan ? "not done\ndue before tomorrow\nsort by priority" : 'TABLE status, due FROM "Projects" WHERE status != "done" SORT due'}
           />
         </div>
       ) : null}
@@ -329,6 +340,47 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
             ) : null}
           </div>
         ) : null}
+        {plan?.problems.length ? (
+          <div className="nexus-tasks-block-problems" data-testid="tasks-block-problems">
+            {plan.problems.map((problem) => (
+              <div
+                key={`${problem.line}:${problem.text}`}
+                className={problem.blocking ? "nexus-query-problem" : "nexus-tasks-block-note"}
+                data-testid="tasks-block-problem"
+                data-line={problem.line + 1}
+                role={problem.blocking ? "alert" : undefined}
+              >
+                <p>
+                  <span className="nexus-query-clause">line {problem.line + 1}</span>
+                  <code>{problem.text}</code> {problem.message}
+                </p>
+                {problem.rewrite !== null ? (
+                  <button
+                    type="button"
+                    className="nexus-query-excerpt"
+                    data-testid="tasks-block-rewrite"
+                    title="Use this line"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const next = applyRewrite(written, problem);
+                      if (editing) {
+                        setDraft(next);
+                        setLiveDraft(next);
+                      } else updateAttributes({ query: next });
+                    }}
+                  >
+                    Use: <mark>{problem.rewrite}</mark>
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {plan?.explain && !blocked ? (
+          <pre className="nexus-tasks-block-explain" data-testid="tasks-block-explain">
+            {plan.query}
+          </pre>
+        ) : null}
         {model.fieldNote ? (
           <p className="nexus-query-empty" data-testid="nexus-query-field-note">
             {model.fieldNote}
@@ -344,7 +396,9 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
             <p className="nexus-query-empty" data-testid="nexus-query-empty">
               {taskIndex.state.phase !== "ready"
                 ? `Reading tasks… ${taskIndex.state.scanned.toLocaleString()} notes`
-                : "No tasks match. Loosen WHERE, or check the FROM folder or tag."}
+                : plan
+                  ? "No tasks match these lines."
+                  : "No tasks match. Loosen WHERE, or check the FROM folder or tag."}
             </p>
           ) : (
             <div className="nexus-query-tasks" data-testid="nexus-query-tasks">
@@ -366,7 +420,7 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
             </div>
           )
         ) : null}
-        {!model.help && !model.error && model.mode !== "task" && model.rows.length === 0 ? (
+        {!blocked && !model.help && !model.error && model.mode !== "task" && model.rows.length === 0 ? (
           <p className="nexus-query-empty" data-testid="nexus-query-empty">
             {tagsLoading
               ? "Reading tags…"
@@ -559,7 +613,7 @@ export function NexusQueryView({ node, updateAttributes, editor }: NodeViewProps
         {model.scanNote && !(model.rows.length === 0 && model.tagsIncomplete) ? <p className="nexus-query-empty">{model.scanNote}</p> : null}
         <details className="nexus-query-syntax">
           <summary>How to write a query</summary>
-          <p data-testid="nexus-query-footer">{model.footer}</p>
+          <p data-testid="nexus-query-footer">{plan ? TASKS_BLOCK_FOOTER : model.footer}</p>
         </details>
       </div>
     </NodeViewWrapper>
