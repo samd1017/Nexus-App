@@ -173,7 +173,7 @@ export const DEFAULT_PREFS: NexusPrefs = {
   savedSearches: [],
 };
 
-export const NEXUS_VERSION = "0.1.2-alpha";
+export const NEXUS_VERSION = "0.1.3-alpha";
 
 /** Platform-aware keyboard shortcut list for Settings (⌘ vs Ctrl). */
 export function getShortcuts(): { keys: string; action: string }[] {
