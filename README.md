@@ -87,10 +87,10 @@ npm run tauri:dev
 
 ## Releases
 
-The current release, [`v0.1.2-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.2-alpha), has unsigned installers:
+The current release, [`v0.1.3-alpha`](https://github.com/samd1017/Nexus-App/releases/tag/v0.1.3-alpha), has unsigned installers:
 
-- macOS (Apple Silicon): `Nexus_0.1.2-alpha_aarch64.dmg`
-- Windows: `Nexus_0.1.2-alpha_x64-setup.exe`
+- macOS (Apple Silicon): `Nexus_0.1.3-alpha_aarch64.dmg`
+- Windows: `Nexus_0.1.3-alpha_x64-setup.exe`
 
 These installers are not signed or notarized. [DESKTOP.md](DESKTOP.md) explains the warnings you'll see the first time you open the app.
 
