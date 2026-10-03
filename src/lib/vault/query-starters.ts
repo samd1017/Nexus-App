@@ -57,11 +57,13 @@ export function queryStarters(nodes: Record<string, VaultNode> | null | undefine
   const out: QueryStarter[] = [];
   const folder = topFolder(map);
   const tags = getTopVaultTags(map, 2);
-  out.push({
-    label: "Recently edited",
-    hint: "Last 7 days, newest first",
-    query: 'TABLE file.folder AS "Folder", file.mtime AS "Edited"\nWHERE file.mtime >= date(today) - 7d\nSORT file.mtime DESC\nLIMIT 20',
-  });
+  if (folder) {
+    out.push({
+      label: "Recently edited",
+      hint: `Last 7 days in ${folder.path}, newest first`,
+      query: `TABLE file.folder AS "Folder", file.mtime AS "Edited"\nFROM ${quoteFolder(folder.path)}\nWHERE file.mtime >= date(today) - 7d\nSORT file.mtime DESC\nLIMIT 20`,
+    });
+  }
   out.push({
     label: "Open tasks",
     hint: "Most urgent first; tick them here",

@@ -18,6 +18,7 @@
 import { extractWikilinks, normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import { extractTagsFromMarkdown, notesForTag } from "@/lib/vault/tags";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
+import { vaultLinkIndex } from "@/lib/vault/link-index";
 import { getDurableIndex } from "@/lib/vault/durable-index";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
@@ -114,6 +115,9 @@ type WhereCmp =
 /** Field comparisons in one WHERE, joined by AND. */
 const MAX_WHERE = 8;
 
+/** A query with no folder or tag. Both forms use this sentence. */
+const ADD_FROM_SCOPE = 'Add FROM "Folder" or FROM #tag.';
+
 const DAY_MS = 86_400_000;
 
 type FormulaOp = "+" | "-" | "*" | "/";
@@ -131,8 +135,10 @@ type QueryColumn =
 type Parsed =
   | { kind: "help" }
   | { kind: "error"; error: string; problem?: QueryProblem | null }
-  | { kind: "dialect"; query: DialectQuery }
-  | ClassicOk;
+  | { kind: "dialect"; query: DialectQuery };
+
+/** Simple-form clauses for a query the classic sugar compiled. Same object the runner executes. */
+const simpleOf = new WeakMap<DialectQuery, ClassicOk>();
 
 type ClassicParsed = { kind: "help" } | { kind: "error"; error: string } | ClassicOk;
 
@@ -702,14 +708,42 @@ function folderProblem(source: string, folder: string, message: string): QueryPr
   return { message, clause: "FROM", start: Math.max(0, fromAt), end: fromAt >= 0 ? source.length : 1 };
 }
 
+/** The simple form, as the same query LIST, TABLE, CARDS, and TASK already run. */
+function dialectFromClassic(ok: ClassicOk): DialectQuery {
+  return {
+    view: ok.mode,
+    withoutId: false,
+    columns: [],
+    source: {
+      folder: ok.path,
+      tags: [...ok.tags],
+      tagMode: ok.tagMode,
+      notTags: [],
+      notFolders: [],
+      linksTo: null,
+      linkedFrom: null,
+      vault: false,
+    },
+    where: [],
+    sort: [],
+    groupBy: null,
+    limit: ok.limit,
+  };
+}
+
 /**
- * The simple form first, so every block written for it reads the same. Anything
- * it rejects is tried as the full form; when neither reads it, the form the query
- * looks like explains why.
+ * One parse. The simple form is sugar: when it reads the block, it becomes the
+ * same query object as LIST, TABLE, CARDS, and TASK. Anything it rejects is the
+ * full form. When neither reads it, the form the query looks like explains why.
  */
 export function parseNexusQuery(source: string): Parsed {
   const classic = readsThisNote(source) ? null : parseClassic(source);
-  if (classic && classic.kind !== "error") return classic;
+  if (classic?.kind === "help") return classic;
+  if (classic?.kind === "ok") {
+    const query = dialectFromClassic(classic);
+    simpleOf.set(query, classic);
+    return { kind: "dialect", query };
+  }
   const dialect = parseDialect(source || "");
   if (dialect.ok) return { kind: "dialect", query: dialect.query };
   if (classic && looksClassic(source) && !looksLikeDialect(source)) {
@@ -980,7 +1014,7 @@ function parseClassic(source: string): ClassicParsed {
   if (!path && tags.length === 0) {
     return {
       kind: "error",
-      error: "Add FROM path: or FROM #tag so the list stays on one folder or tag.",
+      error: ADD_FROM_SCOPE,
     };
   }
   if (flattenLinks === "out" && !columns.some((col) => col.kind === "field" && linkListField(col.name) === "out")) {
@@ -1199,18 +1233,174 @@ function ordered(left: number, right: number, op: WhereOp): boolean {
   return left !== right;
 }
 
+const linkReadyFor = new WeakMap<object, number>();
+const noteResolveCache = new WeakMap<object, { gen: number; map: Map<string, string> }>();
+/** The node map the link index was last matched to. A different map is rebuilt once, not on every query. */
+let linkOwner: object | null = null;
+
+/** Title and path keys the link index uses for one note. */
+function linkKeysOf(node: VaultNode): string[] {
+  const keys = [
+    normalizeLinkTarget(noteTitle(node)),
+    normalizeLinkTarget(node.name),
+    normalizeLinkTarget(node.path),
+    normalizeLinkTarget(node.path.replace(/\.md$/i, "")),
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const key of keys) {
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+/** Notes the folder index can reach, from the root. Not a scan of the node map. */
+function eachIndexedNote(nodes: Record<string, VaultNode>, visit: (node: VaultNode) => void): void {
+  const idx = ensureVaultIndex(nodes);
+  const stack = [...idx.getChildIds(null)];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const node = nodes[id];
+    if (!node) continue;
+    if (node.kind === "folder") {
+      const kids = idx.getChildIds(node.id);
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]!);
+      continue;
+    }
+    visit(node);
+  }
+}
+
+function indexCoversLoaded(nodes: Record<string, VaultNode>): boolean {
+  if (!vaultLinkIndex.ready) return false;
+  let loaded = 0;
+  let covered = 0;
+  eachIndexedNote(nodes, (node) => {
+    if (node.kind !== "note" || typeof node.content !== "string") return;
+    loaded += 1;
+    if (vaultLinkIndex.outgoing.has(node.id)) covered += 1;
+  });
+  if (covered !== loaded) return false;
+  for (const id of vaultLinkIndex.outgoing.keys()) {
+    if (nodes[id]?.kind !== "note") return false;
+  }
+  return true;
+}
+
+/** Use the link index the shell keeps. Fill it once when this vault has not been indexed yet. */
+function ensureQueryLinkIndex(nodes: Record<string, VaultNode>): void {
+  const gen = vaultLinkIndex.generation;
+  if (linkReadyFor.get(nodes) === gen && vaultLinkIndex.ready) return;
+  const sameMap = linkOwner === null || linkOwner === nodes;
+  if (vaultLinkIndex.ready && sameMap && indexCoversLoaded(nodes)) {
+    linkOwner = nodes;
+    linkReadyFor.set(nodes, vaultLinkIndex.generation);
+    return;
+  }
+  vaultLinkIndex.rebuild(nodes);
+  linkOwner = nodes;
+  linkReadyFor.set(nodes, vaultLinkIndex.generation);
+}
+
+/** Note id for a wikilink target, from the path and title index. */
+function resolveNoteId(nodes: Record<string, VaultNode>, target: string): string | null {
+  const key = normalizeLinkTarget(target);
+  if (!key) return null;
+  const idx = ensureVaultIndex(nodes);
+  const gen = idx.generation();
+  let cached = noteResolveCache.get(nodes);
+  if (!cached || cached.gen !== gen) {
+    const map = new Map<string, string>();
+    const put = (name: string, id: string) => {
+      if (name && !map.has(name)) map.set(name, id);
+    };
+    for (const [path, id] of idx.pathToId) {
+      if (nodes[id]?.kind !== "note") continue;
+      const node = nodes[id];
+      if (!node) continue;
+      put(normalizeLinkTarget(path), id);
+      put(normalizeLinkTarget(path.replace(/\.md$/i, "")), id);
+      put(normalizeLinkTarget(noteTitle(node)), id);
+      put(normalizeLinkTarget(node.name), id);
+    }
+    cached = { gen, map };
+    noteResolveCache.set(nodes, cached);
+  }
+  return cached.map.get(key) ?? null;
+}
+
+/**
+ * Incoming titles for each target, from the link index.
+ * A note with no body and no indexed links is counted and skipped.
+ * Same-note and heading-only links are not rows.
+ */
+function incomingByTarget(nodes: Record<string, VaultNode>): { byId: Map<string, string[]>; unloaded: number } {
+  ensureQueryLinkIndex(nodes);
+  const byId = new Map<string, string[]>();
+  const sources = new Map<string, VaultNode[]>();
+  let unloaded = 0;
+  eachIndexedNote(nodes, (node) => {
+    if (node.kind !== "note") return;
+    if (typeof node.content !== "string" && !vaultLinkIndex.outgoing.has(node.id)) unloaded += 1;
+  });
+  vaultLinkIndex.forEachEdge((sourceId, target) => {
+    const source = nodes[sourceId];
+    if (source?.kind !== "note" || sourceId === undefined) return;
+    const id = resolveNoteId(nodes, target);
+    if (!id || id === sourceId || nodes[id]?.kind !== "note") return;
+    const list = sources.get(id);
+    if (list) {
+      if (list.some((item) => item.id === sourceId)) return;
+      list.push(source);
+      return;
+    }
+    sources.set(id, [source]);
+  });
+  for (const [id, list] of sources) {
+    list.sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)) || a.path.localeCompare(b.path));
+    byId.set(id, list.map((node) => noteTitle(node)));
+  }
+  return { byId, unloaded };
+}
+
+/** Notes that link to `target`, from the reverse link index. A note with no body is skipped. */
+function notesLinkingTo(nodes: Record<string, VaultNode>, target: VaultNode): { notes: VaultNode[]; unloaded: number } {
+  ensureQueryLinkIndex(nodes);
+  const ids = new Set<string>();
+  for (const key of linkKeysOf(target)) {
+    for (const src of vaultLinkIndex.getBacklinkSources(key)) {
+      if (src !== target.id) ids.add(src);
+    }
+  }
+  const notes: VaultNode[] = [];
+  let unloaded = 0;
+  for (const id of ids) {
+    const node = nodes[id];
+    if (!isQueryNote(node)) continue;
+    if (typeof node.content !== "string") {
+      unloaded += 1;
+      continue;
+    }
+    notes.push(node);
+  }
+  return { notes, unloaded };
+}
+
 type LinkScan = {
-  index: Map<string, string>;
   incoming: Map<string, string[]>;
   incomingUnloaded: number;
 };
 
-/** Indexes for one query. Built only when WHERE or FLATTEN reads links. */
+/** Incoming titles, only when a query reads them. Outgoing labels resolve per note. */
 function scanLinks(nodes: Record<string, VaultNode>, need: { out: boolean; inn: boolean }): LinkScan {
-  const index = need.out ? noteLinkIndex(nodes) : new Map();
-  if (!need.inn) return { index, incoming: new Map(), incomingUnloaded: 0 };
+  if (!need.inn) return { incoming: new Map(), incomingUnloaded: 0 };
   const incoming = incomingByTarget(nodes);
-  return { index, incoming: incoming.byId, incomingUnloaded: incoming.unloaded };
+  return { incoming: incoming.byId, incomingUnloaded: incoming.unloaded };
 }
 
 function whereMatch(
@@ -1225,7 +1415,7 @@ function whereMatch(
     if (!nodes || !links) return "unloaded";
     if (membership.join === "out") {
       if (typeof node.content !== "string") return "unloaded";
-      const labels = outgoingJoinLabels(node, nodes, links.index);
+      const labels = outgoingJoinLabels(node, nodes);
       return labels.some((label) => label === membership.needle) ? "yes" : "no";
     }
     const labels = links.incoming.get(node.id) ?? [];
@@ -1380,64 +1570,8 @@ function formulaText(node: VaultNode, column: Extract<QueryColumn, { kind: "form
   return "—";
 }
 
-function noteLinkIndex(nodes: Record<string, VaultNode>): Map<string, string> {
-  const index = new Map<string, string>();
-  const put = (key: string, id: string) => {
-    if (key && !index.has(key)) index.set(key, id);
-  };
-  for (const node of Object.values(nodes)) {
-    if (node.kind !== "note") continue;
-    put(normalizeLinkTarget(noteTitle(node)), node.id);
-    put(normalizeLinkTarget(node.name), node.id);
-    put(normalizeLinkTarget(node.path.replace(/\.md$/i, "")), node.id);
-    put(normalizeLinkTarget(node.path), node.id);
-  }
-  return index;
-}
-
-/**
- * Incoming titles for each target id, from loaded note bodies.
- * A note with no body is counted and skipped. Same-note and heading-only links are not rows.
- */
-function incomingByTarget(nodes: Record<string, VaultNode>): { byId: Map<string, string[]>; unloaded: number } {
-  const index = noteLinkIndex(nodes);
-  const byId = new Map<string, string[]>();
-  const seen = new Map<string, Set<string>>();
-  let unloaded = 0;
-  const sources = Object.values(nodes)
-    .filter((node) => node.kind === "note")
-    .sort((a, b) => noteTitle(a).localeCompare(noteTitle(b)) || a.path.localeCompare(b.path));
-  for (const source of sources) {
-    if (typeof source.content !== "string") {
-      unloaded += 1;
-      continue;
-    }
-    const title = noteTitle(source);
-    const local = new Set<string>();
-    for (const link of extractWikilinks(source.content)) {
-      if (!link.noteTarget) continue;
-      const key = normalizeLinkTarget(link.noteTarget);
-      if (!key || local.has(key)) continue;
-      local.add(key);
-      const id = index.get(key);
-      const hit = id ? nodes[id] : undefined;
-      if (!hit || hit.kind !== "note" || hit.id === source.id) continue;
-      let bag = seen.get(hit.id);
-      if (!bag) {
-        bag = new Set();
-        seen.set(hit.id, bag);
-        byId.set(hit.id, []);
-      }
-      if (bag.has(source.id)) continue;
-      bag.add(source.id);
-      byId.get(hit.id)?.push(title);
-    }
-  }
-  return { byId, unloaded };
-}
-
 /** One label per outgoing note link, in the order written. Same-note headings are not rows. */
-function outgoingJoinLabels(node: VaultNode, nodes: Record<string, VaultNode>, index: Map<string, string>): string[] {
+function outgoingJoinLabels(node: VaultNode, nodes: Record<string, VaultNode>): string[] {
   if (typeof node.content !== "string") return [];
   const labels: string[] = [];
   const seen = new Set<string>();
@@ -1446,7 +1580,7 @@ function outgoingJoinLabels(node: VaultNode, nodes: Record<string, VaultNode>, i
     const key = normalizeLinkTarget(link.noteTarget);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    const id = index.get(key);
+    const id = resolveNoteId(nodes, link.noteTarget);
     const hit = id ? nodes[id] : null;
     if (hit?.kind === "note") {
       if (hit.id === node.id) continue;
@@ -1615,11 +1749,7 @@ function readsFrontmatter(name: string): boolean {
   return true;
 }
 
-/** GROUP BY, WHERE, TABLE, or SORT on a frontmatter field. File meta stays sync. */
-export function queryNeedsFrontmatter(source: string): boolean {
-  const parsed = parseNexusQuery(source);
-  if (parsed.kind === "dialect") return readsNoteBody(dialectExprs(parsed.query).map((expr) => expr.reads));
-  if (parsed.kind !== "ok") return false;
+function simpleNeedsFrontmatter(parsed: ClassicOk): boolean {
   if (parsed.groupBy && readsFrontmatter(parsed.groupBy)) return true;
   if (parsed.where.some((cmp) => readsFrontmatter(cmp.field))) return true;
   if (
@@ -1646,6 +1776,15 @@ export function queryNeedsFrontmatter(source: string): boolean {
   return false;
 }
 
+/** GROUP BY, WHERE, TABLE, or SORT on a frontmatter field. File meta stays sync. */
+export function queryNeedsFrontmatter(source: string): boolean {
+  const parsed = parseNexusQuery(source);
+  if (parsed.kind !== "dialect") return false;
+  const simple = simpleOf.get(parsed.query);
+  if (simple) return simpleNeedsFrontmatter(simple);
+  return readsNoteBody(dialectExprs(parsed.query).map((expr) => expr.reads));
+}
+
 /** How many meta-only notes one query may pull from disk. A folder, not the vault. */
 export const NEXUS_QUERY_BODY_CAP = 400;
 
@@ -1660,11 +1799,13 @@ function usesFileSize(name: string): boolean {
 /** TABLE, WHERE, SORT, or GROUP BY on file.size. Other file meta stays sync. */
 export function queryNeedsSizeBody(source: string): boolean {
   const parsed = parseNexusQuery(source);
-  if (parsed.kind !== "ok") return false;
-  if (parsed.groupBy && usesFileSize(parsed.groupBy)) return true;
-  if (parsed.where.some((cmp) => usesFileSize(cmp.field))) return true;
-  if (parsed.sort?.key === "size") return true;
-  for (const column of parsed.columns) {
+  if (parsed.kind !== "dialect") return false;
+  const spec = simpleOf.get(parsed.query);
+  if (!spec) return false;
+  if (spec.groupBy && usesFileSize(spec.groupBy)) return true;
+  if (spec.where.some((cmp) => usesFileSize(cmp.field))) return true;
+  if (spec.sort?.key === "size") return true;
+  for (const column of spec.columns) {
     if (column.kind === "field" && usesFileSize(column.name)) return true;
     if (column.kind === "formula") {
       if (column.atoms.some((atom) => atom.kind === "field" && usesFileSize(atom.name))) return true;
@@ -1685,25 +1826,45 @@ function scopeHydrateIds(
   limit: number,
 ): string[] {
   const parsedQuery = parseNexusQuery(source);
-  if (parsedQuery.kind !== "ok" && parsedQuery.kind !== "dialect") return [];
-  const parsed =
-    parsedQuery.kind === "dialect"
-      ? {
-          path: parsedQuery.query.source.folder,
-          tags: parsedQuery.query.source.tags,
-          tagMode: parsedQuery.query.source.tagMode,
-          vault: !parsedQuery.query.source.folder && !parsedQuery.query.source.tags.length,
-        }
-      : { ...parsedQuery, vault: false };
+  if (parsedQuery.kind !== "dialect") return [];
+  const parsed = {
+    path: parsedQuery.query.source.folder,
+    tags: parsedQuery.query.source.tags,
+    tagMode: parsedQuery.query.source.tagMode,
+    linksTo: parsedQuery.query.source.linksTo,
+    linkedFrom: parsedQuery.query.source.linkedFrom,
+  };
   const ids: string[] = [];
   const push = (node: VaultNode) => {
     if (ids.length >= limit || node.kind !== "note" || !want(node)) return;
     ids.push(node.id);
   };
-  if (parsed.vault) {
-    for (const node of Object.values(nodes)) {
-      if (ids.length >= limit) break;
-      if (isQueryNote(node)) push(node);
+  if (!parsed.path && !parsed.tags.length) {
+    if (!parsed.linksTo && !parsed.linkedFrom) return ids;
+    if (parsed.linksTo === THIS_NOTE || parsed.linkedFrom === THIS_NOTE) return ids;
+    ensureQueryLinkIndex(nodes);
+    if (parsed.linkedFrom) {
+      const fromId = resolveNoteId(nodes, parsed.linkedFrom);
+      const from = fromId ? nodes[fromId] : undefined;
+      if (!from) return ids;
+      for (const target of vaultLinkIndex.getOutgoing(from.id)) {
+        const id = resolveNoteId(nodes, target);
+        const hit = id ? nodes[id] : undefined;
+        if (hit) push(hit);
+      }
+      return ids;
+    }
+    const targetId = parsed.linksTo ? resolveNoteId(nodes, parsed.linksTo) : null;
+    const target = targetId ? nodes[targetId] : undefined;
+    if (!target) return ids;
+    const seen = new Set<string>();
+    for (const key of linkKeysOf(target)) {
+      for (const srcId of vaultLinkIndex.getBacklinkSources(key)) {
+        if (seen.has(srcId)) continue;
+        seen.add(srcId);
+        const node = nodes[srcId];
+        if (node) push(node);
+      }
     }
     return ids;
   }
@@ -1813,11 +1974,22 @@ export function runNexusQuery(
       problem: parsed.problem ?? null,
     };
   }
-  if (parsed.kind === "dialect" && parsed.query.view === "task") {
+  const simple = simpleOf.get(parsed.query);
+  if (parsed.query.view === "task") {
     return runTaskDialect(source, parsed.query, nodes, tagExtras, now, hostId, tasks ?? []);
   }
-  if (parsed.kind === "dialect") return runDialect(source, parsed.query, nodes, tagExtras, now, hostId);
+  if (simple) return runSimple(source, simple, nodes, tagExtras, now);
+  return runDialect(source, parsed.query, nodes, tagExtras, now, hostId);
+}
 
+function runSimple(
+  source: string,
+  parsed: ClassicOk,
+  nodes: Record<string, VaultNode>,
+  tagExtras: (VaultNode[] | null)[] | null | undefined,
+  now: number,
+): NexusQueryModel {
+  const footer = NEXUS_QUERY_FOOTER;
   let fieldNote: string | null = null;
   let notes: VaultNode[] = [];
   let budgetHit = false;
@@ -1916,7 +2088,7 @@ export function runNexusQuery(
         linkUnloaded += 1;
         continue;
       }
-      for (const label of outgoingJoinLabels(node, nodes, linkScan.index)) joined.push({ node, link: label });
+      for (const label of outgoingJoinLabels(node, nodes)) joined.push({ node, link: label });
     }
   } else if (parsed.flattenLinks === "in" && linkScan) {
     linkUnloaded = linkScan.incomingUnloaded;
@@ -2035,14 +2207,11 @@ export const NEXUS_DIALECT_FOOTER =
 
 /** Rows the full form shows at most. LIMIT asks for fewer. */
 export const NEXUS_DIALECT_CAP = 500;
-/** Notes a query with no FROM reads before it stops and says so. */
-export const VAULT_SCAN_BUDGET = 20_000;
 
 /** Tags this query reads from FROM, for the sqlite tag_map lookup. */
 export function queryTags(source: string): string[] {
   const parsed = parseNexusQuery(source);
   if (parsed.kind === "dialect") return parsed.query.source.tags;
-  if (parsed.kind === "ok") return parsed.tags;
   return [];
 }
 
@@ -2073,7 +2242,6 @@ function cachedProps(node: VaultNode, content: string): Record<string, string> {
 
 type DialectContext = {
   nodes: Record<string, VaultNode>;
-  linkIndex: () => Map<string, string>;
   backlinks: () => Map<string, FormulaLink[]>;
   /** The note the query is written in, or null outside a note. */
   host: VaultNode | null;
@@ -2081,25 +2249,28 @@ type DialectContext = {
 };
 
 function dialectContext(nodes: Record<string, VaultNode>, hostId: string | null = null): DialectContext {
-  let index: Map<string, string> | null = null;
   let back: Map<string, FormulaLink[]> | null = null;
-  const linkIndex = () => (index ??= noteLinkIndex(nodes));
   const backlinks = () => {
     if (back) return back;
+    ensureQueryLinkIndex(nodes);
     const out = new Map<string, FormulaLink[]>();
-    const idx = linkIndex();
-    for (const source of Object.values(nodes)) {
-      if (!isQueryNote(source) || typeof source.content !== "string") continue;
-      const seen = new Set<string>();
-      for (const link of noteOutlinks(source.content)) {
-        const id = idx.get(normalizeLinkTarget(link.target));
-        if (!id || id === source.id || seen.has(id)) continue;
-        seen.add(id);
-        const list = out.get(id) ?? [];
-        list.push({ target: source.path.replace(/\.md$/i, ""), display: noteTitle(source) });
-        out.set(id, list);
+    const seen = new Map<string, Set<string>>();
+    vaultLinkIndex.forEachEdge((sourceId, target) => {
+      const source = nodes[sourceId];
+      if (!isQueryNote(source)) return;
+      const id = resolveNoteId(nodes, target);
+      if (!id || id === sourceId) return;
+      let bag = seen.get(id);
+      if (!bag) {
+        bag = new Set();
+        seen.set(id, bag);
       }
-    }
+      if (bag.has(sourceId)) return;
+      bag.add(sourceId);
+      const list = out.get(id) ?? [];
+      list.push({ target: source.path.replace(/\.md$/i, ""), display: noteTitle(source) });
+      out.set(id, list);
+    });
     for (const list of out.values()) list.sort((a, b) => (a.display ?? "").localeCompare(b.display ?? ""));
     back = out;
     return out;
@@ -2109,7 +2280,6 @@ function dialectContext(nodes: Record<string, VaultNode>, hostId: string | null 
   let self: FormulaRow | null | undefined;
   const ctx: DialectContext = {
     nodes,
-    linkIndex,
     backlinks,
     host,
     self: () => {
@@ -2124,7 +2294,7 @@ function dialectContext(nodes: Record<string, VaultNode>, hostId: string | null 
 
 function nodeForTarget(ctx: DialectContext, target: string): VaultNode | null {
   if (target === THIS_NOTE) return ctx.host;
-  const id = ctx.linkIndex().get(normalizeLinkTarget(target.replace(/\.md$/i, "")));
+  const id = resolveNoteId(ctx.nodes, target);
   const node = id ? ctx.nodes[id] : undefined;
   return isQueryNote(node) ? node : null;
 }
@@ -2174,9 +2344,12 @@ function formulaRowOf(node: VaultNode, ctx: DialectContext): FormulaRow {
 
 function outgoingIds(node: VaultNode, ctx: DialectContext): Set<string> {
   const ids = new Set<string>();
-  if (typeof node.content !== "string") return ids;
-  for (const link of noteOutlinks(node.content)) {
-    const hit = nodeForTarget(ctx, link.target);
+  const targets =
+    typeof node.content === "string"
+      ? noteOutlinks(node.content).map((link) => link.target)
+      : (ensureQueryLinkIndex(ctx.nodes), vaultLinkIndex.getOutgoing(node.id));
+  for (const target of targets) {
+    const hit = nodeForTarget(ctx, target);
     if (hit && hit.id !== node.id) ids.add(hit.id);
   }
   return ids;
@@ -2220,16 +2393,11 @@ function dialectCandidates(
       }),
       src.tagMode,
     ).filter(isQueryNote);
-  } else {
+  } else if (src.linksTo || src.linkedFrom) {
     notes = [];
-    for (const node of Object.values(nodes)) {
-      if (!isQueryNote(node)) continue;
-      if (notes.length >= VAULT_SCAN_BUDGET) {
-        out.budgetHit = true;
-        break;
-      }
-      notes.push(node);
-    }
+  } else {
+    out.error = ADD_FROM_SCOPE;
+    return out;
   }
   if (src.linksTo) {
     const target = nodeForTarget(ctx, src.linksTo);
@@ -2237,15 +2405,21 @@ function dialectCandidates(
       out.error = `No note is named “${src.linksTo}”.`;
       return out;
     }
-    const kept: VaultNode[] = [];
-    for (const node of notes) {
-      if (typeof node.content !== "string") {
-        out.unloaded += 1;
-        continue;
+    if (!src.folder && !src.tags.length) {
+      const linked = notesLinkingTo(nodes, target);
+      notes = linked.notes;
+      out.unloaded += linked.unloaded;
+    } else {
+      const kept: VaultNode[] = [];
+      for (const node of notes) {
+        if (typeof node.content !== "string") {
+          out.unloaded += 1;
+          continue;
+        }
+        if (outgoingIds(node, ctx).has(target.id)) kept.push(node);
       }
-      if (outgoingIds(node, ctx).has(target.id)) kept.push(node);
+      notes = kept;
     }
-    notes = kept;
   }
   if (src.linkedFrom) {
     const from = nodeForTarget(ctx, src.linkedFrom);
@@ -2324,11 +2498,14 @@ function runDialect(
   }
   const found = dialectCandidates(query, nodes, tagExtras, ctx, now);
   if (found.error) {
+    const unscoped = !query.source.folder && !query.source.tags.length && !query.source.linksTo && !query.source.linkedFrom;
     return {
       ...base,
       mode: null,
       error: found.error,
-      problem: folderProblem(source, query.source.folder ?? "", found.error),
+      problem: unscoped
+        ? { message: found.error, clause: "FROM", start: 0, end: Math.max(1, Math.min(source.length, 4)) }
+        : folderProblem(source, query.source.folder ?? "", found.error),
     };
   }
   const whereBody = readsNoteBody(query.where.map((expr) => expr.reads));
@@ -2458,9 +2635,7 @@ function runDialect(
   }
   let scanNote: string | null = null;
   if (found.budgetHit) {
-    scanNote = query.source.vault
-      ? `Read the first ${VAULT_SCAN_BUDGET.toLocaleString("en-US")} notes. Add FROM "Folder" or FROM #tag to scope it.`
-      : `Stopped while reading this folder (${VISIT_BUDGET} files). Narrow it with a tag.`;
+    scanNote = `Stopped while reading this folder (${VISIT_BUDGET} files). Narrow it with a tag.`;
   } else if (found.tagsIncomplete && total === 0) {
     scanNote = "Couldn't read every tag from the index.";
   }

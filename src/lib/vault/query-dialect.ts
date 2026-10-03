@@ -10,8 +10,9 @@
  *   LIMIT 50
  *
  * LIST shows titles (plus one value), TABLE shows columns, CARDS shows a card per
- * note, TASK shows checkbox lines you can tick. FROM is optional; without it the
- * whole vault is read.
+ * note, TASK shows checkbox lines you can tick. FROM "Folder", FROM #tag, or
+ * FROM [[Note]] picks the notes. Without a folder, a tag, or a link, the query
+ * asks for one instead of reading every note.
  *
  *   TASK FROM "Projects" WHERE !done AND due <= date(today) + 7d SORT urgency DESC
  */
@@ -44,7 +45,7 @@ export type DialectSource = {
   linksTo: string | null;
   /** FROM outgoing([[Note]]): notes Note links to. */
   linkedFrom: string | null;
-  /** No folder, tag, or link scope: every note. */
+  /** No folder, tag, or link. A note query refuses this instead of reading every note. */
   vault: boolean;
 };
 

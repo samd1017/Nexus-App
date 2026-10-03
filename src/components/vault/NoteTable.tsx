@@ -32,7 +32,7 @@ import {
 } from "@/lib/vault/note-table";
 import { groupNoteRows, summarize, summaryKindsFor, summaryLabel, type NoteGroup } from "@/lib/vault/bases-groups";
 import { BASE_EXPORT_FILE, exportBaseFile } from "@/lib/vault/bases-file";
-import { basesViewToQuery } from "@/lib/vault/bases-query";
+import { basesViewToQuery, copiedQueryBlock } from "@/lib/vault/bases-query";
 import { problemExcerpt } from "@/lib/vault/query-expr";
 import {
   LEGACY_LIVE_BASE_FILE,
@@ -931,7 +931,7 @@ export function NoteTable() {
 
   const copyAsQuery = async () => {
     const { text, notes } = basesViewToQuery(view, built.keys);
-    const block = `\`\`\`nexus-query\n${text}\n\`\`\`\n`;
+    const block = copiedQueryBlock(text, notes);
     try {
       await navigator.clipboard.writeText(block);
       setBaseNotice({ title: `Copied “${view.name}” as a query. Paste it into any note.`, lines: notes, tone: "ok", undo: null });
