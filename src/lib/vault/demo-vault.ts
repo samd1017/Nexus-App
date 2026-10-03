@@ -274,10 +274,11 @@ CARDS file.folder AS "Folder", file.mtime AS "Edited"
 FROM #writing OR #graph
 \`\`\`
 
-What changed this week, across the vault:
+What changed this week in Research:
 
 \`\`\`nexus-query
 LIST file.folder
+FROM "Research"
 WHERE file.mtime >= date(today) - 7d
 SORT file.mtime DESC
 LIMIT 10

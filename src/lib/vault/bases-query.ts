@@ -60,3 +60,13 @@ export function basesViewToQuery(view: BasesViewConfig, detectedKeys: string[]):
   if (Object.keys(view.summaries ?? {}).length) notes.push("Summaries stay in the note table.");
   return { text: lines.join("\n"), notes };
 }
+
+/**
+ * The block pasted into a note. The query is unchanged, and the notes about
+ * what the copy left out ride along so the paste does not look complete.
+ */
+export function copiedQueryBlock(text: string, notes: string[]): string {
+  const fence = `\`\`\`nexus-query\n${text}\n\`\`\``;
+  if (!notes.length) return `${fence}\n`;
+  return `${fence}\n\n${notes.join("\n")}\n`;
+}

@@ -25,7 +25,7 @@ const { resetVaultIndex, ensureVaultIndex } = await import("../src/lib/vault/ind
 const { buildNoteTable, parseBasesSession, defaultBasesSession } = await import("../src/lib/vault/note-table.ts");
 const { importBaseFile, exportBaseFile } = await import("../src/lib/vault/bases-file.ts");
 const { readLiveBase, writeLiveBase } = await import("../src/lib/vault/bases-live.ts");
-const { basesViewToQuery } = await import("../src/lib/vault/bases-query.ts");
+const { basesViewToQuery, copiedQueryBlock } = await import("../src/lib/vault/bases-query.ts");
 const { queryStarters } = await import("../src/lib/vault/query-starters.ts");
 const { invalidateVaultTagsCache } = await import("../src/lib/vault/tags.ts");
 const { inlineFields } = await import("../src/lib/vault/inline-fields.ts");
@@ -66,9 +66,9 @@ assert.equal(toFormulaSyntax("status != done"), "status != done");
 assert.deepEqual(filterAndParts('a = 1 AND (b = 2 OR c = 3) && d'), ["a = 1", "(b = 2 OR c = 3)", "d"]);
 assert.deepEqual(filterAndParts("a = 1 OR b = 2 AND c"), ["a = 1 OR b = 2 AND c"]);
 
-// --- Which parser reads a block.
-assert.equal(parseNexusQuery("LIST FROM path:Research").kind, "ok");
-assert.equal(parseNexusQuery('TABLE status FROM "Research" WHERE status = "draft"').kind, "ok");
+// --- LIST, TABLE, CARDS, and TASK share one parse.
+assert.equal(parseNexusQuery("LIST FROM path:Research").kind, "dialect");
+assert.equal(parseNexusQuery('TABLE status FROM "Research" WHERE status = "draft"').kind, "dialect");
 assert.equal(parseNexusQuery('TABLE status AS "State" FROM "Research"').kind, "dialect");
 assert.equal(parseNexusQuery("CARDS FROM #idea").kind, "dialect");
 assert.equal(parseNexusQuery("TABLE WITHOUT ID file.link FROM #idea").kind, "dialect");
@@ -162,7 +162,11 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   assert.deepEqual(sortedIds(run("LIST FROM outgoing([[Alpha]])")), ["beta", "gamma"]);
 
   const vaultWide = run("LIST WHERE file.mtime >= date(today) - 7d SORT file.mtime DESC");
-  assert.deepEqual(ids(vaultWide), ["loose", "alpha", "book", "beta"]);
+  assert.match(vaultWide.error, /Add FROM "Folder" or FROM #tag/);
+  assert.equal(vaultWide.rows.length, 0);
+  assert.equal(vaultWide.problem.clause, "FROM");
+  const scopedWeek = run('LIST FROM "Projects" WHERE file.mtime >= date(today) - 7d SORT file.mtime DESC');
+  assert.deepEqual(ids(scopedWeek), ["alpha", "beta"]);
 
   const multiSort = run('TABLE priority FROM #work WHERE priority SORT status DESC, priority ASC');
   assert.deepEqual(ids(multiSort), ["gamma", "beta", "alpha"]);
@@ -197,7 +201,7 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
 
   const links = run('TABLE file.outlinks AS "Out", file.inlinks AS "In" FROM "Projects" WHERE file.name = "Alpha"');
   assert.deepEqual(links.rows[0].fields.map((f) => f.value), ["Beta, Gamma", "Beta, Dune"]);
-  assert.deepEqual(ids(run('LIST WHERE contains(file.outlinks, [[Alpha]])')), ["beta", "book"]);
+  assert.match(run('LIST WHERE contains(file.outlinks, [[Alpha]])').error, /Add FROM "Folder" or FROM #tag/);
   assert.deepEqual(sortedIds(run('LIST FROM "Projects" WHERE file.hasTag("launch") OR status = "blocked"')), ["alpha", "beta"]);
   assert.deepEqual(ids(run('LIST FROM "Projects" WHERE !contains(file.tags, "#work")')), []);
 
@@ -260,13 +264,25 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   const perFolder = (performance.now() - t) / 20;
   const scoped = runNexusQuery('TABLE score FROM "Area 3" WHERE status = "open" AND score > 3 SORT score DESC', big, null, NOW);
   assert.equal(scoped.total, Array.from({ length: PER }, (_, n) => n).filter((n) => n % 3 !== 0 && n % 17 > 3).length);
-  t = performance.now();
-  const wide = runNexusQuery('LIST WHERE file.mtime > date(today) - 1d SORT file.mtime DESC LIMIT 10', big, null, NOW);
-  const vaultWideMs = performance.now() - t;
-  assert.equal(wide.rows.length, 10);
+  const values = Object.values;
+  let nodeMapScans = 0;
+  Object.values = function (obj) {
+    if (obj === big) nodeMapScans += 1;
+    return values.call(Object, obj);
+  };
+  try {
+    const wide = runNexusQuery("TABLE file.name\nWHERE file.mtime > date(today) - 1d", big, null, NOW);
+    assert.match(wide.error, /Add FROM "Folder" or FROM #tag/);
+    assert.equal(wide.rows.length, 0);
+    assert.equal(nodeMapScans, 0, "TABLE with no FROM walked the node map");
+    const listed = runNexusQuery("LIST WHERE file.mtime > date(today) - 1d SORT file.mtime DESC LIMIT 10", big, null, NOW);
+    assert.match(listed.error, /Add FROM "Folder" or FROM #tag/);
+    assert.equal(nodeMapScans, 0, "LIST with no FROM walked the node map");
+  } finally {
+    Object.values = values;
+  }
   assert.ok(perFolder < 60, `a folder query over a ${FOLDERS * PER}-note vault took ${perFolder.toFixed(1)} ms`);
-  assert.ok(vaultWideMs < 1500, `a vault-wide metadata query took ${vaultWideMs.toFixed(0)} ms`);
-  console.log(`query-dialect perf: ${FOLDERS * PER} notes · folder query ${perFolder.toFixed(1)} ms · vault-wide ${vaultWideMs.toFixed(0)} ms`);
+  console.log(`query-dialect perf: ${FOLDERS * PER} notes · folder query ${perFolder.toFixed(1)} ms`);
 }
 
 // --- The folder index keeps up when a create and a delete land together.
@@ -373,7 +389,7 @@ const run = (q) => runNexusQuery(q, vault, null, NOW);
   assert.deepEqual(ids(runNexusQuery('LIST FROM "P" WHERE due < date(today) + 7d', inl, null, NOW)), ["alpha"]);
 
   const classic = runNexusQuery("TABLE status, owner FROM path:P", inl, null, NOW);
-  assert.equal(parseNexusQuery("TABLE status, owner FROM path:P").kind, "ok");
+  assert.equal(parseNexusQuery("TABLE status, owner FROM path:P").kind, "dialect");
   const byId = Object.fromEntries(classic.rows.map((r) => [r.id, r.fields.map((f) => f.value)]));
   assert.deepEqual(byId.alpha, ["active", "Sam"]);
   assert.deepEqual(byId.beta, ["blocked", "Ana"]);
@@ -534,6 +550,28 @@ const tableNotes = Object.values(vault)
   assert.equal(odd.text, 'CARDS note["due date"] AS "due date", note["from"] AS "from"\nFROM "Projects"\nWHERE status != "done"\nGROUP BY status');
   assert.equal(runNexusQuery(odd.text, vault, null, NOW).error, null);
   assert.equal(odd.notes.length, 2);
+  const summarized = basesViewToQuery(
+    {
+      ...view,
+      columns: ["due date", "from"],
+      formulas: [],
+      column: "name",
+      dir: "asc",
+      query: "abc",
+      layout: "cards",
+      groupBy: { column: "status", dir: "desc" },
+      summaries: { status: "count" },
+    },
+    [],
+  );
+  assert.equal(summarized.notes.length, 3);
+  const pasted = copiedQueryBlock(summarized.text, summarized.notes);
+  assert.match(pasted, /^```nexus-query\n/);
+  assert.match(pasted, /\n```\n\n/);
+  for (const note of summarized.notes) assert.ok(pasted.includes(note), note);
+  assert.match(pasted, /The search text “abc” is not part of the query\./);
+  assert.match(pasted, /Query groups always run A to Z\./);
+  assert.match(pasted, /Summaries stay in the note table\./);
 }
 
 // --- .base files: every filter imports, and edits write back.
