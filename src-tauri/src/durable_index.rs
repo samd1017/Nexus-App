@@ -872,6 +872,7 @@ pub struct TaskHitDto {
     pub text: String,
     pub due: Option<String>,
     pub note_due: Option<String>,
+    pub heading: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -907,6 +908,7 @@ pub fn vault_index_task_page(
                     text: task.text,
                     due: task.due,
                     note_due: task.note_due,
+                    heading: task.heading,
                 })
                 .collect(),
             next_rowid: page.next_rowid,

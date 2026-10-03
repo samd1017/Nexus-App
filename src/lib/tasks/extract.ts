@@ -46,8 +46,18 @@ export type VaultTask = {
   depth: number;
   /** Line of the nearest task above with less indent, or null. */
   parentLine: number | null;
+  /** Text of the nearest heading above the task, or null. */
+  heading: string | null;
   problems: TaskProblem[];
 };
+
+const HEADING = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+
+/** `## Title ##` → `Title`; null when the line is not an ATX heading. */
+export function headingText(line: string): string | null {
+  const m = HEADING.exec(line);
+  return m ? (m[1] ?? "").trim() : null;
+}
 
 /** A giant checklist note still reads in a few ms; beyond this the rest is left out. */
 export const PER_NOTE_CAP = 2000;
@@ -113,13 +123,13 @@ export type TaskNote = { id: string; path: string; title: string };
  */
 export function tasksFromLines(
   note: TaskNote,
-  entries: { line: number; raw: string }[],
+  entries: { line: number; raw: string; heading?: string | null }[],
   noteDue: string | null,
   today: string = localToday(),
 ): VaultTask[] {
   const out: VaultTask[] = [];
   const stack: { width: number; line: number }[] = [];
-  for (const { line, raw } of entries) {
+  for (const { line, raw, heading } of entries) {
     const parsed = parseTaskLine(raw, today);
     if (!parsed) continue;
     const width = indentWidth(parsed.lead);
@@ -152,6 +162,7 @@ export function tasksFromLines(
       format: parsed.format,
       depth: stack.length,
       parentLine: parent ? parent.line : null,
+      heading: heading ?? null,
       problems: parsed.problems.map((p) => ({ ...p, start: p.start + parsed.bodyStart, end: p.end + parsed.bodyStart })),
     });
     stack.push({ width, line });
@@ -166,11 +177,13 @@ export function tasksInNote(note: TaskNote & { body: string }, today: string = l
   if (!QUICK_TASK.test(note.body)) return [];
   const lines = note.body.split(/\r?\n/);
   const skip = nonTaskLines(lines);
-  const entries: { line: number; raw: string }[] = [];
+  const entries: { line: number; raw: string; heading: string | null }[] = [];
+  let heading: string | null = null;
   for (let i = 0; i < lines.length; i++) {
     if (skip.has(i)) continue;
     const raw = lines[i] ?? "";
-    if (raw.includes("[") && QUICK_TASK.test(raw)) entries.push({ line: i + 1, raw });
+    if (raw.startsWith("#") || raw.startsWith(" ")) heading = headingText(raw) ?? heading;
+    if (raw.includes("[") && QUICK_TASK.test(raw)) entries.push({ line: i + 1, raw, heading });
     if (entries.length >= PER_NOTE_CAP) break;
   }
   return tasksFromLines(note, entries, dueFromFrontmatter(note.body), today);

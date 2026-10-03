@@ -24,6 +24,8 @@ pub struct ScannedTask {
     pub due: Option<String>,
     /// The note `due:` alone.
     pub note_due: Option<String>,
+    /// Text of the nearest heading above the task.
+    pub heading: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +83,7 @@ pub fn scan_task_page(
 
 fn push_tasks(out: &mut Vec<ScannedTask>, note_id: &str, path: &str, title: &str, body: &str) {
     let note_due = due_from_frontmatter(body);
+    let mut heading: Option<String> = None;
     let mut n = 0usize;
     let mut fence: Option<char> = None;
     let mut in_yaml = body.trim_start_matches('\u{feff}').starts_with("---\n") || body.trim_start_matches('\u{feff}').starts_with("---\r\n");
@@ -104,6 +107,10 @@ fn push_tasks(out: &mut Vec<ScannedTask>, note_id: &str, path: &str, title: &str
         if fence.is_some() {
             continue;
         }
+        if let Some(found) = heading_text(line) {
+            heading = Some(found);
+            continue;
+        }
         let Some((symbol, text)) = task_parts(line) else { continue };
         out.push(ScannedTask {
             note_id: note_id.to_string(),
@@ -115,12 +122,36 @@ fn push_tasks(out: &mut Vec<ScannedTask>, note_id: &str, path: &str, title: &str
             due: due_on_line(text).or_else(|| note_due.clone()),
             text: display_text(text),
             note_due: note_due.clone(),
+            heading: heading.clone(),
         });
         n += 1;
         if n >= PER_NOTE_CAP {
             break;
         }
     }
+}
+
+/// `## Title ##` → `Title`: up to three spaces, one to six `#`, then a space.
+fn heading_text(line: &str) -> Option<String> {
+    let lead = line.len() - line.trim_start_matches(' ').len();
+    if lead > 3 {
+        return None;
+    }
+    let rest = &line[lead..];
+    let hashes = rest.chars().take_while(|c| *c == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let after = &rest[hashes..];
+    if !after.starts_with([' ', '\t']) {
+        return None;
+    }
+    let mut text = after.trim();
+    let closing = text.trim_end_matches('#');
+    if closing.len() < text.len() && (closing.is_empty() || closing.ends_with([' ', '\t'])) {
+        text = closing.trim_end();
+    }
+    Some(text.to_string())
 }
 
 /// `- [ ] text`, `* [x] text`, `+ [/] text`, `1. [-] text`, `> - [ ] text`: the symbol and the text.
@@ -313,5 +344,19 @@ mod tests {
         assert_eq!(page.tasks[1].line, 5);
         assert_eq!(page.tasks[2].raw, "> - [ ] Quoted");
         assert_eq!(page.tasks[4].line, 14);
+    }
+
+    #[test]
+    fn each_task_carries_the_heading_above_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE note_fts USING fts5(note_id UNINDEXED, title, path, body);
+             INSERT INTO note_fts(note_id, title, path, body) VALUES
+               ('n1', 'H', 'H.md', '- [ ] Before\n# Week ##\n- [ ] One\n#tag line\n```\n## Not a heading\n```\n- [ ] Two\n  ## Errands\n- [ ] Three');",
+        )
+        .unwrap();
+        let page = scan_task_page(&conn, 0, 8).unwrap();
+        let headings: Vec<Option<&str>> = page.tasks.iter().map(|t| t.heading.as_deref()).collect();
+        assert_eq!(headings, vec![None, Some("Week"), Some("Week"), Some("Errands")]);
     }
 }

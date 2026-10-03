@@ -15,6 +15,7 @@ type TaskHit = {
   raw?: string;
   text: string;
   noteDue?: string | null;
+  heading?: string | null;
 };
 
 /** Notes read per desktop index call. */
@@ -42,11 +43,11 @@ export function tasksFromHits(hits: TaskHit[], today: string): VaultTask[] {
   let i = 0;
   while (i < hits.length) {
     const first = hits[i] as TaskHit;
-    const entries: { line: number; raw: string }[] = [];
+    const entries: { line: number; raw: string; heading: string | null }[] = [];
     let j = i;
     while (j < hits.length && (hits[j] as TaskHit).noteId === first.noteId) {
       const hit = hits[j] as TaskHit;
-      entries.push({ line: hit.line, raw: hit.raw ?? `- [ ] ${hit.text}` });
+      entries.push({ line: hit.line, raw: hit.raw ?? `- [ ] ${hit.text}`, heading: hit.heading ?? null });
       j += 1;
     }
     out.push(...tasksFromLines({ id: first.noteId, path: first.path, title: first.title }, entries, first.noteDue ?? null, today));

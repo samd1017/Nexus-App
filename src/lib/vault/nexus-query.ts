@@ -2500,6 +2500,7 @@ export const TASK_QUERY_FIELDS = [
   "recurrence",
   "recurring",
   "tags",
+  "heading",
   "line",
   "depth",
   "id",
@@ -2542,6 +2543,7 @@ export function taskQueryProps(task: VaultTask, today: string, openIds: Readonly
   props.recurrence = task.recurrence ?? "";
   props.recurring = yes(task.recurring);
   props.tags = flowList(task.tags);
+  props.heading = task.heading ?? "";
   props.line = String(task.line);
   props.depth = String(task.depth);
   props.id = task.id ?? "";
