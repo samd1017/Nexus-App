@@ -824,7 +824,7 @@ assert.match(table, /addEventListener\("focus", tick\)/);
 assert.match(table, /data-testid="bases-live-retry"/);
 assert.match(table, /data-testid="bases-live-replace"/);
 assert.match(table, /Keep my version/);
-assert.match(table, /Views live in \$\{LIVE_BASE_FILE\} at the vault root, an Obsidian \.base file Nexus saves to and reloads when it changes\./);
+assert.match(table, /Views live in \$\{LIVE_BASE_FILE\} at the vault root, a \.base file Nexus saves to and reloads when it changes\./);
 assert.doesNotMatch(table, /not an Obsidian \.base file/);
 assert.doesNotMatch(table, /note-table\.json/);
 assert.doesNotMatch(table, /saveNoteTableConfig|loadNoteTableConfig/);
