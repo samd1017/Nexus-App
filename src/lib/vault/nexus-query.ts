@@ -9,15 +9,22 @@
  * One of those joins, not both, and not a join of two queries.
  * GROUP BY partitions that list. LIMIT keeps that many rows, and never more than the cap.
  * GROUP BY status rows lists one level of notes in each partition.
+ *
+ * Anything the simple form does not read goes to the full form (query-dialect.ts):
+ * LIST, TABLE, or CARDS with WHERE, columns, SORT, and GROUP BY written in the Bases
+ * formula language, so a query block and a Bases view filter read the same way.
  */
 
-import { parseFrontmatterFields, splitFrontmatter } from "@/lib/editor/frontmatter";
 import { extractWikilinks, normalizeLinkTarget } from "@/lib/markdown/wikilinks";
 import { extractTagsFromMarkdown, notesForTag } from "@/lib/vault/tags";
 import { ensureVaultIndex } from "@/lib/vault/indexes";
 import { getDurableIndex } from "@/lib/vault/durable-index";
 import type { VaultNode } from "@/lib/vault/types";
 import { noteTitle } from "@/lib/vault/types";
+import { THIS_NOTE, looksLikeDialect, parseDialect, type DialectQuery } from "@/lib/vault/query-dialect";
+import { didYouMean, readsNoteBody, runQueryFilter, type CompiledExpr, type QueryProblem } from "@/lib/vault/query-expr";
+import { THIS_OUTSIDE_NOTE, formulaDisplay, runNoteFormula, type FormulaLink, type FormulaRefs, type FormulaResult, type FormulaRow } from "@/lib/vault/note-formula";
+import { noteOutlinks, noteTableProperties } from "@/lib/vault/note-table";
 
 export const NEXUS_QUERY_CAP = 100;
 /** Stop walking a huge folder before the UI locks. */
@@ -25,7 +32,7 @@ const VISIT_BUDGET = 4000;
 export const MAX_QUERY_COLUMNS = 4;
 
 export const NEXUS_QUERY_FOOTER =
-  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise.';
+  'Built-in list. Not Dataview — a join is FLATTEN file.outlinks or FLATTEN file.inlinks, one row per link. No join of two queries. WHERE contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note with that link title. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note only when every comparison matches. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status partitions the list. GROUP BY status rows lists one level of notes in each partition. LIMIT 3 keeps that many rows, and never more than 100. file.size and file.ctime work in TABLE, WHERE, and SORT. SORT status, SORT due, or SORT file.folder orders by that field. A TABLE formula is up to three + - * /, left to right, with no parentheses. TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. Fields come from frontmatter and inline key:: value fields in the note; frontmatter wins when both set one.';
 
 export const NEXUS_QUERY_HELP =
   'LIST or TABLE. FROM path:Journal, FROM "Journal", or FROM #tag. WHERE status = "draft", WHERE contains(file.name, "Graph"), WHERE due > date(today), or WHERE price > 10. WHERE status = "draft" AND contains(file.name, "Graph") keeps a note when every comparison matches, up to 8. WHERE status = "draft" OR status = "live" keeps a note when any comparison matches, up to 8. contains() is a case-sensitive substring. contains(file.outlinks, "Title") or contains(file.inlinks, "Title") keeps a note whose link title is exactly that. WHERE file.outlinks = "Title" or file.inlinks = "Title" is that same exact-title membership. WHERE file.tags = "graph" or tags = "graph" keeps a note that has that exact tag. file.mtime >= date(today) - 7d. file.size > 10. file.ctime >= date(today) - 30d. TABLE status, due, file.size, file.ctime, price * 2, or file.name + " note". TABLE choice(status = "draft", "yes", "no") shows yes when the comparison matches and no otherwise. AND binds tighter than OR, so status = "draft" AND price > 10 OR status = "live" means the AND pair or the live status. GROUP BY status rows lists one level of notes in each partition. A TABLE formula is up to three + - * /, left to right, with no parentheses. FLATTEN file.outlinks, or TABLE file.outlinks, lists one row per outgoing link. FLATTEN file.inlinks, or TABLE file.inlinks, lists one row per incoming link. GROUP BY status or GROUP BY file.folder. LIMIT 3. Tags: #a OR #b, or #a AND #b. SORT title, SORT mtime, SORT file.size, SORT file.ctime, SORT status, SORT due, or SORT file.folder, asc or desc.';
@@ -57,7 +64,7 @@ export type NexusQueryModel = {
   footer: string;
   help: string | null;
   error: string | null;
-  mode: "list" | "table" | null;
+  mode: "list" | "table" | "cards" | null;
   rows: NexusQueryRow[];
   truncated: boolean;
   /** Shown when the walk stopped before the folder ended. */
@@ -66,6 +73,20 @@ export type NexusQueryModel = {
   fieldNote: string | null;
   /** A tag_map page failed after retries. Do not treat that as "no notes". */
   tagsIncomplete?: boolean;
+  /** Where in the query the error is, so the block can mark it. */
+  problem?: QueryProblem | null;
+  /** Set for the full form: column headers in order. */
+  columns?: string[];
+  /** The simple form's TABLE shows a Path column. */
+  showPath?: boolean;
+  /** TABLE WITHOUT ID: no Title column. */
+  withoutId?: boolean;
+  /** Matches before LIMIT and the row cap. */
+  total?: number;
+  /** Row cap this model was cut to. */
+  cap?: number;
+  /** The query ran as the full form. */
+  dialect?: boolean;
 };
 
 type TagJoin = "or" | "and";
@@ -102,7 +123,13 @@ type QueryColumn =
 
 type Parsed =
   | { kind: "help" }
-  | { kind: "error"; error: string }
+  | { kind: "error"; error: string; problem?: QueryProblem | null }
+  | { kind: "dialect"; query: DialectQuery }
+  | ClassicOk;
+
+type ClassicParsed = { kind: "help" } | { kind: "error"; error: string } | ClassicOk;
+
+type ClassicOk =
   | {
       kind: "ok";
       mode: "list" | "table";
@@ -336,7 +363,7 @@ function parseContainsAt(tokens: string[], at: number): CmpParse | null {
   const needle = unquote(inner.slice(comma + 1).trim());
   if (!field || !new RegExp(`^${CMP_FIELD}$`).test(field)) {
     return {
-      error: `contains() does not read “${field || "that"}”. Use a frontmatter field, file.name, file.path, file.folder, file.tags, file.mtime, file.ctime, or file.size.`,
+      error: `contains() does not read “${field || "that"}”. Use a property (frontmatter or an inline key:: field), file.name, file.path, file.folder, file.tags, file.mtime, file.ctime, or file.size.`,
     };
   }
   if (!needle) return { error: 'contains() needs text to look for, such as contains(status, "draft").' };
@@ -364,6 +391,7 @@ function readPath(token: string): string | null {
   }
   if (!raw || raw.includes(":") || raw.startsWith("#")) return null;
   if (/^(FROM|WHERE|SORT|OR|AND|ASC|DESC|LIST|TABLE)$/i.test(raw)) return null;
+  if (token.startsWith("[[") || /^[-!]/.test(token) || /^\w+\(/.test(token)) return null;
   return cleanPath(raw);
 }
 
@@ -610,7 +638,80 @@ function parseChoiceAt(tokens: string[], at: number): { col: QueryColumn; end: n
   };
 }
 
+/** Spellings only the simple form reads, so its own message explains a mistake best. */
+function looksClassic(source: string): boolean {
+  const code = source.replace(/"[^"]*"/g, '""');
+  return /\b(field|tag):|\bflatten\b|\bchoice\s*\(|\brows\b/i.test(code) || /^\s*(list|table)\s+(path|folder):/i.test(code);
+}
+
+/** The first quoted token a simple-form message names, found in the query. */
+const CLASSIC_CLAUSES = ["FLATTEN", "WHERE", "GROUP BY", "SORT", "LIMIT", "FROM", "TABLE", "LIST"];
+
+function classicProblem(source: string, error: string): QueryProblem | null {
+  for (const match of error.matchAll(/“([^”]+)”/g)) {
+    const token = match[1] ?? "";
+    const at = token ? source.indexOf(token) : -1;
+    if (at >= 0) return { message: error, clause: "", start: at, end: at + token.length };
+  }
+  const clauseAt = (name: string, from = 0) => {
+    const re = new RegExp(`(?<![\\w.])${name.replace(" ", "\\s+")}(?![\\w-])`, "gi");
+    re.lastIndex = from;
+    return re.exec(source)?.index ?? -1;
+  };
+  for (const clause of CLASSIC_CLAUSES) {
+    if (!new RegExp(`\\b${clause}\\b`).test(error)) continue;
+    const start = clauseAt(clause);
+    if (start < 0) continue;
+    const next = CLASSIC_CLAUSES.map((other) => clauseAt(other, start + clause.length)).filter((at) => at > start);
+    const end = next.length ? Math.min(...next) : source.length;
+    return { message: error, clause, start, end: start + source.slice(start, end).trimEnd().length };
+  }
+  return null;
+}
+
+const THIS_REF = /(?<![\w.])this\s*\.|\[\[#?\]\]/;
+
+/** Where the query names the note it is written in: `this.`, `[[]]`, or `[[#]]` outside quotes. */
+function thisRefAt(source: string): { start: number; end: number } | null {
+  const code = source.replace(/"[^"]*"|'[^']*'/g, (quoted) => " ".repeat(quoted.length));
+  const hit = THIS_REF.exec(code);
+  if (!hit) return null;
+  const end = hit[0].startsWith("[") ? hit.index + hit[0].length : (/^this\s*\.[\w.]*/.exec(code.slice(hit.index))?.[0].length ?? 5) + hit.index;
+  return { start: hit.index, end };
+}
+
+/** Only the full form knows the note a query is written in. */
+function readsThisNote(source: string): boolean {
+  return thisRefAt(source) !== null;
+}
+
+/** Points a missing-folder message at the folder name the query typed. */
+function folderProblem(source: string, folder: string, message: string): QueryProblem {
+  for (const token of [`"${folder}"`, `path:${folder}`, `folder:${folder}`, folder]) {
+    const at = source.toLowerCase().indexOf(token.toLowerCase());
+    if (at >= 0) return { message, clause: "FROM", start: at, end: at + token.length };
+  }
+  const fromAt = source.search(/\bfrom\b/i);
+  return { message, clause: "FROM", start: Math.max(0, fromAt), end: fromAt >= 0 ? source.length : 1 };
+}
+
+/**
+ * The simple form first, so every block written for it reads the same. Anything
+ * it rejects is tried as the full form; when neither reads it, the form the query
+ * looks like explains why.
+ */
 export function parseNexusQuery(source: string): Parsed {
+  const classic = readsThisNote(source) ? null : parseClassic(source);
+  if (classic && classic.kind !== "error") return classic;
+  const dialect = parseDialect(source || "");
+  if (dialect.ok) return { kind: "dialect", query: dialect.query };
+  if (classic && looksClassic(source) && !looksLikeDialect(source)) {
+    return { kind: "error", error: classic.error, problem: classicProblem(source, classic.error) };
+  }
+  return { kind: "error", error: dialect.problem.message, problem: dialect.problem };
+}
+
+function parseClassic(source: string): ClassicParsed {
   const raw = (source || "").trim();
   if (!raw) return { kind: "help" };
   const tokens = tokenize(raw);
@@ -990,15 +1091,18 @@ function hasTags(node: VaultNode, tags: string[], mode: TagJoin): boolean {
   return tags.some((tag) => have.includes(tag));
 }
 
-function frontmatterProps(content: string): Record<string, string> {
-  const { yaml } = splitFrontmatter(content);
-  if (!yaml) return {};
-  const props: Record<string, string> = {};
-  for (const field of parseFrontmatterFields(yaml)) {
-    const value = field.value.replace(/^['"]|['"]$/g, "").trim();
-    if (value) props[field.key.toLowerCase()] = value;
+const lowerProps = new WeakMap<Record<string, string>, Record<string, string>>();
+
+/** Frontmatter and inline `key:: value` fields with lowercased keys; frontmatter wins. */
+function classicProps(node: VaultNode, content: string): Record<string, string> {
+  const props = cachedProps(node, content);
+  let lower = lowerProps.get(props);
+  if (!lower) {
+    lower = {};
+    for (const [key, value] of Object.entries(props)) lower[key.toLowerCase()] ??= value;
+    lowerProps.set(props, lower);
   }
-  return props;
+  return lower;
 }
 
 function folderOf(path: string): string {
@@ -1006,7 +1110,7 @@ function folderOf(path: string): string {
   return i <= 0 ? "" : path.slice(0, i);
 }
 
-/** A frontmatter value, or null when the note body is not loaded. File columns never need the body. */
+/** A property value, or null when the note body is not loaded. File columns never need the body. */
 function fieldActual(node: VaultNode, field: string): string | null {
   const key = columnKey(field);
   if (key === "tags") return tagsOf(node).join(", ");
@@ -1017,7 +1121,7 @@ function fieldActual(node: VaultNode, field: string): string | null {
   if (key === "file.path") return node.path;
   if (key === "file.folder") return folderOf(node.path);
   if (typeof node.content !== "string") return null;
-  return frontmatterProps(node.content)[key] ?? "";
+  return classicProps(node, node.content)[key] ?? "";
 }
 
 function startOfUtcDay(ms: number): number {
@@ -1507,6 +1611,7 @@ function readsFrontmatter(name: string): boolean {
 /** GROUP BY, WHERE, TABLE, or SORT on a frontmatter field. File meta stays sync. */
 export function queryNeedsFrontmatter(source: string): boolean {
   const parsed = parseNexusQuery(source);
+  if (parsed.kind === "dialect") return readsNoteBody(dialectExprs(parsed.query).map((expr) => expr.reads));
   if (parsed.kind !== "ok") return false;
   if (parsed.groupBy && readsFrontmatter(parsed.groupBy)) return true;
   if (parsed.where.some((cmp) => readsFrontmatter(cmp.field))) return true;
@@ -1572,13 +1677,29 @@ function scopeHydrateIds(
   want: (node: VaultNode) => boolean,
   limit: number,
 ): string[] {
-  const parsed = parseNexusQuery(source);
-  if (parsed.kind !== "ok") return [];
+  const parsedQuery = parseNexusQuery(source);
+  if (parsedQuery.kind !== "ok" && parsedQuery.kind !== "dialect") return [];
+  const parsed =
+    parsedQuery.kind === "dialect"
+      ? {
+          path: parsedQuery.query.source.folder,
+          tags: parsedQuery.query.source.tags,
+          tagMode: parsedQuery.query.source.tagMode,
+          vault: !parsedQuery.query.source.folder && !parsedQuery.query.source.tags.length,
+        }
+      : { ...parsedQuery, vault: false };
   const ids: string[] = [];
   const push = (node: VaultNode) => {
     if (ids.length >= limit || node.kind !== "note" || !want(node)) return;
     ids.push(node.id);
   };
+  if (parsed.vault) {
+    for (const node of Object.values(nodes)) {
+      if (ids.length >= limit) break;
+      if (isQueryNote(node)) push(node);
+    }
+    return ids;
+  }
   if (parsed.path) {
     const folderId = resolveFolder(nodes, parsed.path);
     if (!folderId) return ids;
@@ -1653,6 +1774,8 @@ export function runNexusQuery(
    */
   tagExtras?: (VaultNode[] | null)[] | null,
   now = Date.now(),
+  /** The note this query is written in, which `this.` and FROM [[]] read. */
+  hostId: string | null = null,
 ): NexusQueryModel {
   const footer = NEXUS_QUERY_FOOTER;
   const parsed = parseNexusQuery(source);
@@ -1670,7 +1793,7 @@ export function runNexusQuery(
   }
   if (parsed.kind === "error") {
     return {
-      footer,
+      footer: looksLikeDialect(source) ? NEXUS_DIALECT_FOOTER : footer,
       help: null,
       error: parsed.error,
       mode: null,
@@ -1678,8 +1801,10 @@ export function runNexusQuery(
       truncated: false,
       scanNote: null,
       fieldNote: null,
+      problem: parsed.problem ?? null,
     };
   }
+  if (parsed.kind === "dialect") return runDialect(source, parsed.query, nodes, tagExtras, now, hostId);
 
   let fieldNote: string | null = null;
   let notes: VaultNode[] = [];
@@ -1704,15 +1829,17 @@ export function runNexusQuery(
   if (parsed.path) {
     const folderId = resolveFolder(nodes, parsed.path);
     if (!folderId) {
+      const error = `No folder matches path:${parsed.path}. Use a folder from the file list.`;
       return {
         footer,
         help: null,
-        error: `No folder matches path:${parsed.path}. Use a folder from the file list.`,
+        error,
         mode: parsed.mode,
         rows: [],
         truncated: false,
         scanNote: null,
         fieldNote: null,
+        problem: folderProblem(source, parsed.path, error),
       };
     }
     const collected = collectInFolder(nodes, folderId, parsed.path, parsed.tags, parsed.tagMode, parsed.where, parsed.whereJoins, now, linkScan);
@@ -1859,7 +1986,12 @@ export function runNexusQuery(
   } else if (rows.length && frontmatterCols.length) {
     const missing = frontmatterCols.filter((name) => rows.every((row) => row.fields.find((field) => field.name === name)?.value === "—"));
     if (missing.length) {
-      fieldNote = `No loaded note has ${missing.map((name) => `“${name}”`).join(" or ")} in its frontmatter.`;
+      const seen = new Set<string>();
+      for (const item of ordered.slice(0, 300)) {
+        if (typeof item.node.content === "string") for (const key of Object.keys(classicProps(item.node, item.node.content))) seen.add(key);
+      }
+      const guess = missing.length === 1 ? didYouMean(columnKey(missing[0]!), seen) : null;
+      fieldNote = `No loaded note has ${missing.map((name) => `“${name}”`).join(" or ")} in its frontmatter or as an inline ${columnKey(missing[0]!)}:: field.${guess ? ` Did you mean “${guess}”?` : ""}`;
     }
   }
   return {
@@ -1869,6 +2001,9 @@ export function runNexusQuery(
     mode: parsed.mode,
     rows,
     truncated,
+    showPath: true,
+    total: ordered.length,
+    cap: NEXUS_QUERY_CAP,
     scanNote: budgetHit
       ? `Stopped while reading this folder (${VISIT_BUDGET} files). Narrow with tag:.`
       : tagsIncomplete && notes.length === 0
@@ -1880,5 +2015,450 @@ export function runNexusQuery(
           : null,
     fieldNote,
     tagsIncomplete,
+  };
+}
+
+export const NEXUS_DIALECT_FOOTER =
+  'LIST, TABLE, or CARDS · FROM "Folder", #tag, -#tag, or [[Note]] · WHERE, columns, SORT, and GROUP BY take any Bases formula, and Dataview spellings like =, AND, OR, date(today), and dur(7 days) read the same · AS "Label" names a column · LIMIT n · Properties are frontmatter plus inline key:: value fields; frontmatter wins when both set one · this. is the note the query is written in, like this.file.name or contains(this.file.outlinks, file.link), and FROM [[]] lists notes that link to it. Runs inside Nexus; nothing in a note is run as code.';
+
+/** Rows the full form shows at most. LIMIT asks for fewer. */
+export const NEXUS_DIALECT_CAP = 500;
+/** Notes a query with no FROM reads before it stops and says so. */
+export const VAULT_SCAN_BUDGET = 20_000;
+
+/** Tags this query reads from FROM, for the sqlite tag_map lookup. */
+export function queryTags(source: string): string[] {
+  const parsed = parseNexusQuery(source);
+  if (parsed.kind === "dialect") return parsed.query.source.tags;
+  if (parsed.kind === "ok") return parsed.tags;
+  return [];
+}
+
+function isQueryNote(node: VaultNode | undefined): node is VaultNode {
+  return !!node && node.kind === "note" && !/\.(canvas|base)$/i.test(node.path);
+}
+
+function dialectExprs(query: DialectQuery): CompiledExpr[] {
+  return [
+    ...query.where,
+    ...query.columns.map((col) => col.expr),
+    ...query.sort.map((key) => key.expr),
+    ...(query.groupBy ? [query.groupBy.expr] : []),
+  ];
+}
+
+/** Frontmatter per note id, reused until that note's text changes. */
+const propsCache = new Map<string, { content: string; props: Record<string, string> }>();
+
+function cachedProps(node: VaultNode, content: string): Record<string, string> {
+  const hit = propsCache.get(node.id);
+  if (hit && hit.content === content) return hit.props;
+  if (propsCache.size > 50_000) propsCache.clear();
+  const props = noteTableProperties(content);
+  propsCache.set(node.id, { content, props });
+  return props;
+}
+
+type DialectContext = {
+  nodes: Record<string, VaultNode>;
+  linkIndex: () => Map<string, string>;
+  backlinks: () => Map<string, FormulaLink[]>;
+  /** The note the query is written in, or null outside a note. */
+  host: VaultNode | null;
+  self: () => FormulaRow | null;
+};
+
+function dialectContext(nodes: Record<string, VaultNode>, hostId: string | null = null): DialectContext {
+  let index: Map<string, string> | null = null;
+  let back: Map<string, FormulaLink[]> | null = null;
+  const linkIndex = () => (index ??= noteLinkIndex(nodes));
+  const backlinks = () => {
+    if (back) return back;
+    const out = new Map<string, FormulaLink[]>();
+    const idx = linkIndex();
+    for (const source of Object.values(nodes)) {
+      if (!isQueryNote(source) || typeof source.content !== "string") continue;
+      const seen = new Set<string>();
+      for (const link of noteOutlinks(source.content)) {
+        const id = idx.get(normalizeLinkTarget(link.target));
+        if (!id || id === source.id || seen.has(id)) continue;
+        seen.add(id);
+        const list = out.get(id) ?? [];
+        list.push({ target: source.path.replace(/\.md$/i, ""), display: noteTitle(source) });
+        out.set(id, list);
+      }
+    }
+    for (const list of out.values()) list.sort((a, b) => (a.display ?? "").localeCompare(b.display ?? ""));
+    back = out;
+    return out;
+  };
+  const hostNode = hostId ? nodes[hostId] : undefined;
+  const host = isQueryNote(hostNode) ? hostNode : null;
+  let self: FormulaRow | null | undefined;
+  const ctx: DialectContext = {
+    nodes,
+    linkIndex,
+    backlinks,
+    host,
+    self: () => {
+      if (self !== undefined) return self;
+      self = null;
+      if (host) self = formulaRowOf(host, ctx);
+      return self;
+    },
+  };
+  return ctx;
+}
+
+function nodeForTarget(ctx: DialectContext, target: string): VaultNode | null {
+  if (target === THIS_NOTE) return ctx.host;
+  const id = ctx.linkIndex().get(normalizeLinkTarget(target.replace(/\.md$/i, "")));
+  const node = id ? ctx.nodes[id] : undefined;
+  return isQueryNote(node) ? node : null;
+}
+
+function formulaRowOf(node: VaultNode, ctx: DialectContext): FormulaRow {
+  const content = typeof node.content === "string" ? node.content : null;
+  const props = content !== null ? cachedProps(node, content) : {};
+  let outlinks: FormulaLink[] | null = null;
+  const fileAt = (target: string) => {
+    const hit = nodeForTarget(ctx, target);
+    if (!hit) return null;
+    const body = typeof hit.content === "string" ? hit.content : null;
+    return {
+      kind: "file" as const,
+      id: hit.id,
+      target: hit.path.replace(/\.md$/i, ""),
+      name: noteTitle(hit),
+      path: hit.path,
+      props: body !== null ? cachedProps(hit, body) : {},
+      size: noteByteSize(hit),
+      ctime: hit.ctime || 0,
+      mtime: hit.mtime || 0,
+    };
+  };
+  return {
+    name: noteTitle(node),
+    path: node.path,
+    folder: folderOf(node.path),
+    mtime: node.mtime || 0,
+    size: noteByteSize(node),
+    ctime: node.ctime || 0,
+    props,
+    refs: new Map(),
+    outlinks: () => (outlinks ??= content !== null ? noteOutlinks(content) : []),
+    backlinks: () => ctx.backlinks().get(node.id) ?? [],
+    tags: () => tagsOf(node),
+    get self() {
+      return ctx.self();
+    },
+    fileAt,
+    linksAt: (target) => {
+      const hit = nodeForTarget(ctx, target);
+      return hit && typeof hit.content === "string" ? noteOutlinks(hit.content) : null;
+    },
+  };
+}
+
+function outgoingIds(node: VaultNode, ctx: DialectContext): Set<string> {
+  const ids = new Set<string>();
+  if (typeof node.content !== "string") return ids;
+  for (const link of noteOutlinks(node.content)) {
+    const hit = nodeForTarget(ctx, link.target);
+    if (hit && hit.id !== node.id) ids.add(hit.id);
+  }
+  return ids;
+}
+
+type Candidates = {
+  notes: VaultNode[];
+  budgetHit: boolean;
+  tagsIncomplete: boolean;
+  unloaded: number;
+  error: string | null;
+};
+
+function dialectCandidates(
+  query: DialectQuery,
+  nodes: Record<string, VaultNode>,
+  tagExtras: (VaultNode[] | null)[] | null | undefined,
+  ctx: DialectContext,
+  now: number,
+): Candidates {
+  const src = query.source;
+  const out: Candidates = { notes: [], budgetHit: false, tagsIncomplete: false, unloaded: 0, error: null };
+  let notes: VaultNode[];
+  if (src.folder) {
+    const folderId = resolveFolder(nodes, src.folder);
+    if (!folderId) {
+      out.error = `No folder matches “${src.folder}”. Use a folder from the file list.`;
+      return out;
+    }
+    const collected = collectInFolder(nodes, folderId, src.folder, src.tags, src.tagMode, [], [], now);
+    notes = collected.notes.filter(isQueryNote);
+    out.budgetHit = collected.budgetHit;
+  } else if (src.tags.length) {
+    const failed = src.tags.map((_, i) => tagExtras != null && tagExtras[i] == null);
+    out.tagsIncomplete = failed.some(Boolean);
+    notes = joinTaggedNotes(
+      src.tags.map((tag, i) => {
+        const mem = notesForTagJoined(nodes, tag);
+        const extra = tagExtras?.[i];
+        return extra == null ? mem : joinTaggedNotes([mem, extra], "or");
+      }),
+      src.tagMode,
+    ).filter(isQueryNote);
+  } else {
+    notes = [];
+    for (const node of Object.values(nodes)) {
+      if (!isQueryNote(node)) continue;
+      if (notes.length >= VAULT_SCAN_BUDGET) {
+        out.budgetHit = true;
+        break;
+      }
+      notes.push(node);
+    }
+  }
+  if (src.linksTo) {
+    const target = nodeForTarget(ctx, src.linksTo);
+    if (!target) {
+      out.error = `No note is named “${src.linksTo}”.`;
+      return out;
+    }
+    const kept: VaultNode[] = [];
+    for (const node of notes) {
+      if (typeof node.content !== "string") {
+        out.unloaded += 1;
+        continue;
+      }
+      if (outgoingIds(node, ctx).has(target.id)) kept.push(node);
+    }
+    notes = kept;
+  }
+  if (src.linkedFrom) {
+    const from = nodeForTarget(ctx, src.linkedFrom);
+    if (!from) {
+      out.error = `No note is named “${src.linkedFrom}”.`;
+      return out;
+    }
+    if (typeof from.content !== "string") out.unloaded += 1;
+    const ids = outgoingIds(from, ctx);
+    notes = src.folder || src.tags.length ? notes.filter((n) => ids.has(n.id)) : [...ids].map((id) => nodes[id]).filter(isQueryNote);
+  }
+  if (src.notTags.length) {
+    notes = notes.filter((node) => {
+      const have = tagsOf(node);
+      return !src.notTags.some((tag) => have.some((t) => t === tag || t.startsWith(`${tag}/`)));
+    });
+  }
+  if (src.notFolders.length) {
+    notes = notes.filter((node) => !src.notFolders.some((folder) => pathHasPrefix(node.path, folder)));
+  }
+  out.notes = notes;
+  return out;
+}
+
+function compareResults(a: FormulaResult, b: FormulaResult, dir: number): number {
+  const blankA = a.error !== null || a.value === "";
+  const blankB = b.error !== null || b.value === "";
+  if (blankA || blankB) return blankA === blankB ? 0 : blankA ? 1 : -1;
+  if (a.sort !== null && b.sort !== null && a.sort !== b.sort) return (a.sort - b.sort) * dir;
+  return a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: "base" }) * dir;
+}
+
+function refKey(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function runDialect(
+  source: string,
+  query: DialectQuery,
+  nodes: Record<string, VaultNode>,
+  tagExtras: (VaultNode[] | null)[] | null | undefined,
+  now: number,
+  hostId: string | null,
+): NexusQueryModel {
+  const ctx = dialectContext(nodes, hostId);
+  const base: NexusQueryModel = {
+    footer: NEXUS_DIALECT_FOOTER,
+    help: null,
+    error: null,
+    mode: query.view,
+    rows: [],
+    truncated: false,
+    scanNote: null,
+    fieldNote: null,
+    problem: null,
+    columns: query.columns.map((col) => col.label),
+    showPath: false,
+    withoutId: query.withoutId,
+    total: 0,
+    cap: NEXUS_DIALECT_CAP,
+    dialect: true,
+  };
+  const wantsHost =
+    query.source.linksTo === THIS_NOTE || query.source.linkedFrom === THIS_NOTE || dialectExprs(query).some((expr) => expr.reads.self);
+  if (wantsHost && !ctx.host) {
+    const at = thisRefAt(source) ?? { start: 0, end: source.length };
+    return { ...base, mode: null, error: THIS_OUTSIDE_NOTE, problem: { message: THIS_OUTSIDE_NOTE, clause: "", ...at } };
+  }
+  const found = dialectCandidates(query, nodes, tagExtras, ctx, now);
+  if (found.error) {
+    return {
+      ...base,
+      mode: null,
+      error: found.error,
+      problem: folderProblem(source, query.source.folder ?? "", found.error),
+    };
+  }
+  const whereBody = readsNoteBody(query.where.map((expr) => expr.reads));
+  const readsRefs = [...query.sort.map((s) => s.expr), ...(query.groupBy ? [query.groupBy.expr] : []), ...query.where].some(
+    (expr) => expr.reads.refs.length > 0,
+  );
+  let unloaded = found.unloaded;
+  let whereFailed = 0;
+  let firstWhereError: string | null = null;
+  const kept: { node: VaultNode; row: FormulaRow }[] = [];
+  const seenKeys = new Set<string>();
+  let loadedSeen = 0;
+  const withColumns = (item: { node: VaultNode; row: FormulaRow }) => {
+    const refs = item.row.refs as FormulaRefs;
+    if (refs.size) return;
+    for (const col of query.columns) {
+      const result = runNoteFormula(col.expr.compiled, item.row, now);
+      const entry = result.error ? { error: result.error } : { value: result.raw };
+      refs.set(col.label.toLowerCase(), entry);
+      refs.set(refKey(col.label), entry);
+    }
+  };
+  for (const node of found.notes) {
+    const loaded = typeof node.content === "string";
+    if (whereBody && !loaded) {
+      unloaded += 1;
+      continue;
+    }
+    const row = formulaRowOf(node, ctx);
+    if (loaded && loadedSeen < 2000) {
+      loadedSeen += 1;
+      for (const key of Object.keys(row.props)) seenKeys.add(key);
+    }
+    const item = { node, row };
+    if (readsRefs) withColumns(item);
+    let pass = true;
+    for (const expr of query.where) {
+      const result = runQueryFilter(expr, row, now);
+      if (result.error) {
+        whereFailed += 1;
+        firstWhereError ??= result.error;
+      }
+      if (!result.pass) {
+        pass = false;
+        break;
+      }
+    }
+    if (pass) kept.push(item);
+  }
+  if (query.sort.length) {
+    const keyed = kept.map((item) => ({ item, keys: query.sort.map((key) => runNoteFormula(key.expr.compiled, item.row, now)) }));
+    keyed.sort((a, b) => {
+      for (let i = 0; i < query.sort.length; i += 1) {
+        const delta = compareResults(a.keys[i] as FormulaResult, b.keys[i] as FormulaResult, query.sort[i]?.dir === "desc" ? -1 : 1);
+        if (delta) return delta;
+      }
+      return a.item.row.name.localeCompare(b.item.row.name) || a.item.node.path.localeCompare(b.item.node.path);
+    });
+    kept.splice(0, kept.length, ...keyed.map((entry) => entry.item));
+  } else {
+    kept.sort((a, b) => a.row.name.localeCompare(b.row.name) || a.node.path.localeCompare(b.node.path));
+  }
+  let groups: string[] | null = null;
+  if (query.groupBy) {
+    const expr = query.groupBy.expr;
+    const keyed = kept.map((item) => {
+      const result = runNoteFormula(expr.compiled, item.row, now);
+      return { item, result, label: result.error || result.value === "" ? "—" : result.value };
+    });
+    const order = new Map<string, FormulaResult>();
+    for (const entry of keyed) if (!order.has(entry.label)) order.set(entry.label, entry.result);
+    const labels = [...order.keys()].sort((a, b) => {
+      if ((a === "—") !== (b === "—")) return a === "—" ? 1 : -1;
+      return compareResults(order.get(a) as FormulaResult, order.get(b) as FormulaResult, 1);
+    });
+    const rank = new Map(labels.map((label, i) => [label, i]));
+    keyed.sort((a, b) => (rank.get(a.label) ?? 0) - (rank.get(b.label) ?? 0));
+    kept.splice(0, kept.length, ...keyed.map((entry) => entry.item));
+    groups = keyed.map((entry) => entry.label);
+  }
+  const total = kept.length;
+  const cap = Math.min(query.limit ?? NEXUS_DIALECT_CAP, NEXUS_DIALECT_CAP);
+  const shown = kept.slice(0, cap);
+  const rows: NexusQueryRow[] = shown.map((item, i) => {
+    withColumns(item);
+    const refs = item.row.refs as FormulaRefs;
+    const fields = query.columns.map((col) => {
+      const entry = refs.get(col.label.toLowerCase());
+      if (!entry || "error" in entry) return { name: col.label, value: entry ? "⚠" : "—" };
+      return { name: col.label, value: formulaDisplay(entry.value) || "—" };
+    });
+    return {
+      id: item.node.id,
+      title: item.row.name,
+      path: item.node.path,
+      tags: null,
+      mtime: null,
+      fields,
+      link: null,
+      group: groups ? (groups[i] ?? null) : null,
+      rows: null,
+    };
+  });
+  const notes: string[] = [];
+  if (unloaded) {
+    notes.push(`${plural(unloaded, "note is", "notes are")} not loaded yet, so ${unloaded === 1 ? "it was" : "they were"} left out. They fill in as Nexus reads them.`);
+  }
+  if (whereFailed) notes.push(`WHERE could not be checked on ${plural(whereFailed, "note", "notes")}: ${firstWhereError}`);
+  const columnErrors = new Map<string, string>();
+  for (const item of shown) {
+    for (const col of query.columns) {
+      const entry = (item.row.refs as FormulaRefs).get(col.label.toLowerCase());
+      if (entry && "error" in entry && !columnErrors.has(col.label)) columnErrors.set(col.label, entry.error);
+    }
+  }
+  for (const [label, error] of columnErrors) notes.push(`“${label}” shows ⚠ where it failed: ${error}`);
+  if (loadedSeen > 0) {
+    const asked = new Set<string>();
+    for (const expr of dialectExprs(query)) for (const key of expr.reads.props) asked.add(key);
+    const lowerSeen = new Set([...seenKeys].map((key) => key.toLowerCase()));
+    const missing = [...asked].filter((key) => key && !lowerSeen.has(key.toLowerCase()));
+    for (const key of missing.slice(0, 2)) {
+      const guess = didYouMean(key, seenKeys);
+      notes.push(`No note in scope has the property “${key}” in frontmatter or as an inline ${key}:: field.${guess ? ` Did you mean “${guess}”?` : ""}`);
+    }
+    if (missing.length > 2) notes.push(`${missing.length - 2} more properties are missing too.`);
+  }
+  let scanNote: string | null = null;
+  if (found.budgetHit) {
+    scanNote = query.source.vault
+      ? `Read the first ${VAULT_SCAN_BUDGET.toLocaleString("en-US")} notes. Add FROM "Folder" or FROM #tag to scope it.`
+      : `Stopped while reading this folder (${VISIT_BUDGET} files). Narrow it with a tag.`;
+  } else if (found.tagsIncomplete && total === 0) {
+    scanNote = "Couldn't read every tag from the index.";
+  }
+  return {
+    ...base,
+    rows,
+    total,
+    truncated: total > cap && (query.limit === null || query.limit > NEXUS_DIALECT_CAP),
+    scanNote,
+    fieldNote: notes.length ? notes.join(" ") : null,
+    tagsIncomplete: found.tagsIncomplete,
   };
 }

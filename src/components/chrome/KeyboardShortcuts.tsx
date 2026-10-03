@@ -404,6 +404,14 @@ export function KeyboardShortcuts() {
         const inList = (el: HTMLElement | null) =>
           Boolean(el && typeof el.closest === "function" && el.closest("[data-file-tree]"));
         if (inList(target) || inList(active)) return;
+        // A field inside the note (a query, diagram or math editor) uses Esc to cancel its own edit.
+        if (
+          target &&
+          typeof target.closest === "function" &&
+          target.closest(".ProseMirror textarea, .ProseMirror input:not([type='checkbox'])")
+        ) {
+          return;
+        }
         // Only a modal owns Esc. The quick tour is not one.
         if (document.querySelector("[role='dialog'][aria-modal='true']")) return;
         const inNote = (el: HTMLElement | null) =>

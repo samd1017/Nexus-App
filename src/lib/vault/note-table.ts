@@ -11,6 +11,8 @@ import {
   type FormulaValue,
 } from "@/lib/vault/note-formula";
 import { extractTagsFromMarkdown } from "@/lib/vault/tags";
+import { withInlineFields } from "@/lib/vault/inline-fields";
+import { compileQueryFilter, readsNoteBody, runQueryFilter, type QueryProblem } from "@/lib/vault/query-expr";
 
 export type NoteTableSource = {
   id: string;
@@ -125,6 +127,7 @@ export function emptyBasesView(id: string, name: string): BasesViewConfig {
     name,
     query: "",
     folder: "",
+    filter: "",
     column: "name",
     dir: "asc",
     formulas: [],
@@ -141,6 +144,8 @@ export type BasesViewConfig = {
   name: string;
   query: string;
   folder: string;
+  /** A WHERE expression in the shared query dialect. Empty keeps every note. */
+  filter: string;
   column: string;
   dir: "asc" | "desc";
   /** Formula columns, left to right. A column may read columns to its left. */
@@ -242,18 +247,18 @@ export function resolveNoteLink(
 /**
  * One string per top-level key. A block list (`key:` then `- item` lines)
  * reads as the flow list `[a, b]`, so formulas see the same list either way.
+ * Inline `key:: value` fields in the body are read too; frontmatter wins.
  */
 export function noteTableProperties(content: string | null | undefined): Record<string, string> {
   if (!content) return {};
   const { yaml } = splitFrontmatter(content);
-  if (!yaml) return {};
   const props: Record<string, string> = {};
-  for (const field of parseFrontmatterFields(yaml)) {
+  for (const field of yaml ? parseFrontmatterFields(yaml) : []) {
     const value = field.value.replace(/^['"]|['"]$/g, "").trim();
     if (!value) continue;
     props[field.key] = value;
   }
-  return props;
+  return withInlineFields(props, content);
 }
 
 export function defaultBasesSession(): BasesSession {
@@ -265,6 +270,7 @@ export function defaultBasesSession(): BasesSession {
         name: "All notes",
         query: "",
         folder: "",
+        filter: "",
         column: "name",
         dir: "asc",
         formulas: [{ id: "formula", name: "Formula", expr: "file.mtime" }],
@@ -279,6 +285,7 @@ export function defaultBasesSession(): BasesSession {
         name: "Saved view",
         query: "",
         folder: "",
+        filter: "",
         column: "name",
         dir: "asc",
         formulas: [{ id: "formula", name: "Formula", expr: 'if(status, status, "—")' }],
@@ -350,6 +357,7 @@ function asView(raw: unknown, fallback: BasesViewConfig): BasesViewConfig {
     name: typeof row.name === "string" && row.name.trim() ? row.name : fallback.name,
     query: typeof row.query === "string" ? row.query : fallback.query,
     folder: typeof row.folder === "string" ? row.folder : fallback.folder,
+    filter: typeof row.filter === "string" ? row.filter : fallback.filter,
     column,
     dir: row.dir === "desc" ? "desc" : "asc",
     formulas,
@@ -580,7 +588,7 @@ function cellLinks(raw: FormulaResult["raw"], resolve: LinkResolver): NoteLink[]
 const LINE_WIKILINK = /\[\[([^\]\n]+)\]\]/g;
 
 /** Wikilinks a note makes, once per target. Embeds (![[…]]) and code are not links. */
-function noteOutlinks(content: string): FormulaLink[] {
+export function noteOutlinks(content: string): FormulaLink[] {
   const out: FormulaLink[] = [];
   const seen = new Set<string>();
   const source = stripCodeForLinkScan(content);
@@ -609,18 +617,41 @@ function noteTags(content: string, props: Record<string, string>): string[] {
   return [...tags].sort();
 }
 
+/** How a view's WHERE filter went. */
+export type NoteTableFilterStatus = {
+  /** Set when the filter does not compile; the view then keeps every note. */
+  problem: QueryProblem | null;
+  /** Notes the filter could not check, and the first reason. */
+  failed: number;
+  firstError: string | null;
+  /** Notes kept until their body loads, because the filter reads properties or text. */
+  pending: number;
+};
+
 export function buildNoteTable(
   notes: NoteTableSource[],
   folderPrefix = "",
   formulas: BasesFormula[] = [],
   now = Date.now(),
+  filter = "",
 ): {
   rows: NoteTableRow[];
   keys: string[];
   truncated: boolean;
   formulaStatus: FormulaColumnStatus[];
+  filterStatus: NoteTableFilterStatus;
 } {
   const prefix = folderPrefix.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const filterStatus: NoteTableFilterStatus = { problem: null, failed: 0, firstError: null, pending: 0 };
+  let compiledFilter = filter.trim() ? compileQueryFilter(filter) : null;
+  if (compiledFilter?.ok && compiledFilter.expr?.reads.self) {
+    const at = /(?<![\w.])this\s*\.[\w.]*|\[\[#?\]\]/.exec(filter);
+    const message = "this. means the note a query block is written in, and a Bases view has none. Name the note instead, like [[Project X]].";
+    compiledFilter = { ok: false, problem: { message, clause: "WHERE", start: at?.index ?? 0, end: at ? at.index + at[0].length : filter.length } };
+  }
+  if (compiledFilter && !compiledFilter.ok) filterStatus.problem = compiledFilter.problem;
+  const where = compiledFilter?.ok ? compiledFilter.expr : null;
+  const whereReadsBody = where ? readsNoteBody([where.reads]) : false;
   const counts = new Map<string, number>();
   const rows: NoteTableRow[] = [];
   let truncated = false;
@@ -675,12 +706,6 @@ export function buildNoteTable(
       break;
     }
     const props = noteTableProperties(note.content);
-    const links: Record<string, NoteLink[]> = {};
-    for (const key of Object.keys(props)) {
-      counts.set(key, (counts.get(key) || 0) + 1);
-      const targets = relationTargets(props[key] || "");
-      if (targets.length) links[key] = targets.map((target) => resolveNoteLink(target, catalog));
-    }
     const built = {
       name: noteTableTitle(note.name || note.path.split("/").pop() || note.path),
       path: note.path,
@@ -747,13 +772,31 @@ export function buildNoteTable(
         status.firstFailure ??= computed.error;
       }
     });
+    if (where) {
+      if (whereReadsBody && typeof note.content !== "string") {
+        filterStatus.pending += 1;
+      } else {
+        const checked = runQueryFilter(where, formulaRow, now);
+        if (checked.error) {
+          filterStatus.failed += 1;
+          filterStatus.firstError ??= checked.error;
+        }
+        if (!checked.pass) continue;
+      }
+    }
+    const links: Record<string, NoteLink[]> = {};
+    for (const key of Object.keys(props)) {
+      counts.set(key, (counts.get(key) || 0) + 1);
+      const targets = relationTargets(props[key] || "");
+      if (targets.length) links[key] = targets.map((target) => resolveNoteLink(target, catalog));
+    }
     rows.push({ id: note.id, ...built, links, formulas: cells });
   }
   const keys = [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, MAX_KEYS)
     .map(([key]) => key);
-  return { rows, keys, truncated, formulaStatus };
+  return { rows, keys, truncated, formulaStatus, filterStatus };
 }
 
 export function filterNoteRows(rows: NoteTableRow[], query: string): NoteTableRow[] {

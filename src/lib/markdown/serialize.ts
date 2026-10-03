@@ -38,13 +38,32 @@ marked.setOptions({
   breaks: false,
 });
 
-const turndown = new TurndownService({
+/**
+ * Atom blocks reach turndown as empty placeholders. Turndown skips empty
+ * elements before rules run, so these types must bypass that or they vanish.
+ */
+const ATOM_BLOCK_TYPES = new Set(["mermaid", "embed", "nexus-query", "query", "math-block", "math-inline"]);
+
+type TurndownNode = HTMLElement & { isBlank?: boolean; isBlock?: boolean };
+
+const turndown: TurndownService = new TurndownService({
   headingStyle: "atx",
   codeBlockStyle: "fenced",
   bulletListMarker: "-",
   emDelimiter: "*",
   strongDelimiter: "**",
   hr: "---",
+  blankReplacement: (content, node) => {
+    const el = node as TurndownNode;
+    const type = typeof el.getAttribute === "function" ? el.getAttribute("data-type") : null;
+    if (type && ATOM_BLOCK_TYPES.has(type)) {
+      el.isBlank = false;
+      const rules = (turndown as unknown as { rules: { forNode(n: Node): TurndownService.Rule } }).rules;
+      const rule = rules.forNode(el);
+      if (typeof rule.replacement === "function") return rule.replacement(content, el, turndown.options);
+    }
+    return el.isBlock ? "\n\n" : "";
+  },
 });
 
 turndown.addRule("frontmatter", {
@@ -97,7 +116,8 @@ turndown.addRule("nexusQueryBlock", {
     (node as HTMLElement).getAttribute("data-type") === "nexus-query",
   replacement: (_content, node) => {
     const q = (node as HTMLElement).getAttribute("data-query") || "";
-    return `\n\`\`\`nexus-query\n${q.replace(/\n+$/, "")}\n\`\`\`\n\n`;
+    const fence = (node as HTMLElement).getAttribute("data-lang") === "dataview" ? "dataview" : "nexus-query";
+    return `\n\`\`\`${fence}\n${q.replace(/\n+$/, "")}\n\`\`\`\n\n`;
   },
 });
 
@@ -601,9 +621,12 @@ function flattenSpecialEditorBlocks(root: HTMLElement): void {
       el.getAttribute("data-query") ||
       el.querySelector("[data-query]")?.getAttribute("data-query") ||
       "";
+    const fence =
+      el.getAttribute("data-lang") || el.querySelector("[data-lang]")?.getAttribute("data-lang") || "";
     const next = doc.createElement("div");
     next.setAttribute("data-type", "nexus-query");
     next.setAttribute("data-query", query);
+    if (fence === "dataview") next.setAttribute("data-lang", fence);
     el.replaceWith(next);
   });
   root.querySelectorAll("[data-type='query'], .nexus-query").forEach((el) => {

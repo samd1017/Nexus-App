@@ -2,6 +2,13 @@ import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { NexusQueryView } from "@/components/editor/NexusQueryView";
 
+/** Fence names this block reads and writes back unchanged. */
+export type NexusQueryFence = "nexus-query" | "dataview";
+
+export function queryFence(value: unknown): NexusQueryFence {
+  return value === "dataview" ? "dataview" : "nexus-query";
+}
+
 export const NexusQueryBlock = Node.create({
   name: "nexusQueryBlock",
   group: "block",
@@ -15,6 +22,11 @@ export const NexusQueryBlock = Node.create({
         default: "",
         parseHTML: (el) => el.getAttribute("data-query") || "",
         renderHTML: (attrs) => ({ "data-query": attrs.query || "" }),
+      },
+      lang: {
+        default: "nexus-query",
+        parseHTML: (el) => queryFence(el.getAttribute("data-lang")),
+        renderHTML: (attrs) => (queryFence(attrs.lang) === "dataview" ? { "data-lang": "dataview" } : {}),
       },
     };
   },
@@ -39,6 +51,7 @@ export const NexusQueryBlock = Node.create({
       attrs: ({ node }) => ({
         "data-type": "nexus-query",
         "data-query": String(node.attrs.query ?? ""),
+        ...(queryFence(node.attrs.lang) === "dataview" ? { "data-lang": "dataview" } : {}),
         class: "nexus-note-list",
       }),
     });

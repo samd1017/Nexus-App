@@ -12,6 +12,7 @@ import {
   FILE_SORT,
   asRecord,
   baseViewNode,
+  filterAtoms,
   folderFilter,
   folderOf,
   formulaRefs,
@@ -19,7 +20,9 @@ import {
   normalFolder,
   rewriteFormulaRefs,
   summaryFromBase,
+  viewFilterAtoms,
 } from "@/lib/vault/bases-file";
+import { toFormulaSyntax } from "@/lib/vault/query-expr";
 import {
   basesViewId,
   formulaKey,
@@ -44,6 +47,7 @@ const VIEW_FIELDS = [
   "name",
   "query",
   "folder",
+  "filter",
   "column",
   "dir",
   "formulas",
@@ -207,6 +211,32 @@ function withFolder(node: unknown, folder: string | null): unknown {
   return all.length ? { and: all } : undefined;
 }
 
+/** One condition with any outer parentheses removed, for comparing file atoms with filter parts. */
+function bareCondition(text: string): string {
+  let out = toFormulaSyntax(text).trim();
+  while (out.startsWith("(") && out.endsWith(")")) {
+    let depth = 0;
+    let wraps = true;
+    for (let i = 0; i < out.length; i += 1) {
+      if (out[i] === "(") depth += 1;
+      else if (out[i] === ")") depth -= 1;
+      if (depth === 0 && i < out.length - 1) {
+        wraps = false;
+        break;
+      }
+    }
+    if (!wraps) break;
+    out = out.slice(1, -1).trim();
+  }
+  return out;
+}
+
+/** A view's `filters` for its folder and WHERE text, minus conditions the whole file already applies. */
+function viewFilters(folder: string | null, filter: string, shared: ReadonlySet<string>): unknown {
+  const atoms = viewFilterAtoms(folder, filter).filter((atom, i) => (folder && i === 0) || !shared.has(bareCondition(atom)));
+  return atoms.length ? { and: atoms } : undefined;
+}
+
 function topFolder(node: unknown): string | null {
   const { atoms } = filterList(node);
   for (const atom of atoms) {
@@ -346,6 +376,11 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
     });
   }
 
+  const sharedConditions = new Set(
+    filterAtoms(topFilters, [])
+      .filter((atom) => folderOf(atom) === null)
+      .map(bareCondition),
+  );
   const nodes: unknown[] = [...rawViews];
   session.views.forEach((view, i) => {
     if (!changed[i]) return;
@@ -363,7 +398,9 @@ export function writeLiveBase(base: LiveBase | null, next: BasesSession, detecte
     out.name = node.name;
     const ownFolder = normalFolder(view.folder);
     const viewFolder = !pushDown && shared !== null && ownFolder === shared ? null : ownFolder || null;
-    if (!prior || normalFolder(prior.folder) !== ownFolder || pushDown) setOrDelete(out, "filters", withFolder(old.filters, viewFolder));
+    if (!prior || (prior.filter ?? "").trim() !== (view.filter ?? "").trim()) {
+      setOrDelete(out, "filters", viewFilters(viewFolder, view.filter ?? "", sharedConditions));
+    } else if (normalFolder(prior.folder) !== ownFolder || pushDown) setOrDelete(out, "filters", withFolder(old.filters, viewFolder));
     out.order = [...(node.order as string[]), ...foreignOrder(old.order, source?.sourceKeys[i] ?? [])];
     if (!prior || !sameFormulas || prior.column !== view.column || prior.dir !== view.dir || !Array.isArray(old.sort)) {
       const first = (node.sort as Record<string, unknown>[])[0] as Record<string, unknown>;
