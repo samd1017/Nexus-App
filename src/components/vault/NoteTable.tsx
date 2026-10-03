@@ -34,7 +34,16 @@ import { groupNoteRows, summarize, summaryKindsFor, summaryLabel, type NoteGroup
 import { BASE_EXPORT_FILE, exportBaseFile } from "@/lib/vault/bases-file";
 import { basesViewToQuery } from "@/lib/vault/bases-query";
 import { problemExcerpt } from "@/lib/vault/query-expr";
-import { LIVE_BASE_BACKUP, LIVE_BASE_FILE, readLiveBase, sameBasesSession, type LiveBase } from "@/lib/vault/bases-live";
+import {
+  LEGACY_LIVE_BASE_FILE,
+  LEGACY_LIVE_BASE_LABEL,
+  LIVE_BASE_BACKUP,
+  LIVE_BASE_FILE,
+  baseFileLabel,
+  readLiveBase,
+  sameBasesSession,
+  type LiveBase,
+} from "@/lib/vault/bases-live";
 import { sentence, type LiveCheck, type LiveOpen, type LiveSave } from "@/lib/vault/bases-live-sync";
 import { liveBasesSync, storageForVaultBase } from "@/lib/vault/bases-live-storage";
 import type { LiveStorage } from "@/lib/vault/bases-live-sync";
@@ -107,7 +116,8 @@ export function NoteTable() {
   const [vaultBasesOpen, setVaultBasesOpen] = useState(false);
   const [vaultBases, setVaultBases] = useState<VaultBaseEntry[] | null>(null);
   /** Vault path of the open `.base`, or null while the home live file is active. */
-  const [livePath, setLivePath] = useState<string | null>(null);
+  const [liveFile, setLiveFile] = useState<string | null>(null);
+  const livePath = liveFile ? baseFileLabel(liveFile) : null;
   const [liveState, setLiveState] = useState<"ok" | "failed" | "blocked">("ok");
   const baseInput = useRef<HTMLInputElement>(null);
   const [hydratingProps, setHydratingProps] = useState(false);
@@ -131,6 +141,7 @@ export function NoteTable() {
   };
 
   const liveName = () => live?.sync.storage.name ?? LIVE_BASE_FILE;
+  const homeName = () => live?.sync.home.name ?? LIVE_BASE_FILE;
   const keepMine = (session: BasesSession): BaseUndo => ({ session, label: "Keep my version", kind: "external" });
 
   const onSaved = (attempted: BasesSession) => (result: LiveSave) => {
@@ -239,13 +250,13 @@ export function NoteTable() {
       }
     } else {
       setSession(result.session);
-      const where = live?.onDisk ? `${LIVE_BASE_FILE} at the vault root` : "a .base kept in browser storage";
+      const where = live?.onDisk ? `${homeName()} at the vault root` : "a .base kept in browser storage";
       const title =
         result.from === "legacy"
           ? `Your views now live in ${where}. ${sentence(backup)} was left as a backup; Nexus no longer reads it.`
           : result.usedLegacy
-            ? `${LIVE_BASE_FILE} was an export from an older Nexus. It now holds your live views from ${backup}, which was left as a backup.`
-            : `${LIVE_BASE_FILE} was an export from an older Nexus. Nexus now saves your views to it directly.`;
+            ? `${sentence(homeName())} was an export from an older Nexus. It now holds your live views from ${backup}, which was left as a backup.`
+            : `${sentence(homeName())} was an export from an older Nexus. Nexus now saves your views to it directly.`;
       setBaseNotice({
         title: result.saveError ? `${title} Saving it failed (${result.saveError}); Nexus tries again on your next change.` : title,
         lines: result.notes,
@@ -260,7 +271,7 @@ export function NoteTable() {
     ready.current = false;
     saveFailed.current = false;
     setLiveState("ok");
-    setLivePath(live && live.sync.storage !== live.sync.home ? (live.sync.storage.path ?? null) : null);
+    setLiveFile(live && live.sync.storage !== live.sync.home ? (live.sync.storage.path ?? null) : null);
     if (!live) {
       ready.current = true;
       return;
@@ -755,7 +766,7 @@ export function NoteTable() {
     const previousBase = live?.sync.template() ?? null;
     live?.sync.adopt({ text, session: result.session });
     setSession(result.session);
-    const active = livePath ?? (live?.onDisk ? LIVE_BASE_FILE : live ? "browser storage" : null);
+    const active = livePath ?? (live?.onDisk ? homeName() : live ? "browser storage" : null);
     setBaseNotice({
       title: active ? `Imported ${name}. Edits save to ${active}.` : `Imported ${name}.`,
       lines: result.notes.length ? result.notes : ["Every view, column, formula, filter, and sort carried over."],
@@ -790,15 +801,16 @@ export function NoteTable() {
       return;
     }
     const clean = file.path.replace(/\\/g, "/").replace(/^\/+/, "");
-    const next = clean === LIVE_BASE_FILE ? live.sync.home : storageForVaultBase(clean);
+    const shownName = baseFileLabel(file.name);
+    const next = clean === live.sync.home.path ? live.sync.home : storageForVaultBase(clean);
     if (!next) {
-      setBaseNotice({ title: `Couldn't open ${file.name}: no vault is open.`, lines: [], tone: "error", undo: null });
+      setBaseNotice({ title: `Couldn't open ${shownName}: no vault is open.`, lines: [], tone: "error", undo: null });
       return;
     }
     if (live.sync.storage.path === clean) {
       setVaultBasesOpen(false);
       setBaseNotice({
-        title: `${file.name} is already the file these views save to.`,
+        title: `${sentence(shownName)} is already the file these views save to.`,
         lines: [],
         tone: "ok",
         undo: null,
@@ -810,11 +822,11 @@ export function NoteTable() {
       text = await readVaultBaseText(clean);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setBaseNotice({ title: `Couldn't open ${file.name}: ${message}`, lines: [], tone: "error", undo: null });
+      setBaseNotice({ title: `Couldn't open ${shownName}: ${message}`, lines: [], tone: "error", undo: null });
       return;
     }
     if (text.length > 1024 * 1024) {
-      setBaseNotice({ title: `${file.name} is larger than 1 MB, so it was not opened.`, lines: [], tone: "error", undo: null });
+      setBaseNotice({ title: `${sentence(shownName)} is larger than 1 MB, so it was not opened.`, lines: [], tone: "error", undo: null });
       return;
     }
     const parsed = readLiveBase(text, next.name);
@@ -838,13 +850,13 @@ export function NoteTable() {
     const previousBase = live.sync.template();
     const previousPath = live.sync.storage === live.sync.home ? null : (live.sync.storage.path ?? null);
     await live.sync.retarget(next, text);
-    setLivePath(next === live.sync.home ? null : clean);
+    setLiveFile(next === live.sync.home ? null : clean);
     setSession(parsed.session);
     setVaultBasesOpen(false);
     const lines = parsed.notes.length ? [...parsed.notes] : ["Every view, column, formula, filter, and sort carried over."];
     if (flushed.kind === "conflict") lines.push("The file you left had changed outside Nexus. Undo open returns to that version.");
     setBaseNotice({
-      title: `Opened ${file.name}. Edits save to ${clean}.`,
+      title: `Opened ${shownName}. Edits save to ${baseFileLabel(clean)}.`,
       lines,
       tone: "ok",
       undo: {
@@ -903,7 +915,7 @@ export function NoteTable() {
       setBaseNotice({
         title:
             desktop || fsa
-            ? `Exported a copy to ${BASE_EXPORT_FILE}. Nexus keeps saving your views to ${livePath ?? LIVE_BASE_FILE}.`
+            ? `Exported a copy to ${BASE_EXPORT_FILE}. Nexus keeps saving your views to ${livePath ?? homeName()}.`
             : livePath
               ? `Downloaded ${BASE_EXPORT_FILE}. Nexus keeps saving your views to ${livePath}.`
               : `Downloaded ${BASE_EXPORT_FILE}.`,
@@ -1133,12 +1145,14 @@ export function NoteTable() {
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--border)] px-3 py-2">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">Note table</p>
-          <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure" data-live-path={livePath ?? ""}>
+          <p className="text-[11px] text-[var(--text-muted)]" data-testid="bases-disclosure" data-live-path={liveFile ?? ""}>
             Built-in table and cards with views, formula columns with list, regex, and link functions, group-by, summary rows with summary formulas, and typed note links.{" "}
             {livePath
               ? `Views live in ${livePath}. Nexus saves edits to that file and reloads it when it changes.`
               : live?.onDisk
-                ? `Views live in ${LIVE_BASE_FILE} at the vault root, a .base file Nexus saves to and reloads when it changes.`
+                ? live.sync.home.path === LEGACY_LIVE_BASE_FILE
+                  ? `Views live in ${LEGACY_LIVE_BASE_LABEL} at the vault root, a .base file from an earlier version that Nexus still saves to and reloads when it changes.`
+                  : `Views live in ${LIVE_BASE_FILE} at the vault root, a .base file Nexus saves to and reloads when it changes.`
                 : "Views live in a .base kept in browser storage for this vault."}{" "}
             link.asFile() opens that note, and link.linksTo() checks its links. Formula help lists every function that works. asFile().name, .path, .properties, .size, .ctime, and .mtime read that note.
           </p>
@@ -1396,10 +1410,10 @@ export function NoteTable() {
                   className="chip-btn"
                   data-testid="bases-vault-base"
                   data-path={file.path}
-                  title={file.path}
+                  title={baseFileLabel(file.path)}
                   onClick={() => void openVaultBase(file)}
                 >
-                  {file.path}
+                  {baseFileLabel(file.path)}
                 </button>
               ))}
             </div>
@@ -1431,7 +1445,7 @@ export function NoteTable() {
                       cancelPendingSave();
                       if (undo.storage) await live?.sync.retarget(undo.storage, undo.base?.text ?? null);
                       else if (undo.base !== undefined) live?.sync.adopt(undo.base);
-                      if (undo.livePath !== undefined) setLivePath(undo.livePath);
+                      if (undo.livePath !== undefined) setLiveFile(undo.livePath);
                       setSession(undo.session);
                       setBaseNotice(null);
                     })();
@@ -1897,7 +1911,7 @@ export function NoteTable() {
         {livePath
           ? `Views save to ${livePath}.`
           : live?.onDisk
-            ? `Views save to ${LIVE_BASE_FILE}.`
+            ? `Views save to ${homeName()}.`
             : "Views save in browser storage."}
       </p>
     </div>

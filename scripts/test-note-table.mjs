@@ -947,7 +947,7 @@ assert.equal(legacyLayout.views[0].layout, "table");
 
 const { readFileSync } = await import("node:fs");
 const palette = readFileSync("src/components/search/CommandPalette.tsx", "utf8");
-assert.match(palette, /label: "Bases"/);
+assert.match(palette, /label: "Note table"/);
 assert.match(palette, /note table/);
 assert.match(palette, /setBasesOpen\(true\)/);
 const table = readFileSync("src/components/vault/NoteTable.tsx", "utf8");
@@ -1020,7 +1020,7 @@ assert.doesNotMatch(table, /Opening another vault \.base loads its views here/);
 assert.doesNotMatch(table, /Nexus still saves them to/);
 assert.doesNotMatch(table, /Nexus still saves them in browser storage/);
 assert.doesNotMatch(table, /still holds these views/);
-assert.match(table, /Edits save to \$\{clean\}/);
+assert.match(table, /Edits save to \$\{baseFileLabel\(clean\)\}/);
 assert.match(table, /Views live in \$\{livePath\}/);
 assert.match(table, /sync\.retarget\(/);
 assert.match(table, /storageForVaultBase/);
@@ -1059,7 +1059,7 @@ assert.match(workspace, /NoteTable/);
 // .base import / export
 const { BASE_EXPORT_FILE, exportBaseFile, importBaseFile } = await import("../src/lib/vault/bases-file.ts");
 const { parse: parseYaml } = await import("yaml");
-assert.equal(BASE_EXPORT_FILE, "Nexus Bases export.base");
+assert.equal(BASE_EXPORT_FILE, "Note table export.base");
 const exportSession = {
   activeId: "all",
   views: [
@@ -1264,7 +1264,7 @@ assert.deepEqual(
     diskPaths: ["Sample-ThreeViews.base", "Notes/Mine.base"],
     includeDemo: true,
   }).map((file) => file.path),
-  ["Nexus Bases export.base", "Notes/Mine.base", "Sample-GroupBy.base", "Sample-MultiFormula.base", "Sample-ThreeViews.base"],
+  ["Note table export.base", "Notes/Mine.base", "Sample-GroupBy.base", "Sample-MultiFormula.base", "Sample-ThreeViews.base"],
 );
 assert.deepEqual(
   vaultBaseEntries({ nodes: {}, diskPaths: ["Projects/Other.base"], includeDemo: false }).map((file) => file.path),

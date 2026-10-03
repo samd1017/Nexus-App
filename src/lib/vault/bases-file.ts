@@ -26,11 +26,11 @@ import {
   type SummaryKind,
 } from "@/lib/vault/note-table";
 
-export const BASE_EXPORT_FILE = "Nexus Bases export.base";
+export const BASE_EXPORT_FILE = "Note table export.base";
 
 const EXPORT_HEADER = [
-  "# Exported from Nexus as a copy. Nexus keeps its live views in Nexus Bases.base; open this file from Bases to load its views there.",
-  "# Formulas use Nexus syntax, which mostly matches Obsidian Bases; check any that error there.",
+  "# Exported from Nexus as a copy. Nexus keeps its live views in its own .base file; open this file from the note table to load its views there.",
+  "# Formulas use Nexus syntax; another app may read some of them differently.",
 ].join("\n");
 
 export const FILE_SORT: Record<string, string> = { name: "file.name", folder: "file.folder", path: "file.path" };

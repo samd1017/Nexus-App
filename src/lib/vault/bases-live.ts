@@ -31,13 +31,22 @@ import {
   type BasesViewConfig,
 } from "@/lib/vault/note-table";
 
-export const LIVE_BASE_FILE = "Nexus Bases.base";
+export const LIVE_BASE_FILE = "Note table.base";
+/** The home file's name in vaults made by older builds; such a vault keeps using it. */
+export const LEGACY_LIVE_BASE_FILE = "Nexus Bases.base";
+/** How the older home file is named on screen. */
+export const LEGACY_LIVE_BASE_LABEL = "the note table file";
 /** Where an unreadable live file is copied before Nexus replaces it. */
-export const LIVE_BASE_BACKUP = ".nexus/Nexus Bases.unreadable.base";
+export const LIVE_BASE_BACKUP = ".nexus/Note table.unreadable.base";
 export const MAX_LIVE_BASE_CHARS = 1024 * 1024;
 
+/** A vault `.base` path as the note table shows it. */
+export function baseFileLabel(path: string): string {
+  return path === LEGACY_LIVE_BASE_FILE ? LEGACY_LIVE_BASE_LABEL : path;
+}
+
 const LIVE_HEADER = [
-  "# Nexus Bases live views. Nexus saves every change here and reloads edits made in other apps.",
+  "# Nexus note table views. Nexus saves every change here and reloads edits made in other apps.",
   "# The nexus: block keeps Nexus-only settings (text filter, link columns, Count summaries).",
 ].join("\n");
 

@@ -41,12 +41,12 @@ const roundTrip = (session, keys = []) => {
   return { text, read };
 };
 
-assert.equal(LIVE_BASE_FILE, "Nexus Bases.base");
-assert.equal(LIVE_BASE_BACKUP, ".nexus/Nexus Bases.unreadable.base");
+assert.equal(LIVE_BASE_FILE, "Note table.base");
+assert.equal(LIVE_BASE_BACKUP, ".nexus/Note table.unreadable.base");
 
 // Defaults and a full session survive a write and read exactly.
 const defaults = roundTrip(defaultBasesSession(), ["status"]);
-assert.match(defaults.text, /^# Nexus Bases live views/);
+assert.match(defaults.text, /^# Nexus note table views/);
 assert.doesNotMatch(defaults.text, /Exported from Nexus/);
 const doc0 = parse(defaults.text);
 assert.equal(doc0.views.length, 2);
@@ -235,8 +235,8 @@ assert.equal(ok(renamed).session.views[0].query, "", "a renamed view does not ta
 // Unreadable files never read as empty views.
 assert.equal(readLiveBase("views: [\n").ok, false);
 assert.match(readLiveBase("views: [\n").error, /^Not a readable \.base file/);
-assert.equal(readLiveBase("").error, "Nexus Bases.base has no views.");
-assert.equal(readLiveBase("formulas:\n  a: 1\n").error, "Nexus Bases.base has no views.");
+assert.equal(readLiveBase("").error, "Note table.base has no views.");
+assert.equal(readLiveBase("formulas:\n  a: 1\n").error, "Note table.base has no views.");
 assert.match(readLiveBase("x".repeat(1024 * 1024 + 1)).error, /larger than 1 MB/);
 assert.equal(readLiveBase("", "Other.base").error, "Other.base has no views.");
 
@@ -248,7 +248,7 @@ const oldRead = ok(oldExport);
 assert.equal(oldRead.oldExport, true);
 const freshened = writeLiveBase({ text: oldExport, session: oldRead.session }, oldRead.session, []);
 assert.doesNotMatch(freshened, /Exported from Nexus|keeps editing/);
-assert.match(freshened, /^# Nexus Bases live views/);
+assert.match(freshened, /^# Nexus note table views/);
 assert.equal(ok(freshened).oldExport, false);
 
 // ---- Sync queue against a fake vault ----
@@ -383,7 +383,7 @@ const edit = (session, patch) => {
   const opened = await sync.open();
   assert.equal(opened.kind, "blocked");
   assert.equal(opened.replaceable, true);
-  assert.match(opened.reason, /^Nexus Bases\.base can't be read: Not a readable \.base file/);
+  assert.match(opened.reason, /^Note table\.base can't be read: Not a readable \.base file/);
   assert.equal((await sync.save(edit(rich, { query: "x" }), [])).kind, "blocked");
   assert.equal(vault.file, "views: [\n  - broken");
   assert.deepEqual(await sync.check(), { kind: "same" });
@@ -409,7 +409,7 @@ const edit = (session, patch) => {
   vault.readError = "permission denied";
   const sync = new LiveBasesSync(vault);
   const opened = await sync.open();
-  assert.deepEqual(opened, { kind: "blocked", reason: "Couldn't read Nexus Bases.base: permission denied", replaceable: false });
+  assert.deepEqual(opened, { kind: "blocked", reason: "Couldn't read Note table.base: permission denied", replaceable: false });
   assert.equal((await sync.save(rich, [])).kind, "blocked");
   assert.equal(vault.writes, 0);
   vault.readError = null;
