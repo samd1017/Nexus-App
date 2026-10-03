@@ -438,35 +438,53 @@ const qtexts = (m) => {
   }
 }
 
-// ---------------------------------------------------------------- Preview checkboxes pair with their lines
+// ---------------------------------------------------------------- a Visual save writes task lines back as typed
 {
-  const { markdownToHtml } = await import("../src/lib/markdown/serialize.ts");
-  const { buildDemoVault } = await import("../src/lib/vault/demo-vault.ts");
-  const { checkboxTasks } = await import("../src/lib/tasks/extract.ts");
-  const boxesIn = (html) =>
-    [...html.matchAll(/<li>\s*(?:<p>)?<input([^>]*)type="checkbox">\s*([^<\n]*)/g)].map((m) => ({ checked: /checked/.test(m[1]), text: m[2].trim() }));
-  const tricky = [
-    "---", "due: 2026-10-09", "---", "# Mixed", "- [ ] first 📅 2026-10-03", "- [/] doing is text in preview", "- [x] done ✅ 2026-10-01",
-    "```", "- [ ] code, not a task", "```", "1. [ ] numbered", "   - [ ] nested", "- [-] cancelled", "> - [ ] quoted", "", "- [ ] last ^blk",
-  ].join("\n");
-  const bodies = [tricky, ...Object.values(buildDemoVault().nodes).filter((n) => n.kind === "note" && typeof n.content === "string").map((n) => n.content)];
-  let paired = 0;
-  for (const body of bodies) {
-    const boxes = boxesIn(markdownToHtml(body));
-    const tasks = checkboxTasks(note(body));
-    if (!tasks.length && !boxes.length) continue;
-    assert.equal(boxes.length, tasks.length, `checkbox count lines up in:\n${body.slice(0, 120)}`);
-    boxes.forEach((box, i) => {
-      assert.equal(box.checked, tasks[i].status === "done");
-      assert.ok(tasks[i].raw.includes(box.text.slice(0, 6)), `box ${i} "${box.text}" pairs with "${tasks[i].raw}"`);
-    });
-    paired += boxes.length;
-  }
-  assert.ok(paired > 10, "the demo vault has checkboxes to pair");
-  assert.deepEqual(checkboxTasks(note(tricky)).map((t) => t.line), [5, 7, 11, 12, 14, 16]);
+  const { htmlToMarkdown } = await import("../src/lib/markdown/serialize.ts");
+  const item = (text, { checked = false, status = null, nested = "" } = {}) =>
+    `<li data-type="taskItem" data-checked="${checked}"${status ? ` data-status="${status}"` : ""}><label><input type="checkbox"${checked ? " checked" : ""}></label><div><p>${text}</p>${nested}</div></li>`;
+  const list = (...items) => `<ul data-type="taskList">${items.join("")}</ul>`;
+  assert.equal(
+    htmlToMarkdown(
+      list(
+        item("doing", { status: "/" }),
+        item("was doing", { status: "/", checked: true }),
+        item("dropped ❌ 2026-09-30", { status: "-" }),
+        item("parent", { nested: list(item("child", { nested: list(item("grandchild", { checked: true })) })) }),
+      ),
+    ),
+    "- [/] doing\n- [x] was doing\n- [-] dropped ❌ 2026-09-30\n- [ ] parent\n  - [ ] child\n    - [x] grandchild\n",
+    "status symbols and every nesting level survive",
+  );
+  assert.equal(
+    htmlToMarkdown("<p>Fields [owner:: Sam] and [due:: 2026-10-03], text [a](b), [ref]: x</p>"),
+    "Fields [owner:: Sam] and [due:: 2026-10-03], text \\[a\\](b), \\[ref\\]: x\n",
+    "brackets that cannot start a link are written as typed",
+  );
+  assert.equal(
+    htmlToMarkdown("<ul data-bullet=\"disc\"><li><p>a bullet</p></li><li><p>[ ] task kept as text</p></li></ul>"),
+    "- a bullet\n- [ ] task kept as text\n",
+  );
+  assert.equal(
+    htmlToMarkdown(
+      '<table><tr><th>Write</th><th>Means</th></tr><tr><td><code>- [ ]</code></td><td>to do <span data-wikilink="Task Board" data-alias="Task Board">Task Board</span></td></tr></table>',
+    ),
+    "| Write | Means |\n| --- | --- |\n| `- [ ]` | to do [[Task Board]] |\n",
+    "table cells keep code and links",
+  );
+  assert.equal(htmlToMarkdown("<ol><li><p>[ ] one</p></li><li><p>[x] two</p></li></ol>"), "1. [ ] one\n2. [x] two\n");
 
+  const serialize = readFileSync("src/lib/markdown/serialize.ts", "utf8");
+  assert.match(serialize, /export function markdownWithWikilinksToHtml\(md: string\): string \{\n  return markdownToHtml\(md, \{ editor: true \}\);/);
+  assert.match(serialize, /Array\.from\(root\.querySelectorAll\("ul, ol"\)\)\.reverse\(\)/, "subtask lists convert before their parents");
+  assert.match(readFileSync("src/components/editor/VisualEditor.tsx", "utf8"), /StatusTaskItem\.configure\(/);
+  assert.match(readFileSync("src/lib/markdown/sanitize-html.ts", "utf8"), /"data-status"/);
+}
+
+// ---------------------------------------------------------------- Preview wiring
+{
   const preview = readFileSync("src/lib/editor/hydrate-preview.ts", "utf8");
-  assert.match(preview, /if \(tasks\.length !== boxes\.length\) return;/, "a count mismatch leaves boxes read-only");
+  assert.match(preview, /if \(found < 0\) continue;/, "a box with no matching line stays read-only");
   assert.match(preview, /await whenTasksReady\(\)/);
   assert.match(preview, /data-task-toggle/);
   const sourcePreview = readFileSync("src/components/editor/SourcePreview.tsx", "utf8");

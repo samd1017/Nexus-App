@@ -22,7 +22,7 @@ import { noteTitle, type VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
 import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
 import { friendlyDay, localToday } from "@/lib/tasks/dates";
-import { checkboxTasks, priorityMarker, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
+import { priorityMarker, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
 import { isOpen } from "@/lib/tasks/syntax";
 import { whenTasksReady } from "@/lib/tasks/task-index";
 
@@ -411,25 +411,64 @@ async function renderNexusQueries(
   }
 }
 
+/** Letters and digits only, so rendered text and its Markdown line compare equal. */
+function textKey(text: string): string {
+  return text.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase().slice(0, 16);
+}
+
+function boxText(box: HTMLInputElement): string {
+  const li = box.closest("li");
+  if (!li) return "";
+  const head = li.getAttribute("data-type") === "taskItem" ? li.querySelector(":scope > div > p") : box.parentElement;
+  if (!head) return "";
+  const clone = head.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("ul, ol").forEach((n) => n.remove());
+  return clone.textContent ?? "";
+}
+
+function lineText(task: VaultTask): string {
+  return task.raw
+    .replace(/^[\s>]*(?:[-*+]|\d{1,9}[.)])\s+\[[^\]]\]\s*/, "")
+    .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+}
+
 /**
- * Let the note's own checkboxes be ticked in Preview. Rendered boxes and
- * `[ ]`/`[x]` lines are paired in order, and only when the counts agree, so a
- * box can never write a different line than the one it shows.
+ * Let the note's own checkboxes be ticked in Preview. Each box is paired with
+ * the next task line that has the same status and starts with the same words;
+ * a box with no such line stays read-only, so a box never writes a line it
+ * does not show.
  */
 export function wirePreviewTaskBoxes(root: HTMLElement, body: string, noteId: string | null): void {
   if (!noteId) return;
   const boxes = Array.from(
-    root.querySelectorAll<HTMLInputElement>("li > input[type='checkbox'], li > p:first-child > input[type='checkbox']"),
+    root.querySelectorAll<HTMLInputElement>(
+      "li > input[type='checkbox'], li > p:first-child > input[type='checkbox'], li[data-type='taskItem'] > label > input[type='checkbox']",
+    ),
   ).filter(
     (box) => !box.closest("[data-type='embed'], [data-type='nexus-query'], [data-type='query']"),
   );
   if (!boxes.length) return;
   const node = useVaultStore.getState().nodes[noteId];
   const title = node ? noteTitle(node) : "";
-  const tasks = checkboxTasks(tasksInNote({ id: noteId, path: node?.path ?? "", title, body }));
-  if (tasks.length !== boxes.length) return;
-  boxes.forEach((box, i) => {
-    const task = tasks[i] as VaultTask;
+  const tasks = tasksInNote({ id: noteId, path: node?.path ?? "", title, body });
+  let next = 0;
+  for (const box of boxes) {
+    const li = box.closest("li");
+    const checked = box.checked || box.hasAttribute("checked");
+    const symbol = li?.getAttribute("data-status") || (checked ? "x" : " ");
+    const key = textKey(boxText(box));
+    let found = -1;
+    for (let j = next; j < tasks.length; j += 1) {
+      const task = tasks[j] as VaultTask;
+      if (task.symbol.toLowerCase() === symbol.toLowerCase() && textKey(lineText(task)) === key) {
+        found = j;
+        break;
+      }
+    }
+    if (found < 0) continue;
+    next = found + 1;
+    const task = tasks[found] as VaultTask;
     box.disabled = false;
     box.setAttribute("data-task-toggle", "");
     box.setAttribute("data-task-note", noteId);
@@ -438,7 +477,7 @@ export function wirePreviewTaskBoxes(root: HTMLElement, body: string, noteId: st
     box.setAttribute("data-task-title", title);
     box.setAttribute("aria-label", `${isOpen(task.status) ? "Mark done" : "Mark not done"}: ${task.text}`);
     box.classList.add("nexus-preview-task-box");
-  });
+  }
 }
 
 /** Re-run only the TASK blocks in a preview, after the vault's tasks change. */
