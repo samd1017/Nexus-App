@@ -124,7 +124,7 @@ function MenuButton({ children, onClick, testId, active }: { children: ReactNode
 }
 
 const MENU_CLASS =
-  "z-[80] flex w-[230px] flex-col rounded-[12px] border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-elevated)] backdrop-blur-xl";
+  "z-[96] flex w-[230px] flex-col rounded-[12px] border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-elevated)] backdrop-blur-xl";
 
 function TaskMenuItems({ task, today, close }: { task: VaultTask; today: string; close: () => void }) {
   const [picked, setPicked] = useState(task.due ?? "");
