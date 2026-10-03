@@ -45,11 +45,11 @@ assert.ok(welcomeDetail.includes("Nexus Desktop"));
 assert.ok(welcomeDetail.includes("will not open"));
 const readme = readFileSync("README.md", "utf8");
 assert.ok(
-  readme.includes("about " + CHROME_FSA_SUPPORTED_MAX.toLocaleString("en-US") + " notes or fewer"),
+  readme.includes("up to about " + CHROME_FSA_SUPPORTED_MAX.toLocaleString("en-US") + " notes"),
   "README missing the supported browser size",
 );
 assert.ok(
-  readme.includes("will not open a folder of about " + CHROME_FSA_NOTE_CAP.toLocaleString("en-US") + " notes"),
+  readme.includes("won't open a folder of about " + CHROME_FSA_NOTE_CAP.toLocaleString("en-US") + " notes"),
   "README missing the browser refusal size",
 );
 assert.ok(readme.includes("Nexus Desktop"), "README missing the desktop pointer");
