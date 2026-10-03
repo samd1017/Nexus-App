@@ -583,6 +583,10 @@ const qtexts = (m) => {
   assert.match(sourcePreview, /editTask\(/);
   assert.match(sourcePreview, /refreshTaskQueries\(/);
   assert.match(sourcePreview, /wirePreviewTaskBoxes\(root/);
+  assert.match(sourcePreview, /onContextMenu=\{taskMenu\}/, "right-click on a task in Preview opens the task menu");
+  assert.match(sourcePreview, /<TaskMenuAt/);
+  assert.match(sourcePreview, /tasks\[ \\t\]\*\$/, "a ```tasks block refreshes when tasks change");
+  assert.match(preview, /export function previewTaskAt\(/);
   assert.match(preview, /blockQuery\(written, fence/);
   assert.match(readFileSync("src/components/editor/NexusQueryView.tsx", "utf8"), /blockQuery\(written, fence/);
   assert.doesNotMatch(readFileSync("src/lib/tasks/tasks-block.ts", "utf8"), /\beval\(|new Function\(/);

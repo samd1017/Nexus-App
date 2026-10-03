@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { AlertTriangle, Ban, Check, CircleDot, MoreHorizontal, Repeat } from "lucide-react";
 import { editTask, openTaskInNote } from "@/lib/tasks/actions";
-import { friendlyDay } from "@/lib/tasks/dates";
+import { friendlyDay, localToday } from "@/lib/tasks/dates";
 import { fixTaskProblem, setTaskDate, setTaskPriority, setTaskStatus, toggleTask } from "@/lib/tasks/edit";
 import { dayFromToday, priorityMarker, type VaultTask } from "@/lib/tasks/extract";
 import { isOpen, type TaskPriority, type TaskProblem } from "@/lib/tasks/syntax";
@@ -123,6 +123,96 @@ function MenuButton({ children, onClick, testId, active }: { children: ReactNode
   );
 }
 
+const MENU_CLASS =
+  "z-[80] flex w-[230px] flex-col rounded-[12px] border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-elevated)] backdrop-blur-xl";
+
+function TaskMenuItems({ task, today, close }: { task: VaultTask; today: string; close: () => void }) {
+  const [picked, setPicked] = useState(task.due ?? "");
+  const run = (edit: Parameters<typeof editTask>[1]) => {
+    close();
+    void editTask(task, edit);
+  };
+  const due = (ymd: string | null) => run((md, ref) => setTaskDate(md, ref, "due", ymd));
+  const label = "px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]";
+  return (
+    <>
+      <div className={label}>Due</div>
+      <div className="grid grid-cols-3 gap-0.5">
+        <MenuButton testId="task-due-today" onClick={() => due(today)}>Today</MenuButton>
+        <MenuButton testId="task-due-tomorrow" onClick={() => due(dayFromToday(today, 1))}>Tomorrow</MenuButton>
+        <MenuButton testId="task-due-week" onClick={() => due(dayFromToday(today, 7))}>+1 week</MenuButton>
+      </div>
+      <div className="flex items-center gap-1 px-1 py-1">
+        <input
+          type="date"
+          aria-label="Due date"
+          data-testid="task-due-pick"
+          value={picked}
+          onChange={(e) => setPicked(e.target.value)}
+          className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-1.5 py-0.5 text-[12px] text-[var(--text-primary)]"
+        />
+        <button
+          type="button"
+          disabled={!picked || picked === task.due}
+          onClick={() => due(picked)}
+          className="chip-btn"
+        >
+          Set
+        </button>
+        {task.due && !task.dueFromNote ? (
+          <button type="button" className="chip-btn" data-testid="task-due-clear" onClick={() => due(null)}>
+            Clear
+          </button>
+        ) : null}
+      </div>
+      <div className={label}>Priority</div>
+      <div className="grid grid-cols-3 gap-0.5">
+        {PRIORITY_CHOICES.map((choice) => (
+          <MenuButton
+            key={choice.id}
+            testId={`task-priority-${choice.id}`}
+            active={task.priority === choice.id}
+            onClick={() => run((md, ref) => setTaskPriority(md, ref, choice.id))}
+          >
+            {priorityMarker(choice.id)} {choice.label}
+          </MenuButton>
+        ))}
+      </div>
+      <div className={label}>Status</div>
+      <div className="flex flex-col">
+        {task.status !== "doing" && isOpen(task.status) ? (
+          <MenuButton testId="task-start" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "doing", day))}>
+            Mark in progress <span className="font-mono text-[var(--text-muted)]">[/]</span>
+          </MenuButton>
+        ) : null}
+        {task.status === "doing" ? (
+          <MenuButton testId="task-stop" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "todo", day))}>
+            Back to to-do <span className="font-mono text-[var(--text-muted)]">[ ]</span>
+          </MenuButton>
+        ) : null}
+        {task.status !== "cancelled" ? (
+          <MenuButton testId="task-cancel" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "cancelled", day))}>
+            Cancel <span className="font-mono text-[var(--text-muted)]">[-] ❌</span>
+          </MenuButton>
+        ) : (
+          <MenuButton testId="task-reopen" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "todo", day))}>
+            Reopen
+          </MenuButton>
+        )}
+        <MenuButton
+          testId="task-open-note"
+          onClick={() => {
+            close();
+            openTaskInNote(task);
+          }}
+        >
+          Open in note
+        </MenuButton>
+      </div>
+    </>
+  );
+}
+
 function TaskMenu({
   task,
   today,
@@ -134,13 +224,6 @@ function TaskMenu({
   open: boolean;
   setOpen: (open: boolean) => void;
 }) {
-  const [picked, setPicked] = useState(task.due ?? "");
-  const run = (edit: Parameters<typeof editTask>[1]) => {
-    setOpen(false);
-    void editTask(task, edit);
-  };
-  const due = (ymd: string | null) => run((md, ref) => setTaskDate(md, ref, "due", ymd));
-  const label = "px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]";
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
@@ -160,81 +243,42 @@ function TaskMenu({
           sideOffset={4}
           // Inside a note the editor takes focus back after a right-click; a click outside still closes the menu.
           onFocusOutside={(e) => e.preventDefault()}
-          className="z-[80] flex w-[230px] flex-col rounded-[12px] border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-elevated)] backdrop-blur-xl"
+          className={MENU_CLASS}
         >
-          <div className={label}>Due</div>
-          <div className="grid grid-cols-3 gap-0.5">
-            <MenuButton testId="task-due-today" onClick={() => due(today)}>Today</MenuButton>
-            <MenuButton testId="task-due-tomorrow" onClick={() => due(dayFromToday(today, 1))}>Tomorrow</MenuButton>
-            <MenuButton testId="task-due-week" onClick={() => due(dayFromToday(today, 7))}>+1 week</MenuButton>
-          </div>
-          <div className="flex items-center gap-1 px-1 py-1">
-            <input
-              type="date"
-              aria-label="Due date"
-              data-testid="task-due-pick"
-              value={picked}
-              onChange={(e) => setPicked(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-1.5 py-0.5 text-[12px] text-[var(--text-primary)]"
-            />
-            <button
-              type="button"
-              disabled={!picked || picked === task.due}
-              onClick={() => due(picked)}
-              className="chip-btn"
-            >
-              Set
-            </button>
-            {task.due && !task.dueFromNote ? (
-              <button type="button" className="chip-btn" data-testid="task-due-clear" onClick={() => due(null)}>
-                Clear
-              </button>
-            ) : null}
-          </div>
-          <div className={label}>Priority</div>
-          <div className="grid grid-cols-3 gap-0.5">
-            {PRIORITY_CHOICES.map((choice) => (
-              <MenuButton
-                key={choice.id}
-                testId={`task-priority-${choice.id}`}
-                active={task.priority === choice.id}
-                onClick={() => run((md, ref) => setTaskPriority(md, ref, choice.id))}
-              >
-                {priorityMarker(choice.id)} {choice.label}
-              </MenuButton>
-            ))}
-          </div>
-          <div className={label}>Status</div>
-          <div className="flex flex-col">
-            {task.status !== "doing" && isOpen(task.status) ? (
-              <MenuButton testId="task-start" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "doing", day))}>
-                Mark in progress <span className="font-mono text-[var(--text-muted)]">[/]</span>
-              </MenuButton>
-            ) : null}
-            {task.status === "doing" ? (
-              <MenuButton testId="task-stop" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "todo", day))}>
-                Back to to-do <span className="font-mono text-[var(--text-muted)]">[ ]</span>
-              </MenuButton>
-            ) : null}
-            {task.status !== "cancelled" ? (
-              <MenuButton testId="task-cancel" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "cancelled", day))}>
-                Cancel <span className="font-mono text-[var(--text-muted)]">[-] ❌</span>
-              </MenuButton>
-            ) : (
-              <MenuButton testId="task-reopen" onClick={() => run((md, ref, day) => setTaskStatus(md, ref, "todo", day))}>
-                Reopen
-              </MenuButton>
-            )}
-            <MenuButton
-              testId="task-open-note"
-              onClick={() => {
-                setOpen(false);
-                openTaskInNote(task);
-              }}
-            >
-              Open in note
-            </MenuButton>
-          </div>
+          <TaskMenuItems task={task} today={today} close={() => setOpen(false)} />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+/** The task menu opened where the pointer is, for task lines that are not React rows (Reading view). */
+export function TaskMenuAt({
+  task,
+  x,
+  y,
+  onClose,
+}: {
+  task: VaultTask;
+  x: number;
+  y: number;
+  onClose: () => void;
+}) {
+  return (
+    <Popover.Root open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <Popover.Anchor asChild>
+        <span aria-hidden style={{ position: "fixed", left: x, top: y, width: 0, height: 0 }} />
+      </Popover.Anchor>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="start"
+          sideOffset={2}
+          aria-label={`Task actions: ${task.text}`}
+          data-testid="task-menu-at"
+          className={MENU_CLASS}
+        >
+          <TaskMenuItems task={task} today={localToday()} close={onClose} />
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

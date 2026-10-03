@@ -22,9 +22,9 @@ import { noteTitle, type VaultNode } from "@/lib/vault/types";
 import type { ThemeMode } from "@/lib/prefs/preferences";
 import { renderMermaidSvg } from "@/lib/editor/render-mermaid";
 import { friendlyDay, localToday } from "@/lib/tasks/dates";
-import { priorityMarker, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
+import { priorityMarker, tasksFromLines, tasksInNote, type VaultTask } from "@/lib/tasks/extract";
 import { isOpen } from "@/lib/tasks/syntax";
-import { whenTasksReady } from "@/lib/tasks/task-index";
+import { currentTasks, whenTasksReady } from "@/lib/tasks/task-index";
 import { TASKS_BLOCK_FOOTER, blockQuery, planBlocked, type TasksBlockPlan } from "@/lib/tasks/tasks-block";
 
 /** A query block whose first word is TASK lists task lines, not notes. */
@@ -506,6 +506,31 @@ export function wirePreviewTaskBoxes(root: HTMLElement, body: string, noteId: st
     box.setAttribute("aria-label", `${isOpen(task.status) ? "Mark done" : "Mark not done"}: ${task.text}`);
     box.classList.add("nexus-preview-task-box");
   }
+}
+
+const LINE_BOX = ":scope > input[data-task-toggle], :scope > p:first-child > input[data-task-toggle], :scope > label > input[data-task-toggle]";
+
+/**
+ * The task under a right-click in Preview: a row of a TASK block, or a note
+ * line whose box was paired with its source line. Null anywhere else.
+ */
+export function previewTaskAt(target: Element): VaultTask | null {
+  let box: Element | null = target.closest("[data-task-toggle]");
+  if (!box) box = target.closest(".nexus-query-task")?.querySelector("[data-task-toggle]") ?? null;
+  if (!box) {
+    const li = target.closest("li");
+    if (li && !li.closest("[data-type='nexus-query'], [data-type='embed']")) box = li.querySelector(LINE_BOX);
+  }
+  if (!(box instanceof HTMLElement)) return null;
+  const noteId = box.getAttribute("data-task-note") || "";
+  const line = Number(box.getAttribute("data-task-line"));
+  const raw = box.getAttribute("data-task-raw") || "";
+  if (!noteId || !Number.isFinite(line) || !raw) return null;
+  const known = currentTasks().tasks.find((task) => task.noteId === noteId && task.line === line && task.raw === raw);
+  if (known) return known;
+  const node = useVaultStore.getState().nodes[noteId];
+  const title = box.getAttribute("data-task-title") || (node ? noteTitle(node) : "");
+  return tasksFromLines({ id: noteId, path: node?.path ?? "", title }, [{ line, raw }], null)[0] ?? null;
 }
 
 /** Re-run only the TASK blocks in a preview, after the vault's tasks change. */

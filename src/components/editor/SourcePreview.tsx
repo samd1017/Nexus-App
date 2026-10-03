@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { markdownToHtml } from "@/lib/markdown/serialize";
 import { findEmbedTarget, openWikilink } from "@/lib/editor/open-wikilink";
 import { getFindFocusPane } from "@/lib/editor/find-target";
@@ -6,13 +6,15 @@ import { useVaultStore } from "@/lib/vault/store";
 import { noteOpenGesture } from "@/lib/vault/note-tabs";
 import { isMacOS } from "@/lib/platform";
 import { usePrefsStore } from "@/lib/prefs/preferences";
-import { hydratePreviewSpecials, refreshTaskQueries, wirePreviewTaskBoxes } from "@/lib/editor/hydrate-preview";
+import { hydratePreviewSpecials, previewTaskAt, refreshTaskQueries, wirePreviewTaskBoxes } from "@/lib/editor/hydrate-preview";
 import { isVaultAttachmentHref } from "@/lib/vault/attachments";
 import { editTask, openTaskInNote } from "@/lib/tasks/actions";
 import { toggleTask } from "@/lib/tasks/edit";
 import { currentTasks, subscribeTasks } from "@/lib/tasks/task-index";
+import type { VaultTask } from "@/lib/tasks/extract";
+import { TaskMenuAt } from "@/components/tasks/TaskRow";
 
-const TASK_BLOCK = /^[ \t]*(?:```|~~~)[ \t]*(?:nexus-query|dataview)[ \t]*\r?\n\s*tasks?\b/im;
+const TASK_BLOCK = /^[ \t]*(?:```|~~~)[ \t]*(?:(?:nexus-query|dataview)[ \t]*\r?\n\s*tasks?\b|tasks[ \t]*$)/im;
 
 export function SourcePreview({
   content,
@@ -35,6 +37,7 @@ export function SourcePreview({
     }
   }, [content]);
   const hostRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ task: VaultTask; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const root = hostRef.current;
@@ -153,17 +156,36 @@ export function SourcePreview({
     });
   };
 
+  const taskMenu = (e: ReactMouseEvent) => {
+    const task = previewTaskAt(e.target as Element);
+    if (!task) return;
+    e.preventDefault();
+    setMenu({ task, x: e.clientX, y: e.clientY });
+  };
+
   return (
-    <div
-      ref={hostRef}
-      className="nexus-source-preview note-editor"
-      tabIndex={reading ? -1 : undefined}
-      aria-label={reading ? "Reading view" : undefined}
-      onClick={(e) => openPreviewTarget(e)}
-      onAuxClick={(e) => {
-        if (e.button !== 1) return;
-        openPreviewTarget(e);
-      }}
-    />
+    <>
+      <div
+        ref={hostRef}
+        className="nexus-source-preview note-editor"
+        tabIndex={reading ? -1 : undefined}
+        aria-label={reading ? "Reading view" : undefined}
+        onClick={(e) => openPreviewTarget(e)}
+        onAuxClick={(e) => {
+          if (e.button !== 1) return;
+          openPreviewTarget(e);
+        }}
+        onContextMenu={taskMenu}
+      />
+      {menu ? (
+        <TaskMenuAt
+          key={`${menu.task.noteId}:${menu.task.line}:${menu.x}:${menu.y}`}
+          task={menu.task}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
+    </>
   );
 }

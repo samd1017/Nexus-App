@@ -199,6 +199,82 @@ try {
       removed: [was],
     });
   }
+  const tomorrow = await page.evaluate(async (day) => (await import("/src/lib/tasks/extract.ts")).dayFromToday(day, 1), today);
+
+  // A ```tasks block written for the Tasks plugin runs in Visual and Reading view; a bad line offers its fix.
+  {
+    const md = "# Old tasks\n\n```tasks\nnot done\ndue before tomorrow\nsort by due\n```\n\n```tasks\nnot done\ndew today\n```\n";
+    const old = await page.evaluate(async (text) => {
+      const s = (await window.__appStore()).getState();
+      const noteId = s.createNote(null, "Old Tasks");
+      s.updateNoteContent(noteId, text, { source: true });
+      s.setActiveNote(noteId);
+      return noteId;
+    }, md);
+    await reading(false);
+    const blocks = page.locator(".ProseMirror [data-testid=nexus-query][data-lang=tasks]");
+    await blocks.first().locator("[data-testid=task-item]").first().waitFor();
+    const rows = await blocks.first().locator("[data-testid=tasks-row]").allInnerTexts();
+    assert.ok(rows.some((text) => text.includes("Draft the onboarding checklist")), rows.join(" | "));
+    assert.ok(!rows.some((text) => text.includes("Profile vault open")), "a task due later is not listed");
+    const problem = blocks.nth(1).locator("[data-testid=tasks-block-problem]");
+    assert.equal(await problem.getAttribute("data-line"), "2");
+    assert.match(await problem.innerText(), /dew today[\s\S]*not a Tasks filter/);
+    assert.equal(await blocks.nth(1).locator("[data-testid=task-item]").count(), 0, "a block with a bad line lists nothing");
+    await problem.locator("[data-testid=tasks-block-rewrite]").click();
+    await page.waitForTimeout(1200);
+    assert.match(await body(old), /```tasks\nnot done\ndue today\n```/, "the fix writes the line in the note");
+    await blocks.nth(1).locator("[data-testid=task-item]").first().waitFor();
+
+    await reading(true);
+    const shown = page.locator(".nexus-source-preview [data-type='nexus-query'][data-lang=tasks]");
+    await shown.first().locator("[data-testid=task-item]").first().waitFor();
+    assert.match(await shown.first().locator(".nexus-query-head").innerText(), /\d+ tasks? · tasks/);
+    const readRows = await shown.first().locator("[data-testid=tasks-row]").allInnerTexts();
+    assert.ok(readRows.some((text) => text.includes("Draft the onboarding checklist")), readRows.join(" | "));
+    assert.equal(await page.locator(".nexus-source-preview pre code.language-tasks").count(), 0, "no ```tasks block is left as code");
+  }
+
+  // Reading view: right-click a row in a TASK block, pick Tomorrow; that task's line changes.
+  {
+    await page.evaluate((noteId) => window.__NEXUS_SCALE__.setActiveNote(noteId), board);
+    await reading(true);
+    const row = page.locator(".nexus-source-preview [data-type='nexus-query'] [data-testid=task-item]").filter({ hasText: "Profile vault open" }).first();
+    await row.waitFor();
+    await row.scrollIntoViewIfNeeded();
+    const before = await body(board);
+    const box = await row.locator("[data-testid=tasks-row]").boundingBox();
+    await page.mouse.click(box.x + 30, box.y + box.height / 2, { button: "right" });
+    await page.locator("[data-testid=task-menu-at] [data-testid=task-due-tomorrow]").click();
+    await page.waitForTimeout(1000);
+    const was = before.split("\n").find((line) => line.includes("Profile vault open"));
+    assert.deepEqual(changedLines(before, await body(board)), {
+      added: [was.replace(/📅 [\d-]+/, `📅 ${tomorrow}`)],
+      removed: [was],
+    });
+  }
+
+  // Reading view: right-click a task line of the note itself, set High priority; that line changes.
+  {
+    const before = await body(board);
+    const li = page.locator(".nexus-source-preview > ul > li").filter({ hasText: "Review the agent conflict flow" }).first();
+    await li.scrollIntoViewIfNeeded();
+    const box = await li.boundingBox();
+    await page.mouse.click(box.x + 80, box.y + 10, { button: "right" });
+    await page.locator("[data-testid=task-menu-at] [data-testid=task-priority-high]").click();
+    await page.waitForTimeout(1000);
+    const diff = changedLines(before, await body(board));
+    assert.equal(diff.removed.length, 1);
+    assert.match(diff.removed[0], /Review the agent conflict flow .*🔼/);
+    assert.equal(diff.added.length, 1);
+    assert.match(diff.added[0], /^- \[ \] Review the agent conflict flow .*⏫/);
+    assert.doesNotMatch(diff.added[0], /🔼/);
+    // Right-click anywhere else in Reading view keeps the browser menu.
+    const heading = await page.locator(".nexus-source-preview h1").first().boundingBox();
+    await page.mouse.click(heading.x + 10, heading.y + 5, { button: "right" });
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator("[data-testid=task-menu-at]").count(), 0);
+  }
 
   assert.deepEqual(pageErrors, [], "no page errors");
   console.log("tasks browser: PASS");
